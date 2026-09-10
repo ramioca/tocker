@@ -1,8 +1,7 @@
 "use client"
-/* eslint-disable react-hooks/refs -- vendored Spectrum UI component, kept as installed. */
 
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { AnimatePresence, motion, useReducedMotion } from "motion/react"
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -111,6 +110,7 @@ export function FollowButton({
     : followLabel
   // Follow-state changes roll the label; intent previews crossfade in place
   const swapMode: LabelSwapCustom["mode"] =
+    // eslint-disable-next-line react-hooks/refs -- upstream registry code: previous state chooses the label transition
     following !== prevFollowingRef.current ? "roll" : "fade"
   const swapCustom: LabelSwapCustom = {
     mode: swapMode,
@@ -124,6 +124,7 @@ export function FollowButton({
   }, [following])
 
   const animateLayout =
+    // eslint-disable-next-line react-hooks/refs -- upstream registry code, same reason as above
     (hasToggled || following !== prevFollowingRef.current) &&
     !shouldReduceMotion
 

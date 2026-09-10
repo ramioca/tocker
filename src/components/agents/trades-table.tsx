@@ -1,0 +1,175 @@
+"use client";
+
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { ArrowUpRight, Receipt } from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { SkeletonReveal } from "@/components/spectrumui/skeleton-reveal";
+import { EmptyState, ErrorState } from "@/components/common/empty-state";
+import { RelativeTime } from "@/components/common/relative-time";
+import { TokenIcon } from "@/components/common/token-icon";
+import { formatTokenAmount, formatUsd } from "@/components/common/format";
+import { fetchAgentTrades } from "./agent-actions";
+import { cn } from "@/lib/utils";
+import type { Page, TradeRow } from "@/server/types";
+
+function TableSkeleton() {
+  return (
+    <div className="space-y-2 p-3" role="status" aria-label="Loading trades">
+      {Array.from({ length: 6 }, (_, i) => (
+        <span
+          key={i}
+          className="block h-9 rounded-lg bg-muted/60 motion-safe:animate-pulse"
+          aria-hidden
+        />
+      ))}
+    </div>
+  );
+}
+
+function explorerUrl(trade: TradeRow): string | null {
+  if (!trade.txHash) return null;
+  return trade.chain === "solana"
+    ? `https://solscan.io/tx/${trade.txHash}`
+    : `https://basescan.org/tx/${trade.txHash}`;
+}
+
+export function TradesTable({
+  agentId,
+  initialPage,
+}: {
+  agentId: string;
+  initialPage?: Page<TradeRow>;
+}) {
+  const query = useInfiniteQuery({
+    queryKey: ["agent-trades", agentId],
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => fetchAgentTrades(agentId, pageParam),
+    getNextPageParam: (last: Page<TradeRow>) => last.nextCursor,
+    initialData: initialPage
+      ? { pages: [initialPage], pageParams: [null as string | null] }
+      : undefined,
+  });
+
+  const trades = query.data?.pages.flatMap((page) => page.items) ?? [];
+
+  if (query.isError) {
+    return (
+      <ErrorState
+        title="Trade history did not load"
+        description={(query.error as Error).message}
+        action={
+          <button
+            type="button"
+            onClick={() => void query.refetch()}
+            className="rounded-lg border border-border px-3 py-1.5 text-xs transition-colors duration-150 hover:bg-muted"
+          >
+            Try again
+          </button>
+        }
+      />
+    );
+  }
+
+  return (
+    <SkeletonReveal loading={query.isPending} skeleton={<TableSkeleton />}>
+      {trades.length === 0 ? (
+        <EmptyState
+          icon={<Receipt />}
+          title="No trades yet"
+          description="Every fill this agent makes lands here with the reasoning that produced it."
+        />
+      ) : (
+        <div className="space-y-3">
+          <div className="overflow-x-auto rounded-xl border border-border/70">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>When</TableHead>
+                  <TableHead>Side</TableHead>
+                  <TableHead>Token</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead className="text-right">Price</TableHead>
+                  <TableHead className="text-right">Value</TableHead>
+                  <TableHead className="text-right">Tx</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {trades.map((trade) => {
+                  const url = explorerUrl(trade);
+                  const failed = trade.status === "failed" || trade.status === "rejected";
+                  return (
+                    <TableRow key={trade.id} className={cn(failed && "opacity-60")}>
+                      <TableCell className="whitespace-nowrap text-xs">
+                        <RelativeTime iso={trade.createdAt} />
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={cn(
+                            "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider",
+                            trade.side === "buy"
+                              ? "bg-positive/15 text-positive"
+                              : "bg-negative/15 text-negative",
+                          )}
+                        >
+                          {trade.side}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="flex items-center gap-1.5">
+                          <TokenIcon token={trade.token} size="xs" />
+                          <span className="font-medium">{trade.token.symbol}</span>
+                        </span>
+                      </TableCell>
+                      <TableCell className="tnum text-right text-muted-foreground">
+                        {formatTokenAmount(trade.amountToken)}
+                      </TableCell>
+                      <TableCell className="tnum text-right text-muted-foreground">
+                        {formatUsd(trade.priceUsd)}
+                      </TableCell>
+                      <TableCell className="tnum text-right font-medium">
+                        {formatUsd(trade.amountUsd)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {url ? (
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-0.5 rounded font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            {trade.txHash?.slice(0, 6)}
+                            <ArrowUpRight aria-hidden className="size-3" />
+                          </a>
+                        ) : (
+                          <span className="font-mono text-[11px] text-muted-foreground">paper</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+
+          {query.hasNextPage ? (
+            <button
+              type="button"
+              onClick={() => void query.fetchNextPage()}
+              disabled={query.isFetchingNextPage}
+              className="w-full rounded-lg border border-border py-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {query.isFetchingNextPage ? "Loading…" : "Load more trades"}
+            </button>
+          ) : null}
+        </div>
+      )}
+    </SkeletonReveal>
+  );
+}

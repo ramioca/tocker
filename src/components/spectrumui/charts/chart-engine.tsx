@@ -4,7 +4,7 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 
 export const marketVarsClassName =
-  '[--spectrum-chart-up:#059669] [--spectrum-chart-down:#e11d48] [--spectrum-chart-surface:#fff] dark:[--spectrum-chart-up:#34d399] dark:[--spectrum-chart-down:#fb7185] dark:[--spectrum-chart-surface:#0a0a0a]';
+  '[--spectrum-chart-up:var(--positive)] [--spectrum-chart-down:var(--negative)] [--spectrum-chart-surface:var(--card)]';
 
 export const UP = 'var(--spectrum-chart-up)';
 export const DOWN = 'var(--spectrum-chart-down)';
@@ -590,7 +590,7 @@ export function changeColor(change: number, cap = 4) {
 }
 
 export const seriesVarsClassName =
-  '[--spectrum-series-1:#2563eb] [--spectrum-series-2:#f59e0b] [--spectrum-series-3:#0d9488] [--spectrum-series-4:#7c3aed] [--spectrum-series-5:#db2777] [--spectrum-series-6:#64748b] [--spectrum-track:#ececef] [--spectrum-chart-surface:#fff] [--spectrum-chart-up:#059669] [--spectrum-chart-down:#e11d48] dark:[--spectrum-series-1:#60a5fa] dark:[--spectrum-series-2:#fbbf24] dark:[--spectrum-series-3:#2dd4bf] dark:[--spectrum-series-4:#a78bfa] dark:[--spectrum-series-5:#f472b6] dark:[--spectrum-series-6:#94a3b8] dark:[--spectrum-track:#26262b] dark:[--spectrum-chart-surface:#0a0a0a] dark:[--spectrum-chart-up:#34d399] dark:[--spectrum-chart-down:#fb7185]';
+  '[--spectrum-series-1:var(--chart-1)] [--spectrum-series-2:var(--chart-2)] [--spectrum-series-3:var(--chart-3)] [--spectrum-series-4:var(--chart-4)] [--spectrum-series-5:var(--chart-5)] [--spectrum-series-6:var(--muted-foreground)] [--spectrum-track:var(--muted)] [--spectrum-chart-surface:var(--card)] [--spectrum-chart-up:var(--positive)] [--spectrum-chart-down:var(--negative)]';
 
 export const SERIES_COLORS = [
   'var(--spectrum-series-1)',

@@ -8,7 +8,7 @@ import {
   useMotionValue,
   useReducedMotion,
   useTransform,
-} from "motion/react"
+} from "framer-motion"
 import { Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 

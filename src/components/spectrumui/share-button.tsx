@@ -1,5 +1,4 @@
 "use client"
-/* eslint-disable react-hooks/refs -- vendored Spectrum UI component, kept as installed. */
 
 import React, { useCallback, useEffect, useRef, useState } from "react"
 import {
@@ -7,7 +6,7 @@ import {
   motion,
   useReducedMotion,
   type Transition,
-} from "motion/react"
+} from "framer-motion"
 import { Check, Link, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -423,6 +422,7 @@ export function ShareButton({
                   </AnimatePresence>
                 </span>,
               )}
+            {/* eslint-disable-next-line react-hooks/refs -- upstream registry code reads a ref inside renderAction */}
             {actions.map((action, actionIndex) => {
               const index =
                 actionIndex + (copyValue !== undefined ? 1 : 0)

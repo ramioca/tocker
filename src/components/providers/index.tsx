@@ -1,28 +1,51 @@
 "use client";
+
 import { useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AppPrivyProvider } from "@/components/providers/privy-provider";
+import { Toaster } from "sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { AppPrivyProvider } from "./privy-provider";
+import { RunStatusProvider } from "./run-status";
 
-/**
- * NOTE: UI-CORE owns the final version of this file (it also mounts the toaster,
- * theme provider, etc). Foundation ships this minimal composition so auth works
- * standalone before the branches merge — keep UI-CORE's version at merge time,
- * but keep QueryClientProvider outside AppPrivyProvider: `useSession()` needs
- * react-query in both the Privy and the no-Privy path.
- */
 export function Providers({ children }: { children: ReactNode }) {
+  // One client per browser session, created lazily so it is never shared
+  // between requests on the server.
   const [queryClient] = useState(
     () =>
       new QueryClient({
         defaultOptions: {
-          queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: 1 },
+          queries: {
+            staleTime: 30_000,
+            refetchOnWindowFocus: false,
+            retry: 1,
+          },
         },
       }),
   );
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AppPrivyProvider>{children}</AppPrivyProvider>
+      <AppPrivyProvider>
+        <RunStatusProvider>
+          <TooltipProvider delay={350} closeDelay={100}>
+            {children}
+            <Toaster
+              theme="dark"
+              position="bottom-right"
+              closeButton
+              richColors={false}
+              toastOptions={{
+                classNames: {
+                  toast:
+                    "!bg-popover !text-popover-foreground !border-border !rounded-xl !shadow-lg",
+                  description: "!text-muted-foreground",
+                  actionButton: "!bg-primary !text-primary-foreground",
+                },
+              }}
+            />
+          </TooltipProvider>
+        </RunStatusProvider>
+      </AppPrivyProvider>
     </QueryClientProvider>
   );
 }
