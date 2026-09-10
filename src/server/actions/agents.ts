@@ -279,7 +279,7 @@ export async function deleteAgent(id: string): Promise<ActionResult> {
  * returns — `runAgent` (RUNTIME) creates the `agent_runs` row itself, so there
  * is no id to hand back synchronously; poll `getAgentRuns` for the new run.
  */
-export async function triggerRun(id: string): Promise<ActionResult<{ runId: string | null }>> {
+export async function triggerRun(id: string): Promise<ActionResult<{ runId: string }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
