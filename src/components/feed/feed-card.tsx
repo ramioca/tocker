@@ -205,7 +205,8 @@ export function FeedCard({
           <div className="mt-2 flex items-center gap-1">
             <LikeButton
               liked={liked}
-              count={likeCount}
+              // LikeButton adds +1 for the viewer's own like, so pass the count excluding it.
+              count={Math.max(0, likeCount - (liked ? 1 : 0))}
               size="sm"
               onLikedChange={handleLike}
               label="Like"

@@ -25,12 +25,16 @@ type Step = (typeof STEPS)[number];
 export function OnboardingModal() {
   const { ready, session } = useSession();
   const [open, setOpen] = useState(false);
+  // In-memory dismissal so the modal never reopens mid-session even when
+  // localStorage is unavailable (private mode, sandboxed webviews).
+  const dismissedRef = useRef(false);
   const [step, setStep] = useState<Step>("welcome");
   const [direction, setDirection] = useState(1);
   const reduce = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
 
   const dismiss = useCallback(() => {
+    dismissedRef.current = true;
     setOpen(false);
     try {
       localStorage.setItem(STORAGE_KEY, "1");
@@ -44,11 +48,11 @@ export function OnboardingModal() {
     const forced = new URLSearchParams(window.location.search).get("onboarding") === "1";
     if (!forced && (!ready || !session)) return;
 
-    let dismissed = false;
+    let dismissed = dismissedRef.current;
     try {
-      dismissed = localStorage.getItem(STORAGE_KEY) === "1";
+      dismissed = dismissed || localStorage.getItem(STORAGE_KEY) === "1";
     } catch {
-      dismissed = false;
+      // localStorage unavailable — fall back to the in-memory flag
     }
     if (!forced && dismissed) return;
 

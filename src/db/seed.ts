@@ -52,7 +52,8 @@ const chance = (p: number) => rand() < p;
 const DAY = 86_400_000;
 const NOW = Date.now();
 const START = NOW - 30 * DAY;
-const at = (dayIndex: number, hour = 12) => new Date(START + dayIndex * DAY + hour * 3_600_000);
+// Clamp to the past: day 30 at 17:00 would otherwise land in the future.
+const at = (dayIndex: number, hour = 12) => new Date(Math.min(NOW - 60_000, START + dayIndex * DAY + hour * 3_600_000));
 
 // ---------- reference data ----------
 
