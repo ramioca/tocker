@@ -1,0 +1,28 @@
+{
+  "status": { "timestamp": "2026-09-10T21:00:00.000Z", "error_code": 0, "credit_count": 1 },
+  "data": [
+    {
+      "contract_address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+      "name": "Bonk",
+      "symbol": "BONK",
+      "network_slug": "solana",
+      "price_usd": 0.0000026936182127151164,
+      "percent_change_24h": -6.72,
+      "volume_24h": 91204331.5,
+      "liquidity": 962721.23,
+      "num_transactions_24h": 118420
+    },
+    {
+      "contract_address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+      "name": "dogwifhat",
+      "symbol": "WIF",
+      "network_slug": "solana",
+      "price_usd": 0.5412,
+      "percent_change_24h": -3.11,
+      "volume_24h": 41220884.0,
+      "liquidity": 3120440.0,
+      "num_transactions_24h": 51220
+    }
+  ],
+  "_fixture": true
+}

@@ -14,7 +14,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/db/seed.ts",
-    "tick": "tsx scripts/tick.ts"
+    "tick": "tsx --env-file-if-exists=.env scripts/tick.ts",
+    "demo": "tsx --env-file-if-exists=.env scripts/demo-run.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.52",

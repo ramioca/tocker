@@ -1,0 +1,36 @@
+{
+  "query": "bonk",
+  "count": 4,
+  "tweets": [
+    {
+      "id": "1899220011",
+      "text": "BONK burn is live again and the chart is finally cooperating. Solana majors look like the rotation trade this week.",
+      "author": { "username": "solanafloor", "followers": 214000, "verified": true },
+      "created_at": "2026-09-10T20:41:00.000Z",
+      "metrics": { "likes": 3120, "retweets": 640, "replies": 210, "views": 184000 }
+    },
+    {
+      "id": "1899220012",
+      "text": "Every dog season starts with BONK and ends with something you have never heard of. Position accordingly.",
+      "author": { "username": "0xNarrative", "followers": 88000, "verified": true },
+      "created_at": "2026-09-10T19:58:00.000Z",
+      "metrics": { "likes": 2110, "retweets": 480, "replies": 156, "views": 96000 }
+    },
+    {
+      "id": "1899220013",
+      "text": "not touching BONK up here, the funding is silly and the unique authors are flat while mentions rip. classic distribution",
+      "author": { "username": "perp_janitor", "followers": 31000, "verified": false },
+      "created_at": "2026-09-10T19:10:00.000Z",
+      "metrics": { "likes": 780, "retweets": 91, "replies": 64, "views": 41000 }
+    },
+    {
+      "id": "1899220014",
+      "text": "SOL DEX volume back over $3B. BONK/WIF leading. Feels early rather than late.",
+      "author": { "username": "chainflows", "followers": 52000, "verified": false },
+      "created_at": "2026-09-10T18:22:00.000Z",
+      "metrics": { "likes": 1240, "retweets": 208, "replies": 77, "views": 62000 }
+    }
+  ],
+  "next_cursor": null,
+  "_fixture": true
+}

@@ -1,0 +1,22 @@
+{
+  "query": "solana memecoins",
+  "generated_at": "2026-09-10T21:00:00.000Z",
+  "narrative": {
+    "headline": "BONK reclaims the dog-coin narrative as Solana DEX volume rebounds",
+    "summary": "Mentions of BONK on X are up 41% over 24h, led by mid-size accounts rather than the usual promo cluster. The dominant frame is a rotation back into Solana majors after two weeks of L2 attention. Contrarian read: engagement is rising faster than unique authors, which historically front-runs a 2-3 day fade.",
+    "sentiment_score": 0.62,
+    "narrative_velocity": 0.41,
+    "contrarian_score": -0.18,
+    "confidence": 0.71
+  },
+  "watchlist": [
+    { "symbol": "BONK", "sentiment": 0.62, "velocity": 0.41, "mentions_24h": 18422, "unique_authors_24h": 5104 },
+    { "symbol": "WIF", "sentiment": 0.31, "velocity": 0.08, "mentions_24h": 9110, "unique_authors_24h": 3877 },
+    { "symbol": "JUP", "sentiment": 0.44, "velocity": -0.05, "mentions_24h": 6220, "unique_authors_24h": 2988 }
+  ],
+  "top_posts": [
+    { "author": "@solanafloor", "followers": 214000, "text": "Solana DEX volume back above $3.1B/day. BONK leading the majors.", "engagement": 4210 },
+    { "author": "@0xNarrative", "followers": 88000, "text": "Every dog season starts with BONK and ends with something you have never heard of.", "engagement": 2980 }
+  ],
+  "_fixture": true
+}

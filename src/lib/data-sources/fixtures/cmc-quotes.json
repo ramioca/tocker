@@ -1,0 +1,40 @@
+{
+  "status": { "timestamp": "2026-09-10T21:00:00.000Z", "error_code": 0, "credit_count": 1 },
+  "data": {
+    "SOL": {
+      "id": 5426,
+      "name": "Solana",
+      "symbol": "SOL",
+      "cmc_rank": 5,
+      "quote": {
+        "USD": {
+          "price": 99.85848907125406,
+          "volume_24h": 3184920114.2,
+          "percent_change_1h": -0.21,
+          "percent_change_24h": -2.23,
+          "percent_change_7d": 4.61,
+          "market_cap": 55182930114.0,
+          "last_updated": "2026-09-10T21:00:00.000Z"
+        }
+      }
+    },
+    "BONK": {
+      "id": 23095,
+      "name": "Bonk",
+      "symbol": "BONK",
+      "cmc_rank": 61,
+      "quote": {
+        "USD": {
+          "price": 0.0000026936182127151164,
+          "volume_24h": 91204331.5,
+          "percent_change_1h": 0.34,
+          "percent_change_24h": -6.72,
+          "percent_change_7d": 12.08,
+          "market_cap": 237023674.28,
+          "last_updated": "2026-09-10T21:00:00.000Z"
+        }
+      }
+    }
+  },
+  "_fixture": true
+}
