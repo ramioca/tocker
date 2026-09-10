@@ -1,17 +1,219 @@
 import "server-only";
+import { cache } from "react";
+import { cookies, headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { eq } from "drizzle-orm";
+import { verifyAccessToken } from "@privy-io/node";
+import { getDb, users } from "@/db";
+import { isPrivyConfigured, privy } from "@/lib/privy";
 import type { Session } from "@/server/types";
 
+/** Cookie react-auth sets on the client after login. */
+const TOKEN_COOKIE = "privy-token";
+
 /**
- * Returns the current user's session (verified Privy access token → users row), or null.
- * OWNER: foundation. Implementation notes in SPEC.md → Auth flow.
+ * Dev-only impersonation backdoor so the app (and the seed data) is usable
+ * without Privy credentials. Guarded three ways: env var set, not production,
+ * and Privy not configured. See .env.example → DEV_IMPERSONATE_USER_ID.
  */
-export async function getSession(): Promise<Session | null> {
-  throw new Error("getSession not implemented (foundation workstream)");
+function devImpersonationId(): string | null {
+  if (process.env.NODE_ENV === "production") return null;
+  if (isPrivyConfigured()) return null;
+  const id = process.env.DEV_IMPERSONATE_USER_ID?.trim();
+  return id ? id : null;
 }
 
-/** Throws a redirect to `/` (landing) when logged out. */
+async function readAccessToken(): Promise<string | null> {
+  const jar = await cookies();
+  const fromCookie = jar.get(TOKEN_COOKIE)?.value;
+  if (fromCookie) return fromCookie;
+  const h = await headers();
+  const auth = h.get("authorization") ?? h.get("Authorization");
+  if (auth?.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim() || null;
+  return null;
+}
+
+/**
+ * Verify a Privy access token → Privy DID.
+ *
+ * Uses `verifyAccessToken` from `@privy-io/node` with an explicit
+ * `PRIVY_VERIFICATION_KEY` (SPKI PEM from the Privy dashboard) when one is set —
+ * it avoids a JWKS round-trip on every request. Otherwise falls back to
+ * `privy().utils().auth().verifyAccessToken(token)`, which resolves the app's
+ * JWKS itself.
+ */
+async function verifyToken(token: string): Promise<string | null> {
+  const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim();
+  if (!appId) return null;
+  try {
+    const verificationKey = process.env.PRIVY_VERIFICATION_KEY?.trim();
+    if (verificationKey) {
+      const claims = await verifyAccessToken({
+        access_token: token,
+        app_id: appId,
+        verification_key: normalizeSpki(verificationKey),
+      });
+      return claims.user_id;
+    }
+    const claims = await privy().utils().auth().verifyAccessToken(token);
+    return claims.user_id;
+  } catch {
+    return null;
+  }
+}
+
+/** Accept the dashboard's bare base64 key as well as a full PEM block. */
+function normalizeSpki(key: string): string {
+  const trimmed = key.replace(/\\n/g, "\n").trim();
+  if (trimmed.includes("BEGIN PUBLIC KEY")) return trimmed;
+  return `-----BEGIN PUBLIC KEY-----\n${trimmed}\n-----END PUBLIC KEY-----`;
+}
+
+function toSession(row: typeof users.$inferSelect): Session {
+  return {
+    userId: row.id,
+    handle: row.handle,
+    displayName: row.displayName,
+    avatarUrl: row.avatarUrl,
+    email: row.email,
+  };
+}
+
+/** Strip a candidate down to `[a-z0-9_]{1,20}`. */
+function sanitizeHandle(raw: string): string {
+  const cleaned = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "")
+    .slice(0, 20);
+  return cleaned.length >= 2 ? cleaned : "";
+}
+
+/** Handle from an email local-part, twitter/google name, or short wallet address. */
+export function handleCandidate(input: {
+  email?: string | null;
+  username?: string | null;
+  walletAddress?: string | null;
+  userId?: string | null;
+}): string {
+  const fromUsername = input.username ? sanitizeHandle(input.username) : "";
+  if (fromUsername) return fromUsername;
+  const local = input.email?.split("@")[0];
+  const fromEmail = local ? sanitizeHandle(local) : "";
+  if (fromEmail) return fromEmail;
+  const addr = input.walletAddress;
+  if (addr) {
+    const short = addr.startsWith("0x") ? addr.slice(2, 8) : addr.slice(0, 6);
+    const fromAddr = sanitizeHandle(short);
+    if (fromAddr) return `${fromAddr}${addr.slice(-4).toLowerCase().replace(/[^a-z0-9]/g, "")}`.slice(0, 20);
+  }
+  const tail = (input.userId ?? "").replace(/[^a-zA-Z0-9]/g, "").slice(-6).toLowerCase();
+  return tail ? `user${tail}` : `user${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Append a numeric suffix until the handle is free. */
+export async function uniqueHandle(base: string): Promise<string> {
+  const db = await getDb();
+  const root = sanitizeHandle(base) || "trader";
+  for (let i = 0; i < 60; i++) {
+    const candidate = i === 0 ? root : `${root.slice(0, 17)}${i}`;
+    const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.handle, candidate)).limit(1);
+    if (!existing) return candidate;
+  }
+  return `${root.slice(0, 12)}${Date.now().toString(36)}`.slice(0, 20);
+}
+
+/** Pull profile hints out of the Privy user record (first login only). */
+async function privyProfile(userId: string): Promise<{
+  email: string | null;
+  username: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  walletAddress: string | null;
+}> {
+  const empty = { email: null, username: null, displayName: null, avatarUrl: null, walletAddress: null };
+  if (!isPrivyConfigured()) return empty;
+  try {
+    const user = await privy().users()._get(userId);
+    let email: string | null = null;
+    let username: string | null = null;
+    let displayName: string | null = null;
+    let avatarUrl: string | null = null;
+    let walletAddress: string | null = null;
+    for (const acct of user.linked_accounts ?? []) {
+      if (acct.type === "email") email ??= acct.address;
+      else if (acct.type === "google_oauth") {
+        email ??= acct.email;
+        displayName ??= acct.name;
+      } else if (acct.type === "twitter_oauth") {
+        username ??= acct.username;
+        displayName ??= acct.name;
+        avatarUrl ??= acct.profile_picture_url;
+      } else if (acct.type === "wallet") {
+        walletAddress ??= acct.address;
+      }
+    }
+    return { email, username, displayName, avatarUrl, walletAddress };
+  } catch {
+    return empty;
+  }
+}
+
+async function upsertUser(userId: string): Promise<Session> {
+  const db = await getDb();
+  const [existing] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (existing) return toSession(existing);
+
+  const profile = await privyProfile(userId);
+  const handle = await uniqueHandle(handleCandidate({ ...profile, userId }));
+  const [created] = await db
+    .insert(users)
+    .values({
+      id: userId,
+      handle,
+      displayName: profile.displayName ?? null,
+      avatarUrl: profile.avatarUrl ?? null,
+      email: profile.email ?? null,
+    })
+    .onConflictDoNothing()
+    .returning();
+  if (created) return toSession(created);
+
+  // lost the race — read the row the other request wrote
+  const [row] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (!row) throw new Error("failed to create user row");
+  return toSession(row);
+}
+
+/**
+ * Current session (verified Privy access token → `users` row), or null.
+ * Memoized per request with React `cache()`, so calling it in a layout, a page
+ * and three server actions costs one verification.
+ */
+export const getSession = cache(async (): Promise<Session | null> => {
+  const impersonate = devImpersonationId();
+  if (impersonate) {
+    try {
+      return await upsertUser(impersonate);
+    } catch (err) {
+      console.error("[auth] dev impersonation failed", err);
+      return null;
+    }
+  }
+  const token = await readAccessToken();
+  if (!token) return null;
+  const userId = await verifyToken(token);
+  if (!userId) return null;
+  try {
+    return await upsertUser(userId);
+  } catch (err) {
+    console.error("[auth] could not load the user row", err);
+    return null;
+  }
+});
+
+/** Redirects to `/` (landing) when logged out. */
 export async function requireSession(): Promise<Session> {
-  const s = await getSession();
-  if (!s) throw new Error("UNAUTHENTICATED");
-  return s;
+  const session = await getSession();
+  if (!session) redirect("/");
+  return session;
 }
