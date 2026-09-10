@@ -45,3 +45,4 @@ next-env.d.ts
 .agents/skills/*/node_modules
 drizzle/meta
 .pglite/
+.worktrees/
