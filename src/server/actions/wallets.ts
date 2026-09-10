@@ -55,13 +55,12 @@ export async function withdrawFromAgent(input: {
 
   const db = await getDb();
   const [agent] = await db
-    .select({ id: agents.id, ownerId: agents.ownerId, slug: agents.slug, mode: agents.mode })
+    .select({ id: agents.id, ownerId: agents.ownerId, slug: agents.slug })
     .from(agents)
     .where(eq(agents.id, input.agentId))
     .limit(1);
   if (!agent) return fail("Agent not found");
   if (agent.ownerId !== session.userId) return fail("You do not own this agent");
-  if (agent.mode === "paper") return fail("Paper agents hold no real funds");
 
   const [wallet] = await db
     .select({ id: wallets.id })
