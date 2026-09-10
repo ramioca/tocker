@@ -1,4 +1,7 @@
-import { DATA_SOURCE_STRIP } from "@/mocks/social";
+import { DATA_SOURCES, toDataSourceInfo } from "@/lib/data-sources/registry";
+
+/** Real registry entries, so the marquee never advertises a price the runtime doesn't charge. */
+const DATA_SOURCE_STRIP = DATA_SOURCES.filter((s) => !s.experimental).map(toDataSourceInfo);
 
 /**
  * Supported x402 data sources. A marquee because the row is decorative and constant
