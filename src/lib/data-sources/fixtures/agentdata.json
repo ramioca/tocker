@@ -1,0 +1,15 @@
+{
+  "endpoint": "market-overview",
+  "generated_at": "2026-09-10T21:00:00.000Z",
+  "sentiment": { "fear_greed": 58, "label": "greed", "score": 0.16 },
+  "assets": [
+    { "symbol": "BTC", "price": 91240.5, "change_24h": -1.02, "funding_rate_8h": 0.0091, "annualized_vol": 0.44 },
+    { "symbol": "ETH", "price": 3122.8, "change_24h": -1.84, "funding_rate_8h": 0.0074, "annualized_vol": 0.51 },
+    { "symbol": "SOL", "price": 99.86, "change_24h": -2.23, "funding_rate_8h": 0.0142, "annualized_vol": 0.68 }
+  ],
+  "signals": [
+    { "kind": "funding", "asset": "SOL", "note": "Funding elevated vs 30d median — crowded long.", "strength": 0.42 },
+    { "kind": "volatility", "asset": "SOL", "note": "24h realized vol in the 71st percentile.", "strength": 0.31 }
+  ],
+  "_fixture": true
+}
