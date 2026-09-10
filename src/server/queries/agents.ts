@@ -14,7 +14,7 @@ import {
   wallets,
   x402Payments,
 } from "@/db";
-import { DATA_SOURCES } from "@/lib/data-sources/registry";
+import { DATA_SOURCES, toDataSourceInfo } from "@/lib/data-sources/registry";
 import { toNum } from "@/lib/money";
 import { computeEquity, pnlOverWindow, unrealized, winRate, WINDOW_DAYS } from "@/lib/pnl";
 import type {
@@ -406,8 +406,10 @@ export async function getEquitySeries(agentId: string, window: LeaderboardWindow
  */
 export async function listDataSources(query?: string): Promise<DataSourceInfo[]> {
   const q = query?.trim().toLowerCase();
-  if (!q) return DATA_SOURCES;
-  return DATA_SOURCES.filter((s) =>
+  // Strip zod schemas / query functions: only the plain info shape may cross to the client.
+  const infos = DATA_SOURCES.map(toDataSourceInfo);
+  if (!q) return infos;
+  return infos.filter((s) =>
     [s.id, s.name, s.description, s.category].some((field) => field.toLowerCase().includes(q)),
   );
 }
