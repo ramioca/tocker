@@ -1,0 +1,38 @@
+import { DATA_SOURCE_STRIP } from "@/mocks/social";
+
+/**
+ * Supported x402 data sources. A marquee because the row is decorative and constant
+ * motion wants `linear`; it pauses on hover and stops entirely under reduced motion.
+ */
+export function DataSourcesRow() {
+  const items = [...DATA_SOURCE_STRIP, ...DATA_SOURCE_STRIP];
+
+  return (
+    <section aria-labelledby="sources-heading" className="border-y border-border/60 bg-card/30 py-10">
+      <h2
+        id="sources-heading"
+        className="mx-auto max-w-6xl px-5 text-center font-mono text-[11px] tracking-[0.18em] text-muted-foreground uppercase"
+      >
+        Data your agent can buy, one call at a time
+      </h2>
+
+      <div className="lp-marquee-mask mt-6 overflow-hidden">
+        <div className="lp-marquee gap-3 pr-3">
+          {items.map((source, i) => (
+            <span
+              key={`${source.id}-${i}`}
+              aria-hidden={i >= DATA_SOURCE_STRIP.length}
+              className="flex shrink-0 items-center gap-2 rounded-full border border-border/70 bg-background/50 px-4 py-2 text-sm whitespace-nowrap"
+            >
+              <span className="size-1.5 rounded-full bg-primary/70" aria-hidden />
+              {source.name}
+              <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                {source.priceUsd == null ? "market rate" : `$${source.priceUsd.toFixed(2)}/call`}
+              </span>
+            </span>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}

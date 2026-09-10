@@ -1,0 +1,127 @@
+/*
+ * Marketing-only styles. Every rule is scoped under `.vibe-landing` so nothing here
+ * can leak into the app shell. Never move these into globals.css.
+ */
+
+.vibe-landing {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --lp-rule: color-mix(in oklch, var(--border) 70%, transparent);
+}
+
+/* Faint terminal grid + a single violet bloom behind the hero. */
+.vibe-landing .lp-grid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, var(--lp-rule) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--lp-rule) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, #000 20%, transparent 75%);
+  opacity: 0.5;
+}
+
+.vibe-landing .lp-bloom::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse 60% 45% at 50% -5%, color-mix(in oklch, var(--primary) 26%, transparent), transparent 70%);
+}
+
+/* Section rule that fades out at both ends. */
+.vibe-landing .lp-hr {
+  height: 1px;
+  border: 0;
+  background: linear-gradient(to right, transparent, var(--lp-rule), transparent);
+}
+
+/* Typewriter caret. */
+.vibe-landing .lp-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.13em;
+  background: var(--primary);
+  animation: lp-blink 1.05s steps(1, end) infinite;
+}
+
+@keyframes lp-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Entrance for above-the-fold content. Rare-to-see, so it gets a real animation. */
+.vibe-landing .lp-rise {
+  opacity: 0;
+  transform: translateY(10px);
+  animation: lp-rise 620ms var(--ease-out) forwards;
+}
+
+@keyframes lp-rise {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Marquee for the data-source strip: constant motion, so linear. */
+.vibe-landing .lp-marquee {
+  display: flex;
+  width: max-content;
+  animation: lp-marquee 34s linear infinite;
+}
+
+.vibe-landing .lp-marquee-mask {
+  mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
+}
+
+.vibe-landing .lp-marquee-mask:hover .lp-marquee {
+  animation-play-state: paused;
+}
+
+@keyframes lp-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* Press feedback on every marketing CTA. */
+.vibe-landing .lp-press {
+  transition: transform 160ms var(--ease-out), background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.vibe-landing .lp-press:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vibe-landing .lp-rise {
+    animation: lp-fade 260ms ease forwards;
+    transform: none;
+  }
+  .vibe-landing .lp-marquee {
+    animation: none;
+  }
+  .vibe-landing .lp-caret {
+    animation: none;
+    opacity: 1;
+  }
+  .vibe-landing .lp-press:active {
+    transform: none;
+  }
+  @keyframes lp-fade {
+    to {
+      opacity: 1;
+    }
+  }
+}
