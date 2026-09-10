@@ -297,16 +297,14 @@ export async function triggerRun(id: string): Promise<ActionResult<{ runId: stri
   if (running) return { ok: true, data: { runId: running.id } };
 
   try {
-    const { runAgent } = await import("@/lib/agent/run");
-    // fire and forget — the UI polls the runs list
-    void runAgent({ agentId: id, trigger: "manual" }).catch((err) => {
-      console.error("[triggerRun] runAgent failed", err);
-    });
+    // startRun inserts the run row synchronously and continues in the background,
+    // so the UI gets an id to poll immediately.
+    const { startRun } = await import("@/lib/agent/run");
+    const { runId } = await startRun({ agentId: id, trigger: "manual" });
+    revalidatePath(`/agents/${agent.slug}`);
+    return { ok: true, data: { runId } };
   } catch (err) {
     console.error("[triggerRun] could not start run", err);
     return fail("The agent runtime is unavailable");
   }
-
-  revalidatePath(`/agents/${agent.slug}`);
-  return { ok: true, data: { runId: null } };
 }
