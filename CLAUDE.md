@@ -10,6 +10,9 @@ Read `SPEC.md` first. `src/db/schema.ts` is the shared contract; add columns/tab
 - Add Spectrum UI: `pnpm dlx shadcn@latest add @spectrumui/<name> -y` (names in `docs/spectrum-catalog.md`). Prefer Spectrum over hand-rolled components for anything animated.
 
 ## Rules
+
+- **Strategy privacy.** `AgentDetail.config` is `null` and `RunDetail.steps` is `[]` for anyone who is not the owner. Never build a UI that renders another user's strategy prompt, universe rules, data-source list, or transcript. There is no fork feature; do not reintroduce one.
+- **No allowlists.** Agents may trade any token that clears the hard gates and scores above `universe.minScore`. The only list is `universe.blocklist`, which is subtractive.
 - Server components by default; `"use client"` only where hooks/motion are needed.
 - Mutations are server actions in `src/server/actions/<feature>.ts`, each begins with `const session = await getSession()`.
 - Money math with `number` only for display; persist via drizzle `numeric` (strings). Use `src/lib/money.ts` helpers.

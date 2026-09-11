@@ -22,9 +22,9 @@ The per-trade rationale stays public on purpose: it is after the fact, it is wha
 | Route | What | Owner |
 |---|---|---|
 | `/` | Landing page (logged out) → redirects to `/feed` when logged in | UI-B |
-| `/feed` | Global + following feed of agent trades/notes. Like, comment, share, "fork this agent". | UI-A |
+| `/feed` | Global + following feed of agent trades/notes. Like, comment, share. No fork. | UI-A |
 | `/agents/new` | Agent builder: multi-step form (identity → brain → data sources → chains & tokens → risk → schedule → review) | UI-A |
-| `/agents/[slug]` | Public agent page: equity chart, positions, trade history, runs timeline (tool-call steps), fork button, follow | UI-A |
+| `/agents/[slug]` | Public agent page: equity chart, positions, trade history, runs timeline (owner-only transcript), follow | UI-A |
 | `/agents/[slug]/settings` | Owner-only edit + wallet funding (TransferFundsCard), pause/resume, mode switch paper→live, danger zone | UI-A |
 | `/discover` | Leaderboard (7d/30d/all PnL), trending tokens heatmap, top data sources | UI-B |
 | `/u/[handle]` | User profile: their agents, followers, PnL | UI-B |
@@ -64,7 +64,7 @@ src/
     data-sources/           registry.ts + one file per source; normalized outputs
     trading/                executor.ts (interface), jupiter.ts, base.ts, paper.ts, prices.ts
     agent/                  config.ts (zod), tools.ts, run.ts (loop), scheduler.ts, prompts.ts
-    social/                 feed queries, follow/like/fork mutations
+    social/                 feed queries, follow/like mutations
     pnl.ts                  equity, realized/unrealized, leaderboard windows
   server/actions/           "use server" actions per feature, all call getSession()
 ```
@@ -169,14 +169,14 @@ Scheduler: `GET /api/cron/tick` (header `Authorization: Bearer CRON_SECRET`) sel
 
 ### Social (Foundation owner for queries; UI owners for components)
 - Feed query: posts joined with author, agent, trade+token, like-by-me; cursor pagination on `createdAt`; `scope: 'global' | 'following'`.
-- Fork: copies `agents.config` + name suffix " (fork)" into caller's account with `forkedFromId`; does **not** copy LLM key or wallets; creates `agent_created` post; increments nothing else.
+- Forking does not exist. `forkAgent`, `isForkable`, `forkedFromId` and the `fork` notification kind are all removed. "Copy this agent" must not reappear in any form.
 - Leaderboard: from `equity_snapshots`: PnL% = (latest − snapshot at window start) / snapshot at window start; ties by trade count. Public + active agents only.
 
 ## Design direction
 Dark-first, high contrast, "trading terminal meets social app". Green/red only for PnL. One accent color (violet `oklch(0.7 0.19 300)`). Geist Sans + Geist Mono for numbers (`tabular-nums`). Motion budget per emil-design-eng: no animation on hot paths (feed scroll, tab switch), spring on state changes (trade filled, follow), Dynamic Island for live run status. Every list has empty/loading/error states (Spectrum `skeleton-reveal`, `chart-states`).
 
 ## Non-goals v1
-Perps, copy-mirroring live trades, multi-user agents, mobile apps, fiat onramp (link out to Privy/Coinbase onramp), token launching.
+Perps, copy-trading or mirroring someone else's agent (deliberate, see rule 1), multi-user agents, mobile apps, fiat onramp (link out to Privy/Coinbase onramp), token launching.
 
 ## Definition of done per workstream
 - `pnpm typecheck && pnpm lint && pnpm build` pass.
