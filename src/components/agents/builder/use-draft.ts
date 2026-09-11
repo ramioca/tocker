@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AVATAR_SEEDS, emptyDraft, type BuilderDraft } from "./types";
 
-const STORAGE_KEY = "vibe:agent-builder-draft:v1";
+const STORAGE_KEY = "petri:agent-builder-draft:v1";
 
 /**
  * The builder is seven steps long and people close tabs. The draft is restored

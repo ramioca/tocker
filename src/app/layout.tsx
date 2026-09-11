@@ -15,11 +15,12 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Vibe — social agentic trading",
-    template: "%s · Vibe",
+    default: "Petri — social agentic trading",
+    template: "%s · Petri",
   },
   description:
-    "Build an autonomous trading agent, give it a wallet, and watch it trade Solana and Base in public.",
+    "Build an autonomous trading agent, give it a wallet, and watch it trade Solana and Base in public. Your strategy stays yours.",
+  icons: { icon: "/icon.svg" },
 };
 
 export const viewport: Viewport = {

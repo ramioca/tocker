@@ -13,7 +13,7 @@ import { LandingFooter } from "@/components/landing/landing-footer";
 
 export default function LandingPage() {
   return (
-    <div className="vibe-landing flex min-h-screen flex-1 flex-col">
+    <div className="petri-landing flex min-h-screen flex-1 flex-col">
       <LandingHeader />
       <main className="flex-1">
         <Hero />

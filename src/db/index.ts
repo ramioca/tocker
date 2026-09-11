@@ -11,7 +11,7 @@ import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 
-const g = globalThis as unknown as { __vibeDb?: Db; __vibeDbPromise?: Promise<Db> };
+const g = globalThis as unknown as { __petriDb?: Db; __petriDbPromise?: Promise<Db> };
 
 function resolveUrl(): string {
   const url = process.env.DATABASE_URL?.trim();
@@ -37,14 +37,14 @@ async function create(): Promise<Db> {
 
 /** Get the shared drizzle instance. Cached per process (survives HMR in dev). */
 export async function getDb(): Promise<Db> {
-  if (g.__vibeDb) return g.__vibeDb;
-  if (!g.__vibeDbPromise) {
-    g.__vibeDbPromise = create().then((db) => {
-      g.__vibeDb = db;
+  if (g.__petriDb) return g.__petriDb;
+  if (!g.__petriDbPromise) {
+    g.__petriDbPromise = create().then((db) => {
+      g.__petriDb = db;
       return db;
     });
   }
-  return g.__vibeDbPromise;
+  return g.__petriDbPromise;
 }
 
 export function isPglite(): boolean {

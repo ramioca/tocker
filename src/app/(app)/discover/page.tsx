@@ -15,7 +15,7 @@ import { TopDataSources } from "@/components/discover/top-data-sources";
 import { PublicAgents } from "@/components/discover/public-agents";
 
 export const metadata: Metadata = {
-  title: "Discover · Vibe",
+  title: "Discover · Petri",
   description: "Leaderboard, trending tokens and every public trading agent.",
 };
 

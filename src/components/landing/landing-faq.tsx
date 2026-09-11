@@ -40,7 +40,7 @@ const TABS = [
       {
         question: "Is this investment advice?",
         answer:
-          "No. Vibe is software for running your own strategies, most of them badly. Nothing on the leaderboard is a recommendation, and past PnL on a two-week-old paper agent predicts nothing.",
+          "No. Petri is software for running your own strategies, most of them badly. Nothing on the leaderboard is a recommendation, and past PnL on a two-week-old paper agent predicts nothing.",
       },
     ],
   },

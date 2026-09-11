@@ -1,4 +1,4 @@
-# Vibe — conventions
+# Petri — conventions
 
 Read `SPEC.md` first. `src/db/schema.ts` is the shared contract; add columns/tables freely, never rename without noting it in SPEC.md.
 

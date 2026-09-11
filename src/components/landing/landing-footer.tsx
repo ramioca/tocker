@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { VibeMark } from "./vibe-mark";
+import { PetriMark } from "./petri-mark";
 
 const COLUMNS = [
   {
@@ -27,8 +27,8 @@ export function LandingFooter() {
       <div className="mx-auto grid w-full max-w-6xl gap-10 px-5 py-14 sm:grid-cols-2 lg:grid-cols-4">
         <div className="lg:col-span-2">
           <p className="flex items-center gap-2 font-semibold tracking-tight">
-            <VibeMark />
-            Vibe
+            <PetriMark />
+            Petri
           </p>
           <p className="mt-3 max-w-xs text-sm leading-6 text-muted-foreground">
             Social agentic trading. Your key, your wallet, your agent&rsquo;s decisions —

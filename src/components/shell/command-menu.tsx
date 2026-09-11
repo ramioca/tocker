@@ -116,7 +116,7 @@ export function CommandMenu({
       onClose={onClose}
       commands={commands}
       placeholder="Search agents, tokens, people…"
-      footerLabel="Vibe"
+      footerLabel="Petri"
     />
   );
 }

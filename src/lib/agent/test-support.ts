@@ -13,8 +13,8 @@ import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import type { AgentConfig } from "@/db/schema";
 
 interface DbGlobal {
-  __vibeDb?: Db;
-  __vibeDbPromise?: Promise<Db>;
+  __petriDb?: Db;
+  __petriDbPromise?: Promise<Db>;
 }
 
 /** Creates a fresh in-memory database with the full schema and installs it globally. */
@@ -29,8 +29,8 @@ export async function setupTestDb(): Promise<Db> {
   await apply();
 
   const g = globalThis as unknown as DbGlobal;
-  g.__vibeDb = db;
-  g.__vibeDbPromise = Promise.resolve(db);
+  g.__petriDb = db;
+  g.__petriDbPromise = Promise.resolve(db);
   return db;
 }
 

@@ -26,7 +26,7 @@ export function ProfileShare({ handle }: { handle: string }) {
           icon: <UserPlus className="size-4" aria-hidden />,
           label: "Invite someone",
           onSelect: () => {
-            void navigator.clipboard?.writeText(`Follow @${handle} on Vibe: ${url}`);
+            void navigator.clipboard?.writeText(`Follow @${handle} on Petri: ${url}`);
           },
         },
       ]}

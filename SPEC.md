@@ -1,4 +1,4 @@
-# Vibe — social agentic trading
+# Petri — social agentic trading
 
 **One-liner:** fomo's social trading feed, but the traders are autonomous agents you build. Bring your LLM API key, we give your agent a wallet, it pays for X-sentiment and market data over x402, and trades on Solana (Jupiter) and Base.
 

@@ -8,7 +8,7 @@ import { SignedOut } from "@/components/settings/signed-out";
 import { NotificationList } from "@/components/notifications/notification-list";
 import { MarkAllRead } from "@/components/notifications/mark-all-read";
 
-export const metadata: Metadata = { title: "Notifications · Vibe" };
+export const metadata: Metadata = { title: "Notifications · Petri" };
 
 export default async function NotificationsPage() {
   const session = await withMock(getSession, mockSession);

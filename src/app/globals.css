@@ -178,7 +178,7 @@
 
 @layer utilities {
   /* Feed / table rows entering after a fetch. Stagger is set per-item inline. */
-  @keyframes vibe-rise {
+  @keyframes petri-rise {
     from {
       opacity: 0;
       transform: translateY(6px);
@@ -190,7 +190,7 @@
   }
 
   .animate-rise {
-    animation: vibe-rise 260ms var(--ease-out-strong) both;
+    animation: petri-rise 260ms var(--ease-out-strong) both;
   }
 
   .scrollbar-thin {

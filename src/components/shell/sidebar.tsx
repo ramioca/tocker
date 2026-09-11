@@ -1,5 +1,7 @@
 "use client";
 
+import { PetriMark } from "@/components/brand/petri-mark";
+
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Plus } from "lucide-react";
@@ -22,13 +24,8 @@ export function Sidebar({ unreadCount }: { unreadCount: number }) {
           href="/feed"
           className="flex items-center gap-2 rounded-md px-1 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <span
-            aria-hidden
-            className="grid size-6 place-items-center rounded-md bg-primary text-[11px] font-black text-primary-foreground"
-          >
-            V
-          </span>
-          <span className="text-sm font-semibold tracking-tight">Vibe</span>
+          <PetriMark size={22} />
+          <span className="text-sm font-semibold tracking-tight">petri</span>
         </Link>
       </div>
 

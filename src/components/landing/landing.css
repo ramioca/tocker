@@ -1,16 +1,16 @@
 /*
- * Marketing-only styles. Every rule is scoped under `.vibe-landing` so nothing here
+ * Marketing-only styles. Every rule is scoped under `.petri-landing` so nothing here
  * can leak into the app shell. Never move these into globals.css.
  */
 
-.vibe-landing {
+.petri-landing {
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --lp-rule: color-mix(in oklch, var(--border) 70%, transparent);
 }
 
 /* Faint terminal grid + a single violet bloom behind the hero. */
-.vibe-landing .lp-grid::before {
+.petri-landing .lp-grid::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -23,7 +23,7 @@
   opacity: 0.5;
 }
 
-.vibe-landing .lp-bloom::after {
+.petri-landing .lp-bloom::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -32,14 +32,14 @@
 }
 
 /* Section rule that fades out at both ends. */
-.vibe-landing .lp-hr {
+.petri-landing .lp-hr {
   height: 1px;
   border: 0;
   background: linear-gradient(to right, transparent, var(--lp-rule), transparent);
 }
 
 /* Typewriter caret. */
-.vibe-landing .lp-caret {
+.petri-landing .lp-caret {
   display: inline-block;
   width: 2px;
   height: 1em;
@@ -61,7 +61,7 @@
 }
 
 /* Entrance for above-the-fold content. Rare-to-see, so it gets a real animation. */
-.vibe-landing .lp-rise {
+.petri-landing .lp-rise {
   opacity: 0;
   transform: translateY(10px);
   animation: lp-rise 620ms var(--ease-out) forwards;
@@ -75,17 +75,17 @@
 }
 
 /* Marquee for the data-source strip: constant motion, so linear. */
-.vibe-landing .lp-marquee {
+.petri-landing .lp-marquee {
   display: flex;
   width: max-content;
   animation: lp-marquee 34s linear infinite;
 }
 
-.vibe-landing .lp-marquee-mask {
+.petri-landing .lp-marquee-mask {
   mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
 }
 
-.vibe-landing .lp-marquee-mask:hover .lp-marquee {
+.petri-landing .lp-marquee-mask:hover .lp-marquee {
   animation-play-state: paused;
 }
 
@@ -96,27 +96,27 @@
 }
 
 /* Press feedback on every marketing CTA. */
-.vibe-landing .lp-press {
+.petri-landing .lp-press {
   transition: transform 160ms var(--ease-out), background-color 160ms ease, border-color 160ms ease, color 160ms ease;
 }
 
-.vibe-landing .lp-press:active {
+.petri-landing .lp-press:active {
   transform: scale(0.97);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .vibe-landing .lp-rise {
+  .petri-landing .lp-rise {
     animation: lp-fade 260ms ease forwards;
     transform: none;
   }
-  .vibe-landing .lp-marquee {
+  .petri-landing .lp-marquee {
     animation: none;
   }
-  .vibe-landing .lp-caret {
+  .petri-landing .lp-caret {
     animation: none;
     opacity: 1;
   }
-  .vibe-landing .lp-press:active {
+  .petri-landing .lp-press:active {
     transform: none;
   }
   @keyframes lp-fade {

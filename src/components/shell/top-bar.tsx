@@ -1,5 +1,7 @@
 "use client";
 
+import { PetriMark } from "@/components/brand/petri-mark";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, Search } from "lucide-react";
@@ -22,14 +24,9 @@ export function TopBar({
       <Link
         href="/feed"
         className="flex items-center gap-2 md:hidden"
-        aria-label="Vibe home"
+        aria-label="Petri home"
       >
-        <span
-          aria-hidden
-          className="grid size-6 place-items-center rounded-md bg-primary text-[11px] font-black text-primary-foreground"
-        >
-          V
-        </span>
+        <PetriMark size={22} />
       </Link>
 
       {title ? (

@@ -1,5 +1,5 @@
 /**
- * Vibe — database schema (Drizzle + Postgres).
+ * Petri — database schema (Drizzle + Postgres).
  *
  * THIS FILE IS THE SHARED CONTRACT between workstreams. Do not rename tables or
  * columns without updating SPEC.md and telling the reviewer. Adding columns and

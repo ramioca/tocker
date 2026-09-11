@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { LoginButton } from "@/components/auth/login-button";
 import { useSession } from "@/hooks/use-session";
-import { VibeMark } from "./vibe-mark";
+import { PetriMark } from "./petri-mark";
 
 export function LandingHeader() {
   const { session } = useSession();
@@ -16,8 +16,8 @@ export function LandingHeader() {
           href="/"
           className="flex items-center gap-2 rounded-md font-semibold tracking-tight focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
-          <VibeMark />
-          Vibe
+          <PetriMark />
+          Petri
         </Link>
 
         <nav aria-label="Marketing" className="hidden items-center gap-1 text-sm sm:flex">

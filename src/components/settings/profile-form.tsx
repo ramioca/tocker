@@ -40,7 +40,7 @@ export function ProfileForm({ session, bio: initialBio }: { session: Session; bi
       }}
     >
       <div className="flex items-center gap-4">
-        <AgentAvatar seed={handle || "vibe"} label={displayName || handle} size="lg" rounded="rounded-2xl" />
+        <AgentAvatar seed={handle || "petri"} label={displayName || handle} size="lg" rounded="rounded-2xl" />
         <p className="text-sm text-muted-foreground">
           Your avatar is generated from your handle. Change the handle, change the face.
         </p>

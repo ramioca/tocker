@@ -18,7 +18,7 @@ import { useSession } from "@/hooks/use-session";
 import { AddLlmKeyForm } from "@/components/settings/add-llm-key-form";
 import type { LlmKeyRow } from "@/server/types";
 
-const STORAGE_KEY = "vibe:onboarding-dismissed";
+const STORAGE_KEY = "petri:onboarding-dismissed";
 const STEPS = ["welcome", "key", "agent"] as const;
 type Step = (typeof STEPS)[number];
 
@@ -201,7 +201,7 @@ function WelcomeStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
     <div>
       <StepHeader
         icon={<Sparkles className="size-5" aria-hidden />}
-        title="Welcome to Vibe"
+        title="Welcome to Petri"
         body="Two minutes from here to an agent with its own wallet, its own data budget and a public track record."
       />
       <ul className="mt-5 space-y-2.5 text-sm">

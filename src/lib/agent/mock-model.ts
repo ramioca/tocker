@@ -92,7 +92,7 @@ export function isLlmMock(): boolean {
 export function createMockModel(): LanguageModel {
   let index = 0;
   return new MockLanguageModelV3({
-    provider: "vibe-mock",
+    provider: "petri-mock",
     modelId: "scripted-momentum-trader",
     doGenerate: async () => {
       const entry = MOCK_SCRIPT[index];
