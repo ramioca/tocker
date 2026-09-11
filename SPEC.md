@@ -1,6 +1,21 @@
 # Petri — social agentic trading
 
-**One-liner:** fomo's social trading feed, but the traders are autonomous agents you build. Bring your LLM API key, we give your agent a wallet, it pays for X-sentiment and market data over x402, and trades on Solana (Jupiter) and Base.
+**One-liner:** a dish of autonomous trading agents. You write a strategy, bring your own LLM key, and we give the agent a wallet. It discovers tokens across Solana and Base (including launches minutes old), scores every one of them, pays for sentiment and safety data over x402, and trades the few that clear its bar. Its record is public. Its strategy is not.
+
+## Two rules that shape everything
+
+**1. The strategy is the operator's IP.** Track record is public; the recipe is not. A strategy that everyone can copy is worth nothing to the person who wrote it, so there is no fork button anywhere in the product. Concretely:
+
+| Public | Owner-only |
+|---|---|
+| PnL, equity curve, win rate, trade count | The strategy prompt |
+| Every trade: token, size, price, time | The universe rules and score thresholds |
+| The one-line rationale on each trade | Which data sources it buys, and the queries it sends |
+| Run summaries, and how much it spent on data | The full run transcript (tool calls, arguments, results) |
+
+The per-trade rationale stays public on purpose: it is after the fact, it is what makes the feed worth reading, and knowing why someone bought a token once does not hand over a system. The transcript is the opposite — it shows the sources, the parameters, and the reasoning in order, which is the system. `AgentDetail.config` is `null` for non-owners and `RunDetail.steps` is empty for them.
+
+**2. No allowlist. Score everything.** The best trades are often tokens that did not exist yesterday, so the agent must be able to reach any token on its chains. Safety comes from scoring and hard gates, not from a pre-approved list. A blocklist exists for tokens an operator never wants touched; it is the only list, and it is subtractive.
 
 ## Product surface (v1)
 
@@ -87,6 +102,44 @@ Seed registry (`src/lib/data-sources/registry.ts`), each with `{ id, name, descr
 | `agentdata` | AgentData API funding/volatility/indicators https://agentdata-api.com | eip155:8453 | see 402 |
 | `bazaar` | dynamic: any resource found via searchX402Resources | any | from listing |
 Exact paths for "see 402" sources: fetch the service's `/.well-known/x402` or root and read the 402 body at build time; if unreachable, keep the entry but mark `experimental: true` and ship a fixture.
+
+### Token universe & scoring (Runtime owner)
+
+Each tick: **discover → gate → score → size**. Discovery and scoring are free; only sentiment costs money, so an agent can sweep hundreds of tokens on a $0.25 budget.
+
+**Discovery feeds** (`config.universe.discovery`), all free, no keys:
+
+| Feed | Solana | Base |
+|---|---|---|
+| `new_launches` | `GET https://api.jup.ag/tokens/v2/recent` | `GET https://api.dexscreener.com/token-profiles/latest/v1` filtered to `chainId: "base"`, then `/token-pairs/v1/base/<addr>` |
+| `trending` | `GET https://api.jup.ag/tokens/v2/toptraded/24h` | DexScreener search / boosts |
+| `top_organic` | `GET https://api.jup.ag/tokens/v2/toporganicscore/24h` | n/a — fall back to `trending` |
+| `momentum` | derived from `stats1h`/`stats24h` on the above | derived from `priceChange` + `volume` |
+
+**Jupiter Token API v2 is the backbone on Solana.** One record carries nearly every scoring input, verified live:
+`audit.mintAuthorityDisabled`, `audit.freezeAuthorityDisabled`, `audit.topHoldersPercentage`, `audit.devBalancePercentage`, `organicScore` (0-100) and `organicScoreLabel`, `isVerified`, `tags`, `holderCount`, `liquidity`, `mcap`, `fdv`, `usdPrice`, `firstPool.createdAt` (age), and `stats5m|1h|6h|24h` with `priceChange`, `holderChange`, `liquidityChange`, `numBuys`, `numSells`, `numTraders`, `numOrganicBuyers`, `buyOrganicVolume`. The organic fields are the wash-trading detector: volume with few `numOrganicBuyers` is manufactured.
+
+**Safety providers:**
+- Solana: Jupiter `audit` first (free, already fetched); RugCheck `GET https://api.rugcheck.xyz/v1/tokens/<mint>/report/summary` for `score_normalised` (lower is safer), `risks[]` and `lpLockedPct` — verified live, free.
+- Base: GoPlus `GET https://api.gopluslabs.io/api/v1/token_security/8453?contract_addresses=<addr>` — verified live, free. Gives `is_honeypot`, `buy_tax`, `sell_tax`, `is_mintable`, `can_take_back_ownership`, `hidden_owner`, `transfer_pausable`, `owner_percent`, `creator_percent`, `lp_holder_count`, `holder_count`.
+- Optional paid deep-dive, only on request: the existing x402 sources (`deepnets-token-safety`, `token-intel-sol`).
+
+**Hard gates** run before scoring and cannot be outscored. Any failure sets `verdict: "avoid"` and records a blocker string: mint authority live (when `requireMintRevoked`), freeze authority live, honeypot, buy or sell tax above `maxBuyTaxPct`, liquidity under `minLiquidityUsd`, holders under `minHolderCount`, age under `minAgeMinutes` or over `maxAgeHours`, top-10 holders above `maxTop10HolderPct`, address on the blocklist.
+
+**Composite score**, 0-100, in `src/lib/tokens/score.ts` as a pure function so it is testable without network:
+
+| Component | Weight | Reads |
+|---|---|---|
+| `safety` | 30 | authorities, LP lock, honeypot/tax, owner powers, dev balance |
+| `liquidity` | 20 | absolute USD depth, and depth relative to the agent's `maxTradeUsd` |
+| `organic` | 20 | organic buyers vs total buys, buy/sell balance, holder growth |
+| `distribution` | 15 | holder count, top-10 share, dev share |
+| `momentum` | 15 | 1h/6h/24h price and volume trend, liquidity trend |
+| `sentiment` | reweights the rest when present | x402 sentiment sources, only when the agent chooses to pay |
+
+Verdict bands: `avoid` < 40, `watch` 40-59, `candidate` 60-79, `strong` 80+. Scores are cached in `token_scores` keyed by `chain:address` with a 10-minute TTL and shared across agents. The score at the moment of a trade is frozen onto `trades.scoreSnapshot` so the record cannot be rewritten by later re-scoring.
+
+Deliberately, a high score is necessary but not sufficient: the LLM still decides what to buy and why. The score is a filter and a ranking, not an autopilot.
 
 ### Trading (Runtime owner)
 `TradeExecutor { quote(req): Promise<Quote>; execute(quote): Promise<Fill> }`

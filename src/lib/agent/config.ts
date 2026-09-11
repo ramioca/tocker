@@ -29,9 +29,21 @@ export const agentConfigSchema = z.object({
   strategyPrompt: z.string().min(20, "Describe the strategy in at least a sentence").max(8000),
   dataSources: z.array(z.string()).max(12),
   chains: z.array(chainSchema).min(1, "Pick at least one chain"),
-  tokenAllowlist: z
-    .array(z.object({ chain: chainSchema, address: z.string().min(3), symbol: z.string().min(1).max(16) }))
-    .max(50),
+  universe: z.object({
+    discovery: z.array(z.enum(["new_launches", "trending", "top_organic", "momentum"])).min(1, "Pick at least one way to find tokens"),
+    minScore: z.number().min(0).max(100),
+    minLiquidityUsd: z.number().min(0).max(100_000_000),
+    minHolderCount: z.number().int().min(0).max(10_000_000),
+    minAgeMinutes: z.number().int().min(0).max(525_600),
+    maxAgeHours: z.number().min(0).max(87_600).nullable(),
+    maxTop10HolderPct: z.number().min(1).max(100),
+    maxBuyTaxPct: z.number().min(0).max(100),
+    requireMintRevoked: z.boolean(),
+    requireFreezeRevoked: z.boolean(),
+    blocklist: z
+      .array(z.object({ chain: chainSchema, address: z.string().min(3), symbol: z.string().min(1).max(16) }))
+      .max(200),
+  }),
   risk: z.object({
     maxTradeUsd: z.number().positive().max(1_000_000),
     maxDailyTrades: z.number().int().min(1).max(500),
@@ -54,10 +66,24 @@ export type AgentConfigInput = z.input<typeof agentConfigSchema>;
 
 export const DEFAULT_AGENT_CONFIG: AgentConfig = {
   strategyPrompt:
-    "You are a momentum trader on Solana memecoins. Each tick, check X sentiment for the top trending tokens, buy when narrative velocity is rising and sentiment is positive, sell when velocity flips negative. Never hold more than 3 positions.",
+    "You hunt fresh Solana launches. Each tick, pull the new-launch and trending feeds, score every candidate, and buy the best one that clears your score floor and still has room to run. Prefer tokens under $2M market cap with real holder growth over tokens that already went vertical. Cut anything that loses its liquidity or stalls for two ticks.",
   dataSources: ["sentimentalpha", "cmc-quotes", "token-intel-sol"],
   chains: ["solana"],
-  tokenAllowlist: [],
+  universe: {
+    discovery: ["new_launches", "trending", "top_organic"],
+    minScore: 62,
+    minLiquidityUsd: 15_000,
+    minHolderCount: 150,
+    // 30 minutes is the cheapest rug filter there is: most snipe-and-dump rugs
+    // are over before then, and nothing worth holding is gone in half an hour.
+    minAgeMinutes: 30,
+    maxAgeHours: null,
+    maxTop10HolderPct: 60,
+    maxBuyTaxPct: 5,
+    requireMintRevoked: true,
+    requireFreezeRevoked: true,
+    blocklist: [],
+  },
   risk: {
     maxTradeUsd: 100,
     maxDailyTrades: 10,

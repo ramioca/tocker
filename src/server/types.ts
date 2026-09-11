@@ -45,7 +45,6 @@ export interface AgentCard {
   mode: AgentMode;
   status: AgentStatus;
   isPublic: boolean;
-  isForkable: boolean;
   owner: UserCard;
   chains: Chain[];
   model: string;
@@ -55,7 +54,6 @@ export interface AgentCard {
   equityUsd: number | null;
   tradeCount: number;
   followerCount: number;
-  forkCount: number;
   /** last ~30 equity points for a sparkline */
   sparkline: number[];
   lastRunAt: string | null; // ISO
@@ -87,6 +85,8 @@ export interface TradeRow {
   isPaper: boolean;
   txHash: string | null;
   rationale: string | null;
+  /** The token's score when the agent pulled the trigger. Null for legacy rows. */
+  score: TradeScore | null;
   error: string | null;
   createdAt: string;
   filledAt: string | null;
@@ -99,8 +99,19 @@ export interface EquityPoint {
 }
 
 export interface AgentDetail extends AgentCard {
-  config: AgentConfig;
-  forkedFrom: { id: string; slug: string; name: string; owner: UserCard } | null;
+  /**
+   * Owner-only. The strategy prompt and universe rules are the operator's edge —
+   * publishing them would let anyone run the same agent. `null` for everyone else.
+   */
+  config: AgentConfig | null;
+  /** Safe for anyone: what it trades, never how it decides. */
+  publicProfile: {
+    chains: Chain[];
+    model: string;
+    intervalMinutes: number | null;
+    /** How many paid sources it buys from, not which ones. */
+    dataSourceCount: number;
+  };
   isOwner: boolean;
   isFollowedByViewer: boolean;
   paperStartingUsd: number;
@@ -147,7 +158,13 @@ export interface RunSummary {
 }
 
 export interface RunDetail extends RunSummary {
+  /**
+   * The step-by-step transcript reveals which sources the agent paid for and how it
+   * reasoned, so it is owner-only. Empty for everyone else.
+   */
   steps: RunStep[];
+  /** Whether the viewer is allowed to see `steps`. */
+  transcriptVisible: boolean;
   trades: TradeRow[];
 }
 
@@ -169,6 +186,78 @@ export interface CommentRow {
   body: string;
   author: UserCard;
   createdAt: string;
+}
+
+// ---------- token discovery & scoring ----------
+
+export type ScoreVerdict = "avoid" | "watch" | "candidate" | "strong";
+export type DiscoveryFeed = "new_launches" | "trending" | "top_organic" | "momentum" | "manual";
+
+/**
+ * Sub-scores, each 0-100. `sentiment` is null unless the agent paid an x402 source
+ * for it — scoring must stay free by default so an agent can sweep hundreds of tokens.
+ */
+export interface ScoreComponents {
+  safety: number;
+  liquidity: number;
+  momentum: number;
+  /** Real demand versus wash trading. */
+  organic: number;
+  /** How evenly the supply is held. */
+  distribution: number;
+  sentiment: number | null;
+}
+
+export interface TokenScore {
+  tokenId: string;
+  chain: Chain;
+  address: string;
+  symbol: string;
+  name: string | null;
+  /** 0-100 composite. */
+  total: number;
+  verdict: ScoreVerdict;
+  components: ScoreComponents;
+  /** Hard-gate failures. Non-empty always means verdict "avoid", whatever the total. */
+  blockers: string[];
+  /** Worth showing, not disqualifying. */
+  warnings: string[];
+  priceUsd: number | null;
+  liquidityUsd: number | null;
+  volume24hUsd: number | null;
+  marketCapUsd: number | null;
+  holderCount: number | null;
+  ageHours: number | null;
+  priceChange24hPct: number | null;
+  /** Providers that contributed, e.g. ["jupiter", "rugcheck"]. */
+  sources: string[];
+  scoredAt: string;
+}
+
+/** The compact form stored on a trade and rendered in the feed. */
+export interface TradeScore {
+  total: number;
+  verdict: ScoreVerdict;
+  components: Partial<ScoreComponents>;
+  blockers: string[];
+  warnings: string[];
+  liquidityUsd: number | null;
+  ageHours: number | null;
+  scoredAt: string;
+}
+
+/** A token surfaced by a discovery feed, before the expensive scoring pass. */
+export interface TokenCandidate {
+  token: TokenRef;
+  origin: DiscoveryFeed;
+  liquidityUsd: number | null;
+  volume24hUsd: number | null;
+  marketCapUsd: number | null;
+  holderCount: number | null;
+  ageHours: number | null;
+  priceChange24hPct: number | null;
+  /** Cheap pre-rank from the discovery payload alone; null until scored. */
+  quickScore: number | null;
 }
 
 export interface Page<T> {

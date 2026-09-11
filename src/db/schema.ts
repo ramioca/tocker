@@ -39,6 +39,7 @@ export const tradeStatusEnum = pgEnum("trade_status", ["pending", "submitted", "
 export const postKindEnum = pgEnum("post_kind", ["trade", "note", "agent_created", "milestone"]);
 export const followTargetEnum = pgEnum("follow_target", ["user", "agent"]);
 export const walletKindEnum = pgEnum("wallet_kind", ["user_embedded", "agent_server"]);
+export const scoreVerdictEnum = pgEnum("score_verdict", ["avoid", "watch", "candidate", "strong"]);
 
 // ---------- users ----------
 export const users = pgTable(
@@ -99,8 +100,30 @@ export type AgentConfig = {
   dataSources: string[];
   /** Chains the agent may trade on. */
   chains: Array<"solana" | "base">;
-  /** Token allowlist per chain: mint/contract addresses. Empty = any token the data sources surface. */
-  tokenAllowlist: Array<{ chain: "solana" | "base"; address: string; symbol: string }>;
+  /**
+   * The universe rules. There is no allowlist: the agent may trade anything it
+   * discovers, including a token minted minutes ago, provided that token clears
+   * these gates and scores well enough. See src/lib/tokens/score.ts.
+   */
+  universe: {
+    /** Which candidate feeds run each tick. */
+    discovery: Array<"new_launches" | "trending" | "top_organic" | "momentum">;
+    /** Composite score (0-100) a token must reach before the agent may buy it. */
+    minScore: number;
+    minLiquidityUsd: number;
+    minHolderCount: number;
+    /** Refuse tokens younger than this. The first minutes of a launch are the rug window. */
+    minAgeMinutes: number;
+    /** null = no ceiling. Set it low (e.g. 168) to hunt only fresh launches. */
+    maxAgeHours: number | null;
+    maxTop10HolderPct: number;
+    /** EVM only; Solana has no transfer tax. */
+    maxBuyTaxPct: number;
+    requireMintRevoked: boolean;
+    requireFreezeRevoked: boolean;
+    /** Never trade these, whatever they score. The inverse of an allowlist. */
+    blocklist: Array<{ chain: "solana" | "base"; address: string; symbol: string }>;
+  };
   risk: {
     maxTradeUsd: number;
     maxDailyTrades: number;
@@ -133,8 +156,6 @@ export const agents = pgTable(
     mode: agentModeEnum("mode").default("paper").notNull(),
     status: agentStatusEnum("status").default("draft").notNull(),
     isPublic: boolean("is_public").default(true).notNull(),
-    isForkable: boolean("is_forkable").default(true).notNull(),
-    forkedFromId: text("forked_from_id"),
     llmKeyId: text("llm_key_id").references(() => llmKeys.id, { onDelete: "set null" }),
     config: jsonb("config").$type<AgentConfig>().notNull(),
     /** Paper-mode starting balance in USD; live mode uses real wallet balances. */
@@ -241,6 +262,8 @@ export const trades = pgTable(
     txHash: text("tx_hash"),
     /** The agent's one-line reasoning shown in the feed ("why I bought"). */
     rationale: text("rationale"),
+    /** The token's score at the moment of the trade, so the record survives re-scoring. */
+    scoreSnapshot: jsonb("score_snapshot").$type<TradeScoreSnapshot | null>(),
     error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     filledAt: timestamp("filled_at", { withTimezone: true }),
@@ -272,6 +295,47 @@ export const equitySnapshots = pgTable(
     at: timestamp("at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("equity_snapshots_agent_idx").on(t.agentId, t.at)],
+);
+
+/** Compact score record stored on a trade. Mirrors TokenScore in src/server/types.ts. */
+export type TradeScoreSnapshot = {
+  total: number;
+  verdict: "avoid" | "watch" | "candidate" | "strong";
+  components: Record<string, number | null>;
+  blockers: string[];
+  warnings: string[];
+  liquidityUsd: number | null;
+  ageHours: number | null;
+  scoredAt: string;
+};
+
+/**
+ * Score cache. Scoring a token costs several upstream calls, and many agents look at
+ * the same tokens, so scores are shared and refreshed on a TTL rather than per agent.
+ */
+export const tokenScores = pgTable(
+  "token_scores",
+  {
+    id: text("id").primaryKey(), // `${chain}:${address}`
+    chain: chainEnum("chain").notNull(),
+    address: text("address").notNull(),
+    symbol: text("symbol").notNull(),
+    total: numeric("total", { precision: 6, scale: 2 }).notNull(),
+    verdict: scoreVerdictEnum("verdict").notNull(),
+    components: jsonb("components").$type<Record<string, number | null>>().notNull(),
+    blockers: jsonb("blockers").$type<string[]>().notNull(),
+    warnings: jsonb("warnings").$type<string[]>().notNull(),
+    priceUsd: numeric("price_usd", { precision: 30, scale: 12 }),
+    liquidityUsd: numeric("liquidity_usd", { precision: 20, scale: 2 }),
+    volume24hUsd: numeric("volume_24h_usd", { precision: 20, scale: 2 }),
+    marketCapUsd: numeric("market_cap_usd", { precision: 24, scale: 2 }),
+    holderCount: integer("holder_count"),
+    ageHours: numeric("age_hours", { precision: 14, scale: 2 }),
+    priceChange24hPct: numeric("price_change_24h_pct", { precision: 12, scale: 4 }),
+    sources: jsonb("sources").$type<string[]>().notNull(),
+    scoredAt: timestamp("scored_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("token_scores_verdict_idx").on(t.verdict, t.total), index("token_scores_scored_idx").on(t.scoredAt)],
 );
 
 // ---------- social ----------
@@ -350,7 +414,6 @@ export const usersRelations = relations(users, ({ many }) => ({
 export const agentsRelations = relations(agents, ({ one, many }) => ({
   owner: one(users, { fields: [agents.ownerId], references: [users.id] }),
   llmKey: one(llmKeys, { fields: [agents.llmKeyId], references: [llmKeys.id] }),
-  forkedFrom: one(agents, { fields: [agents.forkedFromId], references: [agents.id], relationName: "forks" }),
   wallets: many(wallets),
   runs: many(agentRuns),
   trades: many(trades),
