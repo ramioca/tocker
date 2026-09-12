@@ -10,27 +10,50 @@ import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/common/status-badge";
 import { formatUsd } from "@/components/common/format";
 import { Field, RiskSlider, Toggle } from "@/components/agents/builder/field";
+import { UniverseControls } from "@/components/agents/builder/universe-controls";
 import { INTERVAL_PRESETS } from "@/components/agents/builder/types";
+import { EmptyState } from "@/components/common/empty-state";
 import { setAgentStatusAction, updateAgentAction } from "@/components/agents/agent-actions";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { cn } from "@/lib/utils";
 import type { AgentConfig } from "@/db/schema";
 import type { AgentDetail } from "@/server/types";
 
+/**
+ * `AgentDetail.config` is null for anyone who is not the owner, so the form
+ * cannot be built at all without one. The settings route is owner-gated, but
+ * the type is the real contract — refuse rather than fabricate a config.
+ */
 export function AgentSettingsForm({ agent }: { agent: AgentDetail }) {
+  if (!agent.config) {
+    return (
+      <EmptyState
+        title="This agent's settings are not yours to see"
+        description="A strategy belongs to whoever wrote it. Its record is public; its recipe is not."
+      />
+    );
+  }
+  return <SettingsForm agent={agent} initialConfig={agent.config} />;
+}
+
+function SettingsForm({
+  agent,
+  initialConfig,
+}: {
+  agent: AgentDetail;
+  initialConfig: AgentConfig;
+}) {
   const router = useRouter();
   const [name, setName] = useState(agent.name);
   const [tagline, setTagline] = useState(agent.tagline ?? "");
   const [isPublic, setIsPublic] = useState(agent.isPublic);
-  const [isForkable, setIsForkable] = useState(agent.isForkable);
-  const [config, setConfig] = useState<AgentConfig>(agent.config);
+  const [config, setConfig] = useState<AgentConfig>(initialConfig);
 
   const dirty =
     name !== agent.name ||
     tagline !== (agent.tagline ?? "") ||
     isPublic !== agent.isPublic ||
-    isForkable !== agent.isForkable ||
-    JSON.stringify(config) !== JSON.stringify(agent.config);
+    JSON.stringify(config) !== JSON.stringify(initialConfig);
 
   const save = async () => {
     if (name.trim().length < 2) {
@@ -41,7 +64,8 @@ export function AgentSettingsForm({ agent }: { agent: AgentDetail }) {
       name: name.trim(),
       tagline: tagline.trim() || undefined,
       isPublic,
-      isForkable: isPublic && isForkable,
+      // TODO(merge): PRIVACY removes `isForkable` from CreateAgentInput; drop this line with it.
+      isForkable: false,
       config,
     });
     if (!result.ok) {
@@ -126,23 +150,13 @@ export function AgentSettingsForm({ agent }: { agent: AgentDetail }) {
           />
         </Field>
 
-        <div className="grid gap-2 sm:grid-cols-2">
-          <Toggle
-            id="settings-public"
-            label="Public"
-            description="Its trades and reasoning are visible to everyone."
-            checked={isPublic}
-            onChange={setIsPublic}
-          />
-          <Toggle
-            id="settings-forkable"
-            label="Forkable"
-            description="Others may copy the config — never the key or the wallet."
-            checked={isForkable}
-            onChange={setIsForkable}
-            disabled={!isPublic}
-          />
-        </div>
+        <Toggle
+          id="settings-public"
+          label="Public"
+          description="Its trades, its PnL and the one-line reason behind each one are visible to everyone. Everything on this page stays yours."
+          checked={isPublic}
+          onChange={setIsPublic}
+        />
       </section>
 
       <section className="space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
@@ -155,6 +169,24 @@ export function AgentSettingsForm({ agent }: { agent: AgentDetail }) {
           }
           className="font-mono text-xs leading-relaxed"
           aria-label="Strategy prompt"
+        />
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
+        <div>
+          <h2 className="text-sm font-medium">Universe</h2>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+            Where it looks and how high the bar sits. Changes apply from the next tick.
+          </p>
+        </div>
+        <UniverseControls
+          idPrefix="settings-universe"
+          chains={config.chains}
+          universe={config.universe}
+          onChains={(chains) => setConfig((current) => ({ ...current, chains }))}
+          onUniverse={(patch) =>
+            setConfig((current) => ({ ...current, universe: { ...current.universe, ...patch } }))
+          }
         />
       </section>
 

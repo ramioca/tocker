@@ -1,12 +1,16 @@
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import type { AgentConfigInput } from "@/lib/agent/config";
+import type { AgentConfig } from "@/db/schema";
+
+export type UniverseConfig = AgentConfig["universe"];
+export type DiscoveryFeedId = UniverseConfig["discovery"][number];
+export type BlocklistEntry = UniverseConfig["blocklist"][number];
 
 export interface BuilderDraft {
   name: string;
   tagline: string;
   avatarSeed: string;
   isPublic: boolean;
-  isForkable: boolean;
   llmKeyId: string | null;
   paperStartingUsd: number;
   activate: boolean;
@@ -35,7 +39,6 @@ export function emptyDraft(): BuilderDraft {
     tagline: "",
     avatarSeed: AVATAR_SEEDS[0],
     isPublic: true,
-    isForkable: true,
     llmKeyId: null,
     paperStartingUsd: 10_000,
     activate: true,
@@ -46,7 +49,11 @@ export function emptyDraft(): BuilderDraft {
       llm: { ...DEFAULT_AGENT_CONFIG.llm },
       chains: [...DEFAULT_AGENT_CONFIG.chains],
       dataSources: [...DEFAULT_AGENT_CONFIG.dataSources],
-      tokenAllowlist: [],
+      universe: {
+        ...DEFAULT_AGENT_CONFIG.universe,
+        discovery: [...DEFAULT_AGENT_CONFIG.universe.discovery],
+        blocklist: DEFAULT_AGENT_CONFIG.universe.blocklist.map((entry) => ({ ...entry })),
+      },
     },
   };
 }
@@ -69,7 +76,7 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     chains: ["solana"],
     dataSources: ["sentimentalpha", "cmc-quotes"],
     prompt:
-      "You trade momentum on Solana. Each tick, pull X sentiment and narrative velocity for the trending tokens on your allowlist. Enter only when velocity has risen for two consecutive ticks AND sentiment is positive. Exit the entire position the first time velocity turns negative — do not wait for confirmation. Hold at most three positions, never average down, and if nothing qualifies, post a one-line note explaining what you looked at and finish.",
+      "You trade momentum on Solana. Each tick, score the trending and momentum feeds, then pull X sentiment and narrative velocity for the three highest scorers that clear your bar. Enter only when velocity has risen for two consecutive ticks AND sentiment is positive. Exit the entire position the first time velocity turns negative — do not wait for confirmation. Hold at most three positions, never average down, and if nothing qualifies, post a one-line note explaining what you looked at and finish.",
   },
   {
     id: "sentiment-contrarian",
@@ -78,16 +85,121 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     chains: ["solana", "base"],
     dataSources: ["sentimentalpha", "xquik-search", "token-intel-sol"],
     prompt:
-      "You fade consensus. When sentiment for a token is above 0.8 while narrative velocity is flat or falling, treat it as distribution and sell or refuse to enter. When sentiment is below -0.6 on a token whose on-chain intel is clean — no mint authority, top-10 holders under 30%, liquidity locked — accumulate in three equal tranches. Size down hard when every token you look at is pointing the same way; a one-directional market is where contrarians die.",
+      "You fade consensus. When sentiment for a token is above 0.8 while narrative velocity is flat or falling, treat it as distribution and sell or refuse to enter. When sentiment is below -0.6 on a token that still scores above your bar — clean authorities, distribution component above 60, liquidity holding — accumulate in three equal tranches. Size down hard when every token you look at is pointing the same way; a one-directional market is where contrarians die.",
   },
   {
-    id: "dip-buyer",
-    label: "Dip buyer",
-    blurb: "Ladders into drawdowns on tokens it has already vetted.",
+    id: "fresh-launch",
+    label: "Fresh launch hunter",
+    blurb: "Lives in the first day of a token's life and leaves before the crowd.",
     chains: ["solana"],
-    dataSources: ["cmc-quotes", "token-intel-sol"],
+    dataSources: ["token-intel-sol", "sentimentalpha"],
     prompt:
-      "You only trade tokens on your allowlist and you only buy weakness. When a token is more than 12% below its 24h high and token intel shows no holder-concentration or authority red flags, buy one third of the intended position. Add the second third at -20% and the final third at -30%. Take profit at +18% and cut the whole ladder if the thesis breaks — a rug flag, a liquidity pull, or a 40% drawdown from your first entry.",
+      "You hunt tokens in their first day. Each tick, pull the new-launch feed and score everything on it. Ignore anything with a live mint or freeze authority no matter how well it scores elsewhere, and ignore anything whose organic component is below 60 — manufactured volume is the whole scam. Take one position at a time in the highest scorer that clears your bar, size it small, and sell into the first parabolic move or the moment liquidity starts leaving. If the feed is all rugs, buy nothing and say so.",
+  },
+];
+
+// ------------------------------------------------------------------ universe
+
+export interface DiscoveryFeedMeta {
+  id: DiscoveryFeedId;
+  label: string;
+  /** One line, plain English: what lands in the agent's lap when this is on. */
+  description: string;
+  /** The honest caveat. Every feed has one. */
+  caveat: string;
+}
+
+export const DISCOVERY_FEEDS: DiscoveryFeedMeta[] = [
+  {
+    id: "new_launches",
+    label: "New launches",
+    description: "Tokens minted in the last few hours, the moment they get a pool.",
+    caveat: "Where the rugs live. Your gates do all the work here.",
+  },
+  {
+    id: "trending",
+    label: "Trending",
+    description: "What is being traded most across the chain right now.",
+    caveat: "Crowded. You are rarely early to anything on this list.",
+  },
+  {
+    id: "top_organic",
+    label: "Top organic",
+    description: "Volume that comes from real buyers rather than wash bots.",
+    caveat: "Solana only — Base falls back to trending.",
+  },
+  {
+    id: "momentum",
+    label: "Momentum",
+    description: "Tokens whose price, volume and holders are all accelerating.",
+    caveat: "Derived from the other feeds, so it inherits their blind spots.",
+  },
+];
+
+export interface UniversePreset {
+  id: string;
+  label: string;
+  blurb: string;
+  /** Everything but the blocklist, which is personal and never overwritten. */
+  values: Omit<UniverseConfig, "blocklist">;
+}
+
+/**
+ * The fastest path for most people: one click sets the whole group. Each one is
+ * a real posture, not a difficulty slider — they disagree about what to hunt,
+ * not just about how much.
+ */
+export const UNIVERSE_PRESETS: UniversePreset[] = [
+  {
+    id: "degen",
+    label: "Degen",
+    blurb: "Fresh launches and thin books, with no give at all on authorities.",
+    values: {
+      discovery: ["new_launches", "momentum"],
+      minScore: 55,
+      minLiquidityUsd: 5_000,
+      minHolderCount: 50,
+      minAgeMinutes: 15,
+      maxAgeHours: 72,
+      maxTop10HolderPct: 70,
+      maxBuyTaxPct: 5,
+      requireMintRevoked: true,
+      requireFreezeRevoked: true,
+    },
+  },
+  {
+    id: "balanced",
+    label: "Balanced",
+    blurb: "Young enough to matter, liquid enough to leave. The default.",
+    values: {
+      discovery: ["new_launches", "trending", "top_organic"],
+      minScore: 62,
+      minLiquidityUsd: 15_000,
+      minHolderCount: 150,
+      minAgeMinutes: 30,
+      maxAgeHours: null,
+      maxTop10HolderPct: 60,
+      maxBuyTaxPct: 5,
+      requireMintRevoked: true,
+      requireFreezeRevoked: true,
+    },
+  },
+  {
+    id: "blue-chips",
+    label: "Blue chips only",
+    blurb: "Established names with deep books. It will trade rarely.",
+    values: {
+      discovery: ["trending", "top_organic"],
+      minScore: 78,
+      minLiquidityUsd: 250_000,
+      minHolderCount: 5_000,
+      minAgeMinutes: 1_440,
+      maxAgeHours: null,
+      maxTop10HolderPct: 35,
+      maxBuyTaxPct: 0,
+      requireMintRevoked: true,
+      requireFreezeRevoked: true,
+    },
   },
 ];
 
@@ -106,7 +218,7 @@ export const STEPS = [
   { id: "identity", label: "Identity" },
   { id: "brain", label: "Brain" },
   { id: "data", label: "Data" },
-  { id: "chains", label: "Chains" },
+  { id: "universe", label: "Universe" },
   { id: "risk", label: "Risk" },
   { id: "schedule", label: "Schedule" },
   { id: "review", label: "Review" },

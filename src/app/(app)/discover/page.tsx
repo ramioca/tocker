@@ -1,13 +1,9 @@
 import type { Metadata } from "next";
-import { getLeaderboard, getTopDataSources, getTrendingTokens } from "@/server/queries/discover";
+import { getLeaderboard, getTopDataSources } from "@/server/queries/discover";
 import { listPublicAgents } from "@/server/queries/agents";
 import { withMock } from "@/lib/data";
-import {
-  mockLeaderboard,
-  mockPublicAgents,
-  mockTopDataSources,
-  mockTrendingTokens,
-} from "@/mocks/social";
+import { mockLeaderboard, mockPublicAgents, mockTopDataSources } from "@/mocks/social";
+import { mockFreshLaunches } from "@/mocks/tokens";
 import type { LeaderboardRow, LeaderboardWindow } from "@/server/types";
 import { Leaderboard } from "@/components/discover/leaderboard";
 import { TrendingTokens } from "@/components/discover/trending-tokens";
@@ -22,7 +18,7 @@ export const metadata: Metadata = {
 export default async function DiscoverPage() {
   // All three windows are fetched up front so switching tabs is instant — a tab is a
   // hot path and should never wait on a request.
-  const [sevenDay, thirtyDay, allTime, tokens, sources, agents] = await Promise.all([
+  const [sevenDay, thirtyDay, allTime, sources, agents] = await Promise.all([
     withMock(
       () => getLeaderboard("7d", 12),
       () => mockLeaderboard("7d", 12),
@@ -36,10 +32,6 @@ export default async function DiscoverPage() {
       () => mockLeaderboard("all", 12),
     ),
     withMock(
-      () => getTrendingTokens(10),
-      () => mockTrendingTokens(10),
-    ),
-    withMock(
       () => getTopDataSources(6),
       () => mockTopDataSources(6),
     ),
@@ -48,6 +40,11 @@ export default async function DiscoverPage() {
       () => mockPublicAgents({ limit: 9, sort: "pnl" }),
     ),
   ]);
+
+  // TODO(merge): TOKENS owns the real read. Swap for
+  //   withMock(() => getRecentTokenScores({ limit: 12 }), () => mockFreshLaunches(12))
+  // once `src/lib/tokens` (or a server query wrapping it) exists.
+  const freshLaunches = mockFreshLaunches(12);
 
   const leaderboard: Record<LeaderboardWindow, LeaderboardRow[]> = {
     "7d": sevenDay,
@@ -60,14 +57,14 @@ export default async function DiscoverPage() {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Discover</h1>
         <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-          Who&rsquo;s winning, what they&rsquo;re trading, and what they&rsquo;re paying for.
-          Fork anything that looks better than yours.
+          Who&rsquo;s winning, what the sweep is turning up, and what everyone is paying for
+          data. Records are public here. Strategies are not.
         </p>
       </header>
 
       <div className="mt-10 space-y-14">
         <Leaderboard data={leaderboard} />
-        <TrendingTokens tokens={tokens} />
+        <TrendingTokens scores={freshLaunches} />
         <TopDataSources sources={sources} />
         <PublicAgents initial={agents} />
       </div>

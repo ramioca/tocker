@@ -13,12 +13,14 @@ import { ModeBadge } from "@/components/common/mode-badge";
 import { formatUsd } from "@/components/common/format";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { createAgentAction } from "@/components/agents/agent-actions";
-import { BrainStep, ChainsStep, DataStep, IdentityStep, RiskStep, ScheduleStep } from "./steps";
-import type { PopularToken } from "./steps";
+import { BrainStep, DataStep, IdentityStep, RiskStep, ScheduleStep, UniverseStep } from "./steps";
+import { universeSentence } from "./universe-controls";
 import { StepHeading } from "./field";
 import { useDraft } from "./use-draft";
 import { STEPS, type StepId } from "./types";
 import { cn } from "@/lib/utils";
+import { ScoreBadge } from "@/components/tokens/score-badge";
+import type { AgentConfig } from "@/db/schema";
 import type { DataSourceInfo, LlmKeyRow } from "@/server/types";
 
 function validate(draft: ReturnType<typeof useDraft>["draft"]): Record<string, string> {
@@ -44,7 +46,7 @@ const STEP_ERROR_KEYS: Record<StepId, string[]> = {
   identity: ["name"],
   brain: ["llmKeyId", "strategyPrompt", "llm"],
   data: ["dataSources"],
-  chains: ["chains", "tokenAllowlist"],
+  universe: ["chains", "universe"],
   risk: ["risk"],
   schedule: ["schedule"],
   review: [],
@@ -53,11 +55,9 @@ const STEP_ERROR_KEYS: Record<StepId, string[]> = {
 export function AgentBuilder({
   sources,
   initialKeys,
-  popularTokens,
 }: {
   sources: DataSourceInfo[];
   initialKeys: LlmKeyRow[];
-  popularTokens: PopularToken[];
 }) {
   const router = useRouter();
   const { draft, update, updateConfig, clear, restored } = useDraft();
@@ -101,7 +101,9 @@ export function AgentBuilder({
       tagline: draft.tagline.trim() || undefined,
       avatarSeed: draft.avatarSeed,
       isPublic: draft.isPublic,
-      isForkable: draft.isPublic && draft.isForkable,
+      // TODO(merge): PRIVACY removes `isForkable` from CreateAgentInput. When it
+      // goes, delete this line — nothing in the builder offers forking any more.
+      isForkable: false,
       llmKeyId: draft.llmKeyId,
       paperStartingUsd: draft.paperStartingUsd,
       activate: draft.activate,
@@ -177,13 +179,12 @@ export function AgentBuilder({
             errors={visibleErrors}
             sources={sources}
           />
-        ) : step.id === "chains" ? (
-          <ChainsStep
+        ) : step.id === "universe" ? (
+          <UniverseStep
             draft={draft}
             update={update}
             updateConfig={updateConfig}
             errors={visibleErrors}
-            popularTokens={popularTokens}
           />
         ) : step.id === "risk" ? (
           <RiskStep
@@ -324,10 +325,19 @@ function ReviewStep({
             ))}
           </span>
         </SummaryRow>
-        <SummaryRow label="Allowlist">
-          {draft.config.tokenAllowlist.length === 0
-            ? "Anything its sources surface"
-            : draft.config.tokenAllowlist.map((token) => token.symbol).join(", ")}
+        <SummaryRow label="Bar">
+          <span className="inline-flex items-center gap-1.5">
+            <ScoreBadge total={draft.config.universe.minScore} size="xs" />
+            <span className="tnum text-xs text-muted-foreground">
+              {formatUsd(draft.config.universe.minLiquidityUsd, { compact: true })} liq ·{" "}
+              {draft.config.universe.minHolderCount} holders
+            </span>
+          </span>
+        </SummaryRow>
+        <SummaryRow label="Blocklist">
+          {draft.config.universe.blocklist.length === 0
+            ? "Empty"
+            : draft.config.universe.blocklist.map((entry) => entry.symbol).join(", ")}
         </SummaryRow>
         <SummaryRow label="Data sources">
           {chosen.length === 0 ? "None" : chosen.map((source) => source.name).join(", ")}
@@ -346,7 +356,7 @@ function ReviewStep({
           </span>
         </SummaryRow>
         <SummaryRow label="Visibility">
-          {draft.isPublic ? (draft.isForkable ? "Public, forkable" : "Public") : "Private"}
+          {draft.isPublic ? "Public record, private strategy" : "Private"}
         </SummaryRow>
       </dl>
 
@@ -371,6 +381,13 @@ function ReviewStep({
               .
             </>
           )}
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-border/70 bg-card/30 p-3">
+        <p className="text-sm font-medium">Where it will hunt</p>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          {universeSentence(draft.config.universe as AgentConfig["universe"], draft.config.chains)}
         </p>
       </div>
 
