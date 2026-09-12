@@ -1,9 +1,10 @@
 /**
  * Scheduler entry point. Vercel Cron hits this every 5 minutes (see `vercel.json`);
- * `pnpm tick` hits it indirectly by calling `tickDueAgents` in-process.
+ * `pnpm tick` calls it over HTTP every minute in local dev.
  *
- * Auth: `Authorization: Bearer $CRON_SECRET`, or Vercel's own `x-vercel-cron` header
- * (Vercel does not let you set custom headers on a cron invocation).
+ * Auth: `Authorization: Bearer $CRON_SECRET` only. Vercel Cron sends exactly that header
+ * when CRON_SECRET is set in the project. The `x-vercel-cron` header is not trusted:
+ * any client can send it.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { tickDueAgents } from "@/lib/agent/scheduler";
@@ -12,7 +13,6 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 function authorized(req: NextRequest): boolean {
-  if (req.headers.get("x-vercel-cron")) return true;
   const secret = process.env.CRON_SECRET?.trim();
   if (!secret) return false;
   const header = req.headers.get("authorization") ?? "";

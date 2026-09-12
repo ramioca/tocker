@@ -48,3 +48,4 @@ drizzle/meta
 .pglite/
 .worktrees/
 .gstack/
+.pglite.lock

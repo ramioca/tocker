@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { connection } from "next/server";
 import { getLeaderboard } from "@/server/queries/discover";
 import { withMock } from "@/lib/data";
 import { mockLeaderboard } from "@/mocks/social";
@@ -10,6 +11,9 @@ import { ChainBadges } from "@/components/social-common/chain-badge";
 import { formatCount } from "@/components/social-common/format";
 
 export async function LeaderboardStrip() {
+  // Render per request: a build-time leaderboard would freeze rankings into static
+  // HTML, and would make `next build` open the database.
+  await connection();
   const rows = await withMock(
     () => getLeaderboard("7d", 5),
     () => mockLeaderboard("7d", 5),

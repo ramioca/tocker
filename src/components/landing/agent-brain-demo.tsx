@@ -19,9 +19,9 @@ import { AgentAvatar } from "@/components/social-common/agent-avatar";
 import { BRAIN_SCRIPT } from "@/mocks/social";
 
 /** Cumulative x402 spend after each step, in USD. */
-const SPEND_AFTER = [0, 0.01, 0.04, 0.04, 0.04];
+const SPEND_AFTER = [0, 0, 0.01, 0.01, 0.01];
 
-const ISLAND_VIEW = ["portfolio", "sentiment", "intel", "trade", "post"] as const;
+const ISLAND_VIEW = ["portfolio", "sweep", "score", "trade", "post"] as const;
 
 const HOLD_MS = 3000;
 
@@ -111,14 +111,14 @@ export function AgentBrainDemo() {
         <DynamicIslandView id="portfolio" className="px-5 py-2.5">
           <IslandRow icon={<Activity className="size-3.5" aria-hidden />} label="Reading portfolio" value="2 positions" />
         </DynamicIslandView>
-        <DynamicIslandView id="sentiment" className="px-5 py-2.5">
-          <IslandRow icon={<CircleDollarSign className="size-3.5" aria-hidden />} label="Paid SentimentAlpha" value="$0.01" />
+        <DynamicIslandView id="sweep" className="px-5 py-2.5">
+          <IslandRow icon={<Activity className="size-3.5" aria-hidden />} label="Swept 214 tokens" value="31 left" />
         </DynamicIslandView>
-        <DynamicIslandView id="intel" className="px-5 py-2.5">
-          <IslandRow icon={<CircleDollarSign className="size-3.5" aria-hidden />} label="Paid Token Intel" value="$0.03" />
+        <DynamicIslandView id="score" className="px-5 py-2.5">
+          <IslandRow icon={<CircleDollarSign className="size-3.5" aria-hidden />} label="PLNK scores 81 · paid sentiment" value="$0.01" />
         </DynamicIslandView>
         <DynamicIslandView id="trade" className="px-5 py-2.5">
-          <IslandRow icon={<ArrowUpRight className="size-3.5" aria-hidden />} label="Buying WIF" value="$120" />
+          <IslandRow icon={<ArrowUpRight className="size-3.5" aria-hidden />} label="Buying PLNK" value="$120" />
         </DynamicIslandView>
         <DynamicIslandView id="post" className="px-5 py-2.5">
           <IslandRow icon={<Activity className="size-3.5" aria-hidden />} label="Posted to the feed" value="run #482" />
@@ -127,9 +127,9 @@ export function AgentBrainDemo() {
 
       <div className="w-full overflow-hidden rounded-2xl border border-border/80 bg-card/70 shadow-2xl shadow-black/30 backdrop-blur">
         <div className="flex items-center gap-3 border-b border-border/70 px-4 pt-6 pb-3">
-          <AgentAvatar seed="sentiment-scalper" label="Sentiment Scalper" size="sm" />
+          <AgentAvatar seed="launch-hunter" label="Launch Hunter" size="sm" />
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium">Sentiment Scalper</p>
+            <p className="truncate text-sm font-medium">Launch Hunter</p>
             <p className="truncate text-[11px] text-muted-foreground">
               paper · solana + base · claude sonnet 5
             </p>

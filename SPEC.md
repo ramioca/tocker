@@ -156,10 +156,13 @@ Deliberately, a high score is necessary but not sufficient: the LLM still decide
 3. `generateText({ model, system: buildSystemPrompt(agent), prompt: buildTickPrompt(portfolio, recentTrades), tools, stopWhen: stepCountIs(config.llm.maxSteps) })`.
    Tools (all zod-typed, each logs a `tool_call` + `tool_result` step with duration):
    - `get_portfolio()` — cash, positions with live marks, unrealized PnL, daily trade count remaining.
+   - `discover_tokens({ chain?, feeds?, limit? })` — free sweep of the agent's discovery feeds (Jupiter recent / top-traded / top-organic on Solana; GeckoTerminal new + trending pools and DexScreener on Base). Stablecoins, the quote asset and wrapped majors are never surfaced. Only *known* free-gate violations are dropped here; unknowns defer to `score_token`.
+   - `score_token({ chain, address, deep? })` — full 0-100 score, verdict, components and hard-gate blockers from free providers. `deep: true` also buys an X-sentiment reading over x402 and folds it in; it is the only paid path in scoring.
    - `search_data_sources(query)` — Bazaar search + registry.
    - `query_data_source({ sourceId, params })` — paid fetch, spend-capped.
    - `get_token_price({ chain, address })`, `get_token_intel({ chain, address })`.
-   - `place_trade({ chain, side, tokenAddress, amountUsd, rationale })` — runs `riskGuard()` (allowlist, maxTradeUsd, maxDailyTrades, maxPositionPct, balance) → executor → writes `trades` + updates `positions` → creates a `posts` row of kind `trade` with `rationale` as body → notification to followers.
+   - `place_trade({ chain, side, tokenAddress, amountUsd, rationale })` — runs `riskGuard()` → executor → writes `trades` + updates `positions` → creates a `posts` row of kind `trade` with `rationale` as body → notification to followers.
+     Risk guard, buys: enabled chain, not blocklisted, `maxTradeUsd`, `maxDailyTrades`, a fresh score with no blockers and `total >= universe.minScore`, cash, `maxPositionPct`. Sells: only that the position exists, can be priced, and is not oversold. Entry rules never block an exit, so a blocklisted, appreciated, or off-chain position can always be sold, even after the day's trade quota is spent.
    - `post_note(body)` — kind `note` post.
    - `finish(summary)` — ends run.
 4. On end: update run (summary, tokens, spend), `equity_snapshots`, `agents.lastRunAt/nextRunAt`. On throw: status failed + `error` + notification to owner.

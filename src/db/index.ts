@@ -26,6 +26,11 @@ async function create(): Promise<Db> {
     const { PGlite } = await import("@electric-sql/pglite");
     const { drizzle } = await import("drizzle-orm/pglite");
     const dir = url.replace("pglite://", "") || "./.pglite";
+    // In-memory databases (tests) cannot be shared, so only on-disk ones are locked.
+    if (!dir.startsWith("memory://")) {
+      const { acquirePgliteLock } = await import("./pglite-lock");
+      acquirePgliteLock(dir);
+    }
     const client = new PGlite(dir);
     return drizzle(client, { schema }) as unknown as Db;
   }

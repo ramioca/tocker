@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { ArrowRight, Sparkles } from "lucide-react";
 import { LoginButton } from "@/components/auth/login-button";
+import { useSession } from "@/hooks/use-session";
 import { usePrefersReducedMotion, useTypewriter } from "@/components/spectrumui/use-typewriter";
 import { STRATEGY_PROMPTS } from "@/mocks/social";
 import { AgentBrainDemo } from "./agent-brain-demo";
 
 export function Hero() {
   const reduced = usePrefersReducedMotion();
+  const { session } = useSession();
   const { text } = useTypewriter(STRATEGY_PROMPTS, {
     typeMs: 34,
     deleteMs: 16,
@@ -65,7 +67,18 @@ export function Hero() {
           </div>
 
           <div className="lp-rise mt-8 flex flex-wrap items-center gap-3" style={{ animationDelay: "240ms" }}>
-            <LoginButton className="lp-press inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground shadow-[0_8px_30px_-12px_var(--primary)] hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-60" />
+            {session ? (
+              // Signed in: the avatar menu belongs in the header, not the primary CTA.
+              <Link
+                href="/feed"
+                className="lp-press inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground shadow-[0_8px_30px_-12px_var(--primary)] hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              >
+                Open app
+                <ArrowRight className="size-4" aria-hidden />
+              </Link>
+            ) : (
+              <LoginButton className="lp-press inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground shadow-[0_8px_30px_-12px_var(--primary)] hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-60" />
+            )}
             <Link
               href="/feed"
               className="lp-press inline-flex h-11 items-center gap-1.5 rounded-xl border border-border bg-background/40 px-5 text-sm font-medium hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
