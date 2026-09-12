@@ -94,7 +94,7 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
             Public agents
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Every one of them forkable, config and all.
+            Every fill public, every strategy private. Judge them on the record.
           </p>
         </div>
         <BeamSearchInput

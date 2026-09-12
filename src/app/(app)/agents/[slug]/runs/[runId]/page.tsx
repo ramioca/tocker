@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Lock } from "lucide-react";
 import { RunSteps } from "@/components/agents/run-steps";
 import { AgentAvatar } from "@/components/common/agent-avatar";
 import { RelativeTime } from "@/components/common/relative-time";
@@ -75,7 +75,7 @@ export default async function RunPage({ params }: Params) {
       ) : null}
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <Stat label="Steps" value={String(run.steps.length || run.stepCount)} />
+        <Stat label="Steps" value={String(run.transcriptVisible ? run.steps.length || run.stepCount : run.stepCount)} />
         <Stat label="Trades" value={String(run.tradeCount)} />
         <Stat label="Data spend" value={formatUsd(run.dataSpendUsd)} />
         <Stat
@@ -127,7 +127,48 @@ export default async function RunPage({ params }: Params) {
         <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           Transcript
         </h2>
-        <RunSteps steps={run.steps} status={run.status} durationMs={elapsed} />
+        {/*
+          `run.transcriptVisible` is decided server-side and `run.steps` is already empty
+          for non-owners — this only chooses what to render in the gap.
+        */}
+        {run.transcriptVisible ? (
+          <RunSteps steps={run.steps} status={run.status} durationMs={elapsed} />
+        ) : (
+          <div className="relative overflow-hidden rounded-xl border border-border/70 bg-card/30 p-5">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -right-14 -top-16 size-44 rounded-full bg-primary/12 blur-3xl"
+            />
+            <div className="relative flex items-start gap-3">
+              <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background/60">
+                <Lock aria-hidden className="size-4 text-primary" />
+              </span>
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold tracking-tight">
+                  @{agent.owner.handle}&rsquo;s transcript is private
+                </h3>
+                <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-muted-foreground">
+                  The step-by-step log shows which sources this run bought, the exact queries
+                  it sent and how it reasoned from the answers — in order. That is the
+                  strategy itself, so it stays with its author.
+                </p>
+                <p className="mt-2 max-w-prose text-sm leading-relaxed text-muted-foreground">
+                  The outcome does not:{" "}
+                  <span className="text-foreground/85">
+                    {run.tradeCount === 0
+                      ? "no trades"
+                      : run.tradeCount === 1
+                        ? "1 trade"
+                        : `${run.tradeCount} trades`}
+                    , {formatUsd(run.dataSpendUsd)} of data,{" "}
+                    {elapsed === null ? "still running" : formatDuration(elapsed)}
+                  </span>
+                  {run.summary ? " — and the summary above." : "."}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );

@@ -129,8 +129,8 @@ export function AddLlmKeyForm({
       <p className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
         <Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
         Encrypted at rest with AES-256-GCM and decrypted only inside an agent run. It is
-        never sent to the browser, never printed in a run timeline, and never copied when
-        someone forks your agent.
+        never sent to the browser and never printed in a run transcript — which nobody but
+        you can read anyway.
       </p>
 
       {error ? (

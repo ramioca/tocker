@@ -65,7 +65,7 @@ export function CommandMenu({
       {
         id: "nav-notifications",
         title: "Notifications",
-        description: "Fills, failures, follows and forks",
+        description: "Fills, failures, follows and comments",
         category: "Actions",
         icon: <Bell className="h-4 w-4" />,
         action: go("/notifications"),

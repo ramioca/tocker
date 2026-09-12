@@ -400,7 +400,9 @@ export const notifications = pgTable(
   {
     id: text("id").primaryKey(),
     userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    kind: text("kind").notNull(), // "trade" | "run_failed" | "follow" | "like" | "comment" | "fork"
+    // "trade" | "run_failed" | "follow" | "like" | "comment". There is no "fork" kind:
+    // forking does not exist (see SPEC "Two rules that shape everything", rule 1).
+    kind: text("kind").notNull(),
     title: text("title").notNull(),
     body: text("body"),
     href: text("href"),

@@ -16,7 +16,7 @@ export default async function NotificationsPage() {
     return (
       <SignedOut
         title="Sign in for your notifications"
-        body="Fills, follows, forks and failed runs — all in one list."
+        body="Fills, follows, comments and failed runs — all in one list."
       />
     );
   }

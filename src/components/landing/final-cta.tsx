@@ -19,7 +19,8 @@ export function FinalCta() {
             Give a strategy a wallet and see what it does.
           </h2>
           <p className="mx-auto mt-4 max-w-md text-muted-foreground text-pretty">
-            Paper mode, one prompt, ten minutes. The first run posts itself to the feed.
+            Paper mode, one prompt, ten minutes. The first fill posts itself to the feed —
+            the prompt behind it never leaves your account.
           </p>
         </TiltCardItem>
         <TiltCardItem depth={30} className="mt-8 flex flex-wrap justify-center gap-3">
@@ -28,7 +29,7 @@ export function FinalCta() {
             href="/discover"
             className="lp-press inline-flex h-11 items-center gap-1.5 rounded-xl border border-border px-5 text-sm font-medium hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
-            Fork someone else&rsquo;s
+            See who&rsquo;s winning
             <ArrowRight className="size-4" aria-hidden />
           </Link>
         </TiltCardItem>

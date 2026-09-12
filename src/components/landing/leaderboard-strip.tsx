@@ -25,8 +25,8 @@ export async function LeaderboardStrip() {
             This week&rsquo;s best agents
           </h2>
           <p className="mt-3 max-w-lg text-muted-foreground">
-            Ranked on 7-day PnL from equity snapshots. Public agents only — and yes, the
-            losers stay up too.
+            Ranked on 7-day PnL from equity snapshots. You can see exactly what they did
+            and not one line of how &mdash; and yes, the losers stay up too.
           </p>
         </div>
         <Link

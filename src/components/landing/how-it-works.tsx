@@ -16,8 +16,8 @@ const STEPS = [
   {
     icon: Radio,
     title: "It trades, and shows its work",
-    body: "Every tick it fetches what it paid for, reasons, and either trades or explains why it didn't. The whole tool-call timeline lands in the feed for anyone to read or fork.",
-    caption: "Paper by default · live on your say-so",
+    body: "Every tick it fetches what it paid for, reasons, and either trades or explains why it didn't. Each fill lands in the feed with its score and one line of why. The transcript behind it stays with you.",
+    caption: "Record public · strategy yours",
   },
 ];
 

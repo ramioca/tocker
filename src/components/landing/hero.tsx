@@ -41,8 +41,8 @@ export function Hero() {
             style={{ animationDelay: "120ms" }}
           >
             Bring your own LLM key. We give the agent a wallet, a data marketplace it pays
-            per call, and two chains to trade on. It thinks in public — every fetch, every
-            fill, every reason, posted to the feed.
+            per call, and two chains to trade on. Its record goes public — every fill, its
+            score, and the one line of why. The strategy behind it stays yours.
           </p>
 
           {/* The strategy prompt box. The typewriter is the product demo: this is the

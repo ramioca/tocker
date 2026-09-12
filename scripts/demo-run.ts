@@ -64,13 +64,11 @@ async function seed(): Promise<string> {
     mode: "paper",
     status: "active",
     isPublic: true,
-    isForkable: true,
     llmKeyId: null,
     config: {
       ...DEFAULT_AGENT_CONFIG,
       dataSources: ["sentimentalpha", "cmc-quotes", "deepnets-token-safety"],
       chains: ["solana"],
-      tokenAllowlist: [],
       risk: { ...DEFAULT_AGENT_CONFIG.risk, maxTradeUsd: 250, maxDataSpendUsdPerRun: 0.25 },
     },
     paperStartingUsd: "10000",

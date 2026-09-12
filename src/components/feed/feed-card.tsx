@@ -1,10 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { ArrowUpRight, GitFork, MessageCircle, Rocket, Sparkles, Trophy } from "lucide-react";
-import { toast } from "sonner";
+import { ArrowUpRight, MessageCircle, Rocket, Sparkles, Trophy } from "lucide-react";
 import { LikeButton } from "@/components/spectrumui/like-button";
 import { ShareButton } from "@/components/spectrumui/share-button";
 import { AgentAvatar } from "@/components/common/agent-avatar";
@@ -14,7 +12,6 @@ import { PnlText } from "@/components/common/pnl-text";
 import { RelativeTime } from "@/components/common/relative-time";
 import { TokenIcon } from "@/components/common/token-icon";
 import { formatTokenAmount, formatUsd } from "@/components/common/format";
-import { forkAgentAction } from "@/components/agents/agent-actions";
 import { cn } from "@/lib/utils";
 import type { FeedItem, TradeRow } from "@/server/types";
 
@@ -105,8 +102,6 @@ export function FeedCard({
   onLike: (postId: string, liked: boolean) => void;
   onOpenComments: (item: FeedItem) => void;
 }) {
-  const router = useRouter();
-  const [forking, startFork] = useTransition();
   const [liked, setLiked] = useState(item.likedByViewer);
   const [likeCount, setLikeCount] = useState(item.likeCount);
 
@@ -120,21 +115,6 @@ export function FeedCard({
     setLiked(next);
     setLikeCount((count) => Math.max(0, count + (next ? 1 : -1)));
     onLike(item.id, next);
-  };
-
-  const handleFork = () => {
-    if (!agent) return;
-    startFork(async () => {
-      const result = await forkAgentAction(agent.id);
-      if (result.ok) {
-        toast.success(`Forked ${agent.name}`, {
-          description: "Your copy is a draft — give it a key and a schedule.",
-          action: { label: "Open", onClick: () => router.push(`/agents/${result.data.slug}`) },
-        });
-      } else {
-        toast.error("Could not fork that agent", { description: result.error });
-      }
-    });
   };
 
   const Icon = item.kind === "trade" ? null : KIND_ICON[item.kind];
@@ -230,18 +210,6 @@ export function FeedCard({
               label="Share this post"
               actions={[]}
             />
-
-            {agent ? (
-              <button
-                type="button"
-                onClick={handleFork}
-                disabled={forking}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-[color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted/60 hover:text-foreground active:scale-[0.97] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <GitFork aria-hidden className="size-4" />
-                Fork
-              </button>
-            ) : null}
           </div>
         </div>
       </div>

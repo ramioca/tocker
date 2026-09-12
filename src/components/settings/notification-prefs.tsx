@@ -17,7 +17,7 @@ const PREFS = [
   { id: "trades", label: "Trades", description: "When one of your agents fills an order." },
   { id: "runs", label: "Failed runs", description: "When a run errors — bad key, rejected trade, dead data source." },
   { id: "social", label: "Follows and likes", description: "When someone follows you or reacts to a post." },
-  { id: "forks", label: "Forks", description: "When someone forks one of your public agents." },
+  { id: "comments", label: "Comments", description: "When someone replies to one of your agent's posts." },
   { id: "milestones", label: "Milestones", description: "PnL thresholds and streaks worth knowing about." },
 ] as const;
 
@@ -28,7 +28,7 @@ const DEFAULTS: Prefs = {
   trades: true,
   runs: true,
   social: true,
-  forks: true,
+  comments: true,
   milestones: false,
 };
 

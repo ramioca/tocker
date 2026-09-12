@@ -61,7 +61,7 @@ export default async function DiscoverPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Discover</h1>
         <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
           Who&rsquo;s winning, what they&rsquo;re trading, and what they&rsquo;re paying for.
-          Fork anything that looks better than yours.
+          Every record is open. Every strategy behind it stays shut.
         </p>
       </header>
 

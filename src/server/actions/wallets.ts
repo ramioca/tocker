@@ -13,6 +13,11 @@ function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
 }
 
+/**
+ * Owner-only. The public record is the equity curve and the trades; the per-asset wallet
+ * breakdown (how much gas it holds, how much dry powder is parked where) is operating
+ * detail, and the only screen that renders it is the owner's settings page.
+ */
 export async function getAgentWalletBalances(agentId: string): Promise<ActionResult<WalletBalance[]>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
@@ -24,7 +29,7 @@ export async function getAgentWalletBalances(agentId: string): Promise<ActionRes
     .where(eq(agents.id, agentId))
     .limit(1);
   if (!agent) return fail("Agent not found");
-  if (agent.ownerId !== session.userId && !agent.isPublic) return fail("This agent is private");
+  if (agent.ownerId !== session.userId) return fail("You do not own this agent");
 
   try {
     return { ok: true, data: await loadBalances(agentId) };

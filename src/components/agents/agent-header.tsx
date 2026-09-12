@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { GitFork, Play, Settings2 } from "lucide-react";
+import { Lock, Play, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { FollowButton } from "@/components/spectrumui/follow-button";
 import { MorphButton } from "@/components/spectrumui/morph-button";
@@ -16,15 +15,13 @@ import { RelativeTime } from "@/components/common/relative-time";
 import { StatusBadge } from "@/components/common/status-badge";
 import { useRunStatus } from "@/components/providers/run-status";
 import { followUser } from "@/components/feed/feed-actions";
-import { forkAgentAction, triggerRunAction } from "./agent-actions";
+import { triggerRunAction } from "./agent-actions";
 import { cn } from "@/lib/utils";
 import type { AgentDetail } from "@/server/types";
 
 export function AgentHeader({ agent }: { agent: AgentDetail }) {
-  const router = useRouter();
   const { watchRun } = useRunStatus();
   const [following, setFollowing] = useState(agent.isFollowedByViewer);
-  const [forking, startFork] = useTransition();
 
   const shareUrl =
     typeof window === "undefined"
@@ -45,20 +42,6 @@ export function AgentHeader({ agent }: { agent: AgentDetail }) {
       avatarSeed: agent.avatarSeed,
     });
     toast.success("Run started", { description: "Watch it live in the island up top." });
-  };
-
-  const fork = () => {
-    startFork(async () => {
-      const result = await forkAgentAction(agent.id);
-      if (result.ok) {
-        toast.success(`Forked ${agent.name}`, {
-          description: "Your copy is a draft — attach a key and a schedule.",
-          action: { label: "Open", onClick: () => router.push(`/agents/${result.data.slug}`) },
-        });
-      } else {
-        toast.error("Could not fork that agent", { description: result.error });
-      }
-    });
   };
 
   const onFollow = async (next: boolean) => {
@@ -114,16 +97,10 @@ export function AgentHeader({ agent }: { agent: AgentDetail }) {
             <p className="mt-2 max-w-2xl text-sm text-foreground/85">{agent.tagline}</p>
           ) : null}
 
-          {agent.forkedFrom ? (
+          {!agent.isOwner ? (
             <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <GitFork aria-hidden className="size-3.5" />
-              Forked from{" "}
-              <Link
-                href={`/agents/${agent.forkedFrom.slug}`}
-                className="rounded text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {agent.forkedFrom.name}
-              </Link>
+              <Lock aria-hidden className="size-3.5" />
+              Strategy private · record public
             </p>
           ) : null}
 
@@ -164,26 +141,6 @@ export function AgentHeader({ agent }: { agent: AgentDetail }) {
                 onFollowingChange={(next) => void onFollow(next)}
               />
             )}
-
-            {agent.isForkable ? (
-              <button
-                type="button"
-                onClick={fork}
-                disabled={forking}
-                className={cn(
-                  "inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium",
-                  "transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]",
-                  "hover:bg-muted active:scale-[0.97] disabled:opacity-50",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                )}
-              >
-                <GitFork aria-hidden className="size-3.5" />
-                Fork
-                {agent.forkCount > 0 ? (
-                  <span className="tnum text-muted-foreground">{agent.forkCount}</span>
-                ) : null}
-              </button>
-            ) : null}
 
             <ShareButton size="sm" copyValue={shareUrl} label="Share this agent" actions={[]} />
           </div>
