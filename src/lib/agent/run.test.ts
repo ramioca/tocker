@@ -5,6 +5,7 @@ import * as schema from "@/db/schema";
 import { seedKnownTokens } from "@/lib/trading/tokens";
 import { runAgent, startRun } from "./run";
 import { seedAgent, setupTestDb } from "./test-support";
+import { DEFAULT_AGENT_CONFIG } from "./config";
 
 let db: Db;
 
@@ -42,14 +43,14 @@ beforeEach(() => {
 });
 
 describe("runAgent with the scripted mock model", () => {
-  it("runs the full loop: portfolio → paid data → trade → post → finish", async () => {
+  it("runs the full loop: portfolio → discover → deep score (paid) → trade → post → finish", async () => {
     const { agentId, userId } = await seedAgent(db, {
-      config: { dataSources: ["sentimentalpha"], chains: ["solana"], tokenAllowlist: [] },
+      config: { dataSources: ["sentimentalpha"], chains: ["solana"] },
     });
 
     const result = await runAgent({ agentId, trigger: "manual" });
     expect(result.status).toBe("succeeded");
-    expect(result.summary).toContain("BONK");
+    expect(result.summary).toMatch(/bonk/i); // Jupiter reports the symbol as "Bonk"
 
     const runs = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, result.runId));
     expect(runs[0]?.status).toBe("succeeded");
@@ -65,9 +66,9 @@ describe("runAgent with the scripted mock model", () => {
       .where(eq(schema.agentRunSteps.runId, result.runId))
       .orderBy(asc(schema.agentRunSteps.seq));
     const calls = steps.filter((s) => s.kind === "tool_call").map((s) => s.toolName);
-    expect(calls).toEqual(["get_portfolio", "query_data_source", "place_trade", "finish"]);
+    expect(calls).toEqual(["get_portfolio", "discover_tokens", "score_token", "place_trade", "finish"]);
     const results = steps.filter((s) => s.kind === "tool_result");
-    expect(results).toHaveLength(4);
+    expect(results).toHaveLength(5);
     expect(results.every((s) => typeof s.durationMs === "number")).toBe(true);
     expect(steps.some((s) => s.kind === "message")).toBe(true);
     expect(steps.map((s) => s.seq)).toEqual(steps.map((_, i) => i));
@@ -136,12 +137,15 @@ describe("runAgent with the scripted mock model", () => {
     expect(notes[0]?.title).toContain("BONK");
   });
 
-  it("rejects the trade through the risk guard when the token is off the allowlist", async () => {
+  it("rejects the trade through the risk guard when the token is on the blocklist", async () => {
     const { agentId } = await seedAgent(db, {
       config: {
         dataSources: ["sentimentalpha"],
         chains: ["solana"],
-        tokenAllowlist: [{ chain: "solana", address: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", symbol: "WIF" }],
+        universe: {
+          ...DEFAULT_AGENT_CONFIG.universe,
+          blocklist: [{ chain: "solana", address: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", symbol: "BONK" }],
+        },
       },
     });
 
@@ -158,7 +162,7 @@ describe("runAgent with the scripted mock model", () => {
       .from(schema.agentRunSteps)
       .where(and(eq(schema.agentRunSteps.runId, result.runId), eq(schema.agentRunSteps.kind, "tool_result")));
     const placed = steps.find((s) => s.toolName === "place_trade");
-    expect(JSON.stringify(placed?.payload)).toContain("allowlist");
+    expect(JSON.stringify(placed?.payload)).toContain("blocklist");
   });
 
   it("refuses to run a live agent whose wallets are paper placeholders", async () => {

@@ -270,7 +270,7 @@ describe("the universe gate (what replaced the allowlist)", () => {
     expect(verdict).toEqual({ ok: true });
   });
 
-  it("refuses a blocklisted token on both sides", () => {
+  it("refuses to buy a blocklisted token but still lets the agent sell one it holds", () => {
     const blocked = agentWith({
       universe: {
         ...DEFAULT_AGENT_CONFIG.universe,
@@ -281,17 +281,44 @@ describe("the universe gate (what replaced the allowlist)", () => {
     expect(onBuy).toMatchObject({ ok: false });
     if (!onBuy.ok) expect(onBuy.reason).toContain("blocklist");
 
-    const onSell = riskGuard(
-      blocked,
-      portfolio({
+    // Blocklisting a held token is how an operator says "get out" — it must not trap the position.
+    const onSell = riskGuard(blocked, portfolio({
         positions: [
           { tokenId: `solana:${BONK}`, chain: "solana", address: BONK, symbol: "BONK", amountToken: 10, valueUsd: 200 },
         ],
-      }),
-      { ...buy, side: "sell", amountUsd: 20 },
-      scoreWith(),
-    );
-    expect(onSell).toMatchObject({ ok: false });
+      }), { ...buy, side: "sell", amountUsd: 20 }, scoreWith());
+    expect(onSell).toEqual({ ok: true });
+  });
+
+  it("lets a full exit through even when it exceeds maxTradeUsd", () => {
+    const verdict = riskGuard(agentWith(), portfolio({
+        positions: [
+          { tokenId: `solana:${BONK}`, chain: "solana", address: BONK, symbol: "BONK", amountToken: 10, valueUsd: 200 },
+        ],
+      }), { ...buy, side: "sell", amountUsd: 200 }, scoreWith());
+    expect(verdict).toEqual({ ok: true });
+  });
+
+  it("lets the agent exit after the daily trade quota is used up, but not buy", () => {
+    const busy = { tradesToday: DEFAULT_AGENT_CONFIG.risk.maxDailyTrades };
+    const sell = riskGuard(agentWith(), portfolio({ ...busy, positions: portfolio({
+        positions: [
+          { tokenId: `solana:${BONK}`, chain: "solana", address: BONK, symbol: "BONK", amountToken: 10, valueUsd: 200 },
+        ],
+      }).positions }), { ...buy, side: "sell", amountUsd: 50 }, scoreWith());
+    expect(sell).toEqual({ ok: true });
+    const again = riskGuard(agentWith(), portfolio(busy), buy, scoreWith());
+    expect(again).toMatchObject({ ok: false });
+  });
+
+  it("lets the agent exit a position on a chain that was switched off after buying", () => {
+    const baseOnly = agentWith({ chains: ["base"] });
+    const verdict = riskGuard(baseOnly, portfolio({
+        positions: [
+          { tokenId: `solana:${BONK}`, chain: "solana", address: BONK, symbol: "BONK", amountToken: 10, valueUsd: 200 },
+        ],
+      }), { ...buy, side: "sell", amountUsd: 50 }, scoreWith());
+    expect(verdict).toEqual({ ok: true });
   });
 
   it("matches the blocklist case-insensitively on address", () => {

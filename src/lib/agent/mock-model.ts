@@ -67,9 +67,19 @@ interface ScoreEcho {
   organic: number;
   distribution: number;
   momentum: number;
+  /** Present only when the score was deep, i.e. the agent paid an x402 source for it. */
+  sentiment: number | null;
+  sources: string[];
   liquidityUsd: number | null;
   holderCount: number | null;
 }
+
+/** Display names for the paid sentiment sources a deep score can fold in. */
+const PAID_SOURCE_NAMES: Record<string, string> = {
+  sentimentalpha: "SentimentAlpha",
+  "x-search": "x402Atlas X search",
+  "xquik-search": "Xquik",
+};
 
 function readNumber(source: Record<string, unknown>, key: string): number | null {
   const value = source[key];
@@ -108,6 +118,8 @@ function lastScore(options: MockGenerateOptions): ScoreEcho | null {
         organic: readNumber(components, "organic") ?? 0,
         distribution: readNumber(components, "distribution") ?? 0,
         momentum: readNumber(components, "momentum") ?? 0,
+        sentiment: readNumber(components, "sentiment"),
+        sources: Array.isArray(result.sources) ? result.sources.filter((x): x is string => typeof x === "string") : [],
         liquidityUsd: readNumber(result, "liquidityUsd"),
         holderCount: readNumber(result, "holderCount"),
       };
@@ -123,12 +135,19 @@ function money(n: number | null): string {
   return `$${n.toFixed(0)} liquidity`;
 }
 
+/** "X sentiment 74 via SentimentAlpha (paid) · " — or nothing when the score was free. */
+function paidSentiment(score: ScoreEcho): string {
+  if (score.sentiment === null) return "";
+  const paid = score.sources.map((id) => PAID_SOURCE_NAMES[id]).find(Boolean);
+  return `X sentiment ${score.sentiment}${paid ? ` via ${paid} (paid)` : ""}, `;
+}
+
 function rationaleFrom(score: ScoreEcho | null): string {
   if (score === null) {
     return "Scored the candidate before sizing: it cleared every hard gate and beat this agent's minimum score, so I am opening a starter position.";
   }
   const holders = score.holderCount === null ? "" : `, ${score.holderCount.toLocaleString("en-US")} holders`;
-  return `${score.symbol} scores ${score.total.toFixed(1)}/100 (${score.verdict}) with no hard-gate blockers: safety ${score.safety}, organic ${score.organic}, distribution ${score.distribution}, momentum ${score.momentum}. Real demand behind the volume against ${money(score.liquidityUsd)}${holders}, so the clip fills without moving it. Starter position.`;
+  return `${score.symbol} scores ${score.total.toFixed(1)}/100 (${score.verdict}) with no hard-gate blockers: ${paidSentiment(score)}safety ${score.safety}, organic ${score.organic}, distribution ${score.distribution}, momentum ${score.momentum}. Real demand behind the volume against ${money(score.liquidityUsd)}${holders}, so the clip fills without moving it. Starter position.`;
 }
 
 function summaryFrom(score: ScoreEcho | null): string {
@@ -144,8 +163,8 @@ export const MOCK_SCRIPT = [
     call: { name: "discover_tokens", input: { limit: 10 } },
   },
   {
-    text: "Scoring the strongest name on that table before I even think about sizing.",
-    call: { name: "score_token", input: { chain: "solana", address: BONK_MINT } },
+    text: "Scoring the strongest name on that table, and paying a cent for its X sentiment before I size anything.",
+    call: { name: "score_token", input: { chain: "solana", address: BONK_MINT, deep: true } },
   },
   { text: "It clears my bar. Taking a starter position.", call: { name: "place_trade", input: {} } },
   { text: "Done for this tick.", call: { name: "finish", input: {} } },

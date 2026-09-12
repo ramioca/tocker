@@ -14,10 +14,13 @@
  * gates. Concretely, a buy is refused when the token is blocklisted, has no score at
  * all, carries any blocker, has verdict `avoid`, or totals below `minScore`.
  *
- * **Sells are deliberately not score-gated.** Score thresholds decide what an agent
- * may *enter*; refusing to sell a position because the token has since deteriorated
- * would trap the agent in exactly the tokens it most needs to exit. The blocklist
- * still applies to both sides, matching the operator's "never touch this" intent.
+ * **Exits are never blocked by entry rules.** The blocklist, the score gates,
+ * `maxTradeUsd`, `maxDailyTrades` and the enabled-chain list all decide what an agent
+ * may *enter*. None of them apply to sells: blocklisting a token you hold, a position
+ * that grew past the trade cap, a busy day that used up the trade quota, or a chain
+ * switched off after buying would otherwise trap the agent in exactly the tokens it
+ * most needs to exit. A sell only has to be for a position that exists, can be
+ * priced, and is no larger than what is held.
  */
 import type { AgentConfig } from "@/db/schema";
 import type { Chain, TokenScore } from "@/server/types";
@@ -128,38 +131,39 @@ export function riskGuard(
     return { ok: false, reason: "Trade size must be a positive USD amount." };
   }
 
-  if (!agent.config.chains.includes(order.chain)) {
-    return {
-      ok: false,
-      reason: `Chain ${order.chain} is not enabled for this agent (enabled: ${agent.config.chains.join(", ") || "none"}).`,
-    };
-  }
-
-  // Subtractive and absolute: the operator said never, on either side.
-  if (isBlocklisted(agent.config, order.chain, order.tokenAddress, order.symbol)) {
-    return {
-      ok: false,
-      reason: `${order.symbol} (${order.tokenAddress}) is on this agent's blocklist. Remove it from the blocklist in settings to trade it.`,
-    };
-  }
-
-  if (order.amountUsd > risk.maxTradeUsd) {
-    return {
-      ok: false,
-      reason: `Trade size $${order.amountUsd.toFixed(2)} exceeds maxTradeUsd $${risk.maxTradeUsd.toFixed(2)}.`,
-    };
-  }
-
-  if (portfolio.tradesToday >= risk.maxDailyTrades) {
-    return {
-      ok: false,
-      reason: `Daily trade limit reached (${portfolio.tradesToday}/${risk.maxDailyTrades}).`,
-    };
-  }
-
   const position = portfolio.positions.find((p) => p.tokenId === order.tokenId);
 
   if (order.side === "buy") {
+    // Entry rules — see the header: none of these apply to exits.
+    if (!agent.config.chains.includes(order.chain)) {
+      return {
+        ok: false,
+        reason: `Chain ${order.chain} is not enabled for this agent (enabled: ${agent.config.chains.join(", ") || "none"}).`,
+      };
+    }
+
+    // Subtractive: the operator said never buy this. Selling it stays allowed.
+    if (isBlocklisted(agent.config, order.chain, order.tokenAddress, order.symbol)) {
+      return {
+        ok: false,
+        reason: `${order.symbol} (${order.tokenAddress}) is on this agent's blocklist. Remove it from the blocklist in settings to trade it.`,
+      };
+    }
+
+    if (order.amountUsd > risk.maxTradeUsd) {
+      return {
+        ok: false,
+        reason: `Trade size $${order.amountUsd.toFixed(2)} exceeds maxTradeUsd $${risk.maxTradeUsd.toFixed(2)}.`,
+      };
+    }
+
+    if (portfolio.tradesToday >= risk.maxDailyTrades) {
+      return {
+        ok: false,
+        reason: `Daily trade limit reached (${portfolio.tradesToday}/${risk.maxDailyTrades}).`,
+      };
+    }
+
     const gate = universeGate(agent.config, order, score);
     if (!gate.ok) return gate;
 

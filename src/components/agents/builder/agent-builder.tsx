@@ -101,9 +101,6 @@ export function AgentBuilder({
       tagline: draft.tagline.trim() || undefined,
       avatarSeed: draft.avatarSeed,
       isPublic: draft.isPublic,
-      // TODO(merge): PRIVACY removes `isForkable` from CreateAgentInput. When it
-      // goes, delete this line — nothing in the builder offers forking any more.
-      isForkable: false,
       llmKeyId: draft.llmKeyId,
       paperStartingUsd: draft.paperStartingUsd,
       activate: draft.activate,
