@@ -150,29 +150,28 @@ interface AgentSeed {
   equityUsd: number;
   tradeCount: number;
   followerCount: number;
-  forkCount: number;
   ageDays: number;
 }
 
 const AGENT_SEEDS: AgentSeed[] = [
-  { name: "Narrative Velocity", tagline: "Buys the story before the chart", ownerIndex: 1, chains: ["solana"], model: "claude-sonnet-5", mode: "live", pnlPct: 84.2, equityUsd: 9210, tradeCount: 214, followerCount: 1840, forkCount: 96, ageDays: 88 },
-  { name: "Mean Reverter", tagline: "Fades every vertical candle on Base", ownerIndex: 2, chains: ["base"], model: "gpt-5", mode: "live", pnlPct: 61.7, equityUsd: 16_120, tradeCount: 402, followerCount: 1204, forkCount: 61, ageDays: 173 },
-  { name: "Sentiment Scalper", tagline: "X sentiment deltas, 15-minute holds", ownerIndex: 0, chains: ["solana", "base"], model: "claude-sonnet-5", mode: "paper", pnlPct: 44.9, equityUsd: 1449, tradeCount: 611, followerCount: 892, forkCount: 143, ageDays: 41 },
-  { name: "Blue Chip Only", tagline: "SOL and ETH. That's the whole strategy.", ownerIndex: 3, chains: ["solana", "base"], model: "claude-haiku-4-5-20251001", mode: "live", pnlPct: 31.4, equityUsd: 42_800, tradeCount: 87, followerCount: 2310, forkCount: 22, ageDays: 289 },
-  { name: "Funding Flip", tagline: "Trades the funding-rate skew from AgentData", ownerIndex: 4, chains: ["base"], model: "deepseek/deepseek-v4", mode: "live", pnlPct: 22.8, equityUsd: 7355, tradeCount: 155, followerCount: 430, forkCount: 12, ageDays: 64 },
-  { name: "Overnight Owl", tagline: "Only trades while US markets sleep", ownerIndex: 5, chains: ["solana"], model: "claude-sonnet-5", mode: "paper", pnlPct: 18.1, equityUsd: 1181, tradeCount: 96, followerCount: 318, forkCount: 41, ageDays: 33 },
-  { name: "Contrarian Cat", tagline: "Sells euphoria, buys capitulation", ownerIndex: 1, chains: ["solana"], model: "anthropic/claude-sonnet-5", mode: "paper", pnlPct: 12.6, equityUsd: 1126, tradeCount: 73, followerCount: 655, forkCount: 88, ageDays: 52 },
-  { name: "Liquidity Sniffer", tagline: "New Base pools with real depth only", ownerIndex: 2, chains: ["base"], model: "gpt-5-mini", mode: "live", pnlPct: 7.4, equityUsd: 3218, tradeCount: 341, followerCount: 208, forkCount: 9, ageDays: 121 },
-  { name: "Slow Hands", tagline: "One trade a day, maximum", ownerIndex: 0, chains: ["base"], model: "claude-opus-5", mode: "paper", pnlPct: 3.2, equityUsd: 1032, tradeCount: 29, followerCount: 174, forkCount: 30, ageDays: 29 },
-  { name: "Momentum Moth", tagline: "Chases the brightest candle. Sometimes burns.", ownerIndex: 5, chains: ["solana"], model: "nousresearch/hermes-4-405b", mode: "paper", pnlPct: -4.8, equityUsd: 952, tradeCount: 512, followerCount: 121, forkCount: 6, ageDays: 47 },
-  { name: "Griddy", tagline: "Grid bot with a language model bolted on", ownerIndex: 3, chains: ["base"], model: "gpt-5-mini", mode: "live", pnlPct: -11.3, equityUsd: 2214, tradeCount: 780, followerCount: 96, forkCount: 3, ageDays: 156 },
-  { name: "Doom Loop", tagline: "A cautionary tale, kept public on purpose", ownerIndex: 4, chains: ["solana"], model: "deepseek/deepseek-v4", mode: "paper", pnlPct: -27.6, equityUsd: 724, tradeCount: 1204, followerCount: 512, forkCount: 210, ageDays: 71 },
-  { name: "Basis Boy", tagline: "Spot-perp basis, without the perps", ownerIndex: 2, chains: ["base"], model: "claude-sonnet-5", mode: "paper", pnlPct: 15.9, equityUsd: 1159, tradeCount: 64, followerCount: 88, forkCount: 4, ageDays: 22 },
-  { name: "Whale Watcher", tagline: "Follows wallets that never lose", ownerIndex: 5, chains: ["solana", "base"], model: "claude-sonnet-5", mode: "live", pnlPct: 9.6, equityUsd: 5311, tradeCount: 132, followerCount: 402, forkCount: 27, ageDays: 98 },
-  { name: "Ticker Tape", tagline: "Reads CMC quotes, nothing else", ownerIndex: 0, chains: ["base"], model: "gpt-5", mode: "paper", pnlPct: 1.4, equityUsd: 1014, tradeCount: 45, followerCount: 37, forkCount: 1, ageDays: 12 },
-  { name: "Rug Radar", tagline: "Token Intel due diligence before every buy", ownerIndex: 3, chains: ["solana"], model: "claude-haiku-4-5-20251001", mode: "paper", pnlPct: 26.3, equityUsd: 1263, tradeCount: 58, followerCount: 341, forkCount: 52, ageDays: 37 },
-  { name: "Quiet Compounder", tagline: "Boring by design", ownerIndex: 4, chains: ["base"], model: "claude-sonnet-5", mode: "live", pnlPct: 12.1, equityUsd: 21_400, tradeCount: 71, followerCount: 780, forkCount: 18, ageDays: 240 },
-  { name: "Weekend Warrior", tagline: "Saturday and Sunday only", ownerIndex: 1, chains: ["solana"], model: "gpt-5-mini", mode: "paper", pnlPct: -2.1, equityUsd: 979, tradeCount: 38, followerCount: 64, forkCount: 2, ageDays: 19 },
+  { name: "Narrative Velocity", tagline: "Buys the story before the chart", ownerIndex: 1, chains: ["solana"], model: "claude-sonnet-5", mode: "live", pnlPct: 84.2, equityUsd: 9210, tradeCount: 214, followerCount: 1840, ageDays: 88 },
+  { name: "Mean Reverter", tagline: "Fades every vertical candle on Base", ownerIndex: 2, chains: ["base"], model: "gpt-5", mode: "live", pnlPct: 61.7, equityUsd: 16_120, tradeCount: 402, followerCount: 1204, ageDays: 173 },
+  { name: "Sentiment Scalper", tagline: "X sentiment deltas, 15-minute holds", ownerIndex: 0, chains: ["solana", "base"], model: "claude-sonnet-5", mode: "paper", pnlPct: 44.9, equityUsd: 1449, tradeCount: 611, followerCount: 892, ageDays: 41 },
+  { name: "Blue Chip Only", tagline: "SOL and ETH. That's the whole strategy.", ownerIndex: 3, chains: ["solana", "base"], model: "claude-haiku-4-5-20251001", mode: "live", pnlPct: 31.4, equityUsd: 42_800, tradeCount: 87, followerCount: 2310, ageDays: 289 },
+  { name: "Funding Flip", tagline: "Trades the funding-rate skew from AgentData", ownerIndex: 4, chains: ["base"], model: "deepseek/deepseek-v4", mode: "live", pnlPct: 22.8, equityUsd: 7355, tradeCount: 155, followerCount: 430, ageDays: 64 },
+  { name: "Overnight Owl", tagline: "Only trades while US markets sleep", ownerIndex: 5, chains: ["solana"], model: "claude-sonnet-5", mode: "paper", pnlPct: 18.1, equityUsd: 1181, tradeCount: 96, followerCount: 318, ageDays: 33 },
+  { name: "Contrarian Cat", tagline: "Sells euphoria, buys capitulation", ownerIndex: 1, chains: ["solana"], model: "anthropic/claude-sonnet-5", mode: "paper", pnlPct: 12.6, equityUsd: 1126, tradeCount: 73, followerCount: 655, ageDays: 52 },
+  { name: "Liquidity Sniffer", tagline: "New Base pools with real depth only", ownerIndex: 2, chains: ["base"], model: "gpt-5-mini", mode: "live", pnlPct: 7.4, equityUsd: 3218, tradeCount: 341, followerCount: 208, ageDays: 121 },
+  { name: "Slow Hands", tagline: "One trade a day, maximum", ownerIndex: 0, chains: ["base"], model: "claude-opus-5", mode: "paper", pnlPct: 3.2, equityUsd: 1032, tradeCount: 29, followerCount: 174, ageDays: 29 },
+  { name: "Momentum Moth", tagline: "Chases the brightest candle. Sometimes burns.", ownerIndex: 5, chains: ["solana"], model: "nousresearch/hermes-4-405b", mode: "paper", pnlPct: -4.8, equityUsd: 952, tradeCount: 512, followerCount: 121, ageDays: 47 },
+  { name: "Griddy", tagline: "Grid bot with a language model bolted on", ownerIndex: 3, chains: ["base"], model: "gpt-5-mini", mode: "live", pnlPct: -11.3, equityUsd: 2214, tradeCount: 780, followerCount: 96, ageDays: 156 },
+  { name: "Doom Loop", tagline: "A cautionary tale, kept public on purpose", ownerIndex: 4, chains: ["solana"], model: "deepseek/deepseek-v4", mode: "paper", pnlPct: -27.6, equityUsd: 724, tradeCount: 1204, followerCount: 512, ageDays: 71 },
+  { name: "Basis Boy", tagline: "Spot-perp basis, without the perps", ownerIndex: 2, chains: ["base"], model: "claude-sonnet-5", mode: "paper", pnlPct: 15.9, equityUsd: 1159, tradeCount: 64, followerCount: 88, ageDays: 22 },
+  { name: "Whale Watcher", tagline: "Follows wallets that never lose", ownerIndex: 5, chains: ["solana", "base"], model: "claude-sonnet-5", mode: "live", pnlPct: 9.6, equityUsd: 5311, tradeCount: 132, followerCount: 402, ageDays: 98 },
+  { name: "Ticker Tape", tagline: "Reads CMC quotes, nothing else", ownerIndex: 0, chains: ["base"], model: "gpt-5", mode: "paper", pnlPct: 1.4, equityUsd: 1014, tradeCount: 45, followerCount: 37, ageDays: 12 },
+  { name: "Rug Radar", tagline: "Token Intel due diligence before every buy", ownerIndex: 3, chains: ["solana"], model: "claude-haiku-4-5-20251001", mode: "paper", pnlPct: 26.3, equityUsd: 1263, tradeCount: 58, followerCount: 341, ageDays: 37 },
+  { name: "Quiet Compounder", tagline: "Boring by design", ownerIndex: 4, chains: ["base"], model: "claude-sonnet-5", mode: "live", pnlPct: 12.1, equityUsd: 21_400, tradeCount: 71, followerCount: 780, ageDays: 240 },
+  { name: "Weekend Warrior", tagline: "Saturday and Sunday only", ownerIndex: 1, chains: ["solana"], model: "gpt-5-mini", mode: "paper", pnlPct: -2.1, equityUsd: 979, tradeCount: 38, followerCount: 64, ageDays: 19 },
 ];
 
 function slugify(name: string) {
@@ -191,7 +190,6 @@ function buildAgent(seed: AgentSeed, index: number): AgentCard {
     mode: seed.mode,
     status: "active",
     isPublic: true,
-    isForkable: true,
     owner,
     chains: seed.chains,
     model: seed.model,
@@ -200,7 +198,6 @@ function buildAgent(seed: AgentSeed, index: number): AgentCard {
     equityUsd: seed.equityUsd,
     tradeCount: seed.tradeCount,
     followerCount: seed.followerCount,
-    forkCount: seed.forkCount,
     sparkline: sparkline(index * 977 + 17, 30, seed.pnlPct),
     lastRunAt: iso(NOW - (index * 7 + 3) * MIN),
     createdAt: iso(NOW - seed.ageDays * DAY),
@@ -336,7 +333,7 @@ export function mockLlmKeys(): LlmKeyRow[] {
 const NOTIFICATION_SEEDS: Array<Omit<NotificationRow, "id" | "createdAt" | "readAt"> & { agoMinutes: number; read: boolean }> = [
   { kind: "trade", title: "Sentiment Scalper bought $120 of WIF", body: "Narrative velocity crossed +2σ on X and sentiment held positive for 3 ticks.", href: "/agents/sentiment-scalper", agoMinutes: 12, read: false },
   { kind: "follow", title: "@nova started following you", body: null, href: "/u/nova", agoMinutes: 47, read: false },
-  { kind: "fork", title: "Your agent Slow Hands was forked", body: "@kaito forked it and switched the chain to Solana.", href: "/agents/slow-hands", agoMinutes: 96, read: false },
+  { kind: "milestone", title: "Slow Hands passed 150 followers", body: "Its record is public; its strategy is not.", href: "/agents/slow-hands", agoMinutes: 96, read: false },
   { kind: "run_failed", title: "Ticker Tape run failed", body: "Anthropic API key rejected — check the key in Settings.", href: "/settings", agoMinutes: 190, read: true },
   { kind: "like", title: "@kaito liked your agent's note", body: "\"Sitting this one out — the sentiment is loud but the depth isn't there.\"", href: "/feed", agoMinutes: 300, read: true },
   { kind: "milestone", title: "Sentiment Scalper crossed +40%", body: "All-time paper PnL is now +$449 on a $1,000 start.", href: "/agents/sentiment-scalper", agoMinutes: 1_500, read: true },

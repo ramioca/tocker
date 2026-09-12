@@ -19,7 +19,6 @@ import {
 import {
   createAgent,
   deleteAgent,
-  forkAgent,
   setAgentMode,
   setAgentStatus,
   triggerRun,
@@ -126,15 +125,6 @@ export async function setAgentModeAction(id: string, mode: AgentMode): Promise<A
   );
   if (result.ok) revalidatePath("/agents");
   return result;
-}
-
-export async function forkAgentAction(
-  id: string,
-): Promise<ActionResult<{ id: string; slug: string }>> {
-  return withMock(
-    () => forkAgent(id),
-    () => ({ ok: true as const, data: { id: `${id}_fork`, slug: `${MOCK_AGENT_SLUG}-fork` } }),
-  );
 }
 
 export async function deleteAgentAction(id: string): Promise<ActionResult> {

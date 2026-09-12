@@ -4,7 +4,6 @@ import {
   AtSign,
   Bell,
   CircleDollarSign,
-  GitFork,
   Heart,
   MessageCircle,
   TriangleAlert,
@@ -17,7 +16,6 @@ import { dayBucket, formatAgo } from "@/components/social-common/format";
 const ICONS: Record<string, typeof Bell> = {
   trade: ArrowLeftRight,
   follow: UserPlus,
-  fork: GitFork,
   like: Heart,
   comment: MessageCircle,
   mention: AtSign,
@@ -33,8 +31,8 @@ export function NotificationList({ items, now }: { items: NotificationRow[]; now
         <Bell className="mx-auto size-5 text-muted-foreground" aria-hidden />
         <p className="mt-3 text-sm font-medium">Nothing yet</p>
         <p className="mx-auto mt-1 max-w-xs text-sm text-muted-foreground">
-          Fills, follows, forks and failed runs land here. Start an agent and it&rsquo;ll
-          fill up on its own.
+          Fills, follows, comments and failed runs land here. Start an agent and
+          it&rsquo;ll fill up on its own.
         </p>
       </div>
     );

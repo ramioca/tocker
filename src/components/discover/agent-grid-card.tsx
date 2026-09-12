@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { GitFork, Users } from "lucide-react";
+import { Activity, Users } from "lucide-react";
 import type { AgentCard as AgentCardType } from "@/server/types";
 import { AgentAvatar } from "@/components/social-common/agent-avatar";
 import { ChainBadges, ModeBadge, ModelChip } from "@/components/social-common/chain-badge";
@@ -65,8 +65,8 @@ export function AgentGridCard({ agent }: { agent: AgentCardType }) {
           {formatCount(agent.followerCount)}
         </span>
         <span className="inline-flex items-center gap-1">
-          <GitFork className="size-3" aria-hidden />
-          {formatCount(agent.forkCount)}
+          <Activity className="size-3" aria-hidden />
+          {formatCount(agent.tradeCount)}
         </span>
         <span className="ml-auto relative z-10 text-primary opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
           Open →

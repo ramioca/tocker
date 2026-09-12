@@ -12,9 +12,10 @@ import {
   users,
   type Db,
 } from "@/db";
+import type { TradeScoreSnapshot } from "@/db/schema";
 import { toNum, toNumOrNull } from "@/lib/money";
 import { pnlOverWindow } from "@/lib/pnl";
-import type { AgentCard, Chain, TokenRef, TradeRow, UserCard } from "@/server/types";
+import type { AgentCard, Chain, ScoreComponents, TokenRef, TradeRow, TradeScore, UserCard } from "@/server/types";
 
 // ---------- ids & slugs ----------
 
@@ -109,6 +110,38 @@ export function toTokenRef(row: TokenRow): TokenRef {
   };
 }
 
+function numberOrUndefined(value: number | null | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * `trades.scoreSnapshot` → `TradeRow.score`. The score is public on purpose: it is the
+ * verdict on a token at one moment, not the rules that produced it.
+ */
+export function toTradeScore(snapshot: TradeScoreSnapshot | null | undefined): TradeScore | null {
+  if (!snapshot || typeof snapshot.total !== "number") return null;
+  const raw = snapshot.components ?? {};
+  const components: Partial<ScoreComponents> = {
+    safety: numberOrUndefined(raw.safety),
+    liquidity: numberOrUndefined(raw.liquidity),
+    momentum: numberOrUndefined(raw.momentum),
+    organic: numberOrUndefined(raw.organic),
+    distribution: numberOrUndefined(raw.distribution),
+    // sentiment is explicitly nullable: null means "the agent did not pay for it".
+    sentiment: typeof raw.sentiment === "number" ? raw.sentiment : null,
+  };
+  return {
+    total: snapshot.total,
+    verdict: snapshot.verdict,
+    components,
+    blockers: snapshot.blockers ?? [],
+    warnings: snapshot.warnings ?? [],
+    liquidityUsd: snapshot.liquidityUsd ?? null,
+    ageHours: snapshot.ageHours ?? null,
+    scoredAt: snapshot.scoredAt,
+  };
+}
+
 export function toTradeRow(row: typeof trades.$inferSelect, token: TokenRef): TradeRow {
   return {
     id: row.id,
@@ -124,6 +157,7 @@ export function toTradeRow(row: typeof trades.$inferSelect, token: TokenRef): Tr
     isPaper: row.isPaper,
     txHash: row.txHash,
     rationale: row.rationale,
+    score: toTradeScore(row.scoreSnapshot),
     error: row.error,
     createdAt: row.createdAt.toISOString(),
     filledAt: iso(row.filledAt),
@@ -149,7 +183,6 @@ export interface AgentAggregates {
   sparkline: number[];
   tradeCount: number;
   followerCount: number;
-  forkCount: number;
   cashUsd: number | null;
 }
 
@@ -160,7 +193,6 @@ const EMPTY_AGG: AgentAggregates = {
   sparkline: [],
   tradeCount: 0,
   followerCount: 0,
-  forkCount: 0,
   cashUsd: null,
 };
 
@@ -174,7 +206,7 @@ export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<M
   if (ids.length === 0) return out;
   for (const id of ids) out.set(id, { ...EMPTY_AGG, sparkline: [] });
 
-  const [snapshots, tradeCounts, followerCounts, forkCounts] = await Promise.all([
+  const [snapshots, tradeCounts, followerCounts] = await Promise.all([
     db
       .select({
         agentId: equitySnapshots.agentId,
@@ -195,11 +227,6 @@ export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<M
       .from(follows)
       .where(and(eq(follows.targetType, "agent"), inArray(follows.targetId, ids)))
       .groupBy(follows.targetId),
-    db
-      .select({ forkedFromId: agents.forkedFromId, n: sql<number>`count(*)::int` })
-      .from(agents)
-      .where(inArray(agents.forkedFromId, ids))
-      .groupBy(agents.forkedFromId),
   ]);
 
   const byAgent = new Map<string, Array<{ at: Date; equityUsd: number; cashUsd: number }>>();
@@ -229,11 +256,6 @@ export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<M
     const agg = out.get(row.targetId);
     if (agg) agg.followerCount = Number(row.n ?? 0);
   }
-  for (const row of forkCounts) {
-    if (!row.forkedFromId) continue;
-    const agg = out.get(row.forkedFromId);
-    if (agg) agg.forkCount = Number(row.n ?? 0);
-  }
 
   return out;
 }
@@ -248,8 +270,8 @@ export function toAgentCard(agent: AgentRow, owner: UserCard, agg: AgentAggregat
     mode: agent.mode,
     status: agent.status,
     isPublic: agent.isPublic,
-    isForkable: agent.isForkable,
     owner,
+    // Chains and model are public (the card advertises them); the rest of `config` is not.
     chains: (agent.config?.chains ?? []) as Chain[],
     model: agent.config?.llm?.model ?? "",
     pnlUsd: agg.pnlUsd,
@@ -257,7 +279,6 @@ export function toAgentCard(agent: AgentRow, owner: UserCard, agg: AgentAggregat
     equityUsd: agg.equityUsd ?? (agent.mode === "paper" ? toNum(agent.paperStartingUsd) : null),
     tradeCount: agg.tradeCount,
     followerCount: agg.followerCount,
-    forkCount: agg.forkCount,
     sparkline: agg.sparkline,
     lastRunAt: iso(agent.lastRunAt),
     createdAt: agent.createdAt.toISOString(),

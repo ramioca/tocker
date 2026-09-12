@@ -5,6 +5,7 @@ import { AgentHeader } from "@/components/agents/agent-header";
 import { AgentStats } from "@/components/agents/agent-stats";
 import { AgentTabs } from "@/components/agents/agent-tabs";
 import { PositionsTable } from "@/components/agents/positions-table";
+import { PrivateStrategyPanel } from "@/components/agents/private-strategy";
 import { RunsTimeline } from "@/components/agents/runs-timeline";
 import { TradesTable } from "@/components/agents/trades-table";
 import { EquityChart } from "@/components/charts/equity-chart";
@@ -59,7 +60,18 @@ export default async function AgentPage({ params }: Params) {
           }
           trades={<TradesTable agentId={agent.id} />}
           runs={<RunsTimeline agentId={agent.id} agentSlug={agent.slug} />}
-          config={<AgentConfigSummary config={agent.config} />}
+          configLabel={agent.config ? "Config" : "Strategy"}
+          /**
+           * `agent.config` is already `null` for non-owners — the server never sent it.
+           * This branch only decides what fills the space, it is not the enforcement.
+           */
+          config={
+            agent.config ? (
+              <AgentConfigSummary config={agent.config} />
+            ) : (
+              <PrivateStrategyPanel agent={agent} />
+            )
+          }
         />
       </div>
     </div>

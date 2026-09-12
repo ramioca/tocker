@@ -255,7 +255,7 @@ function AgentStep({ onDone }: { onDone: () => void }) {
       <StepHeader
         icon={<Bot className="size-5" aria-hidden />}
         title="Now build something"
-        body="Describe a strategy in a sentence, pick the chains and the risk envelope, and let it run. Or start from someone else's — every public agent is forkable."
+        body="Describe a strategy in a sentence, pick the chains and the risk envelope, and let it run. It stays yours — the fills go on the feed, the strategy never leaves your account."
       />
       <div className="mt-7 flex flex-wrap items-center justify-end gap-2">
         <Link href="/discover" onClick={onDone} className={ghostButton}>

@@ -22,12 +22,14 @@ import {
   notifications,
   positions,
   posts,
+  tokenScores,
   tokens,
   trades,
   users,
   wallets,
   x402Payments,
   type AgentConfig,
+  type TradeScoreSnapshot,
 } from "./schema";
 import { applyFill, type PositionState } from "../lib/pnl";
 import { toNumeric } from "../lib/money";
@@ -340,8 +342,8 @@ const NOTE_BODIES = [
 const COMMENT_BODIES = [
   "this is the trade of the week honestly",
   "how are you sizing these? feels heavy",
-  "forked this one, curious how it does on base",
-  "the rationale logs are the best part of this app",
+  "not asking for the prompt, but what score did this clear at?",
+  "the rationale line on every fill is the best part of this app",
   "bold. respect.",
   "you got out right before the dump, nice",
 ];
@@ -364,6 +366,57 @@ function id(prefix: string): string {
   return `${prefix}_seed${counter.toString().padStart(5, "0")}`;
 }
 
+// ---------- scoring ----------
+
+/**
+ * How well each demo token tends to score. Majors sit high, fresh community tokens sit
+ * lower and noisier — enough spread that the feed's score chips look like real output.
+ */
+const TOKEN_QUALITY: Record<string, number> = {
+  SOL: 91, ETH: 93, USDC: 96, JUP: 84, AERO: 79, WIF: 69, BONK: 66, BRETT: 62, DEGEN: 57,
+};
+
+function verdictFor(total: number): TradeScoreSnapshot["verdict"] {
+  if (total < 40) return "avoid";
+  if (total < 60) return "watch";
+  if (total < 80) return "candidate";
+  return "strong";
+}
+
+const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+
+/**
+ * A plausible frozen score for one token at one moment. `floor` is the agent's
+ * `universe.minScore` on a buy (the agent would not have bought below it) and 0 on a
+ * sell, where the point is often that the score decayed.
+ */
+function buildScore(token: SeedToken, floor: number, paysForSentiment: boolean, when: Date): TradeScoreSnapshot {
+  const base = TOKEN_QUALITY[token.symbol] ?? 60;
+  const total = Math.round(clamp(base + (rand() - 0.45) * 16, Math.max(floor, 28), 97));
+  const jitter = (spread: number) => Math.round(clamp(total + (rand() - 0.5) * spread, 5, 100));
+  const warnings: string[] = [];
+  if (total < 65) warnings.push("Top-10 holders above 40% of supply");
+  if (token.vol > 0.09) warnings.push("24h realised volatility in the top decile");
+  return {
+    total,
+    verdict: verdictFor(total),
+    components: {
+      safety: jitter(10),
+      liquidity: jitter(18),
+      momentum: jitter(30),
+      organic: jitter(20),
+      distribution: jitter(16),
+      sentiment: paysForSentiment ? jitter(26) : null,
+    },
+    // A trade that happened cleared every hard gate by definition.
+    blockers: [],
+    warnings,
+    liquidityUsd: Math.round(between(40_000, 4_000_000)),
+    ageHours: Math.round(between(6, 9_000)),
+    scoredAt: new Date(when.getTime() - Math.floor(between(5_000, 240_000))).toISOString(),
+  };
+}
+
 /** Same derivation as src/lib/wallets → paper wallets, so dev addresses match. */
 function paperWallet(agentId: string, chain: "solana" | "base") {
   const digest = createHash("sha256").update(`${agentId}:${chain}`).digest("hex");
@@ -373,17 +426,41 @@ function paperWallet(agentId: string, chain: "solana" | "base") {
   };
 }
 
+/**
+ * No allowlist: the universe is a set of gates and a score floor, and the only list is
+ * the subtractive blocklist. `spec.symbols` now only decides what the simulated history
+ * happened to trade, not what the agent is permitted to touch.
+ */
+function universeFor(spec: SeedAgentSpec): AgentConfig["universe"] {
+  const aggressive = spec.aggression >= 0.7;
+  const cautious = spec.aggression <= 0.35;
+  return (
+    spec.config.universe ?? {
+      discovery: aggressive
+        ? (["new_launches", "trending", "momentum"] as const).slice()
+        : cautious
+          ? (["trending", "top_organic"] as const).slice()
+          : (["trending", "top_organic", "momentum"] as const).slice(),
+      minScore: cautious ? 74 : aggressive ? 58 : 66,
+      minLiquidityUsd: cautious ? 250_000 : aggressive ? 20_000 : 75_000,
+      minHolderCount: cautious ? 2_000 : aggressive ? 150 : 600,
+      minAgeMinutes: cautious ? 10_080 : aggressive ? 30 : 1_440,
+      maxAgeHours: null,
+      maxTop10HolderPct: cautious ? 35 : aggressive ? 62 : 48,
+      maxBuyTaxPct: cautious ? 0 : 5,
+      requireMintRevoked: true,
+      requireFreezeRevoked: true,
+      blocklist: [],
+    }
+  );
+}
+
 function fullConfig(spec: SeedAgentSpec): AgentConfig {
-  const allowlist = SEED_TOKENS.filter((t) => spec.symbols.includes(t.symbol) && spec.chains.includes(t.chain)).map((t) => ({
-    chain: t.chain,
-    address: t.address,
-    symbol: t.symbol,
-  }));
   return {
     strategyPrompt: spec.config.strategyPrompt ?? "Trade carefully.",
     dataSources: spec.config.dataSources ?? ["cmc-quotes"],
     chains: spec.chains,
-    tokenAllowlist: allowlist,
+    universe: universeFor(spec),
     risk: spec.config.risk ?? {
       maxTradeUsd: 250,
       maxDailyTrades: 6,
@@ -431,6 +508,40 @@ async function seed() {
       });
   }
 
+  // The shared score cache. Scores are not per-agent: many agents look at the same
+  // tokens, so the cache is global and refreshed on a TTL.
+  console.log("· token scores");
+  for (const t of SEED_TOKENS) {
+    if (t.quote) continue;
+    const snapshot = buildScore(t, 0, true, new Date(NOW));
+    await db
+      .insert(tokenScores)
+      .values({
+        id: tokenId(t),
+        chain: t.chain,
+        address: t.address,
+        symbol: t.symbol,
+        total: toNumeric(snapshot.total, 2),
+        verdict: snapshot.verdict,
+        components: snapshot.components,
+        blockers: snapshot.blockers,
+        warnings: snapshot.warnings,
+        priceUsd: toNumeric(paths.get(tokenId(t))![30], 12),
+        liquidityUsd: toNumeric(snapshot.liquidityUsd ?? 0, 2),
+        volume24hUsd: toNumeric(between(120_000, 18_000_000), 2),
+        marketCapUsd: toNumeric(between(2_000_000, 900_000_000), 2),
+        holderCount: Math.round(between(400, 240_000)),
+        ageHours: toNumeric(snapshot.ageHours ?? 0, 2),
+        priceChange24hPct: toNumeric(between(-22, 31), 4),
+        sources: t.chain === "solana" ? ["jupiter", "rugcheck"] : ["dexscreener", "goplus"],
+        scoredAt: new Date(NOW - Math.floor(between(0, 9 * 60_000))),
+      })
+      .onConflictDoUpdate({
+        target: tokenScores.id,
+        set: { total: toNumeric(snapshot.total, 2), verdict: snapshot.verdict, scoredAt: new Date(NOW) },
+      });
+  }
+
   console.log("· users");
   await db.insert(users).values(
     SEED_USERS.map((u, i) => ({
@@ -459,6 +570,9 @@ async function seed() {
     const quoteByChain = new Map(
       spec.chains.map((c) => [c, SEED_TOKENS.find((t) => t.chain === c && t.quote)!]),
     );
+    // Scoring is free; sentiment is the only component you have to pay for, so it is
+    // present only for agents that actually buy a sentiment source.
+    const paysForSentiment = config.dataSources.some((s) => s === "sentimentalpha" || s === "xquik-search");
 
     console.log(`· agent ${spec.slug}`);
 
@@ -472,8 +586,6 @@ async function seed() {
       mode: "paper",
       status: "active",
       isPublic: true,
-      isForkable: true,
-      forkedFromId: null,
       llmKeyId: null,
       config,
       paperStartingUsd: spec.startingUsd.toFixed(2),
@@ -636,6 +748,14 @@ async function seed() {
 
         const tradeId = id("trade");
         const createdAt = at(day, 9 + n * 2 + Math.floor(between(0, 2)));
+        // The score at the moment of the trade, frozen onto the row so later re-scoring
+        // cannot rewrite the record. Public: it is a verdict, not the rules behind it.
+        const scoreSnapshot = buildScore(
+          token,
+          side === "buy" ? config.universe.minScore : 0,
+          paysForSentiment,
+          createdAt,
+        );
         tradeRows.push({
           id: tradeId,
           agentId,
@@ -653,6 +773,7 @@ async function seed() {
           isPaper: true,
           txHash: null,
           rationale: (side === "buy" ? pick(BUY_RATIONALES) : pick(SELL_RATIONALES)).replaceAll("$SYM", `$${token.symbol}`),
+          scoreSnapshot,
           error: null,
           createdAt,
           filledAt: new Date(createdAt.getTime() + 2500),
@@ -820,11 +941,12 @@ async function seed() {
       userId: you.id,
       kind: "comment",
       title: "@mila commented on your post",
-      body: "forked this one, curious how it does on base",
+      body: "not asking for the prompt, but what score did this clear at?",
       href: "/feed",
       readAt: new Date(NOW - 20 * 3_600_000),
       createdAt: new Date(NOW - 26 * 3_600_000),
     },
+    // No "fork" notification: forking does not exist.
   );
   if (notificationRows.length) await db.insert(notifications).values(notificationRows);
 

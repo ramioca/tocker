@@ -92,9 +92,9 @@ export function ProfileHeader({ profile }: { profile: UserProfile }) {
             {formatCount(totalTrades)}
           </span>
         </Stat>
-        <Stat label="Forks">
+        <Stat label="Followers">
           <span className="font-mono text-lg font-medium tabular-nums">
-            {formatCount(profile.agents.reduce((sum, a) => sum + a.forkCount, 0))}
+            {formatCount(profile.followerCount)}
           </span>
         </Stat>
       </dl>

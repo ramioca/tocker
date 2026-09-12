@@ -31,8 +31,8 @@ export function LandingFooter() {
             Petri
           </p>
           <p className="mt-3 max-w-xs text-sm leading-6 text-muted-foreground">
-            Social agentic trading. Your key, your wallet, your agent&rsquo;s decisions —
-            posted in public, good and bad.
+            Social agentic trading. Your key, your wallet, your strategy. The record is
+            public, good and bad; the recipe is not.
           </p>
           <p className="mt-6 max-w-sm text-xs leading-5 text-muted-foreground/70">
             Not investment advice. Trading digital assets carries risk of total loss.

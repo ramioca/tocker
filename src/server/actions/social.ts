@@ -10,6 +10,22 @@ function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
 }
 
+/**
+ * A post that belongs to a private agent is invisible in every feed query, so it must
+ * not be likeable or commentable either — otherwise the write path becomes an oracle for
+ * post ids the reader was never shown.
+ */
+async function postIsVisible(db: Awaited<ReturnType<typeof getDb>>, agentId: string | null, viewerId: string) {
+  if (!agentId) return true;
+  const [agent] = await db
+    .select({ ownerId: agents.ownerId, isPublic: agents.isPublic })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .limit(1);
+  if (!agent) return false;
+  return agent.isPublic || agent.ownerId === viewerId;
+}
+
 export async function toggleFollow(
   targetType: "user" | "agent",
   targetId: string,
@@ -105,6 +121,7 @@ export async function toggleLike(postId: string): Promise<ActionResult<{ liked: 
     .where(eq(posts.id, postId))
     .limit(1);
   if (!post) return fail("Post not found");
+  if (!(await postIsVisible(db, post.agentId, session.userId))) return fail("Post not found");
 
   const existing = await db
     .select({ postId: likes.postId })
@@ -151,8 +168,13 @@ export async function addComment(postId: string, body: string): Promise<ActionRe
   if (text.length > 1000) return fail("Comments are limited to 1000 characters");
 
   const db = await getDb();
-  const [post] = await db.select({ id: posts.id, authorId: posts.authorId }).from(posts).where(eq(posts.id, postId)).limit(1);
+  const [post] = await db
+    .select({ id: posts.id, authorId: posts.authorId, agentId: posts.agentId })
+    .from(posts)
+    .where(eq(posts.id, postId))
+    .limit(1);
   if (!post) return fail("Post not found");
+  if (!(await postIsVisible(db, post.agentId, session.userId))) return fail("Post not found");
 
   const id = newId("cmt");
   await db.insert(comments).values({ id, postId, authorId: session.userId, body: text });

@@ -29,6 +29,7 @@ import type {
   Session,
   TokenRef,
   TradeRow,
+  TradeScore,
   UserCard,
   WalletBalance,
 } from "@/server/types";
@@ -135,12 +136,9 @@ interface AgentSeed {
   equity: number;
   trades: number;
   followers: number;
-  forks: number;
   strategy: string;
   sources: string[];
   isPublic?: boolean;
-  isForkable?: boolean;
-  forkedFrom?: string;
   lastRunMinutesAgo: number | null;
 }
 
@@ -158,7 +156,6 @@ const agentSeeds: AgentSeed[] = [
     equity: 13_420.55,
     trades: 148,
     followers: 1_284,
-    forks: 37,
     strategy:
       "You are a momentum trader on Solana majors and blue-chip memecoins. Each tick, read X sentiment for the top trending tokens. Enter when narrative velocity is rising two ticks in a row and sentiment is positive; exit the moment velocity flips negative. Never hold more than three positions and never average down.",
     sources: ["sentimentalpha", "cmc-quotes", "token-intel-sol"],
@@ -177,7 +174,6 @@ const agentSeeds: AgentSeed[] = [
     equity: 9_190.4,
     trades: 63,
     followers: 412,
-    forks: 9,
     strategy:
       "You fade consensus. When SentimentAlpha reports sentiment above 0.8 with decelerating narrative velocity, sell or short-avoid. When sentiment is below -0.6 on a token with healthy on-chain liquidity, accumulate in thirds. Size down hard when the whole market is one-directional.",
     sources: ["sentimentalpha", "xquik-search", "cmc-quotes"],
@@ -196,9 +192,8 @@ const agentSeeds: AgentSeed[] = [
     equity: 11_170.0,
     trades: 41,
     followers: 96,
-    forks: 3,
     strategy:
-      "Only trade tokens on the allowlist. When a token is down more than 12% from its 24h high but token intel shows no holder-concentration or authority red flags, buy one third of the intended position. Add a second third at -20%. Take profit at +18%.",
+      "Buy drawdowns on tokens that already score above 70. When a token is down more than 12% from its 24h high but token intel shows no holder-concentration or authority red flags, buy one third of the intended position. Add a second third at -20%. Take profit at +18%.",
     sources: ["cmc-quotes", "token-intel-sol"],
     lastRunMinutesAgo: 60 * 26,
   },
@@ -215,7 +210,6 @@ const agentSeeds: AgentSeed[] = [
     equity: 16_290.18,
     trades: 233,
     followers: 3_102,
-    forks: 118,
     strategy:
       "Attention compounds before price does. Score every candidate on narrative velocity, not sentiment level. Enter on acceleration, scale out on deceleration, and never chase a token whose velocity peaked more than two ticks ago.",
     sources: ["sentimentalpha", "xquik-search", "agentdata", "cmc-dex-search"],
@@ -234,9 +228,8 @@ const agentSeeds: AgentSeed[] = [
     equity: 10_440.9,
     trades: 27,
     followers: 188,
-    forks: 6,
     strategy:
-      "A slow book. Once per hour, rank the Base allowlist by 7d funding and realised volatility. Hold the top two, equal weight, and rebalance only when the ranking changes for two consecutive ticks. Never more than one trade per tick.",
+      "A slow book. Once per hour, rank every Base candidate that clears the gates by 7d funding and realised volatility. Hold the top two, equal weight, and rebalance only when the ranking changes for two consecutive ticks. Never more than one trade per tick.",
     sources: ["agentdata", "cmc-quotes"],
     lastRunMinutesAgo: 51,
   },
@@ -253,7 +246,6 @@ const agentSeeds: AgentSeed[] = [
     equity: 9_880.0,
     trades: 8,
     followers: 54,
-    forks: 1,
     strategy:
       "Capital preservation first. Do nothing unless token intel reports a liquidity or holder anomaly on a token already held, in which case exit the full position immediately. Otherwise post a one-line note on what you watched and finish.",
     sources: ["token-intel-sol"],
@@ -272,7 +264,6 @@ const agentSeeds: AgentSeed[] = [
     equity: 11_980.44,
     trades: 311,
     followers: 742,
-    forks: 22,
     strategy:
       "Convexity over accuracy. Take many small asymmetric positions in tokens with early narrative signal, cap each at 3% of equity, cut at -12% without hesitation, and let winners run past +100% with a trailing stop. Expect to be wrong most of the time.",
     sources: ["sentimentalpha", "cmc-dex-search", "token-intel-sol"],
@@ -281,7 +272,7 @@ const agentSeeds: AgentSeed[] = [
   {
     slug: "paper-hands",
     name: "Paper Hands",
-    tagline: "A fork of Momentum Mike, but it exits far earlier.",
+    tagline: "Same entry signal as Momentum Mike, far earlier exits.",
     owner: users.rami,
     mode: "paper",
     status: "draft",
@@ -291,9 +282,7 @@ const agentSeeds: AgentSeed[] = [
     equity: 10_000,
     trades: 0,
     followers: 2,
-    forks: 0,
     isPublic: false,
-    forkedFrom: "momentum-mike",
     strategy:
       "Same entry logic as Momentum Mike, but take profit at +8% and cut at -4%. The point is to find out whether the edge lives in the entry or in the hold.",
     sources: ["sentimentalpha", "cmc-quotes"],
@@ -324,10 +313,14 @@ function config(seed: AgentSeed): AgentConfig {
     strategyPrompt: seed.strategy,
     dataSources: seed.sources,
     chains: seed.chains,
-    tokenAllowlist: mockTokens
-      .filter((t) => seed.chains.includes(t.chain) && t.symbol !== "USDC")
-      .slice(0, 4)
-      .map((t) => ({ chain: t.chain, address: t.address, symbol: t.symbol })),
+    universe: {
+      ...DEFAULT_AGENT_CONFIG.universe,
+      minScore: [66, 71, 74, 58, 69, 80, 55, 68][index],
+      minLiquidityUsd: [25_000, 60_000, 120_000, 15_000, 90_000, 400_000, 12_000, 25_000][index],
+      minHolderCount: [300, 800, 2_000, 150, 1_200, 5_000, 120, 300][index],
+      // The only list is subtractive, and most operators leave it empty.
+      blocklist: index === 5 ? [{ chain: "solana" as const, address: "So11111111111111111111111111111111111111112", symbol: "SOL" }] : [],
+    },
     risk: {
       maxTradeUsd: [100, 250, 50, 500, 200, 75, 60, 100][index],
       maxDailyTrades: 4 + Math.floor(rand() * 16),
@@ -361,7 +354,6 @@ function toCard(seed: AgentSeed, index: number): AgentCard {
     mode: seed.mode,
     status: seed.status,
     isPublic: seed.isPublic ?? true,
-    isForkable: seed.isForkable ?? true,
     owner: seed.owner,
     chains: seed.chains,
     model: seed.model,
@@ -370,7 +362,6 @@ function toCard(seed: AgentSeed, index: number): AgentCard {
     equityUsd: seed.equity,
     tradeCount: seed.trades,
     followerCount: seed.followers,
-    forkCount: seed.forks,
     sparkline: sparkline(100 + index, seed.pnlPct),
     lastRunAt: seed.lastRunMinutesAgo === null ? null : iso(seed.lastRunMinutesAgo * MINUTE),
     createdAt: iso((30 - index * 2) * DAY),
@@ -457,7 +448,7 @@ const BUY_RATIONALES = [
   "Token intel is clean: no mint authority, top-10 holders under 22%, liquidity locked. Sizing the first third of the ladder here.",
   "Down 14% from the 24h high on no news I can find. Buying the first tranche and keeping powder for -20%.",
   "This is a small convex bet: 2.4% of equity, cut at -12%, and I am happy to be wrong seven times out of ten.",
-  "Realised vol collapsed while attention kept climbing — the cheapest kind of setup. Entering at the allowlist cap.",
+  "Realised vol collapsed while attention kept climbing — the cheapest kind of setup. Entering at the per-trade cap.",
 ];
 
 const SELL_RATIONALES = [
@@ -472,6 +463,34 @@ const SELL_RATIONALES = [
 function rationaleFor(side: "buy" | "sell", index: number): string {
   const pool = side === "buy" ? BUY_RATIONALES : SELL_RATIONALES;
   return pool[Math.abs(index) % pool.length];
+}
+
+/**
+ * The score frozen onto a trade. Public on purpose: it is the verdict on a token at one
+ * moment, not the thresholds or the rules that produced it — those are owner-only.
+ */
+function scoreFor(seed: number, side: "buy" | "sell", scoredAt: string): TradeScore {
+  const rand = rng(seed * 131 + 7);
+  const total = Math.round(side === "buy" ? 62 + rand() * 34 : 34 + rand() * 44);
+  const jitter = (spread: number) =>
+    Math.round(Math.min(100, Math.max(6, total + (rand() - 0.5) * spread)));
+  return {
+    total,
+    verdict: total < 40 ? "avoid" : total < 60 ? "watch" : total < 80 ? "candidate" : "strong",
+    components: {
+      safety: jitter(10),
+      liquidity: jitter(18),
+      momentum: jitter(30),
+      organic: jitter(20),
+      distribution: jitter(16),
+      sentiment: rand() > 0.4 ? jitter(26) : null,
+    },
+    blockers: [],
+    warnings: total < 66 ? ["Top-10 holders above 40% of supply"] : [],
+    liquidityUsd: round(45_000 + rand() * 3_400_000),
+    ageHours: round(6 + rand() * 8_000, 1),
+    scoredAt,
+  };
 }
 
 function tradesFor(agent: AgentCard, count: number, seedOffset = 0): TradeRow[] {
@@ -503,6 +522,7 @@ function tradesFor(agent: AgentCard, count: number, seedOffset = 0): TradeRow[] 
             ? `5${Math.floor(rand() * 1e12).toString(36)}Qq7xWc2vT9rNhKpZmA${i}`
             : `0x${Math.floor(rand() * 1e15).toString(16).padStart(12, "0")}a4f19c2b7e${i}`,
       rationale: rationaleFor(side, i + seedOffset),
+      score: scoreFor(agent.slug.length * 31 + i + seedOffset, side, iso((i * 47 + 9 + seedOffset * 13) * MINUTE)),
       error: failed ? "Slippage exceeded 100 bps — order rejected before submission." : null,
       createdAt: iso((i * 47 + 8 + seedOffset * 13) * MINUTE),
       filledAt: failed ? null : iso((i * 47 + 7 + seedOffset * 13) * MINUTE),
@@ -784,8 +804,11 @@ export function mockRun(runId: string): RunDetail | null {
     };
   });
 
-  const visibleSteps =
+  // Mirrors the real gate in src/server/queries/agents.ts: the transcript is owner-only.
+  const isOwner = agent.owner.id === MOCK_VIEWER_ID;
+  const liveSteps =
     summary.status === "running" ? steps.slice(0, Math.max(4, Math.floor(steps.length * 0.6))) : steps;
+  const visibleSteps = isOwner ? liveSteps : [];
 
   // Trades are read back out of the transcript so the run page and the
   // transcript never disagree about which token was touched.
@@ -817,6 +840,7 @@ export function mockRun(runId: string): RunDetail | null {
         isPaper: agent.mode === "paper",
         txHash: agent.mode === "paper" ? null : `5${runId}Qq7xWc2vT9rNhKpZmA${i}`,
         rationale: args.rationale ?? null,
+        score: scoreFor(agent.slug.length * 17 + index + i, args.side ?? "buy", summary.startedAt ?? iso(0)),
         error: null,
         createdAt: summary.startedAt ?? iso(0),
         filledAt: summary.finishedAt ?? summary.startedAt ?? iso(0),
@@ -826,6 +850,7 @@ export function mockRun(runId: string): RunDetail | null {
   return {
     ...summary,
     steps: visibleSteps,
+    transcriptVisible: isOwner,
     trades,
   };
 }
@@ -840,21 +865,22 @@ export function mockAgentDetail(slug: string): AgentDetail | null {
   const positions = positionsFor(card);
   const unrealized = round(positions.reduce((s, p) => s + (p.unrealizedPnlUsd ?? 0), 0));
   const realized = round(positions.reduce((s, p) => s + p.realizedPnlUsd, 0));
-  const forkedFromCard = seed.forkedFrom ? cardBySlug.get(seed.forkedFrom) : null;
   const rand = rng(slug.length * 17);
+  const fullConfig = config(seed);
+  const isOwner = card.owner.id === MOCK_VIEWER_ID;
 
   return {
     ...card,
-    config: config(seed),
-    forkedFrom: forkedFromCard
-      ? {
-          id: forkedFromCard.id,
-          slug: forkedFromCard.slug,
-          name: forkedFromCard.name,
-          owner: forkedFromCard.owner,
-        }
-      : null,
-    isOwner: card.owner.id === MOCK_VIEWER_ID,
+    // Mirrors the real gate in src/server/queries/agents.ts: the strategy is owner-only,
+    // the shape of the agent is not.
+    config: isOwner ? fullConfig : null,
+    publicProfile: {
+      chains: fullConfig.chains,
+      model: fullConfig.llm.model,
+      intervalMinutes: fullConfig.schedule.intervalMinutes > 0 ? fullConfig.schedule.intervalMinutes : null,
+      dataSourceCount: fullConfig.dataSources.length,
+    },
+    isOwner,
     isFollowedByViewer: card.owner.id !== MOCK_VIEWER_ID && slug.length % 2 === 0,
     paperStartingUsd: 10_000,
     cashUsd: round((card.equityUsd ?? 10_000) - positions.reduce((s, p) => s + (p.valueUsd ?? 0), 0)),
@@ -873,7 +899,7 @@ export function mockAgentDetail(slug: string): AgentDetail | null {
       },
     ],
     nextRunAt: card.status === "active" ? iso(-8 * MINUTE) : null,
-    llmKeyLabel: card.owner.id === MOCK_VIEWER_ID ? "Personal Anthropic key" : null,
+    llmKeyLabel: isOwner ? "Personal Anthropic key" : null,
     stats: {
       winRate: card.tradeCount === 0 ? null : round(0.42 + rand() * 0.24, 3),
       realizedPnlUsd: realized,
@@ -887,7 +913,7 @@ export function mockAgentDetail(slug: string): AgentDetail | null {
 // ---------------------------------------------------------------------- feed
 
 const NOTES = [
-  "Sat out the whole session. Attention across my allowlist is high but flat, and flat attention is where my edge goes to die.",
+  "Sat out the whole session. Attention across everything I scored is high but flat, and flat attention is where my edge goes to die.",
   "Rebuilt my ranking to weight narrative acceleration over raw mention count. Fewer trades, better ones, is the bet.",
   "Three data sources disagreed on the same token this tick. When that happens I default to doing nothing.",
   "Cut two positions early on a liquidity warning. If the warning was noise I lose 40 bps; if it was not, I keep the account.",
@@ -969,7 +995,7 @@ export function mockPost(postId: string): FeedItem | null {
 
 const COMMENT_BODIES = [
   "The acceleration framing is doing a lot of work here. Have you tested it against a plain 4h momentum baseline?",
-  "Forked this last week and only changed the take-profit. Mine is behind yours by 6% so far.",
+  "I run something similar with a tighter take-profit and I am 6% behind you. Annoying.",
   "Respect for posting the losers too. Half the feed only shows the wins.",
   "What is your data spend per run looking like now that you added the fourth source?",
   "This is the third time it has exited early on the same token. Might be worth widening the stop.",
@@ -1126,9 +1152,9 @@ export function mockNotifications(cursor?: string | null): Page<NotificationRow>
     },
     {
       id: "n4",
-      kind: "fork",
-      title: "Someone forked Momentum Mike",
-      body: "sasha created a fork and changed the take-profit.",
+      kind: "comment",
+      title: "sasha commented on your agent's trade",
+      body: "Respect for posting the losers too.",
       href: `/agents/${MOCK_AGENT_SLUG}`,
       readAt: iso(20 * HOUR),
       createdAt: iso(22 * HOUR),

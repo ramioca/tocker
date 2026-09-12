@@ -10,7 +10,6 @@ import {
   positions,
   tokens,
   trades,
-  users,
   wallets,
   x402Payments,
 } from "@/db";
@@ -41,19 +40,19 @@ import {
   pageSize,
   toTokenRef,
   toTradeRow,
-  toUserCard,
   type AgentRow,
 } from "./_shared";
+import { isAgentOwner, toPublicProfile, visibleConfig, visibleSteps } from "./visibility";
 
 async function detailFor(agent: AgentRow | undefined, viewerId?: string | null): Promise<AgentDetail | null> {
   if (!agent) return null;
   const db = await getDb();
-  const isOwner = Boolean(viewerId && viewerId === agent.ownerId);
+  const isOwner = isAgentOwner(agent.ownerId, viewerId);
   if (!agent.isPublic && !isOwner) return null;
 
   const since = new Date(Date.now() - 30 * 86_400_000);
 
-  const [aggregates, positionRows, equityRows, walletRows, tradeRows, spendRow, runCountRow, followed, forkedFrom, keyRow] =
+  const [aggregates, positionRows, equityRows, walletRows, tradeRows, spendRow, runCountRow, followed, keyRow] =
     await Promise.all([
       loadAgentAggregates(db, [agent.id]),
       db
@@ -89,14 +88,6 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
         .where(eq(x402Payments.agentId, agent.id)),
       db.select({ n: sql<number>`count(*)::int` }).from(agentRuns).where(eq(agentRuns.agentId, agent.id)),
       isFollowing(db, viewerId, "agent", agent.id),
-      agent.forkedFromId
-        ? db
-            .select({ agent: agents, owner: users })
-            .from(agents)
-            .innerJoin(users, eq(users.id, agents.ownerId))
-            .where(eq(agents.id, agent.forkedFromId))
-            .limit(1)
-        : Promise.resolve([]),
       agent.llmKeyId
         ? db
             .select({ label: llmKeys.label, provider: llmKeys.provider, last4: llmKeys.last4 })
@@ -160,16 +151,16 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
     marks,
   });
 
-  const forked = forkedFrom[0];
   const key = keyRow[0];
 
   return {
     ...card,
     equityUsd: equity.at(-1)?.equityUsd ?? equitySnapshot.equityUsd,
-    config: agent.config,
-    forkedFrom: forked
-      ? { id: forked.agent.id, slug: forked.agent.slug, name: forked.agent.name, owner: toUserCard(forked.owner) }
-      : null,
+    // THE GATE. The strategy prompt, universe rules, thresholds and data-source list
+    // never leave the server for anyone but the owner. Everyone else gets the shape of
+    // the agent (chains, model, cadence, how many sources it buys) and nothing more.
+    config: visibleConfig(agent.config, isOwner),
+    publicProfile: toPublicProfile(agent.config),
     isOwner,
     isFollowedByViewer: followed,
     paperStartingUsd: toNum(agent.paperStartingUsd),
@@ -331,26 +322,37 @@ export async function getRun(runId: string, viewerId?: string | null): Promise<R
     .where(eq(agentRuns.id, runId))
     .limit(1);
   if (!row) return null;
-  if (!row.agent.isPublic && row.agent.ownerId !== viewerId) return null;
+  const isOwner = isAgentOwner(row.agent.ownerId, viewerId);
+  if (!row.agent.isPublic && !isOwner) return null;
 
   const [summary] = await summarizeRuns([row.run]);
+  // Non-owners never need the step rows, so don't read them at all — the cheapest way
+  // to be sure they cannot be serialised into the payload by accident.
   const [steps, tradeRows] = await Promise.all([
-    db.select().from(agentRunSteps).where(eq(agentRunSteps.runId, runId)).orderBy(asc(agentRunSteps.seq)),
+    isOwner
+      ? db.select().from(agentRunSteps).where(eq(agentRunSteps.runId, runId)).orderBy(asc(agentRunSteps.seq))
+      : Promise.resolve([] as Array<typeof agentRunSteps.$inferSelect>),
     db.select().from(trades).where(eq(trades.runId, runId)).orderBy(asc(trades.createdAt)),
   ]);
   const tokenMap = await loadTokens(db, tradeRows.map((t) => t.tokenId));
 
   return {
     ...summary,
-    steps: steps.map((s) => ({
-      id: s.id,
-      seq: s.seq,
-      kind: s.kind,
-      toolName: s.toolName,
-      payload: s.payload,
-      durationMs: s.durationMs,
-      createdAt: s.createdAt.toISOString(),
-    })),
+    // Status, summary, duration, spend and trades stay public; the transcript does not.
+    // It shows which sources were queried, with what arguments, in what order — the system.
+    steps: visibleSteps(
+      steps.map((s) => ({
+        id: s.id,
+        seq: s.seq,
+        kind: s.kind,
+        toolName: s.toolName,
+        payload: s.payload,
+        durationMs: s.durationMs,
+        createdAt: s.createdAt.toISOString(),
+      })),
+      isOwner,
+    ),
+    transcriptVisible: isOwner,
     trades: tradeRows.flatMap((t) => {
       const token = tokenMap.get(t.tokenId);
       return token ? [toTradeRow(t, token)] : [];

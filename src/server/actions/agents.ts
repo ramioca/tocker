@@ -1,19 +1,23 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
-import { agentRuns, agents, getDb, llmKeys, notifications, posts } from "@/db";
+import { agentRuns, agents, getDb, llmKeys, posts } from "@/db";
 import { agentConfigSchema, type AgentConfigInput } from "@/lib/agent/config";
 import { getSession } from "@/lib/auth";
 import { createAgentWallets } from "@/lib/wallets";
 import { newId, uniqueSlug } from "@/server/queries/_shared";
 import type { ActionResult, AgentMode, AgentStatus } from "@/server/types";
 
+/**
+ * Note the absence of any "forkable" flag. Copying someone's agent is not a setting the
+ * operator can turn on — it does not exist. A strategy is the operator's IP; the track
+ * record is what gets published.
+ */
 export interface CreateAgentInput {
   name: string;
   tagline?: string;
   avatarSeed?: string;
   isPublic: boolean;
-  isForkable: boolean;
   llmKeyId: string | null;
   config: AgentConfigInput;
   paperStartingUsd?: number;
@@ -83,7 +87,6 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
       mode: "paper",
       status: activate ? "active" : "draft",
       isPublic: input.isPublic,
-      isForkable: input.isForkable,
       llmKeyId: input.llmKeyId,
       config,
       paperStartingUsd: paperStartingUsd.toFixed(2),
@@ -128,7 +131,6 @@ export async function updateAgent(id: string, input: Partial<CreateAgentInput>):
   if (input.tagline !== undefined) patch.tagline = input.tagline.trim() || null;
   if (input.avatarSeed !== undefined) patch.avatarSeed = input.avatarSeed.trim() || null;
   if (input.isPublic !== undefined) patch.isPublic = input.isPublic;
-  if (input.isForkable !== undefined) patch.isForkable = input.isForkable;
   if (input.paperStartingUsd !== undefined) {
     if (!(input.paperStartingUsd > 0)) return fail("Paper starting balance must be positive");
     patch.paperStartingUsd = input.paperStartingUsd.toFixed(2);
@@ -190,74 +192,6 @@ export async function setAgentMode(id: string, mode: AgentMode): Promise<ActionR
   await db.update(agents).set({ mode, updatedAt: new Date() }).where(eq(agents.id, id));
   revalidateAgent(agent.slug, session.handle);
   return { ok: true, data: undefined };
-}
-
-export async function forkAgent(id: string): Promise<ActionResult<{ id: string; slug: string }>> {
-  const session = await getSession();
-  if (!session) return fail("Sign in to fork an agent");
-
-  const db = await getDb();
-  const [source] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
-  if (!source) return fail("Agent not found");
-  if (!source.isPublic && source.ownerId !== session.userId) return fail("This agent is private");
-  if (!source.isForkable && source.ownerId !== session.userId) return fail("This agent is not forkable");
-
-  const name = `${source.name} (fork)`.slice(0, 60);
-  const newAgentId = newId("agent");
-  const slug = await uniqueSlug(name, db);
-
-  try {
-    await db.insert(agents).values({
-      id: newAgentId,
-      ownerId: session.userId,
-      slug,
-      name,
-      tagline: source.tagline,
-      avatarSeed: slug,
-      mode: "paper",
-      status: "draft",
-      isPublic: true,
-      isForkable: true,
-      forkedFromId: source.id,
-      llmKeyId: null, // never copy the original's key
-      config: source.config,
-      paperStartingUsd: source.paperStartingUsd,
-    });
-
-    await createAgentWallets({
-      agentId: newAgentId,
-      userId: session.userId,
-      name,
-      chains: source.config?.chains,
-    });
-
-    await db.insert(posts).values({
-      id: newId("post"),
-      authorId: session.userId,
-      agentId: newAgentId,
-      kind: "agent_created",
-      body: `Forked ${source.name}.`,
-    });
-
-    if (source.ownerId !== session.userId) {
-      await db.insert(notifications).values({
-        id: newId("ntf"),
-        userId: source.ownerId,
-        kind: "fork",
-        title: `@${session.handle} forked ${source.name}`,
-        body: `${name} is now trading on its own.`,
-        href: `/agents/${slug}`,
-      });
-    }
-  } catch (err) {
-    await db.delete(agents).where(eq(agents.id, newAgentId));
-    console.error("[forkAgent]", err);
-    return fail(err instanceof Error ? err.message : "Could not fork the agent");
-  }
-
-  revalidateAgent(slug, session.handle);
-  revalidatePath(`/agents/${source.slug}`);
-  return { ok: true, data: { id: newAgentId, slug } };
 }
 
 export async function deleteAgent(id: string): Promise<ActionResult> {

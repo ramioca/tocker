@@ -26,7 +26,7 @@ export default async function AgentSettingsPage({ params }: Params) {
       <div className="mx-auto w-full max-w-2xl px-4 py-10 sm:px-6">
         <EmptyState
           title="These settings are not yours"
-          description={`${agent.name} belongs to @${agent.owner.handle}. You can fork it instead and change your own copy.`}
+          description={`${agent.name} belongs to @${agent.owner.handle}. You can follow it and read its record, but only its owner can change how it trades.`}
           action={
             <Link
               href={`/agents/${agent.slug}`}
@@ -39,6 +39,11 @@ export default async function AgentSettingsPage({ params }: Params) {
       </div>
     );
   }
+
+  // `isOwner` is decided server-side; `config` is non-null exactly when it is true.
+  // Belt and braces: if the gate ever disagrees with itself, this 404s rather than
+  // rendering an editor over someone else's strategy.
+  if (!agent.config) notFound();
 
   const balances = await walletBalances(agent.id);
 
@@ -63,7 +68,7 @@ export default async function AgentSettingsPage({ params }: Params) {
       </header>
 
       <div className="mt-6 space-y-6">
-        <AgentSettingsForm agent={agent} />
+        <AgentSettingsForm agent={agent} config={agent.config} />
         <WalletsCard agentId={agent.id} agentName={agent.name} initialBalances={balances} />
         <GoLiveCard agent={agent} />
         <WithdrawForm agent={agent} />

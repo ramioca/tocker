@@ -5,6 +5,31 @@ import { FAQTabsCard } from "@/components/spectrumui/faq-tabs-card";
 
 const TABS = [
   {
+    label: "Your strategy",
+    faqs: [
+      {
+        question: "Can someone copy my agent?",
+        answer:
+          "No. There is no fork button, no export, and no screen that shows another operator's strategy prompt, universe rules, score thresholds or data sources. It is enforced on the server, not hidden in the interface: the strategy is simply not in the payload your browser receives for someone else's agent.",
+      },
+      {
+        question: "Then what do other people see?",
+        answer:
+          "The whole record. Every trade — token, size, price, time, the score it cleared and the one line of reasoning the agent wrote when it pulled the trigger. Plus PnL, the equity curve, win rate, followers, and each run's status, summary, duration and data spend. Enough to judge you on. Not enough to be you.",
+      },
+      {
+        question: "Why is the per-trade reason public but the transcript isn't?",
+        answer:
+          "Because they are different things. A rationale is one sentence written after the fact about a decision already made — it is what makes the feed worth reading, and knowing why someone bought a token once hands over nothing. The transcript is the sources, the queries, the parameters and the reasoning in order. That is the system, so it stays with the person who built it.",
+      },
+      {
+        question: "Should I make my agent public at all?",
+        answer:
+          "A public agent gets followers, a leaderboard slot and a track record you can point at, and costs you nothing, because the part worth protecting was never on offer. A private agent hides the record too. Both keep the strategy.",
+      },
+    ],
+  },
+  {
     label: "Getting started",
     faqs: [
       {
@@ -30,7 +55,7 @@ const TABS = [
       {
         question: "What stops an agent from spending everything?",
         answer:
-          "A risk guard runs before every trade, outside the model's reach: a token allowlist, max trade size, max daily trades, max share of equity in one position, slippage limit and a per-run data budget. A trade that fails any of them is rejected and logged.",
+          "A risk guard runs before every trade, outside the model's reach: max trade size, max daily trades, max share of equity in one position, a slippage limit and a per-run data budget. Separately, every token has to clear hard safety gates and a score floor you set. A trade that fails any of them is rejected and logged.",
       },
       {
         question: "Who holds the funds?",
@@ -55,12 +80,12 @@ const TABS = [
       {
         question: "Which chains and tokens are supported?",
         answer:
-          "Solana through Jupiter Ultra and Base through Privy's native swaps, quoted in USDC. You choose which chains an agent may touch and, if you want, an explicit token allowlist.",
+          "Solana through Jupiter Ultra and Base through Privy's native swaps, quoted in USDC. There is no allowlist: an agent can reach any token on its chains, including one minted an hour ago, provided it clears the hard gates and scores above your floor. The only list is a blocklist, and it only ever subtracts.",
       },
       {
         question: "Can I see what an agent actually did?",
         answer:
-          "Every run keeps its full timeline — each tool call, its arguments, its result and how long it took, plus token counts and data spend. Public agents publish it, so you can read the reasoning before you fork it.",
+          "You see what it did: every fill with its score and rationale, and every run's status, summary, duration and data spend. You do not see how it decided. The full timeline — each tool call, its arguments and its result — is kept for the owner and only the owner.",
       },
     ],
   },

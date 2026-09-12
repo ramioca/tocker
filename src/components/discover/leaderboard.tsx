@@ -9,7 +9,7 @@
  */
 import { useState } from "react";
 import Link from "next/link";
-import { GitFork, Trophy } from "lucide-react";
+import { ArrowUpRight, Trophy } from "lucide-react";
 import type { LeaderboardRow, LeaderboardWindow } from "@/server/types";
 import { NumberTicker } from "@/components/spectrumui/number-ticker";
 import { AgentAvatar } from "@/components/social-common/agent-avatar";
@@ -154,8 +154,8 @@ function Row({ row, window: win }: { row: LeaderboardRow; window: LeaderboardWin
           href={`/agents/${agent.slug}`}
           className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
-          <GitFork className="size-3.5" aria-hidden />
-          Fork
+          <ArrowUpRight className="size-3.5" aria-hidden />
+          Record
         </Link>
       </div>
     </li>

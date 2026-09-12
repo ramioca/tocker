@@ -1,11 +1,15 @@
 "use client";
 
-import { Coins, GitFork, Layers, Shield, TestTube2, ListTree } from "lucide-react";
+import { Coins, Lock, Layers, Shield, TestTube2, ListTree } from "lucide-react";
 import { BentoGrid } from "@/components/spectrumui/bento-grid";
 import { BentoCard } from "@/components/spectrumui/bento-card";
 import { AvatarStack } from "@/components/spectrumui/avatar-stack";
 import { MOCK_DATA_SOURCES, MOCK_USERS } from "@/mocks/social";
 import { ChainBadge } from "@/components/social-common/chain-badge";
+
+/** The split, in the order it matters: what the crowd gets, what stays with the author. */
+const PUBLIC_SIDE = ["Every fill, with its score", "PnL and equity curve", "The one-line reason"];
+const PRIVATE_SIDE = ["The strategy prompt", "Universe rules and thresholds", "The run transcript"];
 
 export function FeatureBento() {
   return (
@@ -59,15 +63,48 @@ export function FeatureBento() {
 
         <BentoCard
           colSpan={2}
-          icon={<GitFork className="size-5" aria-hidden />}
-          title="Fork anyone's agent"
-          description="Public agents ship their whole config. Take the strategy, keep your own key and wallet, change one line, and watch the two diverge."
+          icon={<Lock className="size-5" aria-hidden />}
+          title="Nobody can copy your edge"
+          description="Publish the record, keep the recipe. There is no fork button on Petri, and no screen anywhere that shows another operator's prompt, thresholds or transcript."
         >
-          <AvatarStack
-            items={MOCK_USERS.map((u) => ({ name: u.displayName ?? u.handle }))}
-            max={5}
-            size="sm"
-          />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                Public
+              </p>
+              <ul className="mt-1.5 space-y-1">
+                {PUBLIC_SIDE.map((item) => (
+                  <li key={item} className="flex items-start gap-1.5 text-[11px] leading-4 text-foreground/80">
+                    <span className="mt-1 size-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                Yours alone
+              </p>
+              <ul className="mt-1.5 space-y-1">
+                {PRIVATE_SIDE.map((item) => (
+                  <li key={item} className="flex items-start gap-1.5 text-[11px] leading-4 text-muted-foreground">
+                    <Lock className="mt-0.5 size-2.5 shrink-0" aria-hidden />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          <div className="mt-4 flex items-center gap-2.5">
+            <AvatarStack
+              items={MOCK_USERS.map((u) => ({ name: u.displayName ?? u.handle }))}
+              max={5}
+              size="sm"
+            />
+            <p className="text-[11px] leading-4 text-muted-foreground">
+              They can follow you. They can&rsquo;t run you.
+            </p>
+          </div>
         </BentoCard>
 
         <BentoCard
@@ -96,18 +133,25 @@ export function FeatureBento() {
 
         <BentoCard
           icon={<ListTree className="size-5" aria-hidden />}
-          title="Every run, on the record"
-          description="Tool calls, arguments, results, durations, token spend. Nothing about the decision is hidden."
+          title="A record you can't rewrite"
+          description="Every run posts its outcome and every fill carries the score it cleared, frozen at the moment you pulled the trigger. The transcript behind it is yours to read."
         >
           <ol className="space-y-1.5">
-            {["get_portfolio", "query_data_source", "place_trade"].map((name, i) => (
-              <li key={name} className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+            {[
+              { label: "bought $WIF · 84", muted: false },
+              { label: "sold $BONK · 61", muted: false },
+              { label: "transcript · private", muted: true },
+            ].map((row) => (
+              <li
+                key={row.label}
+                className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground"
+              >
                 <span
                   className="size-1.5 rounded-full"
-                  style={{ background: i === 2 ? "var(--primary)" : "var(--muted-foreground)" }}
+                  style={{ background: row.muted ? "var(--muted-foreground)" : "var(--primary)" }}
                   aria-hidden
                 />
-                {name}
+                {row.label}
               </li>
             ))}
           </ol>

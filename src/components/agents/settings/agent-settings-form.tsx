@@ -17,20 +17,23 @@ import { cn } from "@/lib/utils";
 import type { AgentConfig } from "@/db/schema";
 import type { AgentDetail } from "@/server/types";
 
-export function AgentSettingsForm({ agent }: { agent: AgentDetail }) {
+/**
+ * Owner-only screen: the page 404s / bounces anyone else, and `agent.config` is `null`
+ * for non-owners anyway, so this component takes the config as a non-null prop rather
+ * than guessing.
+ */
+export function AgentSettingsForm({ agent, config: initialConfig }: { agent: AgentDetail; config: AgentConfig }) {
   const router = useRouter();
   const [name, setName] = useState(agent.name);
   const [tagline, setTagline] = useState(agent.tagline ?? "");
   const [isPublic, setIsPublic] = useState(agent.isPublic);
-  const [isForkable, setIsForkable] = useState(agent.isForkable);
-  const [config, setConfig] = useState<AgentConfig>(agent.config);
+  const [config, setConfig] = useState<AgentConfig>(initialConfig);
 
   const dirty =
     name !== agent.name ||
     tagline !== (agent.tagline ?? "") ||
     isPublic !== agent.isPublic ||
-    isForkable !== agent.isForkable ||
-    JSON.stringify(config) !== JSON.stringify(agent.config);
+    JSON.stringify(config) !== JSON.stringify(initialConfig);
 
   const save = async () => {
     if (name.trim().length < 2) {
@@ -41,7 +44,6 @@ export function AgentSettingsForm({ agent }: { agent: AgentDetail }) {
       name: name.trim(),
       tagline: tagline.trim() || undefined,
       isPublic,
-      isForkable: isPublic && isForkable,
       config,
     });
     if (!result.ok) {
@@ -126,23 +128,13 @@ export function AgentSettingsForm({ agent }: { agent: AgentDetail }) {
           />
         </Field>
 
-        <div className="grid gap-2 sm:grid-cols-2">
-          <Toggle
-            id="settings-public"
-            label="Public"
-            description="Its trades and reasoning are visible to everyone."
-            checked={isPublic}
-            onChange={setIsPublic}
-          />
-          <Toggle
-            id="settings-forkable"
-            label="Forkable"
-            description="Others may copy the config — never the key or the wallet."
-            checked={isForkable}
-            onChange={setIsForkable}
-            disabled={!isPublic}
-          />
-        </div>
+        <Toggle
+          id="settings-public"
+          label="Public"
+          description="Its trades, PnL and run summaries are visible to everyone. This strategy, its universe rules and its transcripts stay yours either way."
+          checked={isPublic}
+          onChange={setIsPublic}
+        />
       </section>
 
       <section className="space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
