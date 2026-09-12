@@ -333,6 +333,13 @@ export const tokenScores = pgTable(
     ageHours: numeric("age_hours", { precision: 14, scale: 2 }),
     priceChange24hPct: numeric("price_change_24h_pct", { precision: 12, scale: 4 }),
     sources: jsonb("sources").$type<string[]>().notNull(),
+    /**
+     * Fingerprint of the `universe` rules this row was scored under. The gates are
+     * per-agent, so a cached verdict is only reusable by an agent whose thresholds
+     * match — otherwise a permissive agent's row would let a strict one buy.
+     * Null on legacy rows, which are treated as a cache miss.
+     */
+    universeKey: text("universe_key"),
     scoredAt: timestamp("scored_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("token_scores_verdict_idx").on(t.verdict, t.total), index("token_scores_scored_idx").on(t.scoredAt)],

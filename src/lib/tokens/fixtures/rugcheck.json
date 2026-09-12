@@ -1,0 +1,179 @@
+{
+ "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": {
+  "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "tokenType": "",
+  "risks": [
+   {
+    "name": "Mutable metadata",
+    "value": "",
+    "description": "Token metadata can be changed by the owner",
+    "score": 100,
+    "level": "warn"
+   }
+  ],
+  "score": 101,
+  "score_normalised": 7,
+  "lpLockedPct": 21.109786164607872
+ },
+ "METvsvVRapdj9cFLzq4Tr43xK4tAjQfwX76z3n6mWQL": {
+  "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "tokenType": "",
+  "risks": [
+   {
+    "name": "Mutable metadata",
+    "value": "",
+    "description": "Token metadata can be changed by the owner",
+    "score": 100,
+    "level": "warn"
+   }
+  ],
+  "score": 101,
+  "score_normalised": 7,
+  "lpLockedPct": 56.47586829611061
+ },
+ "98sMhvDwXj1RQi5c5Mndm3vPe9cBqPrbLaufMXFNMh5g": {
+  "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "tokenType": "",
+  "risks": [
+   {
+    "name": "Mint Authority still enabled",
+    "value": "",
+    "description": "More tokens can be minted by the owner",
+    "score": 50000,
+    "level": "danger"
+   }
+  ],
+  "score": 50001,
+  "score_normalised": 71,
+  "lpLockedPct": 0.010082560222320973
+ },
+ "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx": {
+  "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "tokenType": "",
+  "risks": [],
+  "score": 1,
+  "score_normalised": 1,
+  "lpLockedPct": 0.02948655188548543
+ },
+ "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R": {
+  "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "tokenType": "",
+  "risks": [
+   {
+    "name": "Top 10 holders high ownership",
+    "value": "",
+    "description": "The top 10 users hold more than 70% token supply",
+    "score": 7657,
+    "level": "danger"
+   },
+   {
+    "name": "Single holder ownership",
+    "value": "22.22%",
+    "description": "One user holds a large amount of the token supply",
+    "score": 4719,
+    "level": "warn"
+   },
+   {
+    "name": "Single holder ownership",
+    "value": "24.97%",
+    "description": "One user holds a large amount of the token supply",
+    "score": 2497,
+    "level": "warn"
+   },
+   {
+    "name": "Missing file metadata",
+    "value": "",
+    "description": "No file metadata found associated to this token",
+    "score": 500,
+    "level": "warn"
+   },
+   {
+    "name": "Mutable metadata",
+    "value": "",
+    "description": "Token metadata can be changed by the owner",
+    "score": 100,
+    "level": "warn"
+   }
+  ],
+  "score": 15474,
+  "score_normalised": 56,
+  "lpLockedPct": 99.99191056441751
+ },
+ "5dvXTZ5qwgafnHtwu3Ls3QrWx1U4LQsFeCuJgkk4QEC6": {
+  "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "tokenType": "",
+  "risks": [
+   {
+    "name": "Large Amount of LP Unlocked",
+    "value": "84.00%",
+    "description": "A large amount of LP tokens are unlocked, allowing the owner to remove liquidity at any point.",
+    "score": 9399,
+    "level": "danger"
+   }
+  ],
+  "score": 9400,
+  "score_normalised": 49,
+  "lpLockedPct": 16.00498761920247
+ },
+ "A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS": {
+  "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "tokenType": "",
+  "risks": [
+   {
+    "name": "Mint Authority still enabled",
+    "value": "",
+    "description": "More tokens can be minted by the owner",
+    "score": 50000,
+    "level": "danger"
+   },
+   {
+    "name": "Mutable metadata",
+    "value": "",
+    "description": "Token metadata can be changed by the owner",
+    "score": 100,
+    "level": "warn"
+   }
+  ],
+  "score": 50101,
+  "score_normalised": 71,
+  "lpLockedPct": 0.36406747860446215
+ },
+ "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij": {
+  "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "tokenType": "",
+  "risks": [
+   {
+    "name": "Mint Authority still enabled",
+    "value": "",
+    "description": "More tokens can be minted by the owner",
+    "score": 50000,
+    "level": "danger"
+   },
+   {
+    "name": "Freeze Authority still enabled",
+    "value": "",
+    "description": "Tokens can be frozen and prevented from trading",
+    "score": 25000,
+    "level": "danger"
+   },
+   {
+    "name": "Mutable metadata",
+    "value": "",
+    "description": "Token metadata can be changed by the owner",
+    "score": 100,
+    "level": "warn"
+   }
+  ],
+  "score": 75101,
+  "score_normalised": 76,
+  "lpLockedPct": 0.04414816925302183
+ },
+ "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn": {
+  "tokenProgram": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+  "tokenType": "",
+  "risks": [],
+  "score": 1,
+  "score_normalised": 1,
+  "lpLockedPct": 0.04228885915315692
+ }
+}
