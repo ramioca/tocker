@@ -1,0 +1,13 @@
+{
+  "new_pools": {
+    "data": [
+      { "id": "base_0xpool1", "relationships": { "base_token": { "data": { "id": "base_0x940181a94a35a4569e4529a3cdfb74e38fd98631" } } } },
+      { "id": "base_0xpool2", "relationships": { "base_token": { "data": { "id": "base_0x4200000000000000000000000000000000000006" } } } }
+    ]
+  },
+  "trending_pools": {
+    "data": [
+      { "id": "base_0xpool3", "relationships": { "base_token": { "data": { "id": "base_0x532f27101965dd16442e59d40670faf5ebb142e4" } } } }
+    ]
+  }
+}

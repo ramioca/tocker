@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { getLeaderboard, getTopDataSources } from "@/server/queries/discover";
+import { getFreshLaunches, getLeaderboard, getTopDataSources } from "@/server/queries/discover";
 import { listPublicAgents } from "@/server/queries/agents";
 import { withMock } from "@/lib/data";
 import { mockLeaderboard, mockPublicAgents, mockTopDataSources } from "@/mocks/social";
@@ -41,10 +41,12 @@ export default async function DiscoverPage() {
     ),
   ]);
 
-  // TODO(merge): TOKENS owns the real read. Swap for
-  //   withMock(() => getRecentTokenScores({ limit: 12 }), () => mockFreshLaunches(12))
-  // once `src/lib/tokens` (or a server query wrapping it) exists.
-  const freshLaunches = mockFreshLaunches(12);
+  // Real sweep, scored under the platform's default rules (free providers only).
+  // A provider outage returns fewer rows, never an error page.
+  const freshLaunches = await withMock(
+    () => getFreshLaunches(12).catch(() => []),
+    () => mockFreshLaunches(12),
+  );
 
   const leaderboard: Record<LeaderboardWindow, LeaderboardRow[]> = {
     "7d": sevenDay,

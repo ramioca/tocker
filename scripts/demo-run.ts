@@ -27,6 +27,7 @@ import { getPortfolio } from "../src/lib/agent/portfolio";
 import { seedKnownTokens } from "../src/lib/trading/tokens";
 
 process.env.X402_MOCK = process.env.X402_MOCK ?? "1";
+process.env.TOKENS_MOCK = process.env.TOKENS_MOCK ?? "1";
 process.env.LLM_MOCK = process.env.LLM_MOCK ?? "1";
 
 const DEMO_USER_ID = "did:privy:demo-runtime";

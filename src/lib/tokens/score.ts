@@ -28,7 +28,7 @@
  */
 import type { AgentConfig } from "@/db/schema";
 import type { ScoreComponents, ScoreVerdict, TokenScore } from "@/server/types";
-import type { JupiterStats, ScoreInput, TokenFacts } from "./types";
+import type { GoPlusSecurity, JupiterStats, ScoreInput, TokenFacts } from "./types";
 
 export type Universe = AgentConfig["universe"];
 
@@ -116,6 +116,19 @@ function bestStats(input: ScoreInput): JupiterStats | null {
  * Collapses the raw provider payloads into one chain-agnostic view. Exported because
  * discovery pre-ranks on the same numbers and the score cache stores them.
  */
+/**
+ * EVM has no mint *authority*, only mint *functions*. One is a live risk only while
+ * an owner can call it, so a mintable contract whose owner renounced (and cannot
+ * reclaim, and is not hidden) is not treated as mint-enabled. It still costs safety
+ * points and carries the `contract_is_mintable` warning, because a separate minter
+ * role can outlive the owner and GoPlus cannot see it.
+ */
+function evmMintDisabled(gp: GoPlusSecurity | null | undefined): boolean | null {
+  if (!gp || gp.isMintable === null) return null;
+  if (!gp.isMintable) return true;
+  return gp.ownerRenounced === true && gp.canTakeBackOwnership !== true && gp.hiddenOwner !== true;
+}
+
 export function toFacts(input: ScoreInput): TokenFacts {
   const now = input.now ?? Date.now();
   const jup = input.jupiter ?? null;
@@ -151,8 +164,7 @@ export function toFacts(input: ScoreInput): TokenFacts {
     priceChange24hPct: stats24h?.priceChange ?? dex?.priceChange24hPct ?? null,
     // Solana authorities come from Jupiter's audit; the EVM equivalent of a live mint
     // authority is GoPlus's `is_mintable`, and EVM has no freeze authority at all.
-    mintAuthorityDisabled:
-      jup?.audit?.mintAuthorityDisabled ?? (gp?.isMintable === null || gp?.isMintable === undefined ? null : !gp.isMintable),
+    mintAuthorityDisabled: jup?.audit?.mintAuthorityDisabled ?? evmMintDisabled(gp),
     freezeAuthorityDisabled:
       jup?.audit?.freezeAuthorityDisabled ??
       (gp === null ? null : gp.transferPausable === null ? null : !gp.transferPausable),

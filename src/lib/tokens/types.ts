@@ -162,6 +162,12 @@ export interface GoPlusSecurity {
   isMintable: boolean | null;
   isProxy: boolean | null;
   canTakeBackOwnership: boolean | null;
+  /**
+   * True when `owner_address` is empty, the zero address, or the dead address.
+   * A mint function behind a renounced owner cannot be called by the owner — though
+   * a separate minter role could still exist, which GoPlus cannot see.
+   */
+  ownerRenounced: boolean | null;
   hiddenOwner: boolean | null;
   transferPausable: boolean | null;
   cannotSellAll: boolean | null;

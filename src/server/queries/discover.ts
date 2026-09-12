@@ -4,7 +4,9 @@ import { agents, equitySnapshots, getDb, tokens, trades, x402Payments } from "@/
 import { DATA_SOURCES } from "@/lib/data-sources/registry";
 import { toNum } from "@/lib/money";
 import { pnlOverWindow, WINDOW_DAYS } from "@/lib/pnl";
-import type { DataSourceInfo, LeaderboardRow, LeaderboardWindow, TrendingToken } from "@/server/types";
+import type { DataSourceInfo, LeaderboardRow, LeaderboardWindow, TokenScore, TrendingToken } from "@/server/types";
+import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { discoverCandidates, getTokenScore } from "@/lib/tokens";
 import { buildAgentCards, toTokenRef } from "./_shared";
 
 /**
@@ -135,4 +137,73 @@ export async function getTopDataSources(
   const seen = new Set(used.map((u) => u.id));
   const rest = DATA_SOURCES.filter((s) => !seen.has(s.id)).map((s) => ({ ...s, agentCount: 0, spendUsd: 0 }));
   return [...used, ...rest].slice(0, limit);
+}
+
+// ---------------------------------------------------------------------------
+// Fresh launches — the public scoreboard on /discover
+// ---------------------------------------------------------------------------
+
+const FRESH_TTL_MS = 5 * 60_000;
+const FRESH_SWEEP_SIZE = 24;
+const freshCache: { at: number; limit: number; rows: TokenScore[] } = { at: 0, limit: 0, rows: [] };
+let freshInFlight: Promise<TokenScore[]> | null = null;
+
+/**
+ * What the discovery feeds turned up recently, fully scored.
+ *
+ * Scored under the platform's **default** universe, never an agent's. An agent's
+ * gates are part of its private strategy, and a public verdict such as
+ * "liquidity below floor" computed under someone's thresholds would leak them.
+ *
+ * Only free, keyless providers are used, so this never spends money. The result is
+ * cached in-process for five minutes and concurrent requests share one sweep.
+ */
+export async function getFreshLaunches(limit = 12): Promise<TokenScore[]> {
+  const now = Date.now();
+  if (freshCache.rows.length > 0 && freshCache.limit >= limit && now - freshCache.at < FRESH_TTL_MS) {
+    return freshCache.rows.slice(0, limit);
+  }
+  if (!freshInFlight) {
+    freshInFlight = sweepFreshLaunches(Math.max(limit, 12))
+      .then((rows) => {
+        if (rows.length > 0) Object.assign(freshCache, { at: Date.now(), limit: Math.max(limit, 12), rows });
+        return rows;
+      })
+      .finally(() => {
+        freshInFlight = null;
+      });
+  }
+  const rows = await freshInFlight;
+  return rows.slice(0, limit);
+}
+
+async function sweepFreshLaunches(limit: number): Promise<TokenScore[]> {
+  const universe = DEFAULT_AGENT_CONFIG.universe;
+  const candidates = await discoverCandidates({
+    chains: ["solana", "base"],
+    feeds: ["new_launches", "trending", "top_organic"],
+    universe,
+    limit: FRESH_SWEEP_SIZE,
+  });
+
+  // Score the most promising slice fully; the rest of the sweep is only pre-ranked.
+  const shortlist = [...candidates]
+    .sort((a, b) => (b.quickScore ?? -1) - (a.quickScore ?? -1))
+    .slice(0, limit);
+
+  const scored = await Promise.allSettled(
+    shortlist.map((c) =>
+      getTokenScore({
+        chain: c.token.chain,
+        address: c.token.address,
+        universe,
+        maxTradeUsd: DEFAULT_AGENT_CONFIG.risk.maxTradeUsd,
+        symbolHint: c.token.symbol,
+      }),
+    ),
+  );
+
+  return scored
+    .flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))
+    .sort((a, b) => b.total - a.total);
 }

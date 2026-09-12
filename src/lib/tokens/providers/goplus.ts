@@ -69,6 +69,20 @@ function lpLockedPct(value: unknown): number | null {
   return locked === null ? null : Math.min(100, locked);
 }
 
+const DEAD_OWNERS = new Set([
+  "0x0000000000000000000000000000000000000000",
+  "0x000000000000000000000000000000000000dead",
+]);
+
+/** `""` / zero / dead → renounced; a real address → not; field absent → unknown. */
+export function ownerRenounced(value: unknown): boolean | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") return null;
+  const owner = value.trim().toLowerCase();
+  if (owner === "") return true;
+  return DEAD_OWNERS.has(owner);
+}
+
 export function parseGoPlusSecurity(address: string, value: unknown): GoPlusSecurity | null {
   const r = asRecord(value);
   if (!r || Object.keys(r).length === 0) return null;
@@ -83,6 +97,7 @@ export function parseGoPlusSecurity(address: string, value: unknown): GoPlusSecu
     isMintable: flag(r.is_mintable),
     isProxy: flag(r.is_proxy),
     canTakeBackOwnership: flag(r.can_take_back_ownership),
+    ownerRenounced: ownerRenounced(r.owner_address),
     hiddenOwner: flag(r.hidden_owner),
     transferPausable: flag(r.transfer_pausable),
     cannotSellAll: flag(r.cannot_sell_all),

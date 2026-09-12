@@ -8,9 +8,12 @@
  *      discovery sweep asks about the same mints repeatedly;
  *   4. fan-out to one provider never exceeds {@link MAX_CONCURRENCY}.
  *
- * With `TOKENS_MOCK=1` (or `X402_MOCK=1`, which the demo and the test suite already
- * set) providers read local fixtures instead and the process makes no network calls
- * at all.
+ * With `TOKENS_MOCK=1` providers read local fixtures instead and the process makes
+ * no network calls at all. The test suite and `pnpm demo` set it for determinism.
+ *
+ * This is deliberately independent of `X402_MOCK`: every provider here is free and
+ * keyless, so a keyless dev setup still sees real, live launches being scored while
+ * the x402 payments stay simulated.
  */
 
 export const REQUEST_TIMEOUT_MS = 8_000;
@@ -19,7 +22,7 @@ export const MAX_CONCURRENCY = 8;
 
 /** True when discovery and scoring should run entirely from fixtures. */
 export function isTokensMock(): boolean {
-  return process.env.TOKENS_MOCK === "1" || process.env.X402_MOCK === "1";
+  return process.env.TOKENS_MOCK === "1";
 }
 
 interface Entry<T> {

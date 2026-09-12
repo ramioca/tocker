@@ -6,6 +6,8 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.ts"],
     globals: false,
+    // Token providers hit Jupiter / DexScreener / GoPlus / RugCheck live otherwise.
+    env: { TOKENS_MOCK: "1" },
   },
   resolve: {
     alias: {

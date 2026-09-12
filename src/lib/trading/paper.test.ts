@@ -1,7 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { setupTestDb } from "@/lib/agent/test-support";
 import { computePaperCash, PaperExecutor, PAPER_FEE_BPS } from "./paper";
 import { applyFillToPosition, EMPTY_POSITION } from "./positions";
 import type { TradeRequest } from "./executor";
+
+// The price path reads the tokens table. Use a throwaway in-memory database so the
+// suite never touches (or depends on) the developer's ./.pglite.
+beforeAll(async () => {
+  await setupTestDb();
+});
 
 const BONK = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
 

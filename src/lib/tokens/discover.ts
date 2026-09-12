@@ -19,6 +19,7 @@
  */
 import type { Chain, DiscoveryFeed, TokenCandidate, TokenRef } from "@/server/types";
 import { getDexScreenerTokens, getLatestTokenProfiles, getTopBoostedTokens } from "./providers/dexscreener";
+import { getGeckoPoolTokens } from "./providers/geckoterminal";
 import { getJupiterRecent, getJupiterTopOrganic, getJupiterTopTraded } from "./providers/jupiter";
 import { hardGates, toFacts, type Universe } from "./score";
 import type { DexScreenerToken, JupiterToken, TokenFacts } from "./types";
@@ -126,15 +127,18 @@ function fromDexScreener(token: DexScreenerToken, origin: DiscoveryFeed, ctx: Di
  * payload. Safety gates (mint authority, honeypot, taxes) cannot be evaluated here,
  * so they stay for `scoreToken`.
  */
+//
+// Only *known* violations are rejected here. An unknown (Base has no holder count in
+// any discovery payload; Aerodrome pairs omit their creation time) defers to
+// `scoreToken`, which fills the gap from GoPlus / RugCheck and still emits the
+// `*_unknown` blocker if it cannot — so the risk guard refuses the buy either way.
+// Rejecting unknowns here silently emptied every Base sweep.
 const FREE_GATES = new Set([
   "blocklisted",
   "liquidity_below_floor",
-  "liquidity_unknown",
   "holders_below_floor",
-  "holder_count_unknown",
   "age_below_min",
   "age_above_max",
-  "age_unknown",
 ]);
 
 function passesFreeGates(candidate: TokenCandidate, universe: Universe): boolean {
@@ -200,24 +204,25 @@ async function sweepBase(feeds: ReadonlySet<DiscoveryFeed>, ctx: DiscoveryContex
   const wanted = new Map<string, DiscoveryFeed>();
 
   const jobs: Array<Promise<void>> = [];
+  const want = (address: string, origin: DiscoveryFeed) => {
+    const key = address.toLowerCase();
+    if (!wanted.has(key)) wanted.set(key, origin);
+  };
   if (feeds.has("new_launches")) {
+    // GeckoTerminal is the real Base new-pool feed; DexScreener profiles are mostly Solana.
+    jobs.push(getGeckoPoolTokens("new_pools").then((rows) => rows.forEach((a) => want(a, "new_launches"))));
     jobs.push(
       getLatestTokenProfiles().then((rows) => {
-        for (const p of rows) {
-          if (p.chainId !== "base") continue;
-          if (!wanted.has(p.tokenAddress.toLowerCase())) wanted.set(p.tokenAddress.toLowerCase(), "new_launches");
-        }
+        for (const p of rows) if (p.chainId === "base") want(p.tokenAddress, "new_launches");
       }),
     );
   }
   // Base has no organic feed, so `top_organic` falls back to trending (see SPEC).
   if (feeds.has("trending") || feeds.has("momentum") || feeds.has("top_organic")) {
+    jobs.push(getGeckoPoolTokens("trending_pools").then((rows) => rows.forEach((a) => want(a, "trending"))));
     jobs.push(
       getTopBoostedTokens().then((rows) => {
-        for (const p of rows) {
-          if (p.chainId !== "base") continue;
-          if (!wanted.has(p.tokenAddress.toLowerCase())) wanted.set(p.tokenAddress.toLowerCase(), "trending");
-        }
+        for (const p of rows) if (p.chainId === "base") want(p.tokenAddress, "trending");
       }),
     );
   }
@@ -249,6 +254,40 @@ async function sweepBase(feeds: ReadonlySet<DiscoveryFeed>, ctx: DiscoveryContex
  * Never throws: a provider that is down contributes nothing and the sweep continues
  * with whatever the others returned.
  */
+/**
+ * Assets discovery never surfaces: stablecoins, the USDC quote asset, and wrapped
+ * natives / BTC / ETH. They score "strong" on every safety metric, so without this
+ * they crowd the top of every sweep and invite nonsense like buying USDC with USDC.
+ * Agents can still trade majors by naming them — this only shapes what is *found*.
+ */
+const NON_CANDIDATE_ADDRESSES = new Set(
+  [
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC (Solana)
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT (Solana)
+    "So11111111111111111111111111111111111111112", // wrapped SOL
+    "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // USDC (Base)
+    "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA", // USDbC (Base)
+    "0x4200000000000000000000000000000000000006", // WETH (Base)
+    "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", // cbBTC (Base)
+  ].map((a) => a.toLowerCase()),
+);
+// Explicit list on purpose: a prefix rule like /^USD/ would also drop memecoins.
+const NON_CANDIDATE_SYMBOL = new RegExp(
+  "^(?:" +
+    [
+      "W?SOL", "W?ETH", "W?BTC", "CBBTC", "CBETH", "WSTETH", "JITOSOL", "MSOL", "BSOL", "JUPSOL",
+      "USDC", "USDT", "USDS", "USDE", "USDG", "USDH", "USDB", "USDBC", "USDX", "USDY", "USD0", "USD1",
+      "PYUSD", "FDUSD", "TUSD", "GUSD", "LUSD", "SUSD", "BUSD", "CRVUSD", "DAI", "EURC", "EUROC",
+    ].join("|") +
+    ")$",
+  "i",
+);
+
+export function isDiscoveryCandidate(token: { address: string; symbol: string }): boolean {
+  if (NON_CANDIDATE_ADDRESSES.has(token.address.toLowerCase())) return false;
+  return !NON_CANDIDATE_SYMBOL.test(token.symbol.trim());
+}
+
 export async function discoverCandidates(input: DiscoverInput): Promise<TokenCandidate[]> {
   const now = input.now ?? Date.now();
   const limit = Math.max(1, Math.min(input.limit ?? DEFAULT_DISCOVERY_LIMIT, 100));
@@ -282,7 +321,7 @@ export async function discoverCandidates(input: DiscoverInput): Promise<TokenCan
   }
 
   return Array.from(byId.values())
-    .filter((c) => passesFreeGates(c, universe))
+    .filter((c) => isDiscoveryCandidate(c.token) && passesFreeGates(c, universe))
     .sort((a, b) => (b.quickScore ?? 0) - (a.quickScore ?? 0))
     .slice(0, limit);
 }
