@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AVATAR_SEEDS, emptyDraft, type BuilderDraft } from "./types";
 
-const STORAGE_KEY = "petri:agent-builder-draft:v1";
+// v2: the allowlist became a universe. A v1 draft cannot be migrated honestly
+// — it has no discovery feeds and no bar — so it is simply not restored.
+const STORAGE_KEY = "petri:agent-builder-draft:v2";
 
 /**
  * The builder is seven steps long and people close tabs. The draft is restored
@@ -21,7 +23,17 @@ export function useDraft() {
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<BuilderDraft>;
         // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage cannot be read during SSR, so restoring a saved draft is necessarily a post-mount effect
-        setDraft((current) => ({ ...current, ...parsed, config: { ...current.config, ...parsed.config } }));
+        setDraft((current) => ({
+          ...current,
+          ...parsed,
+          config: {
+            ...current.config,
+            ...parsed.config,
+            // The universe is nested, so a shallow spread would drop any key a
+            // saved draft predates.
+            universe: { ...current.config.universe, ...parsed.config?.universe },
+          },
+        }));
         setRestored(true);
       } else {
         // Vary the starting avatar, but only after hydration — a random value in

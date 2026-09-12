@@ -7,12 +7,12 @@ import { DEFAULT_MODELS } from "@/lib/agent/config";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { AgentAvatar } from "@/components/common/agent-avatar";
-import { ChainBadge } from "@/components/common/chain-badge";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { formatUsd } from "@/components/common/format";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { addLlmKeyAction } from "@/components/agents/agent-actions";
 import { Field, RiskSlider, StepHeading, Toggle } from "./field";
+import { UniverseControls } from "./universe-controls";
 import { SimpleSelect } from "./simple-select";
 import {
   AVATAR_SEEDS,
@@ -22,20 +22,13 @@ import {
   type BuilderDraft,
 } from "./types";
 import { cn } from "@/lib/utils";
-import type { Chain, DataSourceInfo, LlmKeyRow } from "@/server/types";
+import type { DataSourceInfo, LlmKeyRow } from "@/server/types";
 
 export interface StepProps {
   draft: BuilderDraft;
   update: (patch: Partial<BuilderDraft>) => void;
   updateConfig: (patch: Partial<BuilderDraft["config"]>) => void;
   errors: Record<string, string>;
-}
-
-export interface PopularToken {
-  chain: Chain;
-  address: string;
-  symbol: string;
-  name: string | null;
 }
 
 // ------------------------------------------------------------------ identity
@@ -106,23 +99,13 @@ export function IdentityStep({ draft, update, errors }: StepProps) {
         </div>
       </Field>
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        <Toggle
-          id="agent-public"
-          label="Public"
-          description="Anyone can see its trades, PnL and reasoning. Your API key and wallets stay private either way."
-          checked={draft.isPublic}
-          onChange={(isPublic) => update({ isPublic })}
-        />
-        <Toggle
-          id="agent-forkable"
-          label="Forkable"
-          description="Others can copy the config into their own account. They do not get your key or your wallet."
-          checked={draft.isForkable}
-          onChange={(isForkable) => update({ isForkable })}
-          disabled={!draft.isPublic}
-        />
-      </div>
+      <Toggle
+        id="agent-public"
+        label="Public"
+        description="Anyone can see its trades, its PnL and the one-line reason behind each one. Your strategy, your universe rules, your key and your wallets stay yours — there is no way for anyone to copy this agent."
+        checked={draft.isPublic}
+        onChange={(isPublic) => update({ isPublic })}
+      />
     </div>
   );
 }
@@ -476,178 +459,25 @@ export function DataStep({
   );
 }
 
-// ------------------------------------------------------------ chains & tokens
+// ------------------------------------------------------------------ universe
 
-export function ChainsStep({
-  draft,
-  updateConfig,
-  errors,
-  popularTokens,
-}: StepProps & { popularTokens: PopularToken[] }) {
-  const [symbol, setSymbol] = useState("");
-  const [address, setAddress] = useState("");
-  const chains = draft.config.chains;
-  const allowlist = draft.config.tokenAllowlist;
-
-  const toggleChain = (chain: Chain) => {
-    const next = chains.includes(chain)
-      ? chains.filter((value) => value !== chain)
-      : [...chains, chain];
-    updateConfig({
-      chains: next,
-      tokenAllowlist: allowlist.filter((token) => next.includes(token.chain)),
-    });
-  };
-
-  const add = (token: { chain: Chain; address: string; symbol: string }) => {
-    if (allowlist.some((entry) => entry.chain === token.chain && entry.address === token.address)) {
-      return;
-    }
-    if (allowlist.length >= 50) {
-      toast.error("Fifty tokens is the cap");
-      return;
-    }
-    updateConfig({ tokenAllowlist: [...allowlist, token] });
-  };
-
-  const remove = (chain: Chain, tokenAddress: string) => {
-    updateConfig({
-      tokenAllowlist: allowlist.filter(
-        (entry) => !(entry.chain === chain && entry.address === tokenAddress),
-      ),
-    });
-  };
+export function UniverseStep({ draft, updateConfig, errors }: StepProps) {
+  const universe = draft.config.universe;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <StepHeading
-        title="Where it can trade"
-        blurb="An empty allowlist means the agent may trade anything its data sources surface. That is more freedom than most strategies deserve."
+        title="Its hunting ground, and its bar"
+        blurb="There is no allowlist. The agent can reach any token on the chains you pick — including one minted a minute ago — so what keeps it honest is where it looks and how high it sets the bar."
       />
 
-      <Field label="Chains" error={errors.chains}>
-        <div className="flex flex-wrap gap-2">
-          {(["solana", "base"] as const).map((chain) => {
-            const active = chains.includes(chain);
-            return (
-              <button
-                key={chain}
-                type="button"
-                aria-pressed={active}
-                onClick={() => toggleChain(chain)}
-                className={cn(
-                  "flex items-center gap-2 rounded-xl border px-3 py-2 text-sm",
-                  "transition-[border-color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  active
-                    ? "border-primary/50 bg-primary/8"
-                    : "border-border/70 hover:border-border hover:bg-muted/40",
-                )}
-              >
-                <ChainBadge chain={chain} />
-                {active ? <Check aria-hidden className="size-3.5 text-primary" /> : null}
-              </button>
-            );
-          })}
-        </div>
-      </Field>
-
-      <Field
-        label="Token allowlist"
-        hint={
-          allowlist.length === 0
-            ? "Empty — the agent may trade any token its data sources surface."
-            : `${allowlist.length} token${allowlist.length === 1 ? "" : "s"}. Nothing else can be bought.`
-        }
-      >
-        <div className="space-y-3">
-          {allowlist.length > 0 ? (
-            <ul className="flex flex-wrap gap-1.5">
-              {allowlist.map((token) => (
-                <li key={`${token.chain}:${token.address}`}>
-                  <button
-                    type="button"
-                    onClick={() => remove(token.chain, token.address)}
-                    className="group inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/40 py-1 pl-2.5 pr-1.5 text-xs transition-colors duration-150 hover:border-destructive/40 hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <span className="font-medium">{token.symbol}</span>
-                    <span className="text-[10px] text-muted-foreground">{token.chain}</span>
-                    <X aria-hidden className="size-3 opacity-50 group-hover:opacity-100" />
-                    <span className="sr-only">Remove {token.symbol}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-
-          <div>
-            <p className="mb-1.5 text-xs text-muted-foreground">Quick add</p>
-            <ul className="flex flex-wrap gap-1.5">
-              {popularTokens
-                .filter((token) => chains.includes(token.chain))
-                .filter(
-                  (token) =>
-                    !allowlist.some(
-                      (entry) => entry.chain === token.chain && entry.address === token.address,
-                    ),
-                )
-                .map((token) => (
-                  <li key={`${token.chain}:${token.address}`}>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        add({ chain: token.chain, address: token.address, symbol: token.symbol })
-                      }
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <Plus aria-hidden className="size-3" />
-                      {token.symbol}
-                    </button>
-                  </li>
-                ))}
-            </ul>
-          </div>
-
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="w-24">
-              <label htmlFor="token-symbol" className="mb-1 block text-xs text-muted-foreground">
-                Symbol
-              </label>
-              <Input
-                id="token-symbol"
-                value={symbol}
-                maxLength={16}
-                placeholder="WIF"
-                onChange={(event) => setSymbol(event.target.value.toUpperCase())}
-              />
-            </div>
-            <div className="min-w-0 flex-1">
-              <label htmlFor="token-address" className="mb-1 block text-xs text-muted-foreground">
-                Mint or contract address
-              </label>
-              <Input
-                id="token-address"
-                value={address}
-                placeholder="EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"
-                onChange={(event) => setAddress(event.target.value)}
-                className="font-mono text-xs"
-              />
-            </div>
-            <button
-              type="button"
-              disabled={symbol.length === 0 || address.length < 3 || chains.length === 0}
-              onClick={() => {
-                add({ chain: chains[0], address: address.trim(), symbol: symbol.trim() });
-                setSymbol("");
-                setAddress("");
-              }}
-              className="h-9 rounded-lg border border-border px-3 text-xs transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.97] disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              Add
-            </button>
-          </div>
-        </div>
-      </Field>
+      <UniverseControls
+        chains={draft.config.chains}
+        universe={universe}
+        errors={errors}
+        onChains={(chains) => updateConfig({ chains })}
+        onUniverse={(patch) => updateConfig({ universe: { ...universe, ...patch } })}
+      />
     </div>
   );
 }
