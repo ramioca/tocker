@@ -1,0 +1,478 @@
+{
+ "0x532f27101965dd16442e59d40670faf5ebb142e4": {
+  "anti_whale_modifiable": "0",
+  "buy_tax": "0",
+  "can_take_back_ownership": "0",
+  "cannot_buy": "0",
+  "cannot_sell_all": "0",
+  "creator_address": "0x21c3de23d98caddc406e3d31b25e807addf33633",
+  "creator_balance": "0",
+  "creator_percent": "0.000000",
+  "dex": [
+   {
+    "liquidity_type": "UniV3",
+    "name": "UniswapV3",
+    "liquidity": "119501.939827412133421271530000000000",
+    "pool_fee": "0.01",
+    "pair": "0xba3f945812a83471d709bce9c3ca699a19fb46f7"
+   },
+   {
+    "liquidity_type": "UniV3",
+    "name": "UniswapV3",
+    "liquidity": "44530.227102275523168622900000000000",
+    "pool_fee": "0.003",
+    "pair": "0x76bf0abd20f1e0155ce40a62615a90a709a6c3d8"
+   },
+   {
+    "liquidity_type": "UniV2",
+    "name": "SushiSwapV2",
+    "liquidity": "2204.28345336",
+    "pool_fee": "0.0030",
+    "pair": "0x404e927b203375779a6abd52a2049ce0adf6609b"
+   }
+  ],
+  "external_call": "0",
+  "hidden_owner": "0",
+  "holder_count": "903198",
+  "holders": [
+   {
+    "address": "0x7061f0b28f5a95aae717905bb59aa4e08c165268",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "1144338285.080551172384049792",
+    "percent": "0.114433856609119477",
+    "is_locked": 0
+   },
+   {
+    "address": "0x388e263cd180409701c6f34dd7ba45e33babc997",
+    "tag": "",
+    "is_contract": 1,
+    "balance": "456351804.577526615910397406",
+    "percent": "0.045635191664204109",
+    "is_locked": 0
+   },
+   {
+    "address": "0xbaed383ede0e5d9d72430661f3285daa77e9439f",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "374743888.750064501517870342",
+    "percent": "0.037474398077444464",
+    "is_locked": 0
+   },
+   {
+    "address": "0x9ba188e4b2c46c15450ea5eac83a048e5e5d9444",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "340637619.289960528048497406",
+    "percent": "0.034063770293899847",
+    "is_locked": 0
+   },
+   {
+    "address": "0x0529ea5885702715e83923c59746ae8734c553b7",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "304998470.343782948234447017",
+    "percent": "0.030499854524105551",
+    "is_locked": 0
+   },
+   {
+    "address": "0xffa8db7b38579e6a2d14f9b347a9ace4d044cd54",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "213190755.0222222871311968",
+    "percent": "0.021319080737463595",
+    "is_locked": 0
+   },
+   {
+    "address": "0xc882b111a75c0c657fc507c04fbfcd2cc984f071",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "159917711.107612826400637869",
+    "percent": "0.015991775037797501",
+    "is_locked": 0
+   },
+   {
+    "address": "0x377b8ce04761754e8ac153b47805a9cf6b190873",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "125030926.990899373529487405",
+    "percent": "0.012503095769425145",
+    "is_locked": 0
+   },
+   {
+    "address": "0xc0675f83b706bf36b65c5a89afb30f5d48203d00",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "124046187.231980963516451769",
+    "percent": "0.012404621769351437",
+    "is_locked": 0
+   },
+   {
+    "address": "0x971a8115a573f9ccf10f9147c835a10698fba57a",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "113936611.763532181936140598",
+    "percent": "0.011393663974249698",
+    "is_locked": 0
+   }
+  ],
+  "honeypot_with_same_creator": "3",
+  "is_anti_whale": "0",
+  "is_blacklisted": "0",
+  "is_honeypot": "0",
+  "is_in_dex": "1",
+  "is_mintable": "0",
+  "is_open_source": "1",
+  "is_proxy": "0",
+  "is_whitelisted": "1",
+  "lp_holder_count": "36",
+  "lp_holders": [
+   {
+    "address": "0x18a83e1d022c9ccf8eef7444d03a0bf53fd88333",
+    "tag": "",
+    "value": "16680.9199568455072488216",
+    "is_contract": 0,
+    "balance": "4622.417790560263207952",
+    "percent": "0.902216670497993999",
+    "is_locked": 0
+   },
+   {
+    "address": "0x3521c436b438ea437c60989d3b3b70d5fa75ab80",
+    "tag": "",
+    "value": "738.6786645279345390107",
+    "is_contract": 0,
+    "balance": "204.693830391529931703",
+    "percent": "0.039952724849854645",
+    "is_locked": 0
+   },
+   {
+    "address": "0x04747c94f0b5019a3d23ae1757a1033b875974f2",
+    "tag": "",
+    "value": "280.38124060588853169413",
+    "is_contract": 0,
+    "balance": "5157.038776616145071931",
+    "percent": "0.015164908771457189",
+    "is_locked": 0
+   },
+   {
+    "address": "0x05b196fa92a3d9c9decc56875c4c760a9856e3cd",
+    "tag": "",
+    "value": "189.81723156735931864888",
+    "is_contract": 1,
+    "balance": "52.59988959972114664",
+    "percent": "0.010266596273520849",
+    "is_locked": 0
+   },
+   {
+    "address": "0x7d27cdfbfcc878f7e7349e216d44204bfd2afd55",
+    "tag": "",
+    "value": "102.99912069964663067481",
+    "is_contract": 1,
+    "balance": "736.038186126904540204",
+    "percent": "0.005570887216188616",
+    "is_locked": 0
+   },
+   {
+    "address": "0xeed7f5c38dd1411f6f9cc00b6b454fa4b77a03af",
+    "tag": "",
+    "value": "85.91135073177867725592",
+    "is_contract": 1,
+    "balance": "23.80672990824268703",
+    "percent": "0.004646665352734456",
+    "is_locked": 0
+   },
+   {
+    "address": "0x7dd67a1c306a803909e8977b6daa34b741a0ebba",
+    "tag": "",
+    "value": "74.17582811163911253469",
+    "is_contract": 1,
+    "balance": "20.554721704786625956",
+    "percent": "0.004011929128815875",
+    "is_locked": 0
+   },
+   {
+    "address": "0xf5029333b4b4476d4e2df5d6416108f36f81c80d",
+    "tag": "",
+    "value": "60.37150575219018457496",
+    "is_contract": 0,
+    "balance": "16.72943236666714686",
+    "percent": "0.003265298260144153",
+    "is_locked": 0
+   },
+   {
+    "address": "0x48be26381eca9390e5a87a6ae0e4cc65e8af2efc",
+    "tag": "",
+    "value": "35.71207176499357708866",
+    "is_contract": 0,
+    "balance": "68.850356575495960783",
+    "percent": "0.001931549732733745",
+    "is_locked": 0
+   },
+   {
+    "address": "0xed7922014c72c213c97e84ed945c65f94d7f6636",
+    "tag": "",
+    "value": "32.27234459377162018631",
+    "is_contract": 1,
+    "balance": "8.942927619056309772",
+    "percent": "0.001745506085029063",
+    "is_locked": 0
+   }
+  ],
+  "lp_total_supply": "12121.327684951457",
+  "owner_address": "0x0000000000000000000000000000000000000000",
+  "owner_balance": "0",
+  "owner_change_balance": "0",
+  "owner_percent": "0.0",
+  "personal_slippage_modifiable": "0",
+  "selfdestruct": "0",
+  "sell_tax": "0",
+  "slippage_modifiable": "0",
+  "token_name": "Brett",
+  "token_symbol": "BRETT",
+  "total_supply": "9999997544.340006294456944163",
+  "trading_cooldown": "0",
+  "transfer_pausable": "0",
+  "transfer_tax": "0"
+ },
+ "0x940181a94a35a4569e4529a3cdfb74e38fd98631": {
+  "anti_whale_modifiable": "0",
+  "buy_tax": "0",
+  "can_take_back_ownership": "0",
+  "cannot_buy": "0",
+  "cannot_sell_all": "0",
+  "creator_address": "0xe83f922C34A1962e9aE9F52B59e18239764f2818",
+  "creator_balance": "0",
+  "creator_percent": "0.000000",
+  "dex": [
+   {
+    "liquidity_type": "UniV3",
+    "name": "UniswapV3",
+    "liquidity": "108855.806693634646643204250000000000",
+    "pool_fee": "0.003",
+    "pair": "0x3d5d143381916280ff91407febeb52f2b60f33cf"
+   },
+   {
+    "liquidity_type": "UniV3",
+    "name": "UniswapV3",
+    "liquidity": "20011.958431888286000000000000000000",
+    "pool_fee": "0.0005",
+    "pair": "0xe5b5f522e98b5a2baae212d4da66b865b781db97"
+   },
+   {
+    "liquidity_type": "UniV4",
+    "name": "UniswapV4",
+    "liquidity": "12655.355817603052",
+    "pool_manager": "0x498581fF718922c3f8e6A244956aF099B2652b2b",
+    "pool_fee": "0.009",
+    "pair": "0x15323d0c13fbc0a9b6639f1824ef541a8bc1b04f7f64de01bfbba99d7683c52a"
+   }
+  ],
+  "external_call": "0",
+  "hidden_owner": "0",
+  "holder_count": "752216",
+  "holders": [
+   {
+    "address": "0xebf418fe2512e7e6bd9b87a8f0f294acdc67e6b4",
+    "tag": "",
+    "is_contract": 1,
+    "balance": "989623762.277936218180921744",
+    "percent": "0.500201476648731059",
+    "is_locked": 0
+   },
+   {
+    "address": "0x2cce736b583f429d4f5c4fc3649133329688fa35",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "37891972.255082299370440063",
+    "percent": "0.019152349809686342",
+    "is_locked": 0
+   },
+   {
+    "address": "0x6325aa7b6fd01475e0f098b24c410fab89b0ad75",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "37728418.6424483770110278",
+    "percent": "0.019069682273124355",
+    "is_locked": 0
+   },
+   {
+    "address": "0x001aa0fe6f267f8c279b2f89cd61ada3eeca212d",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "37728418.6424483770110278",
+    "percent": "0.019069682273124355",
+    "is_locked": 0
+   },
+   {
+    "address": "0xeb22d634a714df99cf3ee41cf1f32289669bfbc6",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "37667510.8049755721966135",
+    "percent": "0.019038896643873446",
+    "is_locked": 0
+   },
+   {
+    "address": "0xcd9d176df726db71f9384480f2d7f12505cca197",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "37667510.8049755721966135",
+    "percent": "0.019038896643873446",
+    "is_locked": 0
+   },
+   {
+    "address": "0x8185f9d028e22b1bf6165a695f8c121e3d10656d",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "37667510.8049755721966135",
+    "percent": "0.019038896643873446",
+    "is_locked": 0
+   },
+   {
+    "address": "0x6fb49677cb40b2ecae76696a78ae8254cf0ec447",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "37667510.8049755721966135",
+    "percent": "0.019038896643873446",
+    "is_locked": 0
+   },
+   {
+    "address": "0x62ebec56766e3be84eb6b3437c501e6716a90c0a",
+    "tag": "",
+    "is_contract": 0,
+    "balance": "37667510.8049755721966135",
+    "percent": "0.019038896643873446",
+    "is_locked": 0
+   },
+   {
+    "address": "0x7269de76188e6597444d0859c4e5c336d3c39ddb",
+    "tag": "",
+    "is_contract": 1,
+    "balance": "29294313",
+    "percent": "0.014806696421962836",
+    "is_locked": 0
+   }
+  ],
+  "honeypot_with_same_creator": "0",
+  "is_anti_whale": "0",
+  "is_blacklisted": "0",
+  "is_honeypot": "0",
+  "is_in_cex": {
+   "listed": "1",
+   "cex_list": [
+    "Coinbase"
+   ]
+  },
+  "is_in_dex": "1",
+  "is_mintable": "1",
+  "is_open_source": "1",
+  "is_proxy": "0",
+  "is_whitelisted": "0",
+  "lp_holder_count": "136",
+  "lp_holders": [
+   {
+    "address": "0xb18299981ac34d48aea00f66cef91f49f2ce6910",
+    "tag": "",
+    "value": "16927.24264212200662379755",
+    "is_contract": 1,
+    "balance": "3473.015774267007563157",
+    "percent": "0.223449630657183228",
+    "is_locked": 0
+   },
+   {
+    "address": "0x3e1355ba7c1c9a5b4c6bfaab078462a961dace20",
+    "tag": "",
+    "value": "15487.56894752821782070217",
+    "is_contract": 1,
+    "balance": "2149.748012069726820408",
+    "percent": "0.204445085018820668",
+    "is_locked": 0
+   },
+   {
+    "address": "0xc4ec7d6ac9a235659c2d6eef0ae8746016dac7a5",
+    "tag": "",
+    "value": "7508.44976222963556393788",
+    "is_contract": 0,
+    "balance": "1293.437319980574970002",
+    "percent": "0.099115984903723370",
+    "is_locked": 0
+   },
+   {
+    "address": "0xf2c22f972cfb6aaa6ff81ff75b27e3087c3a52f7",
+    "tag": "",
+    "value": "3898.19730044480444057545",
+    "is_contract": 0,
+    "balance": "2152.450774173779223582",
+    "percent": "0.051458513676981531",
+    "is_locked": 0
+   },
+   {
+    "address": "0x934cb47920b47df9b646a9662ffc7838e787123d",
+    "tag": "",
+    "value": "3597.51492909985056223812",
+    "is_contract": 1,
+    "balance": "1671.974386315023063592",
+    "percent": "0.047489328249523553",
+    "is_locked": 0
+   },
+   {
+    "address": "0xcbf7681c519cbb2b79a3e5a60b07f1dc8716aaab",
+    "tag": "",
+    "value": "2910.79341316958646792088",
+    "is_contract": 1,
+    "balance": "1198.874317417131572755",
+    "percent": "0.038424197422065750",
+    "is_locked": 0
+   },
+   {
+    "address": "0xcf40563a1159bf8b8126255e5866e1a29469423c",
+    "tag": "",
+    "value": "2783.4574646211048759463",
+    "is_contract": 0,
+    "balance": "691.556943184932203452",
+    "percent": "0.036743287466788273",
+    "is_locked": 0
+   },
+   {
+    "address": "0xf4c74ba720c7bb5fdb37d0862fc926f71005d988",
+    "tag": "",
+    "value": "1991.63073352248978877653",
+    "is_contract": 0,
+    "balance": "198.4274633486934363",
+    "percent": "0.026290705534265692",
+    "is_locked": 0
+   },
+   {
+    "address": "0xae99e179d801929bdf7094c9a237166de9a7d523",
+    "tag": "",
+    "value": "1983.83920194839705606693",
+    "is_contract": 0,
+    "balance": "731.351534392680320721",
+    "percent": "0.026187852701746329",
+    "is_locked": 0
+   },
+   {
+    "address": "0xdca8dcb31aa2d6206038fd6ffb72e8c34c086f6a",
+    "tag": "",
+    "value": "1890.94021545831030318032",
+    "is_contract": 1,
+    "balance": "239.897097831585380907",
+    "percent": "0.024961531046264094",
+    "is_locked": 0
+   }
+  ],
+  "lp_total_supply": "22463.567624717092",
+  "owner_balance": "0",
+  "owner_change_balance": "0",
+  "owner_percent": "0",
+  "personal_slippage_modifiable": "0",
+  "selfdestruct": "0",
+  "sell_tax": "0",
+  "slippage_modifiable": "0",
+  "token_name": "Aerodrome",
+  "token_symbol": "AERO",
+  "total_supply": "1978450301.483024928860547401",
+  "trading_cooldown": "0",
+  "transfer_pausable": "0",
+  "transfer_tax": "0"
+ }
+}

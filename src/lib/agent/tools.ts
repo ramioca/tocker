@@ -20,6 +20,14 @@ import { applyFill } from "@/lib/trading/positions";
 import { getPriceUsd } from "@/lib/trading/prices";
 import { riskGuard, type OrderIntent } from "@/lib/trading/risk";
 import { ensureQuoteToken, resolveToken } from "@/lib/trading/tokens";
+import {
+  discoverCandidates,
+  getTokenScore,
+  renderCandidates,
+  renderScore,
+  toTradeScore,
+} from "@/lib/tokens";
+import type { TokenScore } from "@/server/types";
 import { describePortfolio, getPortfolio, toRiskPortfolio } from "./portfolio";
 import type { RunLogger } from "./logger";
 
@@ -124,12 +132,146 @@ async function fetchBaseIntel(address: string): Promise<ToolOutcome> {
   };
 }
 
+const discoveryFeedSchema = z.enum(["new_launches", "trending", "top_organic", "momentum"]);
+
+/** Shrinks a score to the fields worth spending the model's context on. */
+function scorePayload(score: TokenScore): ToolOutcome {
+  return {
+    ok: true,
+    symbol: score.symbol,
+    chain: score.chain,
+    address: score.address,
+    total: score.total,
+    verdict: score.verdict,
+    components: score.components,
+    blockers: score.blockers,
+    warnings: score.warnings,
+    priceUsd: score.priceUsd,
+    liquidityUsd: score.liquidityUsd,
+    volume24hUsd: score.volume24hUsd,
+    marketCapUsd: score.marketCapUsd,
+    holderCount: score.holderCount,
+    ageHours: score.ageHours,
+    priceChange24hPct: score.priceChange24hPct,
+    sources: score.sources,
+    scoredAt: score.scoredAt,
+    rendered: renderScore(score),
+  };
+}
+
 export function buildTools(ctx: RunContext): ToolSet {
   const { agent } = ctx;
   const executorAgent: ExecutorAgent = { id: agent.id, mode: agent.mode, wallets: ctx.x402.wallets };
   const allowedSources = agent.config.dataSources;
+  const { universe } = agent.config;
+
+  /** Scores a token for this agent. Returns `null` only when scoring itself blew up. */
+  const scoreFor = async (chain: "solana" | "base", address: string, deep = false): Promise<TokenScore | null> => {
+    try {
+      return await getTokenScore({
+        chain,
+        address,
+        universe,
+        maxTradeUsd: agent.config.risk.maxTradeUsd,
+        dataSources: allowedSources,
+        ...(deep ? { deep: true, x402: ctx.x402 } : {}),
+      });
+    } catch {
+      // A scoring failure must never become a trade; the caller turns null into a refusal.
+      return null;
+    }
+  };
 
   return {
+    discover_tokens: tool({
+      description:
+        "Sweep your discovery feeds for tradeable candidates on your chains. Free, and the first step of every tick. Returns a ranked table already filtered on the gates that can be checked for free (age, liquidity, holders, blocklist); safety gates are applied later by score_token.",
+      inputSchema: z.object({
+        chain: chainSchema.optional().describe("Restrict to one chain; omit to sweep every chain you trade"),
+        feeds: z
+          .array(discoveryFeedSchema)
+          .min(1)
+          .max(4)
+          .optional()
+          .describe("Override your configured feeds for this sweep only"),
+        maxAgeHours: z.number().positive().max(87_600).optional().describe("Only tokens younger than this"),
+        minLiquidityUsd: z.number().min(0).max(100_000_000).optional().describe("Raise your liquidity floor for this sweep"),
+        limit: z.number().int().min(1).max(50).optional().describe("How many candidates to return (default 20)"),
+      }),
+      execute: logged(ctx, "discover_tokens", async (input) => {
+        const parsed = z
+          .object({
+            chain: chainSchema.optional(),
+            feeds: z.array(discoveryFeedSchema).optional(),
+            maxAgeHours: z.number().optional(),
+            minLiquidityUsd: z.number().optional(),
+            limit: z.number().optional(),
+          })
+          .parse(input);
+
+        const chains = parsed.chain ? [parsed.chain] : agent.config.chains;
+        if (parsed.chain && !agent.config.chains.includes(parsed.chain)) {
+          return fail(`Chain ${parsed.chain} is not enabled for this agent.`, { enabled: agent.config.chains });
+        }
+
+        const candidates = await discoverCandidates({
+          chains,
+          universe,
+          ...(parsed.feeds ? { feeds: parsed.feeds } : {}),
+          ...(parsed.limit === undefined ? {} : { limit: parsed.limit }),
+          ...(parsed.minLiquidityUsd === undefined ? {} : { minLiquidityUsd: parsed.minLiquidityUsd }),
+          ...(parsed.maxAgeHours === undefined ? {} : { maxAgeHours: parsed.maxAgeHours }),
+        });
+
+        return {
+          ok: true,
+          chains,
+          feeds: parsed.feeds ?? universe.discovery,
+          count: candidates.length,
+          candidates: candidates.map((c) => ({
+            symbol: c.token.symbol,
+            chain: c.token.chain,
+            address: c.token.address,
+            origin: c.origin,
+            quickScore: c.quickScore,
+            liquidityUsd: c.liquidityUsd,
+            volume24hUsd: c.volume24hUsd,
+            marketCapUsd: c.marketCapUsd,
+            holderCount: c.holderCount,
+            ageHours: c.ageHours,
+            priceChange24hPct: c.priceChange24hPct,
+          })),
+          rendered: renderCandidates(candidates),
+          note: "quickScore is a cheap pre-rank, not the real score. Call score_token before you act on any of these.",
+        };
+      }),
+    }),
+
+    score_token: tool({
+      description:
+        "The full safety + quality score for one token: a 0-100 composite, a verdict, five components, hard-gate blockers and warnings. Free. Set deep: true to also buy a sentiment reading over x402 — that spends from your per-run data budget.",
+      inputSchema: z.object({
+        chain: chainSchema,
+        address: z.string().min(3).describe("Mint (Solana) or contract address (Base)"),
+        deep: z
+          .boolean()
+          .optional()
+          .describe("Pay for sentiment and fold it into the score. Costs money; default false"),
+      }),
+      execute: logged(ctx, "score_token", async (input) => {
+        const parsed = z.object({ chain: chainSchema, address: z.string(), deep: z.boolean().optional() }).parse(input);
+        const token = await resolveToken(parsed.chain, parsed.address);
+        const score = await scoreFor(parsed.chain, token.address, parsed.deep === true);
+        if (!score) return fail(`Could not score ${token.symbol} — every data provider failed. Do not buy it.`);
+        return {
+          ...scorePayload(score),
+          minScore: universe.minScore,
+          meetsMinScore: score.blockers.length === 0 && score.verdict !== "avoid" && score.total >= universe.minScore,
+          dataBudgetRemainingUsd: Math.max(0, ctx.budget.maxUsd - ctx.budget.spentUsd),
+        };
+      }),
+    }),
+
     get_portfolio: tool({
       description:
         "Your current book: cash, every open position with a live mark and unrealized PnL, equity, and how many trades you have left today.",
@@ -298,13 +440,17 @@ export function buildTools(ctx: RunContext): ToolSet {
 
     place_trade: tool({
       description:
-        "Buy or sell a token for USDC. Runs the risk guard first (allowlist, size, daily count, position concentration, balance) and only then routes to the venue. `rationale` is published to your followers' feed verbatim.",
+        "Buy or sell a token for USDC. Scores the token, then runs the risk guard (blocklist, minScore, hard gates, size, daily count, position concentration, balance) and only then routes to the venue. A token you have not scored, or one that fails a gate, is rejected rather than filled. `rationale` is published to your followers' feed verbatim and must cite the score.",
       inputSchema: z.object({
         chain: chainSchema,
         side: z.enum(["buy", "sell"]),
         tokenAddress: z.string().min(3).describe("Mint (Solana) or contract address (Base)"),
         amountUsd: z.number().positive().describe("USD notional to buy, or USD worth of the position to sell"),
-        rationale: z.string().min(10).max(500).describe("One or two sentences: why, naming the signal"),
+        rationale: z
+          .string()
+          .min(10)
+          .max(500)
+          .describe("One or two sentences: why, citing the score total, verdict and the component that moved you"),
       }),
       execute: logged(ctx, "place_trade", async (input) => {
         const parsed = z
@@ -330,9 +476,29 @@ export function buildTools(ctx: RunContext): ToolSet {
           symbol: token.symbol,
           amountUsd: parsed.amountUsd,
         };
-        const verdict = riskGuard({ id: agent.id, mode: agent.mode, config: agent.config }, toRiskPortfolio(portfolio), order);
+
+        // Buys must be scored: no score means no buy, whatever the model believes.
+        // Sells take whatever score is already cached — an agent must always be able
+        // to exit, so a scoring outage cannot trap it in a position.
+        const score = await scoreFor(parsed.chain, token.address);
+        if (parsed.side === "buy" && score === null) {
+          return fail(
+            `Could not score ${token.symbol} — every data provider failed, so this agent will not buy it. Try again next tick.`,
+            { rejected: true },
+          );
+        }
+
+        const verdict = riskGuard(
+          { id: agent.id, mode: agent.mode, config: agent.config },
+          toRiskPortfolio(portfolio),
+          order,
+          score,
+        );
         if (!verdict.ok) {
-          return fail(`Rejected by risk guard: ${verdict.reason}`, { rejected: true });
+          return fail(`Rejected by risk guard: ${verdict.reason}`, {
+            rejected: true,
+            ...(score ? { score: { total: score.total, verdict: score.verdict, blockers: score.blockers } } : {}),
+          });
         }
 
         const executor = await getExecutor(executorAgent, parsed.chain);
@@ -364,6 +530,8 @@ export function buildTools(ctx: RunContext): ToolSet {
           status: "pending",
           isPaper: executor.isPaper,
           rationale: parsed.rationale,
+          // Frozen at the moment of the trade so later re-scoring cannot rewrite the record.
+          scoreSnapshot: score === null ? null : toTradeScore(score),
         });
         ctx.tradeIds.push(tradeId);
 
@@ -438,6 +606,7 @@ export function buildTools(ctx: RunContext): ToolSet {
           priceUsd: fill.priceUsd,
           feeUsd: fill.feeUsd,
           txHash: fill.txHash,
+          score: score === null ? null : { total: score.total, verdict: score.verdict, components: score.components },
         };
       }),
     }),

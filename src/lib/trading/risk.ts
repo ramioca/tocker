@@ -1,12 +1,27 @@
 /**
- * The risk guard. Every `place_trade` goes through this before an executor is touched —
- * there is no code path that skips it.
+ * The risk guard. Every `place_trade` goes through this before an executor is
+ * touched — there is no code path that skips it.
  *
- * Pure and synchronous on purpose: the caller assembles the portfolio snapshot, this
- * function only decides.
+ * Pure and synchronous on purpose: the caller assembles the portfolio snapshot and
+ * the token's score, this function only decides. Every rejection reason is written
+ * for a human, because it is shown to the LLM *and* rendered in the UI.
+ *
+ * ## What replaced the allowlist
+ *
+ * There is no allowlist any more. An agent may buy anything on its chains that
+ * clears the hard gates and scores above `universe.minScore`. The subtractive
+ * `universe.blocklist` is the only list, and the {@link TokenScore} carries the
+ * gates. Concretely, a buy is refused when the token is blocklisted, has no score at
+ * all, carries any blocker, has verdict `avoid`, or totals below `minScore`.
+ *
+ * **Sells are deliberately not score-gated.** Score thresholds decide what an agent
+ * may *enter*; refusing to sell a position because the token has since deteriorated
+ * would trap the agent in exactly the tokens it most needs to exit. The blocklist
+ * still applies to both sides, matching the operator's "never touch this" intent.
  */
 import type { AgentConfig } from "@/db/schema";
-import type { Chain } from "@/server/types";
+import type { Chain, TokenScore } from "@/server/types";
+import { explainBlocker } from "@/lib/tokens/score";
 
 export interface RiskAgent {
   id: string;
@@ -47,14 +62,66 @@ function sameAddress(a: string, b: string): boolean {
   return a === b || a.toLowerCase() === b.toLowerCase();
 }
 
-export function isAllowlisted(config: AgentConfig, chain: Chain, address: string, symbol: string): boolean {
-  if (config.tokenAllowlist.length === 0) return true;
-  return config.tokenAllowlist.some(
+/** True when the operator has explicitly told this agent never to touch the token. */
+export function isBlocklisted(config: AgentConfig, chain: Chain, address: string, symbol: string): boolean {
+  return config.universe.blocklist.some(
     (t) => t.chain === chain && (sameAddress(t.address, address) || t.symbol.toUpperCase() === symbol.toUpperCase()),
   );
 }
 
-export function riskGuard(agent: RiskAgent, portfolio: RiskPortfolio, order: OrderIntent): RiskVerdict {
+/**
+ * The universe gate: everything that depends on the token's score. Split out so the
+ * agent tools can explain a refusal before a trade is even attempted.
+ *
+ * `score === null` is a refusal, not a pass — "no score means no buy".
+ */
+export function universeGate(config: AgentConfig, order: OrderIntent, score: TokenScore | null): RiskVerdict {
+  const { universe } = config;
+
+  if (score === null) {
+    return {
+      ok: false,
+      reason: `No score for ${order.symbol}. Call score_token({ chain: "${order.chain}", address: "${order.tokenAddress}" }) first — this agent never buys a token it has not scored.`,
+    };
+  }
+
+  if (score.blockers.length > 0) {
+    const explained = score.blockers.map((b) => `${b} (${explainBlocker(b)})`).join("; ");
+    return {
+      ok: false,
+      reason: `${order.symbol} fails ${score.blockers.length === 1 ? "a hard gate" : "hard gates"}: ${explained}. Hard gates cannot be outscored.`,
+    };
+  }
+
+  if (score.verdict === "avoid") {
+    return {
+      ok: false,
+      reason: `${order.symbol} scores ${score.total.toFixed(1)}/100 with verdict "avoid". This agent does not buy tokens it has judged avoidable.`,
+    };
+  }
+
+  if (score.total < universe.minScore) {
+    return {
+      ok: false,
+      reason: `${order.symbol} scores ${score.total.toFixed(1)}/100, below this agent's minScore of ${universe.minScore} (safety ${score.components.safety}, liquidity ${score.components.liquidity}, organic ${score.components.organic}, distribution ${score.components.distribution}, momentum ${score.components.momentum}).`,
+    };
+  }
+
+  return { ok: true };
+}
+
+/**
+ * The full guard.
+ *
+ * @param score the token's {@link TokenScore} at this instant. Required for buys;
+ *   ignored for sells, which are governed by the position checks instead.
+ */
+export function riskGuard(
+  agent: RiskAgent,
+  portfolio: RiskPortfolio,
+  order: OrderIntent,
+  score: TokenScore | null = null,
+): RiskVerdict {
   const { risk } = agent.config;
 
   if (!Number.isFinite(order.amountUsd) || order.amountUsd <= 0) {
@@ -68,10 +135,11 @@ export function riskGuard(agent: RiskAgent, portfolio: RiskPortfolio, order: Ord
     };
   }
 
-  if (!isAllowlisted(agent.config, order.chain, order.tokenAddress, order.symbol)) {
+  // Subtractive and absolute: the operator said never, on either side.
+  if (isBlocklisted(agent.config, order.chain, order.tokenAddress, order.symbol)) {
     return {
       ok: false,
-      reason: `${order.symbol} (${order.tokenAddress}) is not on this agent's token allowlist.`,
+      reason: `${order.symbol} (${order.tokenAddress}) is on this agent's blocklist. Remove it from the blocklist in settings to trade it.`,
     };
   }
 
@@ -92,6 +160,9 @@ export function riskGuard(agent: RiskAgent, portfolio: RiskPortfolio, order: Ord
   const position = portfolio.positions.find((p) => p.tokenId === order.tokenId);
 
   if (order.side === "buy") {
+    const gate = universeGate(agent.config, order, score);
+    if (!gate.ok) return gate;
+
     if (order.amountUsd > portfolio.cashUsd + 1e-9) {
       return {
         ok: false,

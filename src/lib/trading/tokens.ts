@@ -1,12 +1,20 @@
 /**
- * Token identity: constants for everything the demo needs (so mock mode never touches
- * the network), plus network lookups for anything else.
+ * Token identity. There is no allowlist any more, so this must resolve *any* mint or
+ * contract on Solana and Base — including one minted minutes ago.
+ *
+ * Resolution order: the `tokens` table (already seen), then the live metadata
+ * providers in `src/lib/tokens/providers` (Jupiter on Solana, DexScreener on Base),
+ * and only then the {@link KNOWN_TOKENS} constants. Those constants are no longer the
+ * universe — they are the offline fallback that keeps mock mode and the demo working
+ * with no network, and the source of the fallback prices PnL marks degrade to.
  *
  * `tokens.id` is always `${chain}:${address}`.
  */
 import { and, eq, or } from "drizzle-orm";
 import { getDb, tokens } from "@/db";
 import type { Chain, TokenRef } from "@/server/types";
+import { getDexScreenerToken } from "@/lib/tokens/providers/dexscreener";
+import { getJupiterToken } from "@/lib/tokens/providers/jupiter";
 
 export const CAIP2_SOLANA = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 export const CAIP2_BASE = "eip155:8453";
@@ -95,62 +103,33 @@ interface RemoteToken {
 }
 
 async function lookupSolana(addressOrSymbol: string): Promise<RemoteToken | null> {
-  try {
-    const res = await fetch(`https://api.jup.ag/tokens/v2/search?query=${encodeURIComponent(addressOrSymbol)}`, {
-      headers: jupiterHeaders(),
-      signal: AbortSignal.timeout(8_000),
-    });
-    if (!res.ok) return null;
-    const body: unknown = await res.json();
-    const rows = Array.isArray(body) ? body : [];
-    const first = rows[0];
-    if (!first || typeof first !== "object") return null;
-    const r = first as Record<string, unknown>;
-    const id = typeof r.id === "string" ? r.id : null;
-    const decimals = typeof r.decimals === "number" ? r.decimals : null;
-    if (!id || decimals === null) return null;
-    return {
-      address: id,
-      symbol: typeof r.symbol === "string" ? r.symbol : addressOrSymbol.slice(0, 6),
-      name: typeof r.name === "string" ? r.name : (typeof r.symbol === "string" ? r.symbol : "Unknown"),
-      decimals,
-      logoUrl: typeof r.icon === "string" ? r.icon : null,
-      priceUsd: typeof r.usdPrice === "number" ? r.usdPrice : null,
-    };
-  } catch {
-    return null;
-  }
+  const token = await getJupiterToken(addressOrSymbol);
+  if (!token || token.decimals === null) return null;
+  return {
+    address: token.id,
+    symbol: token.symbol ?? addressOrSymbol.slice(0, 6),
+    name: token.name ?? token.symbol ?? "Unknown",
+    decimals: token.decimals,
+    logoUrl: token.icon,
+    priceUsd: token.usdPrice,
+  };
 }
 
 async function lookupBase(address: string): Promise<RemoteToken | null> {
   if (!address.startsWith("0x")) return null;
-  try {
-    const res = await fetch(`https://api.dexscreener.com/tokens/v1/base/${address}`, {
-      signal: AbortSignal.timeout(8_000),
-    });
-    if (!res.ok) return null;
-    const body: unknown = await res.json();
-    const rows = Array.isArray(body) ? body : [];
-    for (const row of rows) {
-      if (!row || typeof row !== "object") continue;
-      const base = (row as Record<string, unknown>).baseToken;
-      if (!base || typeof base !== "object") continue;
-      const b = base as Record<string, unknown>;
-      if (typeof b.address !== "string" || b.address.toLowerCase() !== address.toLowerCase()) continue;
-      const priceUsd = Number((row as Record<string, unknown>).priceUsd);
-      return {
-        address: b.address,
-        symbol: typeof b.symbol === "string" ? b.symbol : address.slice(0, 8),
-        name: typeof b.name === "string" ? b.name : "Unknown",
-        decimals: 18,
-        logoUrl: null,
-        priceUsd: Number.isFinite(priceUsd) ? priceUsd : null,
-      };
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  const token = await getDexScreenerToken(address);
+  if (!token) return null;
+  return {
+    address: token.address,
+    symbol: token.symbol ?? address.slice(0, 8),
+    name: token.name ?? "Unknown",
+    // Neither DexScreener nor GoPlus report decimals, and 18 is the ERC-20 default
+    // that every Base token we have seen uses. Wrong only for exotic tokens, and
+    // only for the *display* amount — sizing goes through the venue quote.
+    decimals: 18,
+    logoUrl: token.imageUrl,
+    priceUsd: token.priceUsd,
+  };
 }
 
 export function jupiterHeaders(): Record<string, string> {
@@ -180,14 +159,20 @@ export async function resolveToken(chain: Chain, addressOrSymbol: string): Promi
     return { ...toTokenRef(existing[0]), fallbackPriceUsd: known?.fallbackPriceUsd ?? null };
   }
 
-  const known = findKnown(chain, needle);
-  const remote = known ? null : chain === "solana" ? await lookupSolana(needle) : await lookupBase(needle);
-  const resolved = known
-    ? { address: known.address, symbol: known.symbol, name: known.name, decimals: known.decimals, logoUrl: known.logoUrl, priceUsd: null }
-    : remote;
+  // Live metadata first — the agent must be able to name a mint that did not exist
+  // an hour ago. The constants are only the offline fallback.
+  const remote = chain === "solana" ? await lookupSolana(needle) : await lookupBase(needle);
+  const known = findKnown(chain, remote?.address ?? needle);
+  const resolved =
+    remote ??
+    (known
+      ? { address: known.address, symbol: known.symbol, name: known.name, decimals: known.decimals, logoUrl: known.logoUrl, priceUsd: null }
+      : null);
 
   if (!resolved) {
-    throw new Error(`Unknown token "${addressOrSymbol}" on ${chain}. Pass a full mint/contract address.`);
+    throw new Error(
+      `Could not resolve "${addressOrSymbol}" on ${chain}. Pass the full mint (Solana) or contract address (Base) — symbols only work for tokens we already know.`,
+    );
   }
 
   const id = tokenId(chain, resolved.address);
