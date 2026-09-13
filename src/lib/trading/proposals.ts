@@ -105,6 +105,23 @@ export async function notifyAgentFollowers(
   );
 }
 
+/**
+ * True when this agent already has an undecided proposal for this token.
+ *
+ * Without this an agent on a 15-minute cadence and a 4-hour TTL queues sixteen
+ * proposals for the same token, and approving them all would spend sixteen clips. One
+ * pending question per token is the whole point of asking.
+ */
+export async function hasPendingProposal(agentId: string, tokenId: string): Promise<boolean> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ id: trades.id })
+    .from(trades)
+    .where(and(eq(trades.agentId, agentId), eq(trades.tokenId, tokenId), eq(trades.status, "proposed")))
+    .limit(1);
+  return Boolean(row);
+}
+
 // --------------------------------------------------------------- create
 
 export interface CreateProposalInput {

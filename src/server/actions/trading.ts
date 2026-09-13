@@ -174,35 +174,6 @@ export async function previewTrade(input: PreviewTradeInput): Promise<ActionResu
   };
 }
 
-/** Token picker: resolve a pasted mint/contract (or a known symbol) to a real token row. */
-export async function resolveTokenForPicker(input: {
-  chain: Chain;
-  query: string;
-}): Promise<ActionResult<TokenRef>> {
-  const session = await getSession();
-  if (!session) return fail("Sign in first");
-  const query = input.query?.trim();
-  if (!query || query.length < 2) return fail("Paste a mint or contract address.");
-  try {
-    const token = await resolveToken(input.chain, query);
-    return {
-      ok: true,
-      data: {
-        id: token.id,
-        chain: token.chain,
-        address: token.address,
-        symbol: token.symbol,
-        name: token.name,
-        logoUrl: token.logoUrl,
-        decimals: token.decimals,
-        lastPriceUsd: token.lastPriceUsd,
-      },
-    };
-  } catch (err) {
-    return fail(err instanceof Error ? err.message : "Could not find that token.");
-  }
-}
-
 // ------------------------------------------------------------- manual trade
 
 export interface PlaceManualTradeInput {

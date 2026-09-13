@@ -21,6 +21,7 @@ import { getPriceUsd } from "@/lib/trading/prices";
 import {
   createProposal,
   expireAgentProposals,
+  hasPendingProposal,
   indicativePrice,
   notifyAgentFollowers,
   requiresApproval,
@@ -515,9 +516,10 @@ export function buildTools(ctx: RunContext): ToolSet {
         // approve exits; the only trades that bypass this are guardian stop-outs, which
         // the exit engine writes directly.
         if (approvalMode) {
-          if (proposedThisTick.has(token.id)) {
+          // One undecided question per token: within this tick, and across ticks.
+          if (proposedThisTick.has(token.id) || (await hasPendingProposal(agent.id, token.id))) {
             return fail(
-              `You already proposed ${token.symbol} this tick and it is still awaiting your owner's decision. Do not re-propose it — move on or finish.`,
+              `${token.symbol} is already proposed and still awaiting your owner's decision. Do not re-propose it — move on to another candidate or finish the tick.`,
               { alreadyProposed: true },
             );
           }
