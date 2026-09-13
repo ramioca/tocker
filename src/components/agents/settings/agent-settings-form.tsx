@@ -11,6 +11,7 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { formatUsd } from "@/components/common/format";
 import { Field, RiskSlider, Toggle } from "@/components/agents/builder/field";
 import { UniverseControls } from "@/components/agents/builder/universe-controls";
+import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
 import { INTERVAL_PRESETS } from "@/components/agents/builder/types";
 import { EmptyState } from "@/components/common/empty-state";
 import { setAgentStatusAction, updateAgentAction } from "@/components/agents/agent-actions";
@@ -186,6 +187,22 @@ function SettingsForm({
           onUniverse={(patch) =>
             setConfig((current) => ({ ...current, universe: { ...current.universe, ...patch } }))
           }
+        />
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
+        <div>
+          <h2 className="text-sm font-medium">Execution</h2>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+            The safe way to go live: let the agent propose and decide yourself. Approval applies
+            from the next tick, and a proposal the agent already made keeps the TTL it was created
+            with.
+          </p>
+        </div>
+        <ExecutionControls
+          idPrefix="settings-execution"
+          execution={config.execution}
+          onChange={(execution) => setConfig((current) => ({ ...current, execution }))}
         />
       </section>
 

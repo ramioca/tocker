@@ -56,15 +56,8 @@ export interface ProposalToken {
   decimals: number;
 }
 
+/** Used when a config predates approval mode or carries a nonsense TTL. */
 const DEFAULT_TTL_MINUTES = 60;
-
-/** TTL presets the settings UI offers. */
-export const PROPOSAL_TTL_PRESETS = [
-  { minutes: 15, label: "15 min", hint: "Fast markets. Miss it and the agent re-proposes next tick." },
-  { minutes: 60, label: "1 hour", hint: "The default. Long enough to see a phone notification." },
-  { minutes: 240, label: "4 hours", hint: "You check in a few times a day." },
-  { minutes: 1_440, label: "24 hours", hint: "Slow theses only — a day-old quote is a different market." },
-] as const;
 
 export function proposalTtlMinutes(config: AgentConfig): number {
   const raw = config.execution?.proposalTtlMinutes;

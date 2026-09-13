@@ -15,6 +15,7 @@ import { RelativeTime } from "@/components/common/relative-time";
 import { StatusBadge } from "@/components/common/status-badge";
 import { useRunStatus } from "@/components/providers/run-status";
 import { followUser } from "@/components/feed/feed-actions";
+import { ManualTradeSheet } from "./manual-trade";
 import { triggerRunAction } from "./agent-actions";
 import { cn } from "@/lib/utils";
 import type { AgentDetail } from "@/server/types";
@@ -120,6 +121,9 @@ export function AgentHeader({ agent }: { agent: AgentDetail }) {
                     Run now
                   </span>
                 </MorphButton>
+
+                {/* Owner-only: trade the agent's book by hand. */}
+                <ManualTradeSheet agent={agent} />
 
                 <Link
                   href={`/agents/${agent.slug}/settings`}
