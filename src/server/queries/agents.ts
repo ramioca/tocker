@@ -42,6 +42,7 @@ import {
   toTradeRow,
   type AgentRow,
 } from "./_shared";
+import { loadCachedScores } from "@/lib/trading/score-cache";
 import { isAgentOwner, toPublicProfile, visibleConfig, visibleSteps } from "./visibility";
 
 async function detailFor(agent: AgentRow | undefined, viewerId?: string | null): Promise<AgentDetail | null> {
@@ -100,6 +101,10 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
   const agg = aggregates.get(agent.id);
   const card: AgentCard = (await buildAgentCards(db, [agent]))[0];
 
+  // Latest cached score per holding, so the positions table can show "74 at entry → 41
+  // now". Display only — a buy still scores through getTokenScore (see score-cache.ts).
+  const cachedScores = await loadCachedScores(positionRows.map((r) => r.token.id));
+
   const livePositions: Position[] = positionRows
     .filter((r) => toNum(r.position.amountToken) !== 0)
     .map((r) => {
@@ -120,7 +125,7 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
         peakPriceUsd: r.position.peakPriceUsd === null ? null : toNum(r.position.peakPriceUsd),
         entryScore: r.position.entryScore === null ? null : toNum(r.position.entryScore),
         entryLiquidityUsd: r.position.entryLiquidityUsd === null ? null : toNum(r.position.entryLiquidityUsd),
-        currentScore: null,
+        currentScore: cachedScores.get(r.token.id)?.total ?? null,
         ...exitDistances({
           unrealizedPct: u.pnlPct,
           stopLossPct: agent.config.risk.stopLossPct,

@@ -13,6 +13,7 @@ import type { Position, TokenRef } from "@/server/types";
 import type { AgentWalletRef } from "@/lib/x402/types";
 import { getMarks } from "@/lib/trading/prices";
 import { getPaperCash } from "@/lib/trading/paper";
+import { loadCachedScores } from "@/lib/trading/score-cache";
 import { toTokenRef } from "@/lib/trading/tokens";
 import type { RiskPortfolio } from "@/lib/trading/risk";
 
@@ -74,6 +75,9 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
     .where(eq(positions.agentId, agentId));
 
   const marks = await getMarks(held.map((h) => h.token.id));
+  // Display/prompt only: the latest cached score per holding, so "74 at entry → 41 now"
+  // can be shown without rescoring. Buys still go through getTokenScore.
+  const cachedScores = await loadCachedScores(held.map((h) => h.token.id));
 
   let unrealizedPnlUsd = 0;
   let realizedPnlUsd = 0;
@@ -105,7 +109,7 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
         peakPriceUsd: h.position.peakPriceUsd === null ? null : Number(h.position.peakPriceUsd),
         entryScore: h.position.entryScore === null ? null : Number(h.position.entryScore),
         entryLiquidityUsd: h.position.entryLiquidityUsd === null ? null : Number(h.position.entryLiquidityUsd),
-        currentScore: null,
+        currentScore: cachedScores.get(h.token.id)?.total ?? null,
         ...exitDistances({
           unrealizedPct: unrealized === null || costBasis === 0 ? null : (unrealized / costBasis) * 100,
           stopLossPct: agent.config.risk.stopLossPct,
