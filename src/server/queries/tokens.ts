@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, gte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, ne, or, sql } from "drizzle-orm";
 import { agents, getDb, positions, tokenScores, tokens, trades, type Db } from "@/db";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import { toNum, toNumOrNull } from "@/lib/money";
@@ -219,6 +219,21 @@ export async function searchTokens(query: string, limit = 8): Promise<TokenRef[]
     .orderBy(asc(sql`length(${tokens.symbol})`), asc(tokens.symbol))
     .limit(Math.min(25, Math.max(1, limit)));
   return rows.map(toTokenRef);
+}
+
+/**
+ * Slug and name for a set of agent ids, so a token page's trade rows can link to
+ * whoever made them. Public fields only — no config, ever.
+ */
+export async function agentRefs(ids: readonly string[]): Promise<Record<string, { slug: string; name: string }>> {
+  const unique = [...new Set(ids)].filter(Boolean);
+  if (unique.length === 0) return {};
+  const db = await getDb();
+  const rows = await db
+    .select({ id: agents.id, slug: agents.slug, name: agents.name })
+    .from(agents)
+    .where(inArray(agents.id, unique));
+  return Object.fromEntries(rows.map((row) => [row.id, { slug: row.slug, name: row.name }]));
 }
 
 export interface BlocklistTarget {
