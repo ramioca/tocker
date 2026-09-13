@@ -180,11 +180,41 @@ describe("evaluateExits — score collapse", () => {
     const p = position({
       avgCostUsd: 1,
       markPriceUsd: 1.1,
-      score: { total: 66, verdict: "avoid", blockers: ["honeypot", "mint_authority_live"], liquidityUsd: 90_000 },
+      score: { total: 66, verdict: "avoid", blockers: ["honeypot", "mint_authority_active"], liquidityUsd: 90_000 },
     });
     const [decision] = run({ exitScoreBelow: 40 }, [p]);
     expect(decision?.reason).toBe("score_collapse");
-    expect(decision?.rationale).toContain("Blockers: honeypot, mint_authority_live.");
+    expect(decision?.rationale).toContain("Blockers: honeypot, mint_authority_active.");
+  });
+
+  it("ignores entry-shape gates: an old token under a fresh-launch posture is not a collapse", () => {
+    const p = position({
+      avgCostUsd: 1,
+      markPriceUsd: 1.2,
+      score: { total: 71, verdict: "avoid", blockers: ["age_above_max"], liquidityUsd: 2_000_000 },
+    });
+    expect(run({ exitScoreBelow: 40 }, [p])).toEqual([]);
+  });
+
+  it("ignores provider gaps: an unknown authority is a missing answer, not a rug", () => {
+    const p = position({
+      avgCostUsd: 1,
+      markPriceUsd: 0.97,
+      score: { total: 58, verdict: "avoid", blockers: ["mint_authority_unknown", "liquidity_unknown"], liquidityUsd: null },
+    });
+    expect(run({ exitScoreBelow: 40 }, [p])).toEqual([]);
+  });
+
+  it("still fires on real deterioration among entry-shape noise, and reports only the real part", () => {
+    const p = position({
+      avgCostUsd: 1,
+      markPriceUsd: 0.9,
+      score: { total: 61, verdict: "avoid", blockers: ["age_above_max", "liquidity_below_floor"], liquidityUsd: 3_000 },
+    });
+    const [decision] = run({ exitScoreBelow: 40 }, [p]);
+    expect(decision?.reason).toBe("score_collapse");
+    expect(decision?.rationale).toContain("Blockers: liquidity_below_floor.");
+    expect(decision?.rationale).not.toContain("age_above_max");
   });
 
   it("does nothing without a fresh score — no score means no opinion", () => {

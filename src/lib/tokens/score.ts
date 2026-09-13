@@ -27,7 +27,7 @@
  * an `_unknown` suffix: refusing to buy blind is the whole point of the gate.
  */
 import type { AgentConfig } from "@/db/schema";
-import type { ScoreComponents, ScoreVerdict, TokenScore } from "@/server/types";
+import type { ScoreComponents, ScoreVerdict, TokenScore, Chain } from "@/server/types";
 import type { GoPlusSecurity, JupiterStats, ScoreInput, TokenFacts } from "./types";
 
 export type Universe = AgentConfig["universe"];
@@ -129,6 +129,20 @@ function evmMintDisabled(gp: GoPlusSecurity | null | undefined): boolean | null 
   return gp.ownerRenounced === true && gp.canTakeBackOwnership !== true && gp.hiddenOwner !== true;
 }
 
+/**
+ * Chain-native assets (and their canonical wrappers). Nobody holds a mint or freeze
+ * authority over SOL or ETH, there is no tax, no honeypot, no "top-10 wallets" that
+ * can end the token — judging them with fresh-mint gates only produces false rugs.
+ */
+const NATIVE_ASSETS: Record<Chain, ReadonlySet<string>> = {
+  solana: new Set(["So11111111111111111111111111111111111111112"]),
+  base: new Set(["native", "0x4200000000000000000000000000000000000006"]),
+};
+
+export function isNativeAsset(chain: Chain, address: string): boolean {
+  return NATIVE_ASSETS[chain].has(chain === "base" ? address.toLowerCase() : address);
+}
+
 export function toFacts(input: ScoreInput): TokenFacts {
   const now = input.now ?? Date.now();
   const jup = input.jupiter ?? null;
@@ -191,6 +205,10 @@ export function hardGates(facts: TokenFacts, universe: Universe): string[] {
   if (universe.blocklist.some((b) => b.chain === facts.chain && sameAddress(b.address, facts.address))) {
     blockers.push("blocklisted");
   }
+
+  // A native asset cannot fail an authority, tax, holder, age or concentration gate:
+  // there is no issuer. The blocklist above is the only gate that can still apply.
+  if (isNativeAsset(facts.chain, facts.address)) return blockers;
 
   if (universe.requireMintRevoked) {
     if (facts.mintAuthorityDisabled === false) blockers.push("mint_authority_active");

@@ -283,15 +283,18 @@ function evaluateOne(position: ExitPosition, rules: ExitRules, now: Date): Candi
     };
   }
 
-  // 5 — score collapse. Needs a fresh score; no score means no opinion.
+  // 5 — score collapse. Needs a fresh score; no score means no opinion. Only
+  // *deterioration* condemns a holding: an entry-shape gate (age window, blocklist)
+  // or a provider that could not answer (`*_unknown`) is never a reason to sell.
   const score = position.score ?? null;
   if (rules.exitScoreBelow !== null && score) {
     const belowFloor = score.total < rules.exitScoreBelow;
-    const condemned = score.verdict === "avoid" && score.blockers.length > 0;
+    const deterioration = score.blockers.filter(isDeteriorationBlocker);
+    const condemned = score.verdict === "avoid" && deterioration.length > 0;
     if (belowFloor || condemned) {
       const entry = position.entryScore === null ? null : position.entryScore;
       const drift = entry === null ? "" : ` against ${entry.toFixed(0)} at entry`;
-      const blockers = score.blockers.length > 0 ? ` Blockers: ${score.blockers.join(", ")}.` : "";
+      const blockers = deterioration.length > 0 ? ` Blockers: ${deterioration.join(", ")}.` : "";
       const why = belowFloor
         ? `under my exit floor of ${rules.exitScoreBelow}`
         : `and the verdict is now "avoid" with hard-gate failures`;
@@ -323,6 +326,27 @@ function evaluateOne(position: ExitPosition, rules: ExitRules, now: Date): Candi
  * Pure: same inputs, same output, no clock and no io. Order follows the input, so a
  * caller can zip decisions back against its own list.
  */
+/**
+ * Blockers that mean the token itself got worse since entry. Everything else a
+ * score can carry — `age_below_min`, `age_above_max`, `blocklisted`, any
+ * `*_unknown` — describes the operator's entry appetite or a provider gap, and a
+ * position must never be sold because of those.
+ */
+export function isDeteriorationBlocker(blocker: string): boolean {
+  if (blocker.endsWith("_unknown")) return false;
+  if (blocker.startsWith("age_") || blocker === "blocklisted") return false;
+  return (
+    blocker === "mint_authority_active" ||
+    blocker === "freeze_authority_active" ||
+    blocker === "honeypot" ||
+    blocker === "liquidity_below_floor" ||
+    blocker === "holders_below_floor" ||
+    blocker.startsWith("buy_tax_") ||
+    blocker.startsWith("sell_tax_") ||
+    blocker.startsWith("top10_holders_")
+  );
+}
+
 export function evaluateExits(input: EvaluateExitsInput): ExitDecision[] {
   const now = input.now ?? new Date();
   const minValue = input.minValueUsd ?? DUST_VALUE_USD;
