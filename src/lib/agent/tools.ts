@@ -38,6 +38,7 @@ import {
 import type { TokenScore } from "@/server/types";
 import { describePortfolio, getPortfolio, toRiskPortfolio } from "./portfolio";
 import type { RunLogger } from "./logger";
+import { buildPositionTools } from "./tools-positions";
 
 export interface RunAgentRecord {
   id: string;
@@ -684,6 +685,9 @@ export function buildTools(ctx: RunContext): ToolSet {
         return { ok: true, postId };
       }),
     }),
+
+    // review_positions — rescore what you hold, see distance to every exit rule.
+    ...buildPositionTools(ctx),
 
     finish: tool({
       description: "End this run with a short summary of what you did and why. Always call this last.",

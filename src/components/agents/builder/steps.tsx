@@ -12,6 +12,7 @@ import { formatUsd } from "@/components/common/format";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { addLlmKeyAction } from "@/components/agents/agent-actions";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
+import { ExitRulesFields } from "@/components/agents/exit-rules";
 import { Field, RiskSlider, StepHeading, Toggle } from "./field";
 import { UniverseControls } from "./universe-controls";
 import { SimpleSelect } from "./simple-select";
@@ -548,36 +549,6 @@ export function RiskStep({ draft, updateConfig }: StepProps) {
         />
 
         <RiskSlider
-          id="risk-stop-loss"
-          label="Stop loss"
-          value={risk.stopLossPct ?? 0}
-          min={0}
-          max={90}
-          format={(value) => (value === 0 ? "Off" : `−${Math.round(value)}%`)}
-          meaning={
-            (risk.stopLossPct ?? 0) === 0
-              ? "No automatic stop. The strategy prompt is the only thing standing between you and a full drawdown."
-              : `A position is closed once it is ${Math.round(risk.stopLossPct ?? 0)}% below entry.`
-          }
-          onChange={(value) => patch({ stopLossPct: value === 0 ? null : Math.round(value) })}
-        />
-
-        <RiskSlider
-          id="risk-take-profit"
-          label="Take profit"
-          value={risk.takeProfitPct ?? 0}
-          min={0}
-          max={300}
-          format={(value) => (value === 0 ? "Off" : `+${Math.round(value)}%`)}
-          meaning={
-            (risk.takeProfitPct ?? 0) === 0
-              ? "Winners run until the strategy says otherwise."
-              : `Half the reason to hold is gone at +${Math.round(risk.takeProfitPct ?? 0)}% — the position closes there.`
-          }
-          onChange={(value) => patch({ takeProfitPct: value === 0 ? null : Math.round(value) })}
-        />
-
-        <RiskSlider
           id="risk-slippage"
           label="Slippage tolerance"
           value={risk.slippageBps}
@@ -588,6 +559,14 @@ export function RiskStep({ draft, updateConfig }: StepProps) {
           meaning={`Orders are rejected if the fill would be worse than ${(risk.slippageBps / 100).toFixed(2)}% off the quote. Thin memecoins usually need more than 100 bps.`}
           onChange={(slippageBps) => patch({ slippageBps: Math.round(slippageBps) })}
         />
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium">Exit rules</h3>
+        <p className="text-xs text-muted-foreground">
+          Enforced every five minutes by the exit engine, whether or not the model is running. A stop that waits for a human is not a stop.
+        </p>
+        <ExitRulesFields value={risk} onChange={(next) => updateConfig({ risk: next })} />
       </div>
     </div>
   );
