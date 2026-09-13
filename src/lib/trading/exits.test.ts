@@ -184,7 +184,8 @@ describe("evaluateExits — score collapse", () => {
     });
     const [decision] = run({ exitScoreBelow: 40 }, [p]);
     expect(decision?.reason).toBe("score_collapse");
-    expect(decision?.rationale).toContain("Blockers: honeypot, mint_authority_active.");
+    // The authority was already active at entry (it cannot be re-enabled), so only the honeypot counts.
+    expect(decision?.rationale).toContain("Blockers: honeypot.");
   });
 
   it("ignores entry-shape gates: an old token under a fresh-launch posture is not a collapse", () => {
@@ -192,6 +193,15 @@ describe("evaluateExits — score collapse", () => {
       avgCostUsd: 1,
       markPriceUsd: 1.2,
       score: { total: 71, verdict: "avoid", blockers: ["age_above_max"], liquidityUsd: 2_000_000 },
+    });
+    expect(run({ exitScoreBelow: 40 }, [p])).toEqual([]);
+  });
+
+  it("ignores permanent facts that were true at entry: authorities and concentration", () => {
+    const p = position({
+      avgCostUsd: 1,
+      markPriceUsd: 0.92,
+      score: { total: 63, verdict: "avoid", blockers: ["mint_authority_active", "top10_holders_67pct"], liquidityUsd: 900_000 },
     });
     expect(run({ exitScoreBelow: 40 }, [p])).toEqual([]);
   });

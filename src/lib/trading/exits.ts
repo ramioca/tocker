@@ -327,23 +327,21 @@ function evaluateOne(position: ExitPosition, rules: ExitRules, now: Date): Candi
  * caller can zip decisions back against its own list.
  */
 /**
- * Blockers that mean the token itself got worse since entry. Everything else a
- * score can carry — `age_below_min`, `age_above_max`, `blocklisted`, any
- * `*_unknown` — describes the operator's entry appetite or a provider gap, and a
- * position must never be sold because of those.
+ * Blockers that can only be true because the token got worse *after* entry. A mint or
+ * freeze authority cannot be re-enabled once revoked, and top-10 concentration is an
+ * entry appetite — if either is true now it was true when the agent bought, so they
+ * are not collapses. Age windows, the blocklist and any `*_unknown` describe the
+ * operator's rules or a provider gap, never the token. What is left is what actually
+ * moves against a holder: a honeypot flip, a tax switched on, the pool or the holder
+ * base falling through the floor.
  */
 export function isDeteriorationBlocker(blocker: string): boolean {
-  if (blocker.endsWith("_unknown")) return false;
-  if (blocker.startsWith("age_") || blocker === "blocklisted") return false;
   return (
-    blocker === "mint_authority_active" ||
-    blocker === "freeze_authority_active" ||
     blocker === "honeypot" ||
     blocker === "liquidity_below_floor" ||
     blocker === "holders_below_floor" ||
     blocker.startsWith("buy_tax_") ||
-    blocker.startsWith("sell_tax_") ||
-    blocker.startsWith("top10_holders_")
+    blocker.startsWith("sell_tax_")
   );
 }
 

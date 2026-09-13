@@ -579,7 +579,9 @@ async function seed() {
         const when = at(day, hour);
         if (when.getTime() > NOW - 120_000) continue;
         const spread = 6 + t.vol * 60;
-        total = clamp(total + (quality - total) * 0.18 + (rand() - 0.5) * spread, 18, 97);
+        // Never wander more than 20 points under the token's quality: a blue chip does not
+        // read "avoid" because a random walk had a bad week.
+        total = clamp(total + (quality - total) * 0.18 + (rand() - 0.5) * spread, Math.max(18, quality - 20), 97);
         holders = Math.max(60, Math.round(holders * (1 + (rand() - 0.42) * 0.04)));
         liquidity = Math.max(8_000, liquidity * (1 + (rand() - 0.48) * 0.09));
         const rounded = Math.round(total * 10) / 10;
@@ -600,7 +602,7 @@ async function seed() {
             sentiment: null,
           },
           // Below the "avoid" band the gate that usually did it is depth.
-          blockers: rounded < 40 ? ["liquidity_below_floor"] : [],
+          blockers: [],
           priceUsd: toNumeric(price, 12),
           liquidityUsd: toNumeric(liquidity, 2),
           holderCount: holders,
