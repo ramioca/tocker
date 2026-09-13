@@ -28,7 +28,7 @@ function remember(id: string, price: number): void {
   cache.set(id, { at: Date.now(), price });
 }
 
-async function fetchSolanaPrices(mints: string[]): Promise<Map<string, number>> {
+export async function fetchSolanaPrices(mints: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (mints.length === 0) return out;
   try {
@@ -50,7 +50,7 @@ async function fetchSolanaPrices(mints: string[]): Promise<Map<string, number>> 
   return out;
 }
 
-async function fetchBasePrices(addresses: string[]): Promise<Map<string, number>> {
+export async function fetchBasePrices(addresses: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   const erc20 = addresses.filter((a) => a.startsWith("0x"));
   if (erc20.length === 0) return out;

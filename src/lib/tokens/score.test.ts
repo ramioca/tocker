@@ -656,3 +656,24 @@ describe("explainBlocker", () => {
     expect(explainBlocker("some_new_gate")).toBe("some new gate");
   });
 });
+
+describe("native assets", () => {
+  const WSOL = "So11111111111111111111111111111111111111112";
+
+  it("wrapped SOL clears every gate under a fresh-launch posture — there is no issuer to rug it", () => {
+    const facts = toFacts(solanaInput({ address: WSOL, jupiter: jupiterToken({ id: WSOL, symbol: "SOL" }) }));
+    const degen = universe({ maxAgeHours: 72, minAgeMinutes: 15, minHolderCount: 150, maxTop10HolderPct: 50 });
+    expect(hardGates(facts, degen)).toEqual([]);
+  });
+
+  it("native ETH with no provider data is not a rug, it is ETH", () => {
+    const facts = toFacts({ chain: "base", address: "native", symbol: "ETH", now: NOW });
+    expect(hardGates(facts, universe())).toEqual([]);
+  });
+
+  it("the blocklist is the one gate a native asset can still fail", () => {
+    const facts = toFacts(solanaInput({ address: WSOL, jupiter: jupiterToken({ id: WSOL, symbol: "SOL" }) }));
+    const blocked = universe({ blocklist: [{ chain: "solana", address: WSOL, symbol: "SOL" }] });
+    expect(hardGates(facts, blocked)).toEqual(["blocklisted"]);
+  });
+});

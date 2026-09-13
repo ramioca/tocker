@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { AgentConfigSummary } from "@/components/agents/agent-config-summary";
@@ -6,10 +7,14 @@ import { AgentStats } from "@/components/agents/agent-stats";
 import { AgentTabs } from "@/components/agents/agent-tabs";
 import { PositionsTable } from "@/components/agents/positions-table";
 import { PrivateStrategyPanel } from "@/components/agents/private-strategy";
+import { ProposalList } from "@/components/agents/proposals/proposal-list";
 import { RunsTimeline } from "@/components/agents/runs-timeline";
 import { TradesTable } from "@/components/agents/trades-table";
+import { PerformancePanel } from "@/components/agents/analytics";
 import { EquityChart } from "@/components/charts/equity-chart";
 import { agentBySlug, equitySeries, viewerSession } from "@/components/common/data-access";
+import { listProposals } from "@/server/queries/proposals";
+import { getAgentAnalyticsWindows } from "@/server/queries/analytics";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -30,13 +35,26 @@ export default async function AgentPage({ params }: Params) {
   const agent = await agentBySlug(slug, session?.userId ?? null);
   if (!agent) notFound();
 
-  const equity = await equitySeries(agent.id, "all");
+  const [equity, analytics, proposals] = await Promise.all([
+    equitySeries(agent.id, "all"),
+    // The record is public, so a provider hiccup here must cost the tab, not the page.
+    getAgentAnalyticsWindows(agent.id).catch(() => null),
+    // Owner-gated inside the query too — this is the second lock, not the only one.
+    agent.isOwner ? listProposals(agent.id, session?.userId ?? null) : Promise.resolve([]),
+  ]);
 
   return (
     <div className="mx-auto w-full max-w-5xl">
       <AgentHeader agent={agent} />
 
       <div className="space-y-6 px-4 py-6 sm:px-6">
+        {/* Above the tabs on purpose: a proposal has a clock on it. */}
+        {proposals.length > 0 ? (
+          <Suspense fallback={null}>
+            <ProposalList proposals={proposals} />
+          </Suspense>
+        ) : null}
+
         <AgentStats agent={agent} />
 
         <AgentTabs
@@ -59,6 +77,7 @@ export default async function AgentPage({ params }: Params) {
             </div>
           }
           trades={<TradesTable agentId={agent.id} />}
+          performance={analytics ? <PerformancePanel windows={analytics} /> : null}
           runs={<RunsTimeline agentId={agent.id} agentSlug={agent.slug} />}
           configLabel={agent.config ? "Config" : "Strategy"}
           /**

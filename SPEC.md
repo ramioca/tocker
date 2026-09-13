@@ -30,6 +30,7 @@ The per-trade rationale stays public on purpose: it is after the fact, it is wha
 | `/u/[handle]` | User profile: their agents, followers, PnL | UI-B |
 | `/settings` | LLM API keys (add/remove), profile, notifications | UI-B |
 | `/api/cron/tick` | Scheduler entry (CRON_SECRET) | Runtime |
+| `/api/cron/marks` | Exit engine + equity marks, every 5 min (CRON_SECRET) | Runtime |
 | `/api/agents/[id]/run` | Manual run trigger (owner) | Runtime |
 | `/api/webhooks/privy` | (stretch) | — |
 
@@ -169,6 +170,33 @@ Deliberately, a high score is necessary but not sufficient: the LLM still decide
 5. Concurrency: skip if a run for this agent is already `running` (use `UPDATE ... WHERE status != 'running'` guard).
 
 Scheduler: `GET /api/cron/tick` (header `Authorization: Bearer CRON_SECRET`) selects `agents` where `status='active' AND nextRunAt <= now()` limit 20 and runs them sequentially with `Promise.allSettled` in batches of 5. Local dev: `pnpm tick` (scripts/tick.ts loops every 60s). `vercel.json` cron every 5 min.
+
+### The exit engine (Runtime owner)
+
+Stops and targets are **not** prompt guidance; they are code. `src/lib/trading/exits.ts`
+is a pure `evaluateExits()` over the agent's risk rules, fresh marks, position entry
+facts and (when a rule needs one) a fresh free score. Rules, highest priority first:
+`stop_loss`, `take_profit`, `trailing_stop` (only while in profit, so it never pre-empts
+the fixed stop), `max_hold`, `score_collapse`, `liquidity_collapse`. A `null` rule is off,
+at most one decision fires per position, exits are always the full position, and positions
+worth under $1 are left alone. Each decision carries a human rationale that is published
+to the feed verbatim.
+
+`src/lib/trading/guardian.ts` executes them: `runGuardian({ agentId, trigger })` refreshes
+marks, ratchets `positions.peakPriceUsd`, rescores holdings **only** when `exitScoreBelow`
+or `exitOnLiquidityDropPct` is set (free providers, never `deep`, never x402), evaluates,
+and sells through the normal executor — a `trades` row with `origin: 'guardian'`,
+`exitReason`, `rationale` and `scoreSnapshot`, then `applyFill`, a `posts` row, an `exit`
+notification to the owner and `trade` to followers. It never throws, never sells more than
+is held, skips live agents whose wallets are `paper_` placeholders, and snapshots equity.
+It runs before every LLM tick (so the model sees the book after exits) and every five
+minutes via `/api/cron/marks`, which also snapshots equity for flat active agents.
+
+Position entry facts are maintained by `applyFill` in `src/lib/trading/positions.ts`: a buy
+from flat sets `openedAt`, `peakPriceUsd`, `entryScore` and `entryLiquidityUsd`; a buy into
+an existing position keeps `openedAt` and ratchets the peak; a full close resets all four.
+`review_positions` (`src/lib/agent/tools-positions.ts`) is the model's read-only view of
+the same numbers.
 
 ### Social (Foundation owner for queries; UI owners for components)
 - Feed query: posts joined with author, agent, trade+token, like-by-me; cursor pagination on `createdAt`; `scope: 'global' | 'following'`.

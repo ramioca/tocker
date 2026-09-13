@@ -155,9 +155,27 @@ function summaryFrom(score: ScoreEcho | null): string {
   return `Swept the discovery feeds, scored ${score.symbol} at ${score.total.toFixed(1)}/100 (${score.verdict}, safety ${score.safety} / organic ${score.organic}) and bought a $50 starter position. One position open, will reassess next tick.`;
 }
 
-/** Steps 0-2 are fixed; the trade and the summary are built from the real score. */
+/**
+ * True when the runtime actually handed us this tool. `review_positions` lives in
+ * `tools-positions.ts` and is registered by whoever assembles `buildTools`, so the script
+ * asks rather than assumes: calling a tool that is not in the set would fail the run.
+ */
+function toolAvailable(options: MockGenerateOptions, name: string): boolean {
+  const tools: unknown = (options as { tools?: unknown }).tools;
+  if (!Array.isArray(tools)) return false;
+  return tools.some((t) => {
+    const candidate = t as { name?: unknown };
+    return typeof candidate.name === "string" && candidate.name === name;
+  });
+}
+
+/** Steps 0-3 are fixed; the trade and the summary are built from the real score. */
 export const MOCK_SCRIPT = [
   { text: "Checking the book before I do anything.", call: { name: "get_portfolio", input: {} } },
+  {
+    text: "Reviewing what I already hold against my exit rules before I go looking for anything new.",
+    call: { name: "review_positions", input: {} },
+  },
   {
     text: "Sweeping my discovery feeds for anything that clears the free gates.",
     call: { name: "discover_tokens", input: { limit: 10 } },
@@ -181,7 +199,12 @@ export function createMockModel(): LanguageModel {
     provider: "petri-mock",
     modelId: "scripted-discovery-trader",
     doGenerate: async (options) => {
-      const entry = MOCK_SCRIPT[index];
+      // `review_positions` is skipped until it is registered, so the demo passes both
+      // before and after the tool is wired into `buildTools`.
+      const script = MOCK_SCRIPT.filter(
+        (step) => step.call.name !== "review_positions" || toolAvailable(options, "review_positions"),
+      );
+      const entry = script[index];
       index += 1;
       if (!entry) return step("Nothing further this tick.", null, `mock-${index}`);
 

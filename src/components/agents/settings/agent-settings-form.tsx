@@ -11,6 +11,8 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { formatUsd } from "@/components/common/format";
 import { Field, RiskSlider, Toggle } from "@/components/agents/builder/field";
 import { UniverseControls } from "@/components/agents/builder/universe-controls";
+import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
+import { ExitRulesFields } from "@/components/agents/exit-rules";
 import { INTERVAL_PRESETS } from "@/components/agents/builder/types";
 import { EmptyState } from "@/components/common/empty-state";
 import { setAgentStatusAction, updateAgentAction } from "@/components/agents/agent-actions";
@@ -190,6 +192,22 @@ function SettingsForm({
       </section>
 
       <section className="space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
+        <div>
+          <h2 className="text-sm font-medium">Execution</h2>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+            The safe way to go live: let the agent propose and decide yourself. Approval applies
+            from the next tick, and a proposal the agent already made keeps the TTL it was created
+            with.
+          </p>
+        </div>
+        <ExecutionControls
+          idPrefix="settings-execution"
+          execution={config.execution}
+          onChange={(execution) => setConfig((current) => ({ ...current, execution }))}
+        />
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
         <h2 className="text-sm font-medium">Schedule</h2>
         <div className="grid gap-2 sm:grid-cols-3">
           {INTERVAL_PRESETS.map((preset) => {
@@ -267,6 +285,14 @@ function SettingsForm({
             onChange={(maxDataSpendUsdPerRun) => patchRisk({ maxDataSpendUsdPerRun })}
           />
         </div>
+      </section>
+
+      <section className="space-y-3 rounded-xl border border-border/70 bg-card/30 p-4">
+        <h2 className="text-sm font-medium">Exit rules</h2>
+        <p className="text-xs text-muted-foreground">
+          Checked every five minutes by the exit engine, independent of the model. Changes apply from the next check.
+        </p>
+        <ExitRulesFields value={config.risk} onChange={(risk) => setConfig((current) => ({ ...current, risk }))} />
       </section>
 
       <div className="sticky bottom-20 z-10 flex items-center gap-3 rounded-xl border border-border bg-background/90 px-3 py-2.5 backdrop-blur-md md:bottom-4">

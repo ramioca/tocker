@@ -23,6 +23,7 @@ import { getDexScreenerToken } from "./providers/dexscreener";
 import { getGoPlusSecurity } from "./providers/goplus";
 import { getJupiterToken } from "./providers/jupiter";
 import { getRugcheckSummary } from "./providers/rugcheck";
+import { recordScore } from "./history";
 import { scoreToken, type Universe } from "./score";
 import type { ScoreInput, SentimentInput } from "./types";
 
@@ -218,7 +219,10 @@ async function gather(input: GetTokenScoreInput): Promise<ScoreInput> {
     const [jupiter, rugcheck] = await Promise.all([getJupiterToken(address), getRugcheckSummary(address)]);
     return { ...base, jupiter, rugcheck, dexscreener: null, goplus: null };
   }
-  const [dexscreener, goplus] = await Promise.all([getDexScreenerToken(address), getGoPlusSecurity(address)]);
+  // Native ETH has no contract; DexScreener and GoPlus know it as WETH.
+  const WETH_BASE = "0x4200000000000000000000000000000000000006";
+  const lookup = address.toLowerCase() === "native" ? WETH_BASE : address;
+  const [dexscreener, goplus] = await Promise.all([getDexScreenerToken(lookup), getGoPlusSecurity(lookup)]);
   return { ...base, jupiter: null, rugcheck: null, dexscreener, goplus };
 }
 
@@ -254,6 +258,7 @@ export async function getTokenScore(input: GetTokenScoreInput): Promise<TokenSco
 
   const score = scoreToken(gathered, input.universe);
   await writeCache(score, key);
+  await recordScore(score); // append-only history for token pages; deduped, never throws
   return score;
 }
 

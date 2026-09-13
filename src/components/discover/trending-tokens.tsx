@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Sparkles } from "lucide-react";
+import Link from "next/link";
+import { ArrowUpRight, Sparkles } from "lucide-react";
 import type { ScoreVerdict, TokenScore } from "@/server/types";
 import { TokenScoreRow } from "@/components/tokens/token-candidate-row";
 import { VERDICT_META, verdictTint } from "@/components/tokens";
@@ -140,7 +141,26 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
 
       <div className="mt-3 divide-y divide-border/70 overflow-hidden rounded-2xl border border-border/80 bg-card/50">
         {rows.map((score) => (
-          <TokenScoreRow key={score.tokenId} score={score} showTopBlocker />
+          <div key={score.tokenId} className="group/row relative">
+            <TokenScoreRow score={score} showTopBlocker />
+            {/*
+              The row itself is a disclosure — expanding the breakdown in place is the
+              cheaper action and stays the primary one. The page link sits beside it as
+              an explicit affordance rather than stealing the click.
+            */}
+            <Link
+              href={`/tokens/${score.chain}/${score.address}`}
+              aria-label={`Open the ${score.symbol} token page`}
+              className={cn(
+                "absolute top-2 right-10 inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/80 px-1.5 py-0.5",
+                "text-[10px] text-muted-foreground opacity-0 transition-opacity duration-150",
+                "group-hover/row:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              )}
+            >
+              Token page
+              <ArrowUpRight aria-hidden className="size-3" />
+            </Link>
+          </div>
         ))}
       </div>
     </section>

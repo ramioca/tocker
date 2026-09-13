@@ -40,10 +40,18 @@ export interface SeededAgent {
   slug: string;
 }
 
+/**
+ * Config overrides for a seeded agent. `risk` is accepted partially — it is merged onto
+ * the defaults below, which is what a test that only cares about one stop loss wants.
+ */
+export type SeedConfigOverrides = Partial<Omit<AgentConfig, "risk">> & {
+  risk?: Partial<AgentConfig["risk"]>;
+};
+
 /** Inserts a user + paper agent + paper wallet placeholders. */
 export async function seedAgent(
   db: Db,
-  overrides: { config?: Partial<AgentConfig>; mode?: "paper" | "live"; paperStartingUsd?: string } = {},
+  overrides: { config?: SeedConfigOverrides; mode?: "paper" | "live"; paperStartingUsd?: string } = {},
 ): Promise<SeededAgent> {
   const userId = `did:privy:${nanoid(8)}`;
   const agentId = nanoid();

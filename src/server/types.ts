@@ -409,4 +409,43 @@ export interface ProposalRow extends TradeRow {
   expiresAt: string;
   /** Live re-check at read time: would the risk guard still allow it? */
   stillValid: boolean;
+  /** Why not, in the guard's own words. Null when `stillValid` is true. */
+  invalidReason: string | null;
+  /** Which agent this is waiting on — the notifications page shows proposals across agents. */
+  agentSlug: string;
+  agentName: string;
+  agentAvatarSeed: string | null;
+}
+
+/** What the Dynamic Island polls: how many decisions are waiting, and the newest one. */
+export interface PendingProposalsSummary {
+  count: number;
+  latest: {
+    tradeId: string;
+    agentId: string;
+    agentSlug: string;
+    agentName: string;
+    side: "buy" | "sell";
+    symbol: string;
+    requestedUsd: number;
+    expiresAt: string;
+  } | null;
+}
+
+/** `previewTrade`: what a manual order would do, without doing it. */
+export interface TradePreview {
+  token: TokenRef;
+  score: TokenScore | null;
+  /** The risk guard's answer for this exact size, right now. */
+  allowed: boolean;
+  reason: string | null;
+  priceUsd: number | null;
+  estimatedToken: number | null;
+  cashUsd: number;
+  equityUsd: number;
+  /** Position value in this token today, for the concentration sentence. */
+  positionValueUsd: number | null;
+  isPaper: boolean;
+  /** True when this agent would turn the order into a proposal instead of a fill. */
+  requiresApproval: boolean;
 }

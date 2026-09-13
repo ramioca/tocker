@@ -1,0 +1,316 @@
+"use client";
+
+import { useCallback, useMemo, useRef, useState } from "react";
+import type { ScoreHistoryPoint } from "@/server/types";
+import { ChartEmpty } from "@/components/spectrumui/charts/chart-engine";
+import { formatAbsolute, formatUsd } from "@/components/common/format";
+import { VERDICT_META, verdictTint } from "@/components/tokens/verdict";
+import { formatCompactUsd } from "@/components/tokens/format";
+import { cn } from "@/lib/utils";
+
+/**
+ * 30 days of score, with the verdict bands shaded behind the line.
+ *
+ * The bands are the whole point. A line from 74 to 58 is a number moving; the
+ * same line crossing out of `candidate` into `watch` is the moment an agent
+ * stopped being allowed to buy it. Shading the bands makes the threshold
+ * visible without a legend, and the y axis is pinned to 0-100 so two tokens are
+ * always comparable.
+ *
+ * One SVG, no chart library: a fixed-height plot measured in real pixels means
+ * labels never stretch, and 90 points of a step-ish walk need no interpolation.
+ */
+
+const BANDS = [
+  { verdict: "avoid", lo: 0, hi: 40 },
+  { verdict: "watch", lo: 40, hi: 60 },
+  { verdict: "candidate", lo: 60, hi: 80 },
+  { verdict: "strong", lo: 80, hi: 100 },
+] as const;
+
+const PAD = { top: 10, right: 8, bottom: 20, left: 30 };
+const VIEW_W = 720;
+
+export function ScoreHistoryChart({
+  history,
+  height = 220,
+  className,
+}: {
+  history: ScoreHistoryPoint[];
+  height?: number;
+  className?: string;
+}) {
+  const [active, setActive] = useState<number | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
+  const points = useMemo(
+    () =>
+      history
+        .map((p) => ({ ...p, t: new Date(p.at).getTime() }))
+        .filter((p) => Number.isFinite(p.t))
+        .sort((a, b) => a.t - b.t),
+    [history],
+  );
+
+  const plotW = VIEW_W - PAD.left - PAD.right;
+  const plotH = height - PAD.top - PAD.bottom;
+
+  const geometry = useMemo(() => {
+    if (points.length === 0) return null;
+    const first = points[0].t;
+    const last = points[points.length - 1].t;
+    const span = Math.max(1, last - first);
+    const x = (t: number) => PAD.left + ((t - first) / span) * plotW;
+    const y = (total: number) => PAD.top + (1 - Math.max(0, Math.min(100, total)) / 100) * plotH;
+    const coords = points.map((p) => ({ ...p, cx: x(p.t), cy: y(p.total) }));
+    return { coords, first, last, x, y };
+  }, [points, plotW, plotH]);
+
+  const onMove = useCallback(
+    (event: React.PointerEvent<SVGSVGElement>) => {
+      const svg = svgRef.current;
+      if (!svg || !geometry) return;
+      const rect = svg.getBoundingClientRect();
+      if (rect.width === 0) return;
+      const px = ((event.clientX - rect.left) / rect.width) * VIEW_W;
+      let best = 0;
+      let bestDistance = Infinity;
+      geometry.coords.forEach((point, i) => {
+        const d = Math.abs(point.cx - px);
+        if (d < bestDistance) {
+          bestDistance = d;
+          best = i;
+        }
+      });
+      setActive(best);
+    },
+    [geometry],
+  );
+
+  if (!geometry || points.length < 2) {
+    return (
+      <ChartEmpty
+        height={height}
+        variant="line"
+        title="No score history yet"
+        description="Every time this token is scored, a point lands here. The curve fills in from the next sweep."
+      />
+    );
+  }
+
+  const { coords } = geometry;
+  const line = coords.map((p, i) => `${i === 0 ? "M" : "L"}${p.cx.toFixed(2)},${p.cy.toFixed(2)}`).join(" ");
+  const area = `${line} L${coords[coords.length - 1].cx.toFixed(2)},${(PAD.top + plotH).toFixed(2)} L${coords[0].cx.toFixed(2)},${(PAD.top + plotH).toFixed(2)} Z`;
+  const hovered = active === null ? null : coords[active];
+  const latest = coords[coords.length - 1];
+
+  return (
+    <figure className={cn("w-full", className)}>
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${VIEW_W} ${height}`}
+        width="100%"
+        height={height}
+        role="img"
+        aria-label={`Score history, ${points.length} points, latest ${Math.round(latest.total)} out of 100`}
+        className="block touch-pan-y overflow-visible"
+        onPointerMove={onMove}
+        onPointerLeave={() => setActive(null)}
+      >
+        <defs>
+          <linearGradient id="score-history-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.13" />
+            <stop offset="100%" stopColor="var(--primary)" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {/* Verdict bands — the thresholds, not decoration. */}
+        {BANDS.map((band) => {
+          const top = PAD.top + (1 - band.hi / 100) * plotH;
+          const bandHeight = ((band.hi - band.lo) / 100) * plotH;
+          const color = VERDICT_META[band.verdict].color;
+          return (
+            <g key={band.verdict}>
+              <rect
+                x={PAD.left}
+                y={top}
+                width={plotW}
+                height={bandHeight}
+                fill={verdictTint(color, 7)}
+              />
+              {band.lo > 0 ? (
+                <>
+                  <line
+                    x1={PAD.left}
+                    x2={PAD.left + plotW}
+                    y1={top + bandHeight}
+                    y2={top + bandHeight}
+                    stroke={verdictTint(color, 30)}
+                    strokeWidth="1"
+                    strokeDasharray="3 4"
+                  />
+                  <text
+                    x={PAD.left - 6}
+                    y={top + bandHeight + 3}
+                    textAnchor="end"
+                    className="tnum fill-muted-foreground font-mono text-[9px]"
+                  >
+                    {band.lo}
+                  </text>
+                </>
+              ) : null}
+            </g>
+          );
+        })}
+
+        <path d={area} fill="url(#score-history-fill)" />
+        <path
+          d={line}
+          fill="none"
+          stroke="var(--primary)"
+          strokeWidth="1.75"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+
+        {hovered ? (
+          <g>
+            <line
+              x1={hovered.cx}
+              x2={hovered.cx}
+              y1={PAD.top}
+              y2={PAD.top + plotH}
+              stroke="var(--border)"
+              strokeWidth="1"
+            />
+            <circle
+              cx={hovered.cx}
+              cy={hovered.cy}
+              r="3.5"
+              fill={VERDICT_META[hovered.verdict].color}
+              stroke="var(--background)"
+              strokeWidth="1.5"
+            />
+          </g>
+        ) : (
+          <circle
+            cx={latest.cx}
+            cy={latest.cy}
+            r="3"
+            fill={VERDICT_META[latest.verdict].color}
+            stroke="var(--background)"
+            strokeWidth="1.5"
+          />
+        )}
+
+        <text
+          x={PAD.left}
+          y={height - 6}
+          className="tnum fill-muted-foreground font-mono text-[9px]"
+        >
+          {shortDate(coords[0].at)}
+        </text>
+        <text
+          x={PAD.left + plotW}
+          y={height - 6}
+          textAnchor="end"
+          className="tnum fill-muted-foreground font-mono text-[9px]"
+        >
+          {shortDate(latest.at)}
+        </text>
+      </svg>
+
+      <figcaption
+        className="tnum mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground"
+        aria-live="polite"
+      >
+        {(() => {
+          const point = hovered ?? latest;
+          const meta = VERDICT_META[point.verdict];
+          return (
+            <>
+              <span className="font-sans">{hovered ? formatAbsolute(point.at) : "Latest"}</span>
+              <span style={{ color: meta.color }}>
+                {Math.round(point.total)} · {meta.label.toLowerCase()}
+              </span>
+              {point.priceUsd === null ? null : <span>{formatUsd(point.priceUsd)}</span>}
+              {point.liquidityUsd === null ? null : <span>{formatCompactUsd(point.liquidityUsd)} liq</span>}
+            </>
+          );
+        })()}
+      </figcaption>
+    </figure>
+  );
+}
+
+function shortDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/**
+ * Price over the same window, taken from the same history rows.
+ *
+ * It is deliberately small and next to the score: the question a token page has
+ * to answer is "did the score move before the price did", and two charts at the
+ * same width with the same x range is the only honest way to show it.
+ */
+export function PriceSparkline({
+  history,
+  height = 72,
+  className,
+}: {
+  history: ScoreHistoryPoint[];
+  height?: number;
+  className?: string;
+}) {
+  const points = useMemo(
+    () =>
+      history
+        .flatMap((p) => (p.priceUsd === null ? [] : [{ t: new Date(p.at).getTime(), price: p.priceUsd }]))
+        .filter((p) => Number.isFinite(p.t) && p.price > 0)
+        .sort((a, b) => a.t - b.t),
+    [history],
+  );
+
+  if (points.length < 2) return null;
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  const span = Math.max(1, last.t - first.t);
+  const lo = Math.min(...points.map((p) => p.price));
+  const hi = Math.max(...points.map((p) => p.price));
+  const range = hi - lo || hi || 1;
+  const plotW = VIEW_W - PAD.left - PAD.right;
+  const plotH = height - 14;
+
+  const coords = points.map((p) => ({
+    cx: PAD.left + ((p.t - first.t) / span) * plotW,
+    cy: 6 + (1 - (p.price - lo) / range) * plotH,
+  }));
+  const line = coords.map((p, i) => `${i === 0 ? "M" : "L"}${p.cx.toFixed(2)},${p.cy.toFixed(2)}`).join(" ");
+  const rising = last.price >= first.price;
+  const stroke = rising ? "var(--positive)" : "var(--negative)";
+
+  return (
+    <div className={cn("w-full", className)}>
+      <div className="flex items-baseline justify-between">
+        <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Price</p>
+        <p className="tnum font-mono text-[11px] text-muted-foreground">
+          {formatUsd(lo)} – {formatUsd(hi)}
+        </p>
+      </div>
+      <svg
+        viewBox={`0 0 ${VIEW_W} ${height}`}
+        width="100%"
+        height={height}
+        role="img"
+        aria-label={`Price over the same window, ${rising ? "up" : "down"} from ${formatUsd(first.price)} to ${formatUsd(last.price)}`}
+        className="mt-1 block"
+      >
+        <path d={line} fill="none" stroke={stroke} strokeWidth="1.5" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}

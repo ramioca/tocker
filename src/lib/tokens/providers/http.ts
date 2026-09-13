@@ -66,16 +66,27 @@ export class TtlCache<T> {
 }
 
 /** GETs JSON, returning `null` for any failure at all. Never throws. */
+/** Retry schedule for 429 / 5xx / timeouts. A marks pass fans out across agents and can trip a public rate limit; one blip must not blind a whole pass. */
+const RETRY_DELAYS_MS = [400, 1200] as const;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 export async function getJson(url: string, headers: Record<string, string> = {}): Promise<unknown> {
-  try {
-    const res = await fetch(url, {
-      headers: { accept: "application/json", ...headers },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as unknown;
-  } catch {
-    return null;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: { accept: "application/json", ...headers },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (res.ok) return (await res.json()) as unknown;
+      const retryable = res.status === 429 || res.status >= 500;
+      if (!retryable || attempt >= RETRY_DELAYS_MS.length) return null;
+      const after = Number(res.headers.get("retry-after"));
+      await sleep(Number.isFinite(after) && after > 0 ? Math.min(after * 1000, 5_000) : RETRY_DELAYS_MS[attempt]);
+    } catch {
+      if (attempt >= RETRY_DELAYS_MS.length) return null;
+      await sleep(RETRY_DELAYS_MS[attempt]);
+    }
   }
 }
 

@@ -12,6 +12,7 @@ import { PnlText } from "@/components/common/pnl-text";
 import { RelativeTime } from "@/components/common/relative-time";
 import { TokenIcon } from "@/components/common/token-icon";
 import { formatTokenAmount, formatUsd } from "@/components/common/format";
+import { ScoreBadge } from "@/components/tokens/score-badge";
 import { cn } from "@/lib/utils";
 import type { FeedItem, TradeRow } from "@/server/types";
 
@@ -40,6 +41,7 @@ function SideChip({ side }: { side: "buy" | "sell" }) {
 function TradeBlock({ trade }: { trade: TradeRow }) {
   const url = explorerUrl(trade);
   const failed = trade.status === "failed" || trade.status === "rejected";
+  const entryScore = trade.entryScore ?? trade.score?.total ?? null;
 
   return (
     <div
@@ -51,7 +53,13 @@ function TradeBlock({ trade }: { trade: TradeRow }) {
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
         <SideChip side={trade.side} />
         <TokenIcon token={trade.token} size="sm" />
-        <span className="text-sm font-semibold">{trade.token.symbol}</span>
+        {/* The symbol is the way into the token's own record: score, history, who else holds it. */}
+        <Link
+          href={`/tokens/${trade.token.chain}/${trade.token.address}`}
+          className="rounded text-sm font-semibold hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {trade.token.symbol}
+        </Link>
         <span className="tnum text-sm text-muted-foreground">
           {formatTokenAmount(trade.amountToken)}
         </span>
@@ -63,6 +71,27 @@ function TradeBlock({ trade }: { trade: TradeRow }) {
           <ModeBadge mode={trade.isPaper ? "paper" : "live"} size="xs" />
         </div>
       </div>
+
+      {/*
+        The frozen score, not today's. A trade's record is what the agent knew when it
+        pulled the trigger — re-scoring later must never rewrite it.
+      */}
+      {entryScore !== null ? (
+        <p className="mt-2 flex flex-wrap items-center gap-1.5">
+          <ScoreBadge
+            total={entryScore}
+            verdict={trade.score?.verdict}
+            blockers={trade.score?.blockers}
+            size="xs"
+          />
+          <span className="text-[11px] text-muted-foreground">at entry</span>
+          {trade.exitReason ? (
+            <span className="rounded border border-border/70 px-1.5 py-px text-[10px] text-muted-foreground">
+              {trade.exitReason.replace(/_/g, " ")}
+            </span>
+          ) : null}
+        </p>
+      ) : null}
 
       {failed && trade.error ? (
         <p className="mt-2 text-xs text-destructive">{trade.error}</p>

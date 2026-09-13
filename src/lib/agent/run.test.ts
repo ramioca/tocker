@@ -65,9 +65,18 @@ describe("runAgent with the scripted mock model", () => {
       .from(schema.agentRunSteps)
       .where(eq(schema.agentRunSteps.runId, result.runId))
       .orderBy(asc(schema.agentRunSteps.seq));
-    const calls = steps.filter((s) => s.kind === "tool_call").map((s) => s.toolName);
+    // `review_positions` is in the mock script but only fires once it is registered in
+    // buildTools (the exit-engine workstream ships the tool; registration is a merge
+    // step), and a `guardian` step only appears when an exit actually fired. Both are
+    // filtered out so this assertion is about the core loop.
+    const calls = steps
+      .filter((s) => s.kind === "tool_call")
+      .map((s) => s.toolName)
+      .filter((name) => name !== "review_positions");
     expect(calls).toEqual(["get_portfolio", "discover_tokens", "score_token", "place_trade", "finish"]);
-    const results = steps.filter((s) => s.kind === "tool_result");
+    const results = steps.filter(
+      (s) => s.kind === "tool_result" && s.toolName !== "review_positions" && s.toolName !== "guardian",
+    );
     expect(results).toHaveLength(5);
     expect(results.every((s) => typeof s.durationMs === "number")).toBe(true);
     expect(steps.some((s) => s.kind === "message")).toBe(true);
