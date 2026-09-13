@@ -6,9 +6,10 @@ export default defineConfig({
     environment: "node",
     include: ["src/**/*.test.ts"],
     globals: false,
-    // Several suites stand up their own in-memory PGlite in `beforeAll` (see
-    // `src/lib/agent/test-support.ts`). Pushing the schema takes a few seconds, and with
-    // the files running in parallel the default 10s hook timeout is a coin flip.
+    // Every db-backed test file spins its own in-memory PGlite and pushes the whole
+    // schema into it in `beforeAll`. Under parallel workers that legitimately takes
+    // longer than vitest's 10s default, and the failure looks like a bug rather than
+    // a busy machine.
     hookTimeout: 60_000,
     testTimeout: 30_000,
     // Token providers hit Jupiter / DexScreener / GoPlus / RugCheck live otherwise.
@@ -17,6 +18,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      // `server-only` is a bundler marker Next resolves itself; node cannot see it,
+      // so server queries would fail to import in a test. Empty module, same effect.
+      "server-only": fileURLToPath(new URL("./scripts/server-only-shim.mjs", import.meta.url)),
     },
   },
 });

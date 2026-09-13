@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ArrowUpRight, Receipt } from "lucide-react";
 import {
@@ -15,6 +16,7 @@ import { EmptyState, ErrorState } from "@/components/common/empty-state";
 import { RelativeTime } from "@/components/common/relative-time";
 import { TokenIcon } from "@/components/common/token-icon";
 import { formatTokenAmount, formatUsd } from "@/components/common/format";
+import { ScoreBadge } from "@/components/tokens/score-badge";
 import { fetchAgentTrades } from "./agent-actions";
 import { cn } from "@/lib/utils";
 import type { Page, TradeRow } from "@/server/types";
@@ -97,6 +99,7 @@ export function TradesTable({
                   <TableHead className="text-right">Amount</TableHead>
                   <TableHead className="text-right">Price</TableHead>
                   <TableHead className="text-right">Value</TableHead>
+                  <TableHead className="text-right">Entry score</TableHead>
                   <TableHead className="text-right">Tx</TableHead>
                 </TableRow>
               </TableHeader>
@@ -143,10 +146,13 @@ export function TradesTable({
                         </span>
                       </TableCell>
                       <TableCell>
-                        <span className="flex items-center gap-1.5">
+                        <Link
+                          href={`/tokens/${trade.token.chain}/${trade.token.address}`}
+                          className="inline-flex items-center gap-1.5 rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
                           <TokenIcon token={trade.token} size="xs" />
                           <span className="font-medium">{trade.token.symbol}</span>
-                        </span>
+                        </Link>
                       </TableCell>
                       <TableCell className="tnum text-right text-muted-foreground">
                         {formatTokenAmount(trade.amountToken)}
@@ -156,6 +162,29 @@ export function TradesTable({
                       </TableCell>
                       <TableCell className="tnum text-right font-medium">
                         {formatUsd(trade.amountUsd)}
+                      </TableCell>
+                      {/*
+                        The score frozen onto the row, never a live one: a re-score after
+                        the fact must not be able to flatter or damn a decision already made.
+                        Rows from before scoring existed link out to score the token now.
+                      */}
+                      <TableCell className="text-right">
+                        {trade.entryScore === null ? (
+                          <Link
+                            href={`/tokens/${trade.token.chain}/${trade.token.address}`}
+                            className="rounded font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            score now
+                          </Link>
+                        ) : (
+                          <ScoreBadge
+                            total={trade.entryScore}
+                            verdict={trade.score?.verdict}
+                            blockers={trade.score?.blockers}
+                            size="xs"
+                            numberOnly
+                          />
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         {url ? (

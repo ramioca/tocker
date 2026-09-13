@@ -22,6 +22,7 @@ import {
   notifications,
   positions,
   posts,
+  tokenScoreHistory,
   tokenScores,
   tokens,
   trades,
@@ -33,6 +34,14 @@ import {
 } from "./schema";
 import { applyFill, type PositionState } from "../lib/pnl";
 import { toNumeric } from "../lib/money";
+import { DEFAULT_AGENT_CONFIG } from "../lib/agent/config";
+import { universeKey } from "../lib/tokens";
+
+/**
+ * Token pages score under the platform's default universe, never an agent's, so a
+ * seeded cache row has to carry that fingerprint or it reads as a cache miss.
+ */
+const PUBLIC_UNIVERSE_KEY = universeKey(DEFAULT_AGENT_CONFIG.universe);
 
 // ---------- deterministic randomness ----------
 
@@ -514,38 +523,99 @@ async function seed() {
       });
   }
 
+  // 30 days of score history per token so token pages have a curve to draw. The
+  // real thing is appended by `recordScore` on every fresh scoring; this is the
+  // same shape, backdated. Idempotent: the seeded tokens' history is rebuilt.
+  //
+  // History comes first because the score *cache* is then derived from its last
+  // point: a hero reading 73 above a chart ending at 65 is a bug the eye catches
+  // instantly, and the live system cannot produce it — `recordScore` runs off the
+  // same score object `writeCache` just persisted.
+  console.log("· token score history");
+  const historyTokenIds = SEED_TOKENS.filter((t) => !t.quote).map(tokenId);
+  await db.delete(tokenScoreHistory).where(inArray(tokenScoreHistory.tokenId, historyTokenIds));
+  const historyRows: Array<typeof tokenScoreHistory.$inferInsert> = [];
+  const lastPoint = new Map<string, (typeof tokenScoreHistory.$inferInsert)>();
+  for (const t of SEED_TOKENS) {
+    if (t.quote) continue;
+    const path = paths.get(tokenId(t))!;
+    const quality = TOKEN_QUALITY[t.symbol] ?? 60;
+    // A slow mean-reverting walk around the token's quality: majors stay high,
+    // community tokens dip into "watch" and occasionally into "avoid".
+    let total = clamp(quality + (rand() - 0.5) * 8, 22, 96);
+    let holders = Math.round(between(400, 90_000));
+    let liquidity = between(60_000, 3_000_000);
+    for (let day = 0; day <= 30; day++) {
+      for (const hour of [3, 11, 19]) {
+        const when = at(day, hour);
+        if (when.getTime() > NOW - 120_000) continue;
+        const spread = 6 + t.vol * 60;
+        total = clamp(total + (quality - total) * 0.18 + (rand() - 0.5) * spread, 18, 97);
+        holders = Math.max(60, Math.round(holders * (1 + (rand() - 0.42) * 0.04)));
+        liquidity = Math.max(8_000, liquidity * (1 + (rand() - 0.48) * 0.09));
+        const rounded = Math.round(total * 10) / 10;
+        // Interpolate the price between the daily marks so the sparkline is smooth.
+        const next = path[Math.min(30, day + 1)];
+        const price = path[day] + (next - path[day]) * (hour / 24);
+        const row: typeof tokenScoreHistory.$inferInsert = {
+          id: id("tsh"),
+          tokenId: tokenId(t),
+          total: toNumeric(rounded, 2),
+          verdict: verdictFor(rounded),
+          components: {
+            safety: Math.round(clamp(rounded + (rand() - 0.4) * 12, 5, 100)),
+            liquidity: Math.round(clamp(rounded + (rand() - 0.5) * 18, 5, 100)),
+            momentum: Math.round(clamp(rounded + (rand() - 0.5) * 34, 5, 100)),
+            organic: Math.round(clamp(rounded + (rand() - 0.5) * 20, 5, 100)),
+            distribution: Math.round(clamp(rounded + (rand() - 0.5) * 16, 5, 100)),
+            sentiment: null,
+          },
+          // Below the "avoid" band the gate that usually did it is depth.
+          blockers: rounded < 40 ? ["liquidity_below_floor"] : [],
+          priceUsd: toNumeric(price, 12),
+          liquidityUsd: toNumeric(liquidity, 2),
+          holderCount: holders,
+          scoredAt: when,
+        };
+        historyRows.push(row);
+        lastPoint.set(tokenId(t), row);
+      }
+    }
+  }
+  if (historyRows.length) await db.insert(tokenScoreHistory).values(historyRows);
+
   // The shared score cache. Scores are not per-agent: many agents look at the same
-  // tokens, so the cache is global and refreshed on a TTL.
+  // tokens, so the cache is global and refreshed on a TTL. `universeKey` is the
+  // platform default, which is the only fingerprint a public token page will read.
   console.log("· token scores");
   for (const t of SEED_TOKENS) {
     if (t.quote) continue;
     const snapshot = buildScore(t, 0, true, new Date(NOW));
-    await db
-      .insert(tokenScores)
-      .values({
-        id: tokenId(t),
-        chain: t.chain,
-        address: t.address,
-        symbol: t.symbol,
-        total: toNumeric(snapshot.total, 2),
-        verdict: snapshot.verdict,
-        components: snapshot.components,
-        blockers: snapshot.blockers,
-        warnings: snapshot.warnings,
-        priceUsd: toNumeric(paths.get(tokenId(t))![30], 12),
-        liquidityUsd: toNumeric(snapshot.liquidityUsd ?? 0, 2),
-        volume24hUsd: toNumeric(between(120_000, 18_000_000), 2),
-        marketCapUsd: toNumeric(between(2_000_000, 900_000_000), 2),
-        holderCount: Math.round(between(400, 240_000)),
-        ageHours: toNumeric(snapshot.ageHours ?? 0, 2),
-        priceChange24hPct: toNumeric(between(-22, 31), 4),
-        sources: t.chain === "solana" ? ["jupiter", "rugcheck"] : ["dexscreener", "goplus"],
-        scoredAt: new Date(NOW - Math.floor(between(0, 9 * 60_000))),
-      })
-      .onConflictDoUpdate({
-        target: tokenScores.id,
-        set: { total: toNumeric(snapshot.total, 2), verdict: snapshot.verdict, scoredAt: new Date(NOW) },
-      });
+    const tail = lastPoint.get(tokenId(t));
+    const total = tail ? Number(tail.total) : snapshot.total;
+    const verdict = tail ? tail.verdict! : snapshot.verdict;
+    const values = {
+      id: tokenId(t),
+      chain: t.chain,
+      address: t.address,
+      symbol: t.symbol,
+      total: toNumeric(total, 2),
+      verdict,
+      components: (tail?.components ?? snapshot.components) as Record<string, number | null>,
+      blockers: (tail?.blockers ?? snapshot.blockers) as string[],
+      warnings: snapshot.warnings,
+      priceUsd: toNumeric(paths.get(tokenId(t))![30], 12),
+      liquidityUsd: tail?.liquidityUsd ?? toNumeric(snapshot.liquidityUsd ?? 0, 2),
+      volume24hUsd: toNumeric(between(120_000, 18_000_000), 2),
+      marketCapUsd: toNumeric(between(2_000_000, 900_000_000), 2),
+      holderCount: tail?.holderCount ?? Math.round(between(400, 240_000)),
+      ageHours: toNumeric(snapshot.ageHours ?? 0, 2),
+      priceChange24hPct: toNumeric(between(-22, 31), 4),
+      sources: t.chain === "solana" ? ["jupiter", "rugcheck"] : ["dexscreener", "goplus"],
+      universeKey: PUBLIC_UNIVERSE_KEY,
+      scoredAt: new Date(NOW - Math.floor(between(0, 9 * 60_000))),
+    };
+    await db.insert(tokenScores).values(values).onConflictDoUpdate({ target: tokenScores.id, set: values });
   }
 
   console.log("· users");

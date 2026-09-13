@@ -10,27 +10,33 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
  * `configLabel` exists because the last tab means different things to different viewers:
  * the owner is looking at their own config, everyone else is looking at the reason they
  * cannot. The page decides which panel goes in it.
+ *
+ * `performance` sits between Trades and Runs: it is the reading of the trades, so
+ * it belongs next to them rather than at the end. It is public like the rest of
+ * the record — omit it (pass nothing) and the tab disappears.
  */
 export function AgentTabs({
   overview,
   trades,
+  performance,
   runs,
   config,
   configLabel = "Config",
 }: {
   overview: ReactNode;
   trades: ReactNode;
+  performance?: ReactNode;
   runs: ReactNode;
   config: ReactNode;
   configLabel?: string;
 }) {
-  const panels: Record<string, ReactNode> = { overview, trades, runs, config };
   const TABS = [
-    { value: "overview", label: "Overview" },
-    { value: "trades", label: "Trades" },
-    { value: "runs", label: "Runs" },
-    { value: "config", label: configLabel },
-  ] as const;
+    { value: "overview", label: "Overview", panel: overview },
+    { value: "trades", label: "Trades", panel: trades },
+    ...(performance ? [{ value: "performance", label: "Performance", panel: performance }] : []),
+    { value: "runs", label: "Runs", panel: runs },
+    { value: "config", label: configLabel, panel: config },
+  ];
 
   return (
     <Tabs defaultValue="overview" className="gap-4">
@@ -43,7 +49,7 @@ export function AgentTabs({
       </TabsList>
       {TABS.map((tab) => (
         <TabsContent key={tab.value} value={tab.value}>
-          {panels[tab.value]}
+          {tab.panel}
         </TabsContent>
       ))}
     </Tabs>
