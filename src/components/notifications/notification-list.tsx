@@ -4,14 +4,16 @@ import {
   AtSign,
   Bell,
   CircleDollarSign,
+  Gavel,
   Heart,
   MessageCircle,
   TriangleAlert,
   Trophy,
   UserPlus,
 } from "lucide-react";
-import type { NotificationRow } from "@/server/types";
+import type { NotificationRow, ProposalRow } from "@/server/types";
 import { dayBucket, formatAgo } from "@/components/social-common/format";
+import { ProposalCard } from "@/components/agents/proposals/proposal-card";
 
 const ICONS: Record<string, typeof Bell> = {
   trade: ArrowLeftRight,
@@ -21,10 +23,27 @@ const ICONS: Record<string, typeof Bell> = {
   mention: AtSign,
   milestone: Trophy,
   run_failed: TriangleAlert,
+  proposal: Gavel,
   data: CircleDollarSign,
 };
 
-export function NotificationList({ items, now }: { items: NotificationRow[]; now: number }) {
+/** `/agents/slug?proposal=<id>` → the id, so a notification can find its own proposal. */
+function proposalIdFrom(href: string | null): string | null {
+  if (!href) return null;
+  const match = /[?&]proposal=([^&]+)/.exec(href);
+  return match?.[1] ?? null;
+}
+
+export function NotificationList({
+  items,
+  now,
+  /** Proposals still awaiting a decision, so a `proposal` row is actionable in place. */
+  proposals = [],
+}: {
+  items: NotificationRow[];
+  now: number;
+  proposals?: ProposalRow[];
+}) {
   if (items.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-border py-20 text-center">
@@ -37,6 +56,8 @@ export function NotificationList({ items, now }: { items: NotificationRow[]; now
       </div>
     );
   }
+
+  const pendingById = new Map(proposals.map((p) => [p.id, p]));
 
   // Grouped by day, in the order the rows arrive (newest first).
   const groups: Array<{ label: string; rows: NotificationRow[] }> = [];
@@ -58,11 +79,22 @@ export function NotificationList({ items, now }: { items: NotificationRow[]; now
             {group.label}
           </h2>
           <ul className="mt-3 divide-y divide-border/70 overflow-hidden rounded-2xl border border-border/80 bg-card/50">
-            {group.rows.map((row) => (
-              <li key={row.id}>
-                <Row row={row} now={now} />
-              </li>
-            ))}
+            {group.rows.map((row) => {
+              // A proposal is a question, not an announcement: answer it here rather
+              // than sending the owner to another page to find the same card.
+              const pending = row.kind === "proposal" ? pendingById.get(proposalIdFrom(row.href) ?? "") : undefined;
+              return (
+                <li key={row.id}>
+                  {pending ? (
+                    <div className="p-2.5 sm:p-3">
+                      <ProposalCard proposal={pending} showAgent />
+                    </div>
+                  ) : (
+                    <Row row={row} now={now} />
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </section>
       ))}

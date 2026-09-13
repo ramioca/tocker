@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { getSession } from "@/lib/auth";
 import { getNotifications } from "@/server/queries/users";
+import { listMyProposals } from "@/server/queries/proposals";
 import { withMock } from "@/lib/data";
 import { NOW, mockNotifications, mockSession } from "@/mocks/social";
 import { referenceNow } from "@/components/social-common/format";
@@ -26,6 +27,13 @@ export default async function NotificationsPage() {
     () => mockNotifications(),
   );
 
+  // Proposals still awaiting a decision, so a "proposal" notification is a card with
+  // Approve / Reject on it rather than a link to somewhere else.
+  const proposals = await withMock(
+    () => listMyProposals(session.userId),
+    () => [],
+  );
+
   // Mock fixtures are anchored to a fixed clock so relative times stay stable in dev.
   const now = referenceNow(process.env.MOCK_DATA === "1" ? NOW : undefined);
   const unread = page.items.filter((item) => item.readAt === null).length;
@@ -43,7 +51,7 @@ export default async function NotificationsPage() {
       </header>
 
       <div className="mt-8">
-        <NotificationList items={page.items} now={now} />
+        <NotificationList items={page.items} now={now} proposals={proposals} />
       </div>
     </div>
   );
