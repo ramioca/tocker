@@ -66,6 +66,33 @@ const START = NOW - 30 * DAY;
 // Clamp to the past: day 30 at 17:00 would otherwise land in the future.
 const at = (dayIndex: number, hour = 12) => new Date(Math.min(NOW - 60_000, START + dayIndex * DAY + hour * 3_600_000));
 
+/**
+ * Today's real prices for the seed tokens (Jupiter for Solana, DexScreener for Base), so the
+ * seeded books mark to reality and the exit engine's first pass does not stop everything out.
+ * Offline or rate-limited → the constants below stand in and nothing else changes.
+ */
+async function liveSeedPrices(list: SeedToken[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const WETH = "0x4200000000000000000000000000000000000006";
+  try {
+    const { fetchSolanaPrices, fetchBasePrices } = await import("@/lib/trading/prices");
+    const sol = list.filter((t) => t.chain === "solana" && !t.quote).map((t) => t.address);
+    const base = list.filter((t) => t.chain === "base" && !t.quote).map((t) => (t.address === "native" ? WETH : t.address));
+    const [s, b] = await Promise.all([
+      sol.length ? fetchSolanaPrices(sol) : new Map<string, number>(),
+      base.length ? fetchBasePrices(base) : new Map<string, number>(),
+    ]);
+    for (const t of list) {
+      const key = t.chain === "base" && t.address === "native" ? WETH : t.address;
+      const p = t.chain === "solana" ? s.get(key) : b.get(key) ?? b.get(key.toLowerCase());
+      if (typeof p === "number" && p > 0) out.set(`${t.chain}:${t.address}`, p);
+    }
+  } catch {
+    // offline: constants it is
+  }
+  return out;
+}
+
 // ---------- reference data ----------
 
 type SeedToken = {
@@ -98,18 +125,20 @@ const SEED_TOKENS: SeedToken[] = [
 const tokenId = (t: { chain: string; address: string }) => `${t.chain}:${t.address}`;
 
 /** 31 daily marks per token (index 0 = 30 days ago, 30 = now). */
-function buildPricePaths(): Map<string, number[]> {
+function buildPricePaths(live: Map<string, number> = new Map()): Map<string, number[]> {
   const paths = new Map<string, number[]>();
   for (const t of SEED_TOKENS) {
+    // Today's mark anchors the whole path: real when reachable, the constant otherwise.
+    const today = live.get(tokenId(t)) ?? t.price;
     const series: number[] = [];
-    let price = t.price / (1 + t.drift * 30);
+    let price = today / (1 + t.drift * 30);
     for (let d = 0; d <= 30; d++) {
       const shock = (rand() - 0.5) * 2 * t.vol;
-      price = Math.max(price * (1 + t.drift + shock), t.price * 0.2);
+      price = Math.max(price * (1 + t.drift + shock), today * 0.2);
       series.push(t.quote ? 1 : price);
     }
     // land the last mark on the advertised spot price
-    series[30] = t.price;
+    series[30] = today;
     paths.set(tokenId(t), series);
   }
   return paths;
@@ -494,7 +523,7 @@ function fullConfig(spec: SeedAgentSpec): AgentConfig {
 
 async function seed() {
   const db = await getDb();
-  const paths = buildPricePaths();
+  const paths = buildPricePaths(await liveSeedPrices(SEED_TOKENS));
   const seedUserIds = SEED_USERS.map((u) => u.id);
 
   console.log("· clearing previous seed data");
