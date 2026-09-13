@@ -23,6 +23,7 @@ import { getDexScreenerToken } from "./providers/dexscreener";
 import { getGoPlusSecurity } from "./providers/goplus";
 import { getJupiterToken } from "./providers/jupiter";
 import { getRugcheckSummary } from "./providers/rugcheck";
+import { recordScore } from "./history";
 import { scoreToken, type Universe } from "./score";
 import type { ScoreInput, SentimentInput } from "./types";
 
@@ -254,6 +255,7 @@ export async function getTokenScore(input: GetTokenScoreInput): Promise<TokenSco
 
   const score = scoreToken(gathered, input.universe);
   await writeCache(score, key);
+  await recordScore(score); // append-only history for token pages; deduped, never throws
   return score;
 }
 

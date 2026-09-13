@@ -12,6 +12,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      // `server-only` is a bundler marker Next resolves itself; node cannot see it,
+      // so server queries would fail to import in a test. Empty module, same effect.
+      "server-only": fileURLToPath(new URL("./scripts/server-only-shim.mjs", import.meta.url)),
     },
   },
 });
