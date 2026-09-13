@@ -35,7 +35,9 @@ beforeAll(async () => {
   process.env.X402_MOCK = "1";
   db = await setupTestDb();
   await seedKnownTokens();
-});
+  // Generous: PGlite + drizzle-kit pushSchema can take well over the 10s default
+  // hook timeout on a loaded machine.
+}, 120_000);
 
 function stubPricing(pricePerToken = 0.0000027): void {
   globalThis.fetch = (async (input: RequestInfo | URL) => {

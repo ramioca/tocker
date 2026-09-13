@@ -24,7 +24,9 @@ beforeAll(async () => {
   process.env.LLM_MOCK = "1";
   db = await setupTestDb();
   await seedKnownTokens();
-});
+  // Generous: PGlite + drizzle-kit pushSchema can take well over the 10s default
+  // hook timeout on a loaded machine.
+}, 120_000);
 
 /** Same stub as the run-loop tests: a routed Jupiter quote and a price, nothing else. */
 function stubPricing(pricePerToken = 0.0000027): void {

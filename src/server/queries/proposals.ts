@@ -98,11 +98,8 @@ export async function listProposals(agentId: string, viewerId?: string | null): 
   if (rows.length === 0) return [];
 
   const portfolio = toRiskPortfolio(await getPortfolio(agentId));
-  const out: ProposalRow[] = [];
-  for (const row of rows) {
-    out.push(await buildRow(row.trade, agent, row.token, portfolio));
-  }
-  return out;
+  // Scored in parallel: one proposal's provider timeout must not queue behind another's.
+  return Promise.all(rows.map((row) => buildRow(row.trade, agent, row.token, portfolio)));
 }
 
 /** One proposal by id, owner-gated. Used by the notifications page's inline cards. */
@@ -142,16 +139,12 @@ export async function listMyProposals(viewerId?: string | null): Promise<Proposa
 
   // One portfolio read per agent, not per proposal.
   const byAgent = new Map<string, RiskPortfolio>();
-  const out: ProposalRow[] = [];
-  for (const row of rows) {
-    let portfolio = byAgent.get(row.agent.id);
-    if (!portfolio) {
-      portfolio = toRiskPortfolio(await getPortfolio(row.agent.id));
-      byAgent.set(row.agent.id, portfolio);
-    }
-    out.push(await buildRow(row.trade, row.agent, row.token, portfolio));
+  for (const agentId of new Set(rows.map((r) => r.agent.id))) {
+    byAgent.set(agentId, toRiskPortfolio(await getPortfolio(agentId)));
   }
-  return out;
+  return Promise.all(
+    rows.map((row) => buildRow(row.trade, row.agent, row.token, byAgent.get(row.agent.id)!)),
+  );
 }
 
 /**

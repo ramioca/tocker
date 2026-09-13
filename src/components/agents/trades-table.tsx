@@ -103,22 +103,43 @@ export function TradesTable({
               <TableBody>
                 {trades.map((trade) => {
                   const url = explorerUrl(trade);
-                  const failed = trade.status === "failed" || trade.status === "rejected";
+                  // Approval mode puts non-fills in the ledger: a proposal nobody
+                  // approved, or one that expired, must never read as a trade.
+                  const unfilled = trade.status !== "filled";
+                  const failed =
+                    trade.status === "failed" ||
+                    trade.status === "rejected" ||
+                    trade.status === "expired";
                   return (
-                    <TableRow key={trade.id} className={cn(failed && "opacity-60")}>
+                    <TableRow key={trade.id} className={cn(unfilled && "opacity-60")}>
                       <TableCell className="whitespace-nowrap text-xs">
                         <RelativeTime iso={trade.createdAt} />
                       </TableCell>
                       <TableCell>
-                        <span
-                          className={cn(
-                            "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider",
-                            trade.side === "buy"
-                              ? "bg-positive/15 text-positive"
-                              : "bg-negative/15 text-negative",
-                          )}
-                        >
-                          {trade.side}
+                        <span className="flex flex-wrap items-center gap-1">
+                          <span
+                            className={cn(
+                              "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider",
+                              trade.side === "buy"
+                                ? "bg-positive/15 text-positive"
+                                : "bg-negative/15 text-negative",
+                            )}
+                          >
+                            {trade.side}
+                          </span>
+                          {unfilled ? (
+                            <span
+                              title={trade.error ?? undefined}
+                              className={cn(
+                                "rounded border px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider",
+                                failed
+                                  ? "border-destructive/40 text-destructive"
+                                  : "border-border text-muted-foreground",
+                              )}
+                            >
+                              {trade.status}
+                            </span>
+                          ) : null}
                         </span>
                       </TableCell>
                       <TableCell>

@@ -454,8 +454,11 @@ export const notifications = pgTable(
   {
     id: text("id").primaryKey(),
     userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    // "trade" | "run_failed" | "follow" | "like" | "comment". There is no "fork" kind:
-    // forking does not exist (see SPEC "Two rules that shape everything", rule 1).
+    // "trade" | "proposal" | "run_failed" | "follow" | "like" | "comment". There is no
+    // "fork" kind: forking does not exist (see SPEC "Two rules…", rule 1).
+    // "proposal" goes to the *owner* and is actionable: its href is
+    // `/agents/<slug>?proposal=<tradeId>` and the notifications page renders an
+    // approve/reject card inline for it.
     kind: text("kind").notNull(),
     title: text("title").notNull(),
     body: text("body"),
