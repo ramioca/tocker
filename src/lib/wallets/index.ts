@@ -2,7 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { getDb, wallets } from "@/db";
-import { authorizationContext, isPrivyConfigured, privy } from "@/lib/privy";
+import { authorizationContext, authorizationPublicKey, isPrivyConfigured, privy } from "@/lib/privy";
 import type { Chain, WalletBalance } from "@/server/types";
 
 export interface AgentWalletRow {
@@ -70,7 +70,10 @@ export async function createAgentWallets(input: {
         .wallets()
         .create({
           chain_type: CHAIN_TYPE[chain],
-          owner: { user_id: input.userId },
+          // Owned by the app's authorization key, not the user: the agent trades and pays
+          // for data while its owner is asleep, so the server must be able to sign alone.
+          // The user↔agent association lives in our `wallets` table.
+          owner: { public_key: authorizationPublicKey() },
           display_name: `${input.name} · ${chain}`.slice(0, 64),
         });
       rows.push({ id: created.id, chain, address: created.address });

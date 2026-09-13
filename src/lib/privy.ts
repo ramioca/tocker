@@ -1,4 +1,5 @@
 import "server-only";
+import { createPrivateKey, createPublicKey } from "node:crypto";
 import { PrivyClient } from "@privy-io/node";
 import type { AuthorizationContext } from "@privy-io/node";
 
@@ -14,11 +15,31 @@ export function privy(): PrivyClient {
   return _client;
 }
 
+/** The dashboard exports authorization keys as `wallet-auth:<base64 PKCS8>`; the SDK accepts either form. */
+function rawAuthorizationPrivateKey(): string {
+  const key = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY?.trim();
+  if (!key) throw new Error("PRIVY_AUTHORIZATION_PRIVATE_KEY missing (see .env.example)");
+  return key;
+}
+
 /** Authorization context that lets the server sign with agent server wallets. */
 export function authorizationContext(): AuthorizationContext {
-  const key = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;
-  if (!key) throw new Error("PRIVY_AUTHORIZATION_PRIVATE_KEY missing (see .env.example)");
-  return { authorization_private_keys: [key] };
+  return { authorization_private_keys: [rawAuthorizationPrivateKey()] };
+}
+
+/**
+ * The P-256 public key (base64 SPKI DER, the form the Privy dashboard shows) that
+ * matches `PRIVY_AUTHORIZATION_PRIVATE_KEY`. Agent server wallets are created with
+ * this key as their owner, so the server can sign for them without a user JWT.
+ */
+export function authorizationPublicKey(): string {
+  return derivePublicKey(rawAuthorizationPrivateKey());
+}
+
+export function derivePublicKey(privateKey: string): string {
+  const pkcs8 = privateKey.replace(/^wallet-auth:/, "");
+  const priv = createPrivateKey({ key: Buffer.from(pkcs8, "base64"), format: "der", type: "pkcs8" });
+  return createPublicKey(priv).export({ type: "spki", format: "der" }).toString("base64");
 }
 
 export const CAIP2 = {
