@@ -22,6 +22,7 @@ import {
   notifications,
   positions,
   posts,
+  tokenScoreHistory,
   tokenScores,
   tokens,
   trades,
@@ -33,6 +34,14 @@ import {
 } from "./schema";
 import { applyFill, type PositionState } from "../lib/pnl";
 import { toNumeric } from "../lib/money";
+import { DEFAULT_AGENT_CONFIG } from "../lib/agent/config";
+import { universeKey } from "../lib/tokens";
+
+/**
+ * Token pages score under the platform's default universe, never an agent's, so a
+ * seeded cache row has to carry that fingerprint or it reads as a cache miss.
+ */
+const PUBLIC_UNIVERSE_KEY = universeKey(DEFAULT_AGENT_CONFIG.universe);
 
 // ---------- deterministic randomness ----------
 
@@ -540,13 +549,72 @@ async function seed() {
         ageHours: toNumeric(snapshot.ageHours ?? 0, 2),
         priceChange24hPct: toNumeric(between(-22, 31), 4),
         sources: t.chain === "solana" ? ["jupiter", "rugcheck"] : ["dexscreener", "goplus"],
+        universeKey: PUBLIC_UNIVERSE_KEY,
         scoredAt: new Date(NOW - Math.floor(between(0, 9 * 60_000))),
       })
       .onConflictDoUpdate({
         target: tokenScores.id,
-        set: { total: toNumeric(snapshot.total, 2), verdict: snapshot.verdict, scoredAt: new Date(NOW) },
+        set: {
+          total: toNumeric(snapshot.total, 2),
+          verdict: snapshot.verdict,
+          universeKey: PUBLIC_UNIVERSE_KEY,
+          scoredAt: new Date(NOW),
+        },
       });
   }
+
+  // 30 days of score history per token so token pages have a curve to draw. The
+  // real thing is appended by `recordScore` on every fresh scoring; this is the
+  // same shape, backdated. Idempotent: the seeded tokens' history is rebuilt.
+  console.log("· token score history");
+  const historyTokenIds = SEED_TOKENS.filter((t) => !t.quote).map(tokenId);
+  await db.delete(tokenScoreHistory).where(inArray(tokenScoreHistory.tokenId, historyTokenIds));
+  const historyRows: Array<typeof tokenScoreHistory.$inferInsert> = [];
+  for (const t of SEED_TOKENS) {
+    if (t.quote) continue;
+    const path = paths.get(tokenId(t))!;
+    const quality = TOKEN_QUALITY[t.symbol] ?? 60;
+    // A slow mean-reverting walk around the token's quality: majors stay high,
+    // community tokens dip into "watch" and occasionally into "avoid".
+    let total = clamp(quality + (rand() - 0.5) * 8, 22, 96);
+    let holders = Math.round(between(400, 90_000));
+    let liquidity = between(60_000, 3_000_000);
+    for (let day = 0; day <= 30; day++) {
+      for (const hour of [3, 11, 19]) {
+        const when = at(day, hour);
+        if (when.getTime() > NOW) continue;
+        const spread = 6 + t.vol * 60;
+        total = clamp(total + (quality - total) * 0.18 + (rand() - 0.5) * spread, 18, 97);
+        holders = Math.max(60, Math.round(holders * (1 + (rand() - 0.42) * 0.04)));
+        liquidity = Math.max(8_000, liquidity * (1 + (rand() - 0.48) * 0.09));
+        const rounded = Math.round(total * 10) / 10;
+        // Interpolate the price between the daily marks so the sparkline is smooth.
+        const next = path[Math.min(30, day + 1)];
+        const price = path[day] + (next - path[day]) * (hour / 24);
+        historyRows.push({
+          id: id("tsh"),
+          tokenId: tokenId(t),
+          total: toNumeric(rounded, 2),
+          verdict: verdictFor(rounded),
+          components: {
+            safety: Math.round(clamp(rounded + (rand() - 0.4) * 12, 5, 100)),
+            liquidity: Math.round(clamp(rounded + (rand() - 0.5) * 18, 5, 100)),
+            momentum: Math.round(clamp(rounded + (rand() - 0.5) * 34, 5, 100)),
+            organic: Math.round(clamp(rounded + (rand() - 0.5) * 20, 5, 100)),
+            distribution: Math.round(clamp(rounded + (rand() - 0.5) * 16, 5, 100)),
+            sentiment: null,
+          },
+          // Below the "avoid" band the gate that usually did it is depth.
+          blockers: rounded < 40 ? ["liquidity_below_floor"] : [],
+          priceUsd: toNumeric(price, 12),
+          liquidityUsd: toNumeric(liquidity, 2),
+          holderCount: holders,
+          scoredAt: when,
+        });
+      }
+    }
+  }
+  if (historyRows.length) await db.insert(tokenScoreHistory).values(historyRows);
 
   console.log("· users");
   await db.insert(users).values(
