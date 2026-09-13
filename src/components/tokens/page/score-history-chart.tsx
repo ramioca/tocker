@@ -119,7 +119,7 @@ export function ScoreHistoryChart({
       >
         <defs>
           <linearGradient id="score-history-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.22" />
+            <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.13" />
             <stop offset="100%" stopColor="var(--primary)" stopOpacity="0" />
           </linearGradient>
         </defs>
