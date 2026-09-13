@@ -9,8 +9,8 @@
 import { nanoid } from "nanoid";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
-import { follows, getDb, notifications, posts, trades } from "@/db";
+import { eq } from "drizzle-orm";
+import { getDb, posts, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
 import { DATA_SOURCES, getDataSource, toDataSourceInfo } from "@/lib/data-sources/registry";
 import { searchDataSources } from "@/lib/x402/discovery";
@@ -18,6 +18,13 @@ import { X402BudgetError, type RunBudget, type X402Context } from "@/lib/x402/ty
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
 import { applyFill } from "@/lib/trading/positions";
 import { getPriceUsd } from "@/lib/trading/prices";
+import {
+  createProposal,
+  expireAgentProposals,
+  indicativePrice,
+  notifyAgentFollowers,
+  requiresApproval,
+} from "@/lib/trading/proposals";
 import { riskGuard, type OrderIntent } from "@/lib/trading/risk";
 import { ensureQuoteToken, resolveToken } from "@/lib/trading/tokens";
 import {
@@ -91,25 +98,6 @@ function logged(
   };
 }
 
-async function notifyFollowers(agent: RunAgentRecord, title: string, body: string, href: string): Promise<void> {
-  const db = await getDb();
-  const rows = await db
-    .select({ followerId: follows.followerId })
-    .from(follows)
-    .where(and(eq(follows.targetType, "agent"), eq(follows.targetId, agent.id)));
-  if (rows.length === 0) return;
-  await db.insert(notifications).values(
-    rows.map((r) => ({
-      id: nanoid(),
-      userId: r.followerId,
-      kind: "trade",
-      title,
-      body,
-      href,
-    })),
-  );
-}
-
 async function fetchBaseIntel(address: string): Promise<ToolOutcome> {
   const res = await fetch(`https://api.dexscreener.com/tokens/v1/base/${address}`, {
     signal: AbortSignal.timeout(8_000),
@@ -164,6 +152,10 @@ export function buildTools(ctx: RunContext): ToolSet {
   const executorAgent: ExecutorAgent = { id: agent.id, mode: agent.mode, wallets: ctx.x402.wallets };
   const allowedSources = agent.config.dataSources;
   const { universe } = agent.config;
+  /** `approve`: every order this agent places becomes a proposal for its owner. */
+  const approvalMode = requiresApproval(agent.config);
+  /** Tokens already proposed this tick, so one tick cannot queue five decisions on BONK. */
+  const proposedThisTick = new Set<string>();
 
   /** Scores a token for this agent. Returns `null` only when scoring itself blew up. */
   const scoreFor = async (chain: "solana" | "base", address: string, deep = false): Promise<TokenScore | null> => {
@@ -440,7 +432,9 @@ export function buildTools(ctx: RunContext): ToolSet {
 
     place_trade: tool({
       description:
-        "Buy or sell a token for USDC. Scores the token, then runs the risk guard (blocklist, minScore, hard gates, size, daily count, position concentration, balance) and only then routes to the venue. A token you have not scored, or one that fails a gate, is rejected rather than filled. `rationale` is published to your followers' feed verbatim and must cite the score.",
+        approvalMode
+          ? "Propose a buy or sell of a token for USDC. This agent runs in APPROVAL MODE: the token is scored and the risk guard runs exactly as normal, but instead of routing the order it is sent to your owner for a decision. A proposal is not a fill. Propose a token at most once per tick and do not wait for the answer — finish the tick. `rationale` is what your owner reads when deciding, and it is published verbatim if they approve, so it must cite the score."
+          : "Buy or sell a token for USDC. Scores the token, then runs the risk guard (blocklist, minScore, hard gates, size, daily count, position concentration, balance) and only then routes to the venue. A token you have not scored, or one that fails a gate, is rejected rather than filled. `rationale` is published to your followers' feed verbatim and must cite the score.",
       inputSchema: z.object({
         chain: chainSchema,
         side: z.enum(["buy", "sell"]),
@@ -464,6 +458,10 @@ export function buildTools(ctx: RunContext): ToolSet {
           .parse(input);
 
         const db = await getDb();
+        // Anything the owner never got round to deciding is dead before this tick sizes
+        // a new order, so an expired proposal can never be counted as pending.
+        if (approvalMode) await expireAgentProposals(agent.id);
+
         const token = await resolveToken(parsed.chain, parsed.tokenAddress);
         const quoteTokenId = await ensureQuoteToken(parsed.chain);
         const portfolio = await getPortfolio(agent.id);
@@ -501,7 +499,6 @@ export function buildTools(ctx: RunContext): ToolSet {
           });
         }
 
-        const executor = await getExecutor(executorAgent, parsed.chain);
         const request: TradeRequest = {
           chain: parsed.chain,
           side: parsed.side,
@@ -513,6 +510,54 @@ export function buildTools(ctx: RunContext): ToolSet {
           slippageBps: agent.config.risk.slippageBps,
         };
 
+        // ---- approval mode: propose, do not route ----
+        // Sells are proposals too. An operator who wants to approve entries wants to
+        // approve exits; the only trades that bypass this are guardian stop-outs, which
+        // the exit engine writes directly.
+        if (approvalMode) {
+          if (proposedThisTick.has(token.id)) {
+            return fail(
+              `You already proposed ${token.symbol} this tick and it is still awaiting your owner's decision. Do not re-propose it — move on or finish.`,
+              { alreadyProposed: true },
+            );
+          }
+          const priceUsd = await indicativePrice(executorAgent, request);
+          const proposal = await createProposal({
+            agent: {
+              id: agent.id,
+              ownerId: agent.ownerId,
+              slug: agent.slug,
+              name: agent.name,
+              mode: agent.mode,
+              config: agent.config,
+            },
+            runId: ctx.runId,
+            chain: parsed.chain,
+            side: parsed.side,
+            token: { id: token.id, address: token.address, symbol: token.symbol, decimals: token.decimals },
+            quoteTokenId,
+            requestedUsd: parsed.amountUsd,
+            rationale: parsed.rationale,
+            score,
+            priceUsd,
+            isPaper: agent.mode === "paper",
+          });
+          proposedThisTick.add(token.id);
+          ctx.tradeIds.push(proposal.tradeId);
+          return {
+            ok: true,
+            proposed: true,
+            tradeId: proposal.tradeId,
+            expiresAt: proposal.expiresAt,
+            symbol: token.symbol,
+            side: parsed.side,
+            requestedUsd: parsed.amountUsd,
+            quotedPriceUsd: priceUsd,
+            message: "Proposed — awaiting owner approval; do not re-propose this token this tick",
+          };
+        }
+
+        const executor = await getExecutor(executorAgent, parsed.chain);
         const tradeId = nanoid();
         await db.insert(trades).values({
           id: tradeId,
@@ -586,8 +631,8 @@ export function buildTools(ctx: RunContext): ToolSet {
         });
         ctx.postIds.push(postId);
 
-        await notifyFollowers(
-          agent,
+        await notifyAgentFollowers(
+          agent.id,
           `${agent.name} ${parsed.side === "buy" ? "bought" : "sold"} ${token.symbol}`,
           parsed.rationale,
           `/agents/${agent.slug}`,
