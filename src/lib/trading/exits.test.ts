@@ -227,6 +227,16 @@ describe("evaluateExits — score collapse", () => {
     expect(decision?.rationale).not.toContain("age_above_max");
   });
 
+  it("gives a low-confidence score no vote: a provider outage must not liquidate the book", () => {
+    const p = position({
+      avgCostUsd: 1,
+      markPriceUsd: 1.05,
+      entryLiquidityUsd: 1_000_000,
+      score: { total: 12, verdict: "avoid", blockers: ["liquidity_below_floor"], liquidityUsd: 0, warnings: ["low_confidence"] },
+    });
+    expect(run({ exitScoreBelow: 40, exitOnLiquidityDropPct: 50 }, [p])).toEqual([]);
+  });
+
   it("does nothing without a fresh score — no score means no opinion", () => {
     const p = position({ avgCostUsd: 1, markPriceUsd: 0.95 });
     expect(run({ exitScoreBelow: 40 }, [p])).toHaveLength(0);

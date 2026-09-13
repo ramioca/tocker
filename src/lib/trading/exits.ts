@@ -57,6 +57,8 @@ export interface ExitScoreInput {
   verdict: ScoreVerdict;
   blockers: string[];
   liquidityUsd: number | null;
+  /** Scorer warnings; a `low_confidence` score (providers failed) has no vote on exits. */
+  warnings?: string[];
 }
 
 export interface ExitPosition {
@@ -286,7 +288,11 @@ function evaluateOne(position: ExitPosition, rules: ExitRules, now: Date): Candi
   // 5 — score collapse. Needs a fresh score; no score means no opinion. Only
   // *deterioration* condemns a holding: an entry-shape gate (age window, blocklist)
   // or a provider that could not answer (`*_unknown`) is never a reason to sell.
-  const score = position.score ?? null;
+  // A score the providers could not back is not a low score, it is no score: when
+  // Jupiter or DexScreener are down for a pass, every holding would otherwise read
+  // as a collapse and get sold into the outage.
+  const raw = position.score ?? null;
+  const score = raw && raw.warnings?.includes("low_confidence") ? null : raw;
   if (rules.exitScoreBelow !== null && score) {
     const belowFloor = score.total < rules.exitScoreBelow;
     const deterioration = score.blockers.filter(isDeteriorationBlocker);

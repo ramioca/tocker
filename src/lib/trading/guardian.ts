@@ -541,6 +541,7 @@ export async function runGuardian(input: RunGuardianInput): Promise<GuardianResu
                 verdict: score.verdict,
                 blockers: score.blockers,
                 liquidityUsd: score.liquidityUsd,
+                warnings: score.warnings,
               },
       };
     });
