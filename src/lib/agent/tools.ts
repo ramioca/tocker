@@ -568,12 +568,19 @@ export function buildTools(ctx: RunContext): ToolSet {
           })
           .where(eq(trades.id, tradeId));
 
-        await applyFill(agent.id, token.id, {
-          side: parsed.side,
-          amountToken: fill.amountToken,
-          amountUsd: fill.amountUsd,
-          feeUsd: fill.feeUsd,
-        });
+        await applyFill(
+          agent.id,
+          token.id,
+          {
+            side: parsed.side,
+            amountToken: fill.amountToken,
+            amountUsd: fill.amountUsd,
+            feeUsd: fill.feeUsd,
+          },
+          // Entry bookkeeping for the exit engine: opens `openedAt`/`peakPriceUsd` on a
+          // buy from flat and freezes the entry score + pooled liquidity from `score`.
+          { priceUsd: fill.priceUsd, score },
+        );
 
         const postId = nanoid();
         await db.insert(posts).values({
