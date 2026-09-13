@@ -21,6 +21,7 @@ import { parseAgentConfig } from "@/lib/agent/config";
 import { decryptSecret } from "@/lib/crypto";
 import { resolveDataSources } from "@/lib/data-sources/registry";
 import { newBudget, type X402Context } from "@/lib/x402/types";
+import { describeGuardian, runGuardian } from "@/lib/trading/guardian";
 import { RunLogger } from "./logger";
 import { createMockModel, isLlmMock } from "./mock-model";
 import { getAgentWallets, getPortfolio, snapshotEquity } from "./portfolio";
@@ -227,6 +228,32 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
 
     const model = await resolveModel({ llmKeyId: agentRow.llmKeyId, config });
     const sources = resolveDataSources(config.dataSources);
+
+    // The exit engine runs *before* the model thinks, so the book it reads is the book
+    // after stops, targets and collapse rules have been enforced. Its trades join this
+    // run's transcript, and whatever fired is handed to the prompt below.
+    const guardian = await runGuardian({ agentId: input.agentId, trigger: "tick", runId, now: startedAt });
+    if (guardian.exits.length > 0 || guardian.skipped.length > 0) {
+      await logger.log({
+        kind: "tool_result",
+        toolName: "guardian",
+        payload: {
+          summary: describeGuardian(guardian),
+          trigger: "tick",
+          exits: guardian.exits.map((e) => ({
+            symbol: e.symbol,
+            reason: e.reason,
+            status: e.status,
+            amountUsd: e.amountUsd,
+            priceUsd: e.priceUsd,
+            rationale: e.rationale,
+            error: e.error,
+          })),
+          skipped: guardian.skipped,
+        },
+      });
+    }
+
     const portfolio = await getPortfolio(input.agentId);
     const recent = await loadRecentTrades(input.agentId, 10);
 
@@ -241,6 +268,9 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
       dataBudgetRemainingUsd: budget.maxUsd - budget.spentUsd,
       trigger: input.trigger,
       now: startedAt,
+      exits: guardian.exits
+        .filter((e) => e.status === "filled")
+        .map((e) => ({ symbol: e.symbol, reason: e.reason, amountUsd: e.amountUsd, rationale: e.rationale })),
     });
 
     const result = await generateText({

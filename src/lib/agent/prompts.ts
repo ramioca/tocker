@@ -7,6 +7,8 @@
  */
 import type { AgentConfig } from "@/db/schema";
 import type { DataSource } from "@/lib/data-sources/registry";
+import { exitDistances } from "@/lib/pnl";
+import { hasAnyExitRule, priceText, toExitRules } from "@/lib/trading/exits";
 import { describePortfolio, type Portfolio } from "./portfolio";
 
 export interface PromptAgent {
@@ -14,6 +16,14 @@ export interface PromptAgent {
   tagline: string | null;
   mode: "paper" | "live";
   config: AgentConfig;
+}
+
+/** An exit the guardian took just before this tick. */
+export interface TickExit {
+  symbol: string;
+  reason: string;
+  amountUsd: number;
+  rationale: string;
 }
 
 export interface RecentTrade {
@@ -29,6 +39,95 @@ export interface RecentTrade {
 
 function money(n: number): string {
   return `$${n.toFixed(n < 1 ? 4 : 2)}`;
+}
+
+/** Percentage *points* of headroom, signed. Negative means the level is already breached. */
+function points(n: number): string {
+  return `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(1)}pp`;
+}
+
+function hours(n: number): string {
+  return n < 1 ? `${Math.round(n * 60)}m` : n < 48 ? `${n.toFixed(1)}h` : `${(n / 24).toFixed(1)}d`;
+}
+
+/**
+ * The armed exit rules, spelled out as *enforced* rather than advisory.
+ *
+ * This block replaced two lines of "stop loss guidance". The difference matters: the
+ * model used to be told a number nothing enforced, and behaved accordingly. Now the
+ * guardian (`src/lib/trading/guardian.ts`) runs these before every tick and every five
+ * minutes in between, so the prompt's job is to stop the model re-litigating them and
+ * point it at the decisions that are actually still its own.
+ */
+export function describeExitRules(config: AgentConfig): string {
+  const r = config.risk;
+  if (!hasAnyExitRule(toExitRules(r))) {
+    return `## Exit rules
+None are configured, so nothing sells your positions but you. Watch your book.`;
+  }
+  const lines = [
+    r.stopLossPct === null ? null : `  - Stop loss: ${r.stopLossPct}% below entry`,
+    r.takeProfitPct === null ? null : `  - Take profit: ${r.takeProfitPct}% above entry`,
+    r.trailingStopPct === null
+      ? null
+      : `  - Trailing stop: ${r.trailingStopPct}% off the peak, armed only once the position is in profit`,
+    r.maxHoldHours === null ? null : `  - Max hold: ${hours(r.maxHoldHours)}`,
+    r.exitScoreBelow === null ? null : `  - Score floor: a holding that rescores below ${r.exitScoreBelow}/100 is sold`,
+    r.exitOnLiquidityDropPct === null
+      ? null
+      : `  - Liquidity: sold when the pool drains ${r.exitOnLiquidityDropPct}% below what it was at entry`,
+  ].filter((l): l is string => l !== null);
+
+  return `## Exit rules — enforced in code by the exit engine, not by you
+A deterministic guardian applies these before every one of your ticks and every five
+minutes in between. You cannot talk it out of one: when a rule fires the position is
+sold, the reason is published to your feed, and you will see it in the next tick.
+${lines.join("\n")}
+So do not spend a tick babysitting a stop. What is still yours: what to buy, how big,
+and the exits no rule covers — a thesis that broke, a better use of the cash, a name
+going quietly sideways.`;
+}
+
+/**
+ * Per-position distance to each armed rule, from {@link exitDistances}. Reads as "how
+ * close is each of these to being taken out of my hands".
+ */
+export function describeExitWatch(portfolio: Portfolio, config: AgentConfig, now: Date): string {
+  const r = config.risk;
+  if (portfolio.positions.length === 0) return "  No open positions.";
+  return portfolio.positions
+    .map((p) => {
+      const distances = exitDistances({
+        unrealizedPct: p.unrealizedPnlPct,
+        stopLossPct: r.stopLossPct,
+        takeProfitPct: r.takeProfitPct,
+      });
+      const parts: string[] = [];
+      if (p.openedAt !== null) {
+        parts.push(`held ${hours(Math.max(0, (now.getTime() - new Date(p.openedAt).getTime()) / 3_600_000))}`);
+      }
+      if (distances.stopDistancePct !== null) {
+        parts.push(`${points(distances.stopDistancePct)} to the ${r.stopLossPct}% stop`);
+      }
+      if (distances.takeProfitDistancePct !== null) {
+        parts.push(`${points(distances.takeProfitDistancePct)} to the ${r.takeProfitPct}% take-profit`);
+      }
+      if (r.trailingStopPct !== null && p.peakPriceUsd !== null && p.markPriceUsd !== null && p.peakPriceUsd > 0) {
+        const fromPeak = ((p.markPriceUsd - p.peakPriceUsd) / p.peakPriceUsd) * 100;
+        parts.push(
+          `${points(r.trailingStopPct + fromPeak)} to the ${r.trailingStopPct}% trail (peak ${priceText(p.peakPriceUsd)})`,
+        );
+      }
+      if (r.maxHoldHours !== null && p.openedAt !== null) {
+        const left = r.maxHoldHours - Math.max(0, (now.getTime() - new Date(p.openedAt).getTime()) / 3_600_000);
+        parts.push(`${left <= 0 ? "past" : hours(left)} ${left <= 0 ? "the" : "left on the"} ${hours(r.maxHoldHours)} max hold`);
+      }
+      if (p.entryScore !== null) {
+        parts.push(`entry score ${p.entryScore.toFixed(0)}${p.currentScore === null ? "" : ` → ${p.currentScore.toFixed(0)} now`}`);
+      }
+      return `  ${p.token.symbol}: ${parts.length === 0 ? "no exit rules apply" : parts.join(" · ")}`;
+    })
+    .join("\n");
 }
 
 export function buildSystemPrompt(agent: PromptAgent, sources: DataSource[]): string {
@@ -106,7 +205,9 @@ still the wrong trade for your strategy, your book, or this moment. You decide.
   - Max share of equity in one token: ${config.risk.maxPositionPct}%
   - Max data spend per run: ${money(config.risk.maxDataSpendUsdPerRun)}
   - Slippage tolerance: ${config.risk.slippageBps} bps
-${config.risk.stopLossPct === null ? "" : `  - Stop loss guidance: ${config.risk.stopLossPct}%\n`}${config.risk.takeProfitPct === null ? "" : `  - Take profit guidance: ${config.risk.takeProfitPct}%\n`}
+
+${describeExitRules(config)}
+
 ## Data sources you may pay for (x402, charged to your wallet)
 ${sourceLines}
 
@@ -144,8 +245,11 @@ export function buildTickPrompt(input: {
   dataBudgetRemainingUsd: number;
   trigger: "schedule" | "manual" | "webhook";
   now?: Date;
+  /** Exits the guardian took immediately before this tick. */
+  exits?: TickExit[];
 }): string {
   const now = input.now ?? new Date();
+  const fired = input.exits ?? [];
   const trades =
     input.recentTrades.length === 0
       ? "  No trades yet."
@@ -156,10 +260,23 @@ export function buildTickPrompt(input: {
           )
           .join("\n");
 
+  const exitSection =
+    fired.length === 0
+      ? "  Nothing fired this tick."
+      : fired
+          .map((e) => `  ${e.reason.toUpperCase()} — sold ${e.symbol} (${money(e.amountUsd)}): "${e.rationale}"`)
+          .join("\n");
+
   return `New tick (${input.trigger}) at ${now.toISOString()}.
 
 ## Your book
 ${describePortfolio(input.portfolio, input.config)}
+
+## Exit engine, just before this tick
+${exitSection}
+
+## How close each position is to an automatic exit
+${describeExitWatch(input.portfolio, input.config, now)}
 
 ## Last ${input.recentTrades.length} trades
 ${trades}
