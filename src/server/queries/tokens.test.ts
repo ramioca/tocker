@@ -307,8 +307,13 @@ describe("searchTokens", () => {
     expect((await searchTokens(ADDRESS.slice(0, 10))).map((t) => t.id)).toEqual([TOKEN_ID]);
   });
 
-  it("returns nothing for a blank query", async () => {
-    expect(await searchTokens("   ")).toEqual([]);
+  it("lists the table for a blank query, so the palette has something to filter", async () => {
+    const all = await searchTokens("   ", 50);
+    expect(all.map((t) => t.symbol).sort()).toEqual(["BONK", "USDC"]);
+  });
+
+  it("finds nothing for a query that matches nothing", async () => {
+    expect(await searchTokens("zzzznope")).toEqual([]);
   });
 });
 

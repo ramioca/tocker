@@ -242,14 +242,14 @@ export function calibrationSentence(bands: readonly ScoreBandStat[]): string | n
   const populated = bands.filter((b) => b.trades > 0 && b.avgReturnPct !== null);
   if (populated.length === 0) return null;
 
-  const phrase = (b: ScoreBandStat) =>
-    `${b.band} ${b.avgReturnPct! >= 0 ? "averaged" : "lost"} ${signedPct(b.avgReturnPct!)} over ${b.trades} trade${b.trades === 1 ? "" : "s"}`;
+  const phrase = (b: ScoreBandStat, noun = "") =>
+    `${b.band}${noun} ${b.avgReturnPct! >= 0 ? "averaged" : "lost"} ${signedPct(b.avgReturnPct!)} over ${b.trades} trade${b.trades === 1 ? "" : "s"}`;
 
   const best = populated.reduce((a, b) => (b.avgReturnPct! > a.avgReturnPct! ? b : a));
   const worst = populated.reduce((a, b) => (b.avgReturnPct! < a.avgReturnPct! ? b : a));
 
-  if (best.band === worst.band) return `Your ${phrase(best)}.`;
-  return `Your ${phrase(best)}; ${phrase(worst)}.`;
+  if (best.band === worst.band) return `Your ${phrase(best, " picks")}.`;
+  return `Your ${phrase(best, " picks")}; ${phrase(worst)}.`;
 }
 
 function signedPct(value: number): string {

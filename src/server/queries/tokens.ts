@@ -198,26 +198,31 @@ export function priceSeries(history: readonly ScoreHistoryPoint[]): Array<{ at: 
 }
 
 /**
- * ⌘K token search. Symbol or address, over tokens we have actually seen — the
- * palette should jump to a page with something on it.
+ * ⌘K token search. Symbol, name or address, over tokens the platform has actually
+ * seen — the palette should only ever jump to a page with something on it.
+ *
+ * An empty query lists the table (bounded) rather than returning nothing, because
+ * the palette filters its own items and needs a set to filter.
  */
 export async function searchTokens(query: string, limit = 8): Promise<TokenRef[]> {
-  const q = query.trim();
-  if (q.length < 1) return [];
+  const q = query.trim().toLowerCase();
   const db = await getDb();
-  const like = `%${q.toLowerCase()}%`;
+  const like = `%${q}%`;
   const rows = await db
     .select()
     .from(tokens)
     .where(
-      or(
-        sql`lower(${tokens.symbol}) like ${like}`,
-        sql`lower(${tokens.name}) like ${like}`,
-        sql`lower(${tokens.address}) like ${like}`,
-      ),
+      q.length === 0
+        ? undefined
+        : or(
+            sql`lower(${tokens.symbol}) like ${like}`,
+            sql`lower(${tokens.name}) like ${like}`,
+            sql`lower(${tokens.address}) like ${like}`,
+          ),
     )
+    // Shortest symbol first: "SOL" should beat "SOLANA-INU" on the query "sol".
     .orderBy(asc(sql`length(${tokens.symbol})`), asc(tokens.symbol))
-    .limit(Math.min(25, Math.max(1, limit)));
+    .limit(Math.min(50, Math.max(1, limit)));
   return rows.map(toTokenRef);
 }
 
