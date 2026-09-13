@@ -37,3 +37,16 @@ Token discovery and scoring use live market data even in this setup, because Jup
 `pnpm dev` · `pnpm typecheck` · `pnpm lint` · `pnpm test` · `pnpm build` · `pnpm db:push` · `pnpm db:seed` · `pnpm demo` · `pnpm tick`
 
 Add a Spectrum UI component: `pnpm dlx shadcn@latest add @spectrumui/<name> -y` (catalog in `docs/spectrum-catalog.md`).
+
+## Trading features
+
+| Feature | Where | What it does |
+|---|---|---|
+| **Open universe + scoring** | Builder → Universe, Discover | No allowlists. Every token on the agent's chains is discovered (new launches, trending, top organic, momentum), scored 0–100 on safety, liquidity, organic volume, distribution and momentum, and gated by hard rules (authorities revoked, liquidity, holders, age, top-10 share, tax). `universe.blocklist` is the only list and it subtracts. |
+| **Exit engine** | Settings → Exit rules, `/api/cron/marks` | Stop loss, take profit, trailing stop, max hold, score floor and liquidity collapse run in code every five minutes and before every run, whether or not the model is awake. A low-confidence score (providers down) never triggers an exit. |
+| **Approval mode** | Settings → Execution, agent page, Notifications | "Ask me first": the agent scores, sizes and explains a trade, then waits. You approve or reject from the agent page or inline in Notifications; approving re-scores and re-quotes before routing. Proposals expire. Exits are never held for approval. |
+| **Manual trades** | Agent page → Trade | Buy or sell on the agent's book yourself. Same executor, same risk guard. |
+| **Token pages** | `/tokens/<chain>/<address>` | Score breakdown with hard gates, 30-day score history, price, agent flow, who holds it, recent agent trades, one-click block. |
+| **Performance tab** | Agent page → Performance | Realized/unrealized PnL, win rate, average hold, max drawdown, and *score calibration*: average realized return per entry-score band, so you can see whether your score floor is set right. |
+
+Strategy privacy: another user sees an agent's trades, PnL, run summaries and per-trade rationale. They never see its strategy prompt, universe rules, data sources or transcript. There is no fork.
