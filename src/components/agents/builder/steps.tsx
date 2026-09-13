@@ -11,6 +11,7 @@ import { ModeBadge } from "@/components/common/mode-badge";
 import { formatUsd } from "@/components/common/format";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { addLlmKeyAction } from "@/components/agents/agent-actions";
+import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
 import { Field, RiskSlider, StepHeading, Toggle } from "./field";
 import { UniverseControls } from "./universe-controls";
 import { SimpleSelect } from "./simple-select";
@@ -655,6 +656,17 @@ export function ScheduleStep({ draft, update, updateConfig }: StepProps) {
             );
           })}
         </div>
+      </Field>
+
+      <Field
+        label="Execution"
+        hint="You can change this any time in settings. Approval is how most people run their first live agent."
+      >
+        <ExecutionControls
+          idPrefix="builder-execution"
+          execution={draft.config.execution}
+          onChange={(execution) => updateConfig({ execution })}
+        />
       </Field>
 
       <div className="rounded-xl border border-border/70 bg-card/30 p-3">

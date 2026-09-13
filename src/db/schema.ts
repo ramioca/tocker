@@ -454,10 +454,12 @@ export const notifications = pgTable(
   {
     id: text("id").primaryKey(),
     userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    // "trade" | "exit" | "run_failed" | "follow" | "like" | "comment". "exit" is the
-    // owner-only notification the exit engine writes when a rule closed a position
-    // (src/lib/trading/guardian.ts); followers get the usual "trade". There is no "fork" kind:
-    // forking does not exist (see SPEC "Two rules that shape everything", rule 1).
+    // "trade" | "exit" | "proposal" | "run_failed" | "follow" | "like" | "comment".
+    // "exit" is the owner-only notification the exit engine writes when a rule closed a
+    // position (src/lib/trading/guardian.ts); followers get the usual "trade".
+    // "proposal" goes to the owner and is actionable: its href is
+    // `/agents/<slug>?proposal=<tradeId>` and the notifications page renders an
+    // approve/reject card inline for it. There is no "fork" kind: forking does not exist.
     kind: text("kind").notNull(),
     title: text("title").notNull(),
     body: text("body"),

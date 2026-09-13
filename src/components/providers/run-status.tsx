@@ -1,8 +1,9 @@
 "use client";
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
-import type { RunDetail } from "@/server/types";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSession } from "@/hooks/use-session";
+import type { PendingProposalsSummary, RunDetail } from "@/server/types";
 
 export interface WatchedRun {
   runId: string;
@@ -21,11 +22,22 @@ interface RunStatusValue {
   isRunning: boolean;
   watchRun: (run: Omit<WatchedRun, "startedAt">) => void;
   clearRun: () => void;
+  /**
+   * Trades this user's approve-mode agents are waiting on, polled while they are
+   * anywhere in the app. A proposal has a TTL, so it cannot only be discoverable on the
+   * page that produced it.
+   */
+  pendingProposals: PendingProposalsSummary;
+  /** Re-read the proposal count now — called after a decision settles. */
+  refreshProposals: () => void;
 }
 
 const RunStatusContext = createContext<RunStatusValue | null>(null);
 
 const POLL_MS = 2_000;
+const PROPOSAL_POLL_MS = 15_000;
+const NO_PROPOSALS: PendingProposalsSummary = { count: 0, latest: null };
+export const PROPOSALS_QUERY_KEY = ["pending-proposals"] as const;
 
 async function fetchRun(agentId: string, runId: string): Promise<RunDetail | null> {
   const response = await fetch(`/api/agents/${agentId}/runs/${runId}`, {
@@ -36,6 +48,16 @@ async function fetchRun(agentId: string, runId: string): Promise<RunDetail | nul
   // shows "running" from local state rather than flashing an error at the user.
   if (!response.ok) return null;
   return (await response.json()) as RunDetail;
+}
+
+async function fetchPendingProposals(): Promise<PendingProposalsSummary> {
+  const response = await fetch("/api/me/proposals", {
+    headers: { accept: "application/json" },
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!response.ok) return NO_PROPOSALS;
+  return (await response.json()) as PendingProposalsSummary;
 }
 
 /**
@@ -68,9 +90,28 @@ export function RunStatusProvider({ children }: { children: ReactNode }) {
 
   const clearRun = useCallback(() => setWatched(null), []);
 
+  // Signed-out visitors (the landing page) never poll.
+  const { session } = useSession();
+  const queryClient = useQueryClient();
+  const proposalsQuery = useQuery({
+    queryKey: PROPOSALS_QUERY_KEY,
+    queryFn: fetchPendingProposals,
+    enabled: session !== null,
+    refetchInterval: PROPOSAL_POLL_MS,
+    refetchOnWindowFocus: true,
+    retry: false,
+    staleTime: 0,
+  });
+
+  const refreshProposals = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: PROPOSALS_QUERY_KEY });
+  }, [queryClient]);
+
+  const pendingProposals = proposalsQuery.data ?? NO_PROPOSALS;
+
   const value = useMemo<RunStatusValue>(
-    () => ({ watched, detail, isRunning, watchRun, clearRun }),
-    [watched, detail, isRunning, watchRun, clearRun],
+    () => ({ watched, detail, isRunning, watchRun, clearRun, pendingProposals, refreshProposals }),
+    [watched, detail, isRunning, watchRun, clearRun, pendingProposals, refreshProposals],
   );
 
   return <RunStatusContext.Provider value={value}>{children}</RunStatusContext.Provider>;
