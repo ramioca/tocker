@@ -316,7 +316,8 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
     scoreSnapshot: score === null ? null : toTradeScore(score),
     origin: "guardian",
     exitReason: decision.reason,
-    requestedUsd: toNumeric(amountUsd, 6),
+    // `requestedUsd`/`proposedAt` stay null on purpose: those belong to approval mode, and
+    // an exit is never proposed. A stop loss that waits for a human is not a stop loss.
   });
 
   const request: TradeRequest = {

@@ -454,7 +454,9 @@ export const notifications = pgTable(
   {
     id: text("id").primaryKey(),
     userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    // "trade" | "run_failed" | "follow" | "like" | "comment". There is no "fork" kind:
+    // "trade" | "exit" | "run_failed" | "follow" | "like" | "comment". "exit" is the
+    // owner-only notification the exit engine writes when a rule closed a position
+    // (src/lib/trading/guardian.ts); followers get the usual "trade". There is no "fork" kind:
     // forking does not exist (see SPEC "Two rules that shape everything", rule 1).
     kind: text("kind").notNull(),
     title: text("title").notNull(),
