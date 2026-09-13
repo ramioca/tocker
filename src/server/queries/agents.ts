@@ -15,7 +15,7 @@ import {
 } from "@/db";
 import { DATA_SOURCES, toDataSourceInfo } from "@/lib/data-sources/registry";
 import { toNum } from "@/lib/money";
-import { computeEquity, pnlOverWindow, unrealized, winRate, WINDOW_DAYS } from "@/lib/pnl";
+import { computeEquity, exitDistances, pnlOverWindow, unrealized, winRate, WINDOW_DAYS } from "@/lib/pnl";
 import type {
   AgentCard,
   AgentDetail,
@@ -116,6 +116,16 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
         unrealizedPnlUsd: u.pnlUsd,
         unrealizedPnlPct: u.pnlPct,
         realizedPnlUsd: toNum(r.position.realizedPnlUsd),
+        openedAt: r.position.openedAt?.toISOString() ?? null,
+        peakPriceUsd: r.position.peakPriceUsd === null ? null : toNum(r.position.peakPriceUsd),
+        entryScore: r.position.entryScore === null ? null : toNum(r.position.entryScore),
+        entryLiquidityUsd: r.position.entryLiquidityUsd === null ? null : toNum(r.position.entryLiquidityUsd),
+        currentScore: null,
+        ...exitDistances({
+          unrealizedPct: u.pnlPct,
+          stopLossPct: agent.config.risk.stopLossPct,
+          takeProfitPct: agent.config.risk.takeProfitPct,
+        }),
       };
     })
     .sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0));

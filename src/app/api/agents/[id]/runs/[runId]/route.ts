@@ -14,7 +14,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { agentRuns, agentRunSteps, agents, getDb, tokens, trades } from "@/db";
 import { getSession } from "@/lib/auth";
 import { toTokenRef } from "@/lib/trading/tokens";
-import { toTradeScore } from "@/server/queries/_shared";
+import { toTradeRow } from "@/server/queries/_shared";
 import { isAgentOwner, visibleSteps } from "@/server/queries/visibility";
 import type { RunDetail, RunStep, TradeRow } from "@/server/types";
 
@@ -74,26 +74,8 @@ export async function GET(
     isOwner,
   );
 
-  const tradeList: TradeRow[] = tradeRows.map((r) => ({
-    id: r.trade.id,
-    agentId: r.trade.agentId,
-    chain: r.trade.chain,
-    side: r.trade.side,
-    token: toTokenRef(r.token),
-    amountToken: Number(r.trade.amountToken),
-    amountUsd: Number(r.trade.amountUsd),
-    priceUsd: Number(r.trade.priceUsd),
-    feeUsd: Number(r.trade.feeUsd),
-    status: r.trade.status,
-    isPaper: r.trade.isPaper,
-    txHash: r.trade.txHash,
-    // Public on purpose: the one-line rationale and the score are the record, after the fact.
-    rationale: r.trade.rationale,
-    score: toTradeScore(r.trade.scoreSnapshot),
-    error: r.trade.error,
-    createdAt: r.trade.createdAt.toISOString(),
-    filledAt: r.trade.filledAt?.toISOString() ?? null,
-  }));
+  // Public on purpose: the one-line rationale and the score are the record, after the fact.
+  const tradeList: TradeRow[] = tradeRows.map((r) => toTradeRow(r.trade, toTokenRef(r.token)));
 
   const detail: RunDetail = {
     id: run.id,

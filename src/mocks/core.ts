@@ -9,6 +9,7 @@
  * at merge time, it simply stops being called once the real queries land.
  */
 import type { AgentConfig } from "@/db/schema";
+import { exitDistances } from "@/lib/pnl";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import type {
   AgentCard,
@@ -329,7 +330,12 @@ function config(seed: AgentSeed): AgentConfig {
       stopLossPct: index === 6 ? 12 : 15,
       takeProfitPct: index === 7 ? 8 : 40,
       slippageBps: 100,
+      trailingStopPct: index === 1 ? 25 : null,
+      maxHoldHours: index === 4 ? 72 : null,
+      exitScoreBelow: 40,
+      exitOnLiquidityDropPct: 50,
     },
+    execution: { mode: index === 3 ? "approve" : "auto", proposalTtlMinutes: 60 },
     schedule: { intervalMinutes: [15, 30, 60, 5, 60, 240, 15, 0][index] },
     llm: {
       provider: seed.model.startsWith("gpt")
@@ -408,6 +414,16 @@ function positionsFor(agent: AgentCard): Position[] {
       unrealizedPnlUsd: unrealized,
       unrealizedPnlPct: round((unrealized / Math.max(1, valueUsd - unrealized)) * 100),
       realizedPnlUsd: round((rand() - 0.35) * 900),
+      openedAt: iso(-Math.floor(2 + rand() * 90) * 60 * MINUTE),
+      peakPriceUsd: round(Math.max(mark, avgCost) * (1 + rand() * 0.4), 8),
+      entryScore: round(55 + rand() * 40),
+      entryLiquidityUsd: round(40_000 + rand() * 900_000),
+      currentScore: round(45 + rand() * 50),
+      ...exitDistances({
+        unrealizedPct: round((unrealized / Math.max(1, valueUsd - unrealized)) * 100),
+        stopLossPct: 15,
+        takeProfitPct: 40,
+      }),
     };
   });
 }
@@ -503,6 +519,8 @@ function tradesFor(agent: AgentCard, count: number, seedOffset = 0): TradeRow[] 
     const price = round((t.lastPriceUsd ?? 1) * (0.88 + rand() * 0.28), 8);
     const amountUsd = round(25 + rand() * 460);
     const failed = rand() > 0.94;
+    const score = scoreFor(agent.slug.length * 31 + i + seedOffset, side, iso((i * 47 + 9 + seedOffset * 13) * MINUTE));
+    const guardian = side === "sell" && i % 4 === 0;
     out.push({
       id: `trade_${agent.slug}_${seedOffset}_${i}`,
       agentId: agent.id,
@@ -521,8 +539,15 @@ function tradesFor(agent: AgentCard, count: number, seedOffset = 0): TradeRow[] 
           : t.chain === "solana"
             ? `5${Math.floor(rand() * 1e12).toString(36)}Qq7xWc2vT9rNhKpZmA${i}`
             : `0x${Math.floor(rand() * 1e15).toString(16).padStart(12, "0")}a4f19c2b7e${i}`,
-      rationale: rationaleFor(side, i + seedOffset),
-      score: scoreFor(agent.slug.length * 31 + i + seedOffset, side, iso((i * 47 + 9 + seedOffset * 13) * MINUTE)),
+      origin: guardian ? "guardian" : "agent",
+      exitReason: guardian ? (i % 8 === 0 ? "take_profit" : "stop_loss") : null,
+      requestedUsd: null,
+      proposedAt: null,
+      decidedAt: null,
+      decidedBy: null,
+      entryScore: score?.total ?? null,
+      rationale: guardian ? (i % 8 === 0 ? "Take profit: +41.2% from entry." : "Stop loss: −15.3% from entry.") : rationaleFor(side, i + seedOffset),
+      score,
       error: failed ? "Slippage exceeded 100 bps — order rejected before submission." : null,
       createdAt: iso((i * 47 + 8 + seedOffset * 13) * MINUTE),
       filledAt: failed ? null : iso((i * 47 + 7 + seedOffset * 13) * MINUTE),
@@ -839,6 +864,13 @@ export function mockRun(runId: string): RunDetail | null {
         status: "filled",
         isPaper: agent.mode === "paper",
         txHash: agent.mode === "paper" ? null : `5${runId}Qq7xWc2vT9rNhKpZmA${i}`,
+        origin: "agent",
+        exitReason: null,
+        requestedUsd: null,
+        proposedAt: null,
+        decidedAt: null,
+        decidedBy: null,
+        entryScore: scoreFor(agent.slug.length * 17 + index + i, args.side ?? "buy", summary.startedAt ?? iso(0))?.total ?? null,
         rationale: args.rationale ?? null,
         score: scoreFor(agent.slug.length * 17 + index + i, args.side ?? "buy", summary.startedAt ?? iso(0)),
         error: null,

@@ -310,3 +310,22 @@ function roundDust(n: number): number {
 function toDate(v: Date | string | number): Date {
   return v instanceof Date ? v : new Date(v);
 }
+
+/**
+ * How far a position sits from its configured exits, in percentage points.
+ * `stopDistancePct`: headroom above the stop (negative = the stop is already breached).
+ * `takeProfitDistancePct`: room left below the take-profit (negative = already past it).
+ * Null when the rule is off or the position cannot be marked.
+ */
+export function exitDistances(input: {
+  unrealizedPct: number | null;
+  stopLossPct: number | null;
+  takeProfitPct: number | null;
+}): { stopDistancePct: number | null; takeProfitDistancePct: number | null } {
+  const u = input.unrealizedPct;
+  if (u === null || !Number.isFinite(u)) return { stopDistancePct: null, takeProfitDistancePct: null };
+  return {
+    stopDistancePct: input.stopLossPct === null ? null : u + input.stopLossPct,
+    takeProfitDistancePct: input.takeProfitPct === null ? null : input.takeProfitPct - u,
+  };
+}

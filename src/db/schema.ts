@@ -35,7 +35,17 @@ export const runStatusEnum = pgEnum("run_status", ["queued", "running", "succeed
 export const runTriggerEnum = pgEnum("run_trigger", ["schedule", "manual", "webhook"]);
 export const stepKindEnum = pgEnum("step_kind", ["thought", "tool_call", "tool_result", "message", "error"]);
 export const tradeSideEnum = pgEnum("trade_side", ["buy", "sell"]);
-export const tradeStatusEnum = pgEnum("trade_status", ["pending", "submitted", "filled", "failed", "rejected"]);
+export const tradeStatusEnum = pgEnum("trade_status", [
+  "proposed", // approval mode: waiting for the owner's decision
+  "pending",
+  "submitted",
+  "filled",
+  "failed",
+  "rejected", // risk guard, or the owner declined a proposal
+  "expired", // a proposal nobody decided on before its TTL
+]);
+/** Who initiated a trade. */
+export const tradeOriginEnum = pgEnum("trade_origin", ["agent", "guardian", "manual", "mirror"]);
 export const postKindEnum = pgEnum("post_kind", ["trade", "note", "agent_created", "milestone"]);
 export const followTargetEnum = pgEnum("follow_target", ["user", "agent"]);
 export const walletKindEnum = pgEnum("wallet_kind", ["user_embedded", "agent_server"]);
@@ -132,6 +142,16 @@ export type AgentConfig = {
     stopLossPct: number | null;
     takeProfitPct: number | null;
     slippageBps: number;
+    /** Exit engine (deterministic, no LLM). null = off. */
+    trailingStopPct: number | null; // exit when price falls this % from the peak since entry
+    maxHoldHours: number | null; // exit a position older than this
+    exitScoreBelow: number | null; // rescore holdings each tick; exit if total drops under this
+    exitOnLiquidityDropPct: number | null; // exit if pooled liquidity fell this % since entry
+  };
+  /** How trades leave the agent. `approve` = the agent proposes, the owner decides. */
+  execution: {
+    mode: "auto" | "approve";
+    proposalTtlMinutes: number;
   };
   schedule: {
     intervalMinutes: number; // 0 = manual only
@@ -264,6 +284,15 @@ export const trades = pgTable(
     rationale: text("rationale"),
     /** The token's score at the moment of the trade, so the record survives re-scoring. */
     scoreSnapshot: jsonb("score_snapshot").$type<TradeScoreSnapshot | null>(),
+    origin: tradeOriginEnum("origin").default("agent").notNull(),
+    /** Set by the exit engine: stop_loss | take_profit | trailing_stop | max_hold | score_collapse | liquidity_collapse */
+    exitReason: text("exit_reason"),
+    /** Approval mode: the notional the agent asked for; `amountUsd` is what actually filled. */
+    requestedUsd: numeric("requested_usd", { precision: 18, scale: 6 }),
+    proposedAt: timestamp("proposed_at", { withTimezone: true }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** owner | expiry | guard — who settled a proposal */
+    decidedBy: text("decided_by"),
     error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     filledAt: timestamp("filled_at", { withTimezone: true }),
@@ -279,6 +308,13 @@ export const positions = pgTable(
     amountToken: numeric("amount_token", { precision: 30, scale: 12 }).notNull(),
     avgCostUsd: numeric("avg_cost_usd", { precision: 30, scale: 12 }).notNull(),
     realizedPnlUsd: numeric("realized_pnl_usd", { precision: 18, scale: 6 }).default("0").notNull(),
+    /** When the position went from flat to held; reset when it is fully closed. */
+    openedAt: timestamp("opened_at", { withTimezone: true }),
+    /** Highest mark seen since `openedAt` — the trailing stop's reference. */
+    peakPriceUsd: numeric("peak_price_usd", { precision: 30, scale: 12 }),
+    /** Score total and pooled liquidity at first entry, for collapse detection and calibration. */
+    entryScore: numeric("entry_score", { precision: 6, scale: 2 }),
+    entryLiquidityUsd: numeric("entry_liquidity_usd", { precision: 20, scale: 2 }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [primaryKey({ columns: [t.agentId, t.tokenId] })],
@@ -343,6 +379,24 @@ export const tokenScores = pgTable(
     scoredAt: timestamp("scored_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("token_scores_verdict_idx").on(t.verdict, t.total), index("token_scores_scored_idx").on(t.scoredAt)],
+);
+
+/** Append-only score history, one row per fresh scoring. Drives token pages and drift detection. */
+export const tokenScoreHistory = pgTable(
+  "token_score_history",
+  {
+    id: text("id").primaryKey(),
+    tokenId: text("token_id").notNull(), // `${chain}:${address}`
+    total: numeric("total", { precision: 6, scale: 2 }).notNull(),
+    verdict: scoreVerdictEnum("verdict").notNull(),
+    components: jsonb("components").$type<Record<string, number | null>>().notNull(),
+    blockers: jsonb("blockers").$type<string[]>().notNull(),
+    priceUsd: numeric("price_usd", { precision: 30, scale: 12 }),
+    liquidityUsd: numeric("liquidity_usd", { precision: 20, scale: 2 }),
+    holderCount: integer("holder_count"),
+    scoredAt: timestamp("scored_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("token_score_history_token_idx").on(t.tokenId, t.scoredAt)],
 );
 
 // ---------- social ----------

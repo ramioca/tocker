@@ -60,6 +60,16 @@ export interface AgentCard {
   createdAt: string;
 }
 
+export type TradeOrigin = "agent" | "guardian" | "manual" | "mirror";
+export type ExitReason =
+  | "stop_loss"
+  | "take_profit"
+  | "trailing_stop"
+  | "max_hold"
+  | "score_collapse"
+  | "liquidity_collapse";
+export type TradeStatus = "proposed" | "pending" | "submitted" | "filled" | "failed" | "rejected" | "expired";
+
 export interface Position {
   token: TokenRef;
   amountToken: number;
@@ -69,6 +79,15 @@ export interface Position {
   unrealizedPnlUsd: number | null;
   unrealizedPnlPct: number | null;
   realizedPnlUsd: number;
+  openedAt: string | null;
+  peakPriceUsd: number | null;
+  entryScore: number | null;
+  entryLiquidityUsd: number | null;
+  /** Current score for the held token, when one is cached. */
+  currentScore: number | null;
+  /** Distance to the configured stop / take-profit in %, negative = below. Null when off. */
+  stopDistancePct: number | null;
+  takeProfitDistancePct: number | null;
 }
 
 export interface TradeRow {
@@ -81,7 +100,16 @@ export interface TradeRow {
   amountUsd: number;
   priceUsd: number;
   feeUsd: number;
-  status: "pending" | "submitted" | "filled" | "failed" | "rejected";
+  status: TradeStatus;
+  origin: TradeOrigin;
+  exitReason: ExitReason | null;
+  /** Approval mode: what was asked for, before any fill. */
+  requestedUsd: number | null;
+  proposedAt: string | null;
+  decidedAt: string | null;
+  decidedBy: string | null;
+  /** Score total at the time of the trade, from `scoreSnapshot`. */
+  entryScore: number | null;
   isPaper: boolean;
   txHash: string | null;
   rationale: string | null;
@@ -329,3 +357,56 @@ export interface DataSourceInfo {
 }
 
 export type ActionResult<T = void> = { ok: true; data: T } | { ok: false; error: string };
+
+// ---------- token pages & analytics (owner: TOKENS-UI workstream) ----------
+
+export interface ScoreHistoryPoint {
+  at: string; // ISO
+  total: number;
+  verdict: ScoreVerdict;
+  priceUsd: number | null;
+  liquidityUsd: number | null;
+  holderCount: number | null;
+}
+
+export interface TokenPage {
+  token: TokenRef;
+  score: TokenScore | null;
+  history: ScoreHistoryPoint[];
+  /** Public agents currently holding it, with their unrealized PnL on it. */
+  holders: Array<{ agent: Pick<AgentCard, "id" | "slug" | "name" | "avatarSeed" | "mode">; valueUsd: number | null; unrealizedPnlPct: number | null }>;
+  recentTrades: TradeRow[];
+  stats: { agentBuys30d: number; agentSells30d: number; netFlowUsd30d: number };
+}
+
+export interface ScoreBandStat {
+  band: "0-39" | "40-59" | "60-79" | "80-100";
+  trades: number;
+  winRate: number | null;
+  avgReturnPct: number | null;
+  totalPnlUsd: number;
+}
+
+export interface AgentAnalytics {
+  agentId: string;
+  window: LeaderboardWindow;
+  realizedPnlUsd: number;
+  unrealizedPnlUsd: number;
+  winRate: number | null;
+  avgHoldHours: number | null;
+  maxDrawdownPct: number | null;
+  bestTrade: TradeRow | null;
+  worstTrade: TradeRow | null;
+  byChain: Array<{ chain: Chain; trades: number; pnlUsd: number }>;
+  byOrigin: Array<{ origin: TradeOrigin; trades: number; pnlUsd: number }>;
+  exits: Array<{ reason: ExitReason; count: number; pnlUsd: number }>;
+  /** Realized return bucketed by the score the token had at entry. */
+  calibration: ScoreBandStat[];
+  dataSpendUsd: number;
+}
+
+export interface ProposalRow extends TradeRow {
+  expiresAt: string;
+  /** Live re-check at read time: would the risk guard still allow it? */
+  stillValid: boolean;
+}

@@ -115,6 +115,10 @@ const SEED_USERS = [
   { id: "did:privy:seed-sable", handle: "sable", displayName: "Sable", bio: "Slow, boring, profitable.", email: "sable@petri.dev" },
 ];
 
+/** Exit-engine and execution defaults shared by every seeded agent. */
+const EXIT_DEFAULTS = { trailingStopPct: null, maxHoldHours: null, exitScoreBelow: 40, exitOnLiquidityDropPct: 50 } as const;
+const EXECUTION_DEFAULT: AgentConfig["execution"] = { mode: "auto", proposalTtlMinutes: 60 };
+
 type SeedAgentSpec = {
   slug: string;
   name: string;
@@ -141,7 +145,7 @@ const SEED_AGENTS: SeedAgentSpec[] = [
       strategyPrompt:
         "You are a momentum trader on Solana memecoins. Each tick, check X sentiment for trending tokens, buy when narrative velocity is rising and sentiment is positive, and cut the position the moment velocity flips negative. Never hold more than three positions at once.",
       dataSources: ["sentimentalpha", "cmc-quotes", "token-intel-sol"],
-      risk: { maxTradeUsd: 400, maxDailyTrades: 8, maxPositionPct: 30, maxDataSpendUsdPerRun: 0.3, stopLossPct: 12, takeProfitPct: 35, slippageBps: 150 },
+      risk: { ...EXIT_DEFAULTS, maxTradeUsd: 400, maxDailyTrades: 8, maxPositionPct: 30, maxDataSpendUsdPerRun: 0.3, stopLossPct: 12, takeProfitPct: 35, slippageBps: 150 },
       schedule: { intervalMinutes: 15 },
       llm: { provider: "anthropic", model: "claude-sonnet-5", temperature: 0.5, maxSteps: 12 },
     },
@@ -159,7 +163,7 @@ const SEED_AGENTS: SeedAgentSpec[] = [
       strategyPrompt:
         "You accumulate ETH and AERO on Base. Buy weakness, scale out into strength, and never chase a green candle. Size positions so a 30% drawdown in any single token costs less than 10% of equity.",
       dataSources: ["cmc-quotes", "agentdata"],
-      risk: { maxTradeUsd: 1500, maxDailyTrades: 3, maxPositionPct: 45, maxDataSpendUsdPerRun: 0.1, stopLossPct: 25, takeProfitPct: 60, slippageBps: 80 },
+      risk: { ...EXIT_DEFAULTS, maxTradeUsd: 1500, maxDailyTrades: 3, maxPositionPct: 45, maxDataSpendUsdPerRun: 0.1, stopLossPct: 25, takeProfitPct: 60, slippageBps: 80 },
       schedule: { intervalMinutes: 60 },
       llm: { provider: "anthropic", model: "claude-sonnet-5", temperature: 0.2, maxSteps: 8 },
     },
@@ -177,7 +181,7 @@ const SEED_AGENTS: SeedAgentSpec[] = [
       strategyPrompt:
         "Track narrative velocity across X. When a token's narrative accelerates faster than its price, take a position; when the narrative plateaus, exit. Contrarian signals override momentum signals.",
       dataSources: ["sentimentalpha", "xquik-search", "cmc-dex-search"],
-      risk: { maxTradeUsd: 300, maxDailyTrades: 12, maxPositionPct: 25, maxDataSpendUsdPerRun: 0.5, stopLossPct: 10, takeProfitPct: 45, slippageBps: 200 },
+      risk: { ...EXIT_DEFAULTS, maxTradeUsd: 300, maxDailyTrades: 12, maxPositionPct: 25, maxDataSpendUsdPerRun: 0.5, stopLossPct: 10, takeProfitPct: 45, slippageBps: 200 },
       schedule: { intervalMinutes: 10 },
       llm: { provider: "openai", model: "gpt-5", temperature: 0.7, maxSteps: 14 },
     },
@@ -195,7 +199,7 @@ const SEED_AGENTS: SeedAgentSpec[] = [
       strategyPrompt:
         "You only trade WIF. Build the position on 8%+ drawdowns, trim 25% of the position on every 20% rally, and never go to zero cash.",
       dataSources: ["token-intel-sol", "cmc-quotes"],
-      risk: { maxTradeUsd: 500, maxDailyTrades: 4, maxPositionPct: 60, maxDataSpendUsdPerRun: 0.15, stopLossPct: null, takeProfitPct: 20, slippageBps: 120 },
+      risk: { ...EXIT_DEFAULTS, maxTradeUsd: 500, maxDailyTrades: 4, maxPositionPct: 60, maxDataSpendUsdPerRun: 0.15, stopLossPct: null, takeProfitPct: 20, slippageBps: 120 },
       schedule: { intervalMinutes: 30 },
       llm: { provider: "anthropic", model: "claude-haiku-4-5-20251001", temperature: 0.3, maxSteps: 8 },
     },
@@ -213,7 +217,7 @@ const SEED_AGENTS: SeedAgentSpec[] = [
       strategyPrompt:
         "Accumulate BONK relentlessly but hedge with SOL when funding gets frothy. Sell BONK only when its 7-day sentiment score turns negative two ticks in a row.",
       dataSources: ["sentimentalpha", "token-intel-sol"],
-      risk: { maxTradeUsd: 250, maxDailyTrades: 10, maxPositionPct: 50, maxDataSpendUsdPerRun: 0.25, stopLossPct: 20, takeProfitPct: 80, slippageBps: 250 },
+      risk: { ...EXIT_DEFAULTS, maxTradeUsd: 250, maxDailyTrades: 10, maxPositionPct: 50, maxDataSpendUsdPerRun: 0.25, stopLossPct: 20, takeProfitPct: 80, slippageBps: 250 },
       schedule: { intervalMinutes: 20 },
       llm: { provider: "openrouter", model: "deepseek/deepseek-v4", temperature: 0.6, maxSteps: 10 },
     },
@@ -231,7 +235,7 @@ const SEED_AGENTS: SeedAgentSpec[] = [
       strategyPrompt:
         "Read DEX depth and volatility before every trade. Only enter when the expected slippage is under a third of the expected edge. Prefer AERO when its emissions are rising.",
       dataSources: ["cmc-dex-search", "agentdata"],
-      risk: { maxTradeUsd: 1200, maxDailyTrades: 6, maxPositionPct: 35, maxDataSpendUsdPerRun: 0.4, stopLossPct: 15, takeProfitPct: 40, slippageBps: 60 },
+      risk: { ...EXIT_DEFAULTS, maxTradeUsd: 1200, maxDailyTrades: 6, maxPositionPct: 35, maxDataSpendUsdPerRun: 0.4, stopLossPct: 15, takeProfitPct: 40, slippageBps: 60 },
       schedule: { intervalMinutes: 30 },
       llm: { provider: "anthropic", model: "claude-sonnet-5", temperature: 0.35, maxSteps: 12 },
     },
@@ -249,7 +253,7 @@ const SEED_AGENTS: SeedAgentSpec[] = [
       strategyPrompt:
         "Maintain a roughly equal-weight basket of the three most traded Base community tokens. Rebalance whenever a leg drifts more than 15% from target weight.",
       dataSources: ["cmc-quotes", "cmc-dex-search"],
-      risk: { maxTradeUsd: 350, maxDailyTrades: 9, maxPositionPct: 40, maxDataSpendUsdPerRun: 0.2, stopLossPct: 30, takeProfitPct: 70, slippageBps: 150 },
+      risk: { ...EXIT_DEFAULTS, maxTradeUsd: 350, maxDailyTrades: 9, maxPositionPct: 40, maxDataSpendUsdPerRun: 0.2, stopLossPct: 30, takeProfitPct: 70, slippageBps: 150 },
       schedule: { intervalMinutes: 45 },
       llm: { provider: "openai", model: "gpt-5-mini", temperature: 0.4, maxSteps: 10 },
     },
@@ -267,7 +271,7 @@ const SEED_AGENTS: SeedAgentSpec[] = [
       strategyPrompt:
         "You are a contrarian. When sentiment is extremely positive, sell into it. When sentiment is extremely negative but on-chain activity holds up, buy. Ignore anything in between.",
       dataSources: ["sentimentalpha", "xquik-search"],
-      risk: { maxTradeUsd: 600, maxDailyTrades: 5, maxPositionPct: 35, maxDataSpendUsdPerRun: 0.35, stopLossPct: 18, takeProfitPct: 50, slippageBps: 100 },
+      risk: { ...EXIT_DEFAULTS, maxTradeUsd: 600, maxDailyTrades: 5, maxPositionPct: 35, maxDataSpendUsdPerRun: 0.35, stopLossPct: 18, takeProfitPct: 50, slippageBps: 100 },
       schedule: { intervalMinutes: 60 },
       llm: { provider: "anthropic", model: "claude-opus-5", temperature: 0.45, maxSteps: 16 },
     },
@@ -285,7 +289,7 @@ const SEED_AGENTS: SeedAgentSpec[] = [
       strategyPrompt:
         "Scalp JUP against SOL. Target 1–2% moves, cut losers at 1%, and never carry more than one position overnight.",
       dataSources: ["cmc-quotes", "token-intel-sol"],
-      risk: { maxTradeUsd: 200, maxDailyTrades: 20, maxPositionPct: 20, maxDataSpendUsdPerRun: 0.6, stopLossPct: 5, takeProfitPct: 8, slippageBps: 90 },
+      risk: { ...EXIT_DEFAULTS, maxTradeUsd: 200, maxDailyTrades: 20, maxPositionPct: 20, maxDataSpendUsdPerRun: 0.6, stopLossPct: 5, takeProfitPct: 8, slippageBps: 90 },
       schedule: { intervalMinutes: 5 },
       llm: { provider: "openrouter", model: "anthropic/claude-sonnet-5", temperature: 0.25, maxSteps: 8 },
     },
@@ -303,7 +307,7 @@ const SEED_AGENTS: SeedAgentSpec[] = [
       strategyPrompt:
         "Hold ETH and SOL. Add on 10% drawdowns from the 30-day high, trim on new highs, and otherwise do nothing. Doing nothing is a position.",
       dataSources: ["cmc-quotes"],
-      risk: { maxTradeUsd: 2000, maxDailyTrades: 2, maxPositionPct: 55, maxDataSpendUsdPerRun: 0.05, stopLossPct: null, takeProfitPct: null, slippageBps: 50 },
+      risk: { ...EXIT_DEFAULTS, maxTradeUsd: 2000, maxDailyTrades: 2, maxPositionPct: 55, maxDataSpendUsdPerRun: 0.05, stopLossPct: null, takeProfitPct: null, slippageBps: 50 },
       schedule: { intervalMinutes: 240 },
       llm: { provider: "anthropic", model: "claude-sonnet-5", temperature: 0.15, maxSteps: 6 },
     },
@@ -462,6 +466,7 @@ function fullConfig(spec: SeedAgentSpec): AgentConfig {
     chains: spec.chains,
     universe: universeFor(spec),
     risk: spec.config.risk ?? {
+      ...EXIT_DEFAULTS,
       maxTradeUsd: 250,
       maxDailyTrades: 6,
       maxPositionPct: 30,
@@ -470,6 +475,7 @@ function fullConfig(spec: SeedAgentSpec): AgentConfig {
       takeProfitPct: 40,
       slippageBps: 100,
     },
+    execution: spec.config.execution ?? EXECUTION_DEFAULT,
     schedule: spec.config.schedule ?? { intervalMinutes: 30 },
     llm: spec.config.llm ?? { provider: "anthropic", model: "claude-sonnet-5", temperature: 0.4, maxSteps: 12 },
   };

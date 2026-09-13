@@ -52,6 +52,14 @@ export const agentConfigSchema = z.object({
     stopLossPct: z.number().min(0.1).max(99).nullable(),
     takeProfitPct: z.number().min(0.1).max(10_000).nullable(),
     slippageBps: z.number().int().min(1).max(5000),
+    trailingStopPct: z.number().min(0.5).max(99).nullable(),
+    maxHoldHours: z.number().min(0.25).max(24 * 365).nullable(),
+    exitScoreBelow: z.number().min(0).max(100).nullable(),
+    exitOnLiquidityDropPct: z.number().min(1).max(99).nullable(),
+  }),
+  execution: z.object({
+    mode: z.enum(["auto", "approve"]),
+    proposalTtlMinutes: z.number().int().min(5).max(24 * 60),
   }),
   schedule: z.object({ intervalMinutes: z.number().int().min(0).max(10_080) }),
   llm: z.object({
@@ -92,7 +100,14 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
     stopLossPct: 15,
     takeProfitPct: 40,
     slippageBps: 100,
+    // Exit engine. Trailing stop off by default: a 30-40% retrace is normal for a
+    // launch that is working; the fixed stop loss is the floor.
+    trailingStopPct: null,
+    maxHoldHours: null,
+    exitScoreBelow: 40, // a held token that falls to "avoid" is sold
+    exitOnLiquidityDropPct: 50, // half the pool gone = the exit door is closing
   },
+  execution: { mode: "auto", proposalTtlMinutes: 60 },
   schedule: { intervalMinutes: 15 },
   llm: { provider: "anthropic", model: "claude-sonnet-5", temperature: 0.4, maxSteps: 12 },
 };

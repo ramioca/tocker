@@ -5,6 +5,7 @@
  * is the agent's USDC balance across its Privy server wallets.
  */
 import { nanoid } from "nanoid";
+import { exitDistances } from "@/lib/pnl";
 import { and, eq, gte } from "drizzle-orm";
 import { agents, equitySnapshots, getDb, positions, tokens, trades, wallets } from "@/db";
 import type { AgentConfig } from "@/db/schema";
@@ -100,6 +101,16 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
         unrealizedPnlUsd: unrealized,
         unrealizedPnlPct: unrealized === null || costBasis === 0 ? null : (unrealized / costBasis) * 100,
         realizedPnlUsd: realized,
+        openedAt: h.position.openedAt?.toISOString() ?? null,
+        peakPriceUsd: h.position.peakPriceUsd === null ? null : Number(h.position.peakPriceUsd),
+        entryScore: h.position.entryScore === null ? null : Number(h.position.entryScore),
+        entryLiquidityUsd: h.position.entryLiquidityUsd === null ? null : Number(h.position.entryLiquidityUsd),
+        currentScore: null,
+        ...exitDistances({
+          unrealizedPct: unrealized === null || costBasis === 0 ? null : (unrealized / costBasis) * 100,
+          stopLossPct: agent.config.risk.stopLossPct,
+          takeProfitPct: agent.config.risk.takeProfitPct,
+        }),
       };
     });
 
