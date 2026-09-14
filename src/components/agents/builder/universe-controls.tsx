@@ -415,7 +415,7 @@ export function UniverseControls({
       <Field
         label="How it finds tokens"
         error={errors.universe}
-        hint="Every feed is free and runs on each tick. Only what they surface can ever be scored."
+        hint="Every feed runs on each tick, and only what they surface can ever be scored. All of them are free except the paid launch radar, which is billed to the data budget."
       >
         <div className="grid gap-2 sm:grid-cols-2">
           {DISCOVERY_FEEDS.map((feed) => {

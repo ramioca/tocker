@@ -432,7 +432,12 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
  * `universe.minScore` on a buy (the agent would not have bought below it) and 0 on a
  * sell, where the point is often that the score decayed.
  */
-function buildScore(token: SeedToken, floor: number, paysForSentiment: boolean, when: Date): TradeScoreSnapshot {
+function buildScore(
+  token: SeedToken,
+  floor: number,
+  paid: { sentiment: boolean; smartMoney: boolean },
+  when: Date,
+): TradeScoreSnapshot {
   const base = TOKEN_QUALITY[token.symbol] ?? 60;
   const total = Math.round(clamp(base + (rand() - 0.45) * 16, Math.max(floor, 28), 97));
   const jitter = (spread: number) => Math.round(clamp(total + (rand() - 0.5) * spread, 5, 100));
@@ -448,7 +453,8 @@ function buildScore(token: SeedToken, floor: number, paysForSentiment: boolean, 
       momentum: jitter(30),
       organic: jitter(20),
       distribution: jitter(16),
-      sentiment: paysForSentiment ? jitter(26) : null,
+      sentiment: paid.sentiment ? jitter(26) : null,
+      smartMoney: paid.smartMoney ? jitter(22) : null,
     },
     // A trade that happened cleared every hard gate by definition.
     blockers: [],
@@ -621,7 +627,7 @@ async function seed() {
   console.log("· token scores");
   for (const t of SEED_TOKENS) {
     if (t.quote) continue;
-    const snapshot = buildScore(t, 0, true, new Date(NOW));
+    const snapshot = buildScore(t, 0, { sentiment: true, smartMoney: false }, new Date(NOW));
     const tail = lastPoint.get(tokenId(t));
     const total = tail ? Number(tail.total) : snapshot.total;
     const verdict = tail ? tail.verdict! : snapshot.verdict;
@@ -677,9 +683,12 @@ async function seed() {
     const quoteByChain = new Map(
       spec.chains.map((c) => [c, SEED_TOKENS.find((t) => t.chain === c && t.quote)!]),
     );
-    // Scoring is free; sentiment is the only component you have to pay for, so it is
-    // present only for agents that actually buy a sentiment source.
-    const paysForSentiment = config.dataSources.some((s) => s === "sentimentalpha" || s === "xquik-search");
+    // Scoring is free; sentiment and smart money are the components you have to pay
+    // for, so each is present only for agents that actually buy a source that sells it.
+    const paid = {
+      sentiment: config.dataSources.some((s) => s === "sentimentalpha" || s === "xquik-search"),
+      smartMoney: config.dataSources.includes("nansen-smart-money"),
+    };
 
     console.log(`· agent ${spec.slug}`);
 
@@ -860,7 +869,7 @@ async function seed() {
         const scoreSnapshot = buildScore(
           token,
           side === "buy" ? config.universe.minScore : 0,
-          paysForSentiment,
+          paid,
           createdAt,
         );
         tradeRows.push({

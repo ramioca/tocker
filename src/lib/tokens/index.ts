@@ -25,7 +25,7 @@ import { getJupiterToken } from "./providers/jupiter";
 import { getRugcheckSummary } from "./providers/rugcheck";
 import { recordScore } from "./history";
 import { scoreToken, type Universe } from "./score";
-import type { ScoreInput, SentimentInput } from "./types";
+import type { ScoreInput, SellCheckInput, SentimentInput, SmartMoneyInput } from "./types";
 
 export { discoverCandidates, quickScore, renderCandidates, DEFAULT_DISCOVERY_LIMIT } from "./discover";
 export {
@@ -36,6 +36,7 @@ export {
   toFacts,
   verdictFor,
   SENTIMENT_WEIGHT,
+  SMART_MONEY_WEIGHT,
   VERDICT_BANDS,
   WEIGHTS,
   type ScoredToken,
@@ -48,6 +49,24 @@ export const SCORE_TTL_MS = 600_000;
 
 /** Data sources whose `signals.sentiment` we will fold into a deep score. */
 const SENTIMENT_SOURCE_IDS = ["sentimentalpha", "xquik-search", "x-search"] as const;
+
+/** Data sources whose `signals.smartMoneyNetflowUsd` feeds the `smartMoney` component. */
+const SMART_MONEY_SOURCE_IDS: readonly string[] = ["nansen-smart-money"];
+
+/**
+ * Data sources whose `signals.sellable` can raise the `cannot_sell` gate. EVM only:
+ * the check is a sell simulation against the token's pools, and nothing in this list
+ * covers Solana.
+ */
+const SELL_CHECK_SOURCE_IDS: readonly string[] = ["plexa-pretrade"];
+
+/** Which paid signals, beyond sentiment, the caller wants folded into this score. */
+export interface PaidScoreSignals {
+  /** Buy smart-money netflow (Nansen) and score it against the token's liquidity. */
+  smartMoney?: boolean;
+  /** Buy a live sell simulation (Plexa, Base only). A proven failure blocks the buy. */
+  sellCheck?: boolean;
+}
 
 export interface GetTokenScoreInput {
   chain: Chain;
@@ -62,6 +81,13 @@ export interface GetTokenScoreInput {
    * path in the subsystem that spends money, and only the caller can ask for it.
    */
   deep?: boolean;
+  /**
+   * The other paid signals, each behind its own explicit flag. Like `deep`, nothing
+   * here spends anything unless the caller asks, and every call is charged against
+   * `x402.budget` by `paidFetch` — a signal the budget cannot cover is skipped, not
+   * borrowed against.
+   */
+  paid?: PaidScoreSignals;
   x402?: X402Context;
   /** Sources the agent is allowed to pay for; the first sentiment-capable one wins. */
   dataSources?: readonly string[];
@@ -115,6 +141,7 @@ function rowToScore(row: typeof tokenScores.$inferSelect): TokenScore {
       distribution: components.distribution ?? 0,
       momentum: components.momentum ?? 0,
       sentiment: components.sentiment ?? null,
+      smartMoney: components.smartMoney ?? null,
     },
     blockers: row.blockers,
     warnings: row.warnings,
@@ -130,7 +157,13 @@ function rowToScore(row: typeof tokenScores.$inferSelect): TokenScore {
   };
 }
 
-async function readCache(id: string, key: string, now: number, wantSentiment: boolean): Promise<TokenScore | null> {
+interface CacheWants {
+  sentiment: boolean;
+  smartMoney: boolean;
+  sellCheck: boolean;
+}
+
+async function readCache(id: string, key: string, now: number, wants: CacheWants): Promise<TokenScore | null> {
   try {
     const db = await getDb();
     const rows = await db.select().from(tokenScores).where(eq(tokenScores.id, id)).limit(1);
@@ -139,7 +172,12 @@ async function readCache(id: string, key: string, now: number, wantSentiment: bo
     if (row.universeKey !== key) return null;
     if (now - row.scoredAt.getTime() > SCORE_TTL_MS) return null;
     // A deep request cannot be served by a row that was scored without sentiment.
-    if (wantSentiment && (row.components.sentiment ?? null) === null) return null;
+    if (wants.sentiment && (row.components.sentiment ?? null) === null) return null;
+    // The paid signals are recorded in `sources`, which is the only honest test: a
+    // null component can mean "not bought" *or* "bought and the source had nothing",
+    // and re-buying a source that already answered empty is just burning budget.
+    if (wants.smartMoney && !row.sources.some((s) => SMART_MONEY_SOURCE_IDS.includes(s))) return null;
+    if (wants.sellCheck && !row.sources.some((s) => SELL_CHECK_SOURCE_IDS.includes(s))) return null;
     return rowToScore(row);
   } catch {
     // The cache is an optimisation; a database hiccup must not stop a run scoring.
@@ -204,6 +242,81 @@ async function fetchSentiment(
   return null;
 }
 
+/** True when this source is enabled for the agent (an empty list means "anything"). */
+function allowedBy(allowed: readonly string[] | undefined, id: string): boolean {
+  return !allowed || allowed.length === 0 || allowed.includes(id);
+}
+
+/**
+ * Buys one smart-money netflow reading over x402. Returns `null` on any failure —
+ * including an exhausted budget — because a signal the agent could not afford must
+ * degrade the score's *completeness*, never fail the scoring pass.
+ */
+async function fetchSmartMoney(
+  chain: Chain,
+  address: string,
+  symbol: string | null,
+  x402: X402Context,
+  allowed: readonly string[] | undefined,
+): Promise<SmartMoneyInput | null> {
+  const { getDataSource } = await import("@/lib/data-sources/registry");
+  for (const id of SMART_MONEY_SOURCE_IDS.filter((s) => allowedBy(allowed, s))) {
+    const source = getDataSource(id);
+    if (!source) continue;
+    try {
+      const result = await source.query(x402, {
+        chains: [chain],
+        tokenAddress: address,
+        ...(symbol ? { symbol } : {}),
+      });
+      const signals = result.signals ?? {};
+      if (signals.smartMoneyNetflowUsd === undefined) continue;
+      return { netflowUsd: signals.smartMoneyNetflowUsd, traderCount: null, source: id };
+    } catch {
+      // Same contract as sentiment: a paid signal never breaks a free score.
+    }
+  }
+  return null;
+}
+
+/**
+ * Buys one live sell simulation over x402. Base only — the sources in this list
+ * simulate an EVM sell, and pretending a Solana mint was checked would be worse than
+ * not checking it.
+ */
+async function fetchSellCheck(
+  chain: Chain,
+  address: string,
+  sizeUsd: number | undefined,
+  x402: X402Context,
+  allowed: readonly string[] | undefined,
+): Promise<SellCheckInput | null> {
+  if (chain !== "base") return null;
+  const { getDataSource } = await import("@/lib/data-sources/registry");
+  for (const id of SELL_CHECK_SOURCE_IDS.filter((s) => allowedBy(allowed, s))) {
+    const source = getDataSource(id);
+    if (!source) continue;
+    try {
+      const result = await source.query(x402, {
+        token: address,
+        ...(sizeUsd === undefined ? {} : { sizeUsd }),
+        chain: "base",
+      });
+      const signals = result.signals ?? {};
+      // `undefined` here is the source saying "inconclusive", which stays `null` —
+      // it must not become `false` and gate the token.
+      return {
+        sellable: signals.sellable ?? null,
+        verdict: null,
+        source: id,
+      };
+    } catch {
+      // Budget, upstream failure or an address the service does not cover.
+    }
+  }
+  return null;
+}
+
 /** Gathers every free provider for a token. Each failure degrades, none throws. */
 async function gather(input: GetTokenScoreInput): Promise<ScoreInput> {
   const { chain, address } = input;
@@ -238,21 +351,44 @@ export async function getTokenScore(input: GetTokenScoreInput): Promise<TokenSco
   const now = input.now ?? Date.now();
   const id = `${input.chain}:${input.address}`;
   const key = universeKey(input.universe);
-  const wantSentiment = input.deep === true && input.x402 !== undefined;
+  const paying = input.x402 !== undefined;
+  const wants: CacheWants = {
+    sentiment: input.deep === true && paying,
+    smartMoney: input.paid?.smartMoney === true && paying,
+    // A sell check on Solana is not a cache miss, it is a request nobody can serve.
+    sellCheck: input.paid?.sellCheck === true && paying && input.chain === "base",
+  };
 
   if (input.force !== true) {
-    const cached = await readCache(id, key, now, wantSentiment);
+    const cached = await readCache(id, key, now, wants);
     if (cached) return cached;
   }
 
   const gathered = await gather(input);
 
-  if (wantSentiment && input.x402) {
+  if (input.x402) {
     const symbol =
       gathered.jupiter?.symbol ?? gathered.dexscreener?.symbol ?? gathered.goplus?.symbol ?? input.symbolHint ?? null;
-    if (symbol) {
+
+    // Sequential on purpose: each call checks the same budget, and a parallel pair
+    // could both see room for the last $0.05 and spend it twice.
+    if (wants.sentiment && symbol) {
       const sentiment = await fetchSentiment(symbol, input.x402, input.dataSources);
       if (sentiment) gathered.sentiment = sentiment;
+    }
+    if (wants.smartMoney) {
+      const smartMoney = await fetchSmartMoney(input.chain, input.address, symbol, input.x402, input.dataSources);
+      if (smartMoney) gathered.smartMoney = smartMoney;
+    }
+    if (wants.sellCheck) {
+      const sellCheck = await fetchSellCheck(
+        input.chain,
+        input.address,
+        input.maxTradeUsd,
+        input.x402,
+        input.dataSources,
+      );
+      if (sellCheck) gathered.sellCheck = sellCheck;
     }
   }
 

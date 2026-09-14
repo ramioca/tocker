@@ -30,7 +30,11 @@ export const agentConfigSchema = z.object({
   dataSources: z.array(z.string()).max(12),
   chains: z.array(chainSchema).min(1, "Pick at least one chain"),
   universe: z.object({
-    discovery: z.array(z.enum(["new_launches", "trending", "top_organic", "momentum"])).min(1, "Pick at least one way to find tokens"),
+    // `paid_launches` is the only feed that costs money; it runs a paid launch radar
+    // per chain per sweep and is skipped when the run has no wallet or no budget.
+    discovery: z
+      .array(z.enum(["new_launches", "trending", "top_organic", "momentum", "paid_launches"]))
+      .min(1, "Pick at least one way to find tokens"),
     minScore: z.number().min(0).max(100),
     minLiquidityUsd: z.number().min(0).max(100_000_000),
     minHolderCount: z.number().int().min(0).max(10_000_000),

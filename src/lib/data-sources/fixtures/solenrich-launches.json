@@ -1,0 +1,53 @@
+{
+  "entrypoint": "new-tokens",
+  "generated_at": "2026-09-12T09:31:00.000Z",
+  "filters": { "min_liquidity_usd": 15000, "max_risk_score": 0.6, "limit": 10 },
+  "tokens": [
+    {
+      "mint": "PLNKq7s5kQ8nZ4Vw2rT9xYb3mJ6dC1hA8fG5uE2sW4N",
+      "symbol": "PLNK",
+      "name": "Plankton",
+      "price_usd": 0.00041,
+      "liquidity_usd": 82400,
+      "volume_24h_usd": 415200,
+      "market_cap_usd": 410000,
+      "holder_count": 1284,
+      "age_minutes": 96,
+      "price_change_24h_pct": 34.2,
+      "risk_score": 0.18,
+      "risk_flags": ["mint_revoked", "freeze_revoked", "lp_burned"],
+      "top_holder_pct": 4.1
+    },
+    {
+      "mint": "GLMPr4t8xW2kY7nQ5vB9zJ3cH6mD1sA4fT8eR2uL5oK",
+      "symbol": "GLMP",
+      "name": "Glimmer",
+      "price_usd": 0.0000122,
+      "liquidity_usd": 41800,
+      "volume_24h_usd": 128900,
+      "market_cap_usd": 122000,
+      "holder_count": 612,
+      "age_minutes": 41,
+      "price_change_24h_pct": 12.8,
+      "risk_score": 0.32,
+      "risk_flags": ["mint_revoked", "top_holder_9pct"],
+      "top_holder_pct": 9.4
+    },
+    {
+      "mint": "TDPLm2q6vX9bN4kR7jH3zC8sF1wY5tA6gE2dU4pS9iM",
+      "symbol": "TDPL",
+      "name": "Tidepool",
+      "price_usd": 0.0019,
+      "liquidity_usd": 26100,
+      "volume_24h_usd": 54300,
+      "market_cap_usd": 190000,
+      "holder_count": 308,
+      "age_minutes": 184,
+      "price_change_24h_pct": -6.4,
+      "risk_score": 0.47,
+      "risk_flags": ["lp_unlocked"],
+      "top_holder_pct": 14.2
+    }
+  ],
+  "llm": "Three Solana launches cleared the $15k liquidity floor in the last four hours, ranked safest first. PLNK (0.18 risk) is the cleanest: mint and freeze revoked, LP burned, 1,284 holders on $82k of liquidity at 96 minutes old. GLMP is thinner with a 9.4% top holder. TDPL still has unlocked LP — treat the 0.47 risk score as the reason, not a detail."
+}

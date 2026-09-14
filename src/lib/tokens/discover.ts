@@ -16,8 +16,19 @@
  * | `trending`     | Jupiter `/tokens/v2/toptraded/24h`      | DexScreener `/token-boosts/top/v1`      |
  * | `top_organic`  | Jupiter `/tokens/v2/toporganicscore/24h`| n/a — falls back to `trending`          |
  * | `momentum`     | derived from `stats1h`/`stats24h`       | derived from `priceChange` + `volume`   |
+ *
+ * And one feed that is **not** free, off by default, and only runs when the agent
+ * turned it on *and* the caller passed an x402 context:
+ *
+ * | `paid_launches` | SolEnrich `new-tokens` ($0.012, Solana wallet) | gate402 `/v1/launches` ($0.02, Base wallet) |
+ *
+ * It buys a pre-screened launch radar per chain per sweep — one call, not one per
+ * token — and its rows are merged into the same de-duplicated pool as the free feeds,
+ * so a token both a free and a paid feed found is still scored once.
  */
 import type { Chain, DiscoveryFeed, TokenCandidate, TokenRef } from "@/server/types";
+import type { PaidLaunch } from "@/lib/data-sources/normalize";
+import type { X402Context } from "@/lib/x402/types";
 import { getDexScreenerTokens, getLatestTokenProfiles, getTopBoostedTokens } from "./providers/dexscreener";
 import { getGeckoPoolTokens } from "./providers/geckoterminal";
 import { getJupiterRecent, getJupiterTopOrganic, getJupiterTopTraded } from "./providers/jupiter";
@@ -33,6 +44,14 @@ export interface DiscoverInput {
   /** Overrides for this sweep only; the agent's universe is not mutated. */
   minLiquidityUsd?: number;
   maxAgeHours?: number | null;
+  /**
+   * Required by the `paid_launches` feed and by nothing else. Without it that feed is
+   * silently skipped rather than erroring: a sweep must never fail because the caller
+   * has no wallet, and it must never spend without one being handed to it.
+   */
+  x402?: X402Context;
+  /** Sources the agent is allowed to pay for. Empty or absent means "any". */
+  dataSources?: readonly string[];
   /** Injected in tests so age maths is deterministic. */
   now?: number;
 }
@@ -166,8 +185,85 @@ function passesFreeGates(candidate: TokenCandidate, universe: Universe): boolean
     buyTaxPct: null,
     sellTaxPct: null,
     isHoneypot: null,
+    // Only a paid pre-trade check can answer this, and discovery never buys one.
+    sellable: null,
   };
   return !hardGates(facts, universe).some((b) => FREE_GATES.has(b));
+}
+
+// ---------- the paid sweep ----------
+
+/** One launch radar per chain. Both are paid; neither is called unless asked for. */
+const PAID_LAUNCH_SOURCE: Record<Chain, string> = {
+  solana: "solenrich-launches",
+  base: "gate402-base-radar",
+};
+
+function paidFactsFor(launch: PaidLaunch): TokenFacts {
+  return {
+    chain: launch.chain,
+    address: launch.address,
+    symbol: launch.symbol,
+    name: launch.name,
+    decimals: launch.chain === "base" ? 18 : 6,
+    logoUrl: null,
+    priceUsd: launch.priceUsd,
+    liquidityUsd: launch.liquidityUsd,
+    volume24hUsd: launch.volume24hUsd,
+    marketCapUsd: launch.marketCapUsd,
+    holderCount: launch.holderCount,
+    ageHours: launch.ageHours,
+    priceChange1hPct: null,
+    priceChange6hPct: null,
+    priceChange24hPct: launch.priceChange24hPct,
+    // A launch radar reports none of the safety facts, and the free gates treat an
+    // unknown as "defer to scoreToken" — which is exactly right here.
+    mintAuthorityDisabled: null,
+    freezeAuthorityDisabled: null,
+    top10HolderPct: null,
+    devBalancePct: null,
+    buyTaxPct: null,
+    sellTaxPct: null,
+    isHoneypot: null,
+    sellable: null,
+  };
+}
+
+/**
+ * Buys one chain's launch radar and turns it into candidates. Never throws: a budget
+ * that cannot cover the call, a source the agent did not enable, or an upstream
+ * failure all return an empty list and the free feeds carry the sweep.
+ */
+async function sweepPaidLaunches(
+  chain: Chain,
+  x402: X402Context,
+  dataSources: readonly string[] | undefined,
+  minLiquidityUsd: number,
+): Promise<TokenCandidate[]> {
+  const id = PAID_LAUNCH_SOURCE[chain];
+  if (dataSources && dataSources.length > 0 && !dataSources.includes(id)) return [];
+
+  try {
+    const [{ getDataSource }, { parseGate402Launches }, { parseSolEnrichLaunches }] = await Promise.all([
+      import("@/lib/data-sources/registry"),
+      import("@/lib/data-sources/gate402"),
+      import("@/lib/data-sources/solenrich"),
+    ]);
+    const source = getDataSource(id);
+    if (!source) return [];
+
+    const result = await source.query(x402, {
+      mode: "launches",
+      minLiquidityUsd,
+      limit: chain === "solana" ? 20 : 30,
+    });
+    const launches = chain === "solana" ? parseSolEnrichLaunches(result.data) : parseGate402Launches(result.data);
+    return launches
+      .filter((l) => l.chain === chain)
+      .map((l) => candidateFrom(paidFactsFor(l), "paid_launches", null, l.volume24hUsd));
+  } catch {
+    return [];
+  }
 }
 
 // ---------- per-chain sweeps ----------
@@ -306,9 +402,17 @@ export async function discoverCandidates(input: DiscoverInput): Promise<TokenCan
   const ctx: DiscoveryContext = { universe, now, maxTradeUsd: 0 };
 
   const chains = Array.from(new Set(input.chains));
-  const sweeps = await Promise.allSettled(
-    chains.map((chain) => (chain === "solana" ? sweepSolana(feeds, ctx) : sweepBase(feeds, ctx))),
+  const jobs: Array<Promise<TokenCandidate[]>> = chains.map((chain) =>
+    chain === "solana" ? sweepSolana(feeds, ctx) : sweepBase(feeds, ctx),
   );
+  // The one feed that spends money, and only with a wallet in hand.
+  const x402 = input.x402;
+  if (feeds.has("paid_launches") && x402) {
+    for (const chain of chains) {
+      jobs.push(sweepPaidLaunches(chain, x402, input.dataSources, universe.minLiquidityUsd));
+    }
+  }
+  const sweeps = await Promise.allSettled(jobs);
 
   const byId = new Map<string, TokenCandidate>();
   for (const sweep of sweeps) {

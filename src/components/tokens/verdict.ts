@@ -90,10 +90,15 @@ export type ScoreComponentKey = keyof ScoreComponents;
 export interface ComponentMeta {
   key: ScoreComponentKey;
   label: string;
-  /** Weight out of 100, per SPEC. `sentiment` reweights the rest, so it has none. */
+  /**
+   * Weight out of 100, per SPEC. The paid components reweight the free five rather
+   * than adding a slice, so their weight is shown as null.
+   */
   weight: number | null;
   /** What the sub-score is actually reading. Shown on hover. */
   reads: string;
+  /** Shown instead of `reads` when the component is null — i.e. nobody paid for it. */
+  missingNote?: string;
 }
 
 export const SCORE_COMPONENTS: ComponentMeta[] = [
@@ -134,6 +139,15 @@ export const SCORE_COMPONENTS: ComponentMeta[] = [
     weight: null,
     reads:
       "Only present when the agent paid an x402 source for it. It reweights the other five rather than adding a sixth slice.",
+    missingNote: "Not bought for this token — sentiment costs money, so it is optional.",
+  },
+  {
+    key: "smartMoney",
+    label: "Smart money",
+    weight: null,
+    reads:
+      "Net flow from tracked smart-money wallets, measured against this token's own liquidity. Paid, and like sentiment it reweights the free components rather than adding to them.",
+    missingNote: "Not bought for this token — a smart-money read costs money, so it is optional.",
   },
 ];
 

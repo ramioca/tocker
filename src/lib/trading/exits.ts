@@ -340,10 +340,17 @@ function evaluateOne(position: ExitPosition, rules: ExitRules, now: Date): Candi
  * operator's rules or a provider gap, never the token. What is left is what actually
  * moves against a holder: a honeypot flip, a tax switched on, the pool or the holder
  * base falling through the floor.
+ *
+ * `cannot_sell` belongs here for the same reason `honeypot` does: it is a paid
+ * pre-trade check *proving*, at this block, that the exit does not exist — the exit
+ * venue drained, or trading was switched off. Both can become true long after a clean
+ * entry, and both describe the token, not the operator's appetite. (The check is only
+ * ever run when the agent pays for it, so its absence says nothing and blocks nothing.)
  */
 export function isDeteriorationBlocker(blocker: string): boolean {
   return (
     blocker === "honeypot" ||
+    blocker === "cannot_sell" ||
     blocker === "liquidity_below_floor" ||
     blocker === "holders_below_floor" ||
     blocker.startsWith("buy_tax_") ||

@@ -10,12 +10,18 @@ import type { DataSourceInfo } from "@/server/types";
 import { agentData } from "./agentdata";
 import { bazaar } from "./bazaar";
 import { cmcDexSearch, cmcQuotes } from "./coinmarketcap";
+import { dripmetricsMetric, dripmetricsSummary } from "./dripmetrics";
+import { gate402BaseRadar } from "./gate402";
+import { nansenSmartMoney } from "./nansen";
+import { ottoPulse } from "./otto";
+import { plexaPretrade } from "./plexa";
 import { sentimentAlpha } from "./sentimentalpha";
+import { solEnrichLaunches } from "./solenrich";
 import { deepnetsTokenSafety, rugMunch, tokenIntelSol } from "./token-intel";
 import { xSearch, xquikSearch } from "./x-search";
 import type { DataSource } from "./normalize";
 
-export type { DataSource, NormalizedResult, Signals } from "./normalize";
+export type { DataSource, NormalizedResult, PaidLaunch, Signals } from "./normalize";
 
 export const DATA_SOURCES: DataSource[] = [
   sentimentAlpha,
@@ -27,6 +33,13 @@ export const DATA_SOURCES: DataSource[] = [
   tokenIntelSol,
   rugMunch,
   xquikSearch,
+  nansenSmartMoney,
+  plexaPretrade,
+  gate402BaseRadar,
+  solEnrichLaunches,
+  dripmetricsSummary,
+  dripmetricsMetric,
+  ottoPulse,
   bazaar,
 ];
 

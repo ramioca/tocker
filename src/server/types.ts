@@ -219,11 +219,20 @@ export interface CommentRow {
 // ---------- token discovery & scoring ----------
 
 export type ScoreVerdict = "avoid" | "watch" | "candidate" | "strong";
-export type DiscoveryFeed = "new_launches" | "trending" | "top_organic" | "momentum" | "manual";
+export type DiscoveryFeed =
+  | "new_launches"
+  | "trending"
+  | "top_organic"
+  | "momentum"
+  /** The only feed that costs money: paid launch radars (SolEnrich on Solana, gate402 on Base). */
+  | "paid_launches"
+  | "manual";
 
 /**
- * Sub-scores, each 0-100. `sentiment` is null unless the agent paid an x402 source
- * for it — scoring must stay free by default so an agent can sweep hundreds of tokens.
+ * Sub-scores, each 0-100. `sentiment` and `smartMoney` are null unless the agent paid
+ * an x402 source for them — scoring must stay free by default so an agent can sweep
+ * hundreds of tokens. Both *reweight* the five free components rather than adding to
+ * them, so the total stays 0-100 however many were bought.
  */
 export interface ScoreComponents {
   safety: number;
@@ -234,6 +243,8 @@ export interface ScoreComponents {
   /** How evenly the supply is held. */
   distribution: number;
   sentiment: number | null;
+  /** Tracked smart-money net flow, weighed against the token's own liquidity. */
+  smartMoney: number | null;
 }
 
 export interface TokenScore {

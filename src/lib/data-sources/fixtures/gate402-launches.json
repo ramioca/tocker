@@ -1,0 +1,47 @@
+{
+  "chain": "base",
+  "count": 3,
+  "launches": [
+    {
+      "address": "0x9b2f4c1e7a3d5068f21c8e4b7d9a0c3e5f81b246",
+      "symbol": "NEWCOIN",
+      "dex": "aerodrome",
+      "ageMinutes": 18,
+      "liquidityUsd": 42000,
+      "volumeUsd": { "h1": 6200, "h24": 6200 },
+      "priceUsd": "0.0004",
+      "priceChangePct": { "h1": 34.2, "h24": 34.2 },
+      "buyPressureH1Pct": 71,
+      "fdvUsd": 400000,
+      "quickFlags": ["very_new"]
+    },
+    {
+      "address": "0x4ed4e862860bed51a9570b96d89af5e1b0efefed",
+      "symbol": "TIDE",
+      "dex": "uniswap-v3",
+      "ageMinutes": 74,
+      "liquidityUsd": 128500,
+      "volumeUsd": { "h1": 21400, "h24": 96200 },
+      "priceUsd": "0.0121",
+      "priceChangePct": { "h1": 6.1, "h24": 18.4 },
+      "buyPressureH1Pct": 58,
+      "fdvUsd": 1210000,
+      "quickFlags": []
+    },
+    {
+      "address": "0x1c77a5b4e9d2f30867b5c1a4e6f89d0b2c3a5e71",
+      "symbol": "DUST",
+      "dex": "aerodrome",
+      "ageMinutes": 9,
+      "liquidityUsd": 6100,
+      "volumeUsd": { "h1": 900, "h24": 900 },
+      "priceUsd": "0.0000071",
+      "priceChangePct": { "h1": -12.4, "h24": -12.4 },
+      "buyPressureH1Pct": 34,
+      "fdvUsd": 71000,
+      "quickFlags": ["very_new", "thin_liquidity"]
+    }
+  ],
+  "hint": "Vet with /v1/token-risk, /v1/momentum, /v1/best-swap.",
+  "asOf": "2026-09-12T09:31:00.000Z"
+}

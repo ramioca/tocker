@@ -1,0 +1,44 @@
+{
+  "data": [
+    {
+      "token_address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+      "token_symbol": "BONK",
+      "chain": "solana",
+      "net_flow_1h_usd": 84210.5,
+      "net_flow_24h_usd": 1284310.22,
+      "net_flow_7d_usd": 4180244.9,
+      "net_flow_30d_usd": -220148.3,
+      "token_sectors": ["memecoin"],
+      "trader_count": 37,
+      "token_age_days": 1042,
+      "market_cap_usd": 1840000000
+    },
+    {
+      "token_address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+      "token_symbol": "WIF",
+      "chain": "solana",
+      "net_flow_1h_usd": -12044.1,
+      "net_flow_24h_usd": -318200.75,
+      "net_flow_7d_usd": -902411.4,
+      "net_flow_30d_usd": -1840221.6,
+      "token_sectors": ["memecoin"],
+      "trader_count": 19,
+      "token_age_days": 720,
+      "market_cap_usd": 940000000
+    },
+    {
+      "token_address": "0x532f27101965dd16442E59d40670FaF5eBB142E4",
+      "token_symbol": "BRETT",
+      "chain": "base",
+      "net_flow_1h_usd": 4120.0,
+      "net_flow_24h_usd": 96410.8,
+      "net_flow_7d_usd": 211480.15,
+      "net_flow_30d_usd": 402118.4,
+      "token_sectors": ["memecoin"],
+      "trader_count": 11,
+      "token_age_days": 640,
+      "market_cap_usd": 410000000
+    }
+  ],
+  "pagination": { "page": 1, "per_page": 50, "is_last_page": true }
+}

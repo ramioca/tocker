@@ -116,8 +116,11 @@ export type AgentConfig = {
    * these gates and scores well enough. See src/lib/tokens/score.ts.
    */
   universe: {
-    /** Which candidate feeds run each tick. */
-    discovery: Array<"new_launches" | "trending" | "top_organic" | "momentum">;
+    /**
+     * Which candidate feeds run each tick. Every one is free except `paid_launches`,
+     * which buys a launch radar per chain per sweep out of the run's data budget.
+     */
+    discovery: Array<"new_launches" | "trending" | "top_organic" | "momentum" | "paid_launches">;
     /** Composite score (0-100) a token must reach before the agent may buy it. */
     minScore: number;
     minLiquidityUsd: number;

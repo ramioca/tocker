@@ -134,6 +134,12 @@ export const DISCOVERY_FEEDS: DiscoveryFeedMeta[] = [
     description: "Tokens whose price, volume and holders are all accelerating.",
     caveat: "Derived from the other feeds, so it inherits their blind spots.",
   },
+  {
+    id: "paid_launches",
+    label: "Paid launch radar",
+    description: "A pre-screened launch feed bought each sweep — SolEnrich on Solana, gate402 on Base.",
+    caveat: "The only feed that costs money: about $0.02 per chain, per tick, from the data budget.",
+  },
 ];
 
 export interface UniversePreset {

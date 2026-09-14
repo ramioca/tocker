@@ -197,6 +197,30 @@ export interface SentimentInput {
 }
 
 /**
+ * A smart-money reading bought over x402 (Nansen today). Absolute dollars, because
+ * the scorer is the only thing that knows the pool it has to be weighed against.
+ */
+export interface SmartMoneyInput {
+  /** Net USD in (positive) or out (negative) over the source's window. */
+  netflowUsd: number | null;
+  /** How many tracked wallets were behind that flow, when the source says. */
+  traderCount: number | null;
+  source: string;
+}
+
+/**
+ * A live sell simulation bought over x402 (Plexa today). Three-valued on purpose:
+ * `false` means a source *proved* the sell fails, `null` means the check did not
+ * conclude — and an inconclusive check must never read as a failed one.
+ */
+export interface SellCheckInput {
+  sellable: boolean | null;
+  /** The source's own word for it, e.g. "avoid" | "clear" | "unknown". */
+  verdict: string | null;
+  source: string;
+}
+
+/**
  * Everything the scorer needs. Assembled by `index.ts` from the providers, or by
  * hand in tests. Every provider slot is nullable: a provider that was down, rate
  * limited or simply does not cover this chain contributes `null` and lowers the
@@ -213,6 +237,10 @@ export interface ScoreInput {
   dexscreener?: DexScreenerToken | null;
   goplus?: GoPlusSecurity | null;
   sentiment?: SentimentInput | null;
+  /** Paid: tracked smart-money flow. Present only when the agent bought it. */
+  smartMoney?: SmartMoneyInput | null;
+  /** Paid: live sell simulation. Present only when the agent bought it. */
+  sellCheck?: SellCheckInput | null;
   /**
    * The agent's per-trade ceiling, used to judge depth *relative to the size it
    * actually trades*. $40k of liquidity is deep for a $100 clip and thin for $25k.
@@ -249,4 +277,9 @@ export interface TokenFacts {
   buyTaxPct: number | null;
   sellTaxPct: number | null;
   isHoneypot: boolean | null;
+  /**
+   * Whether a live sell simulation could actually get out. `null` unless the agent
+   * paid for a pre-trade check — free providers cannot answer this.
+   */
+  sellable: boolean | null;
 }
