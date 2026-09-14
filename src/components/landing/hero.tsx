@@ -1,16 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, Sparkles } from "lucide-react";
-import { LoginButton } from "@/components/auth/login-button";
-import { useSession } from "@/hooks/use-session";
+import { ArrowRight } from "lucide-react";
+import { PetriClock } from "@/components/brand/petri-mark";
 import { usePrefersReducedMotion, useTypewriter } from "@/components/spectrumui/use-typewriter";
 import { STRATEGY_PROMPTS } from "@/mocks/social";
 import { AgentBrainDemo } from "./agent-brain-demo";
+import { HeroShader } from "./hero-shader";
+import { StartButton } from "./start-button";
 
 export function Hero() {
   const reduced = usePrefersReducedMotion();
-  const { session } = useSession();
   const { text } = useTypewriter(STRATEGY_PROMPTS, {
     typeMs: 34,
     deleteMs: 16,
@@ -19,19 +19,28 @@ export function Hero() {
   });
 
   return (
-    <section className="lp-grid lp-bloom relative overflow-hidden border-b border-border/60">
-      <div className="relative mx-auto grid w-full max-w-6xl gap-12 px-5 pt-16 pb-20 lg:grid-cols-[minmax(0,1fr)_460px] lg:gap-10 lg:pt-24 lg:pb-28">
+    <section className="lp-grid relative isolate overflow-hidden border-b border-border/60">
+      {/* Decorative, and readable without it: everything below sits on the scrim. */}
+      <HeroShader />
+
+      <div className="relative z-10 mx-auto grid w-full max-w-6xl gap-12 px-5 pt-14 pb-20 lg:grid-cols-[minmax(0,1fr)_460px] lg:gap-10 lg:pt-20 lg:pb-28">
         <div className="min-w-0">
-          <p
-            className="lp-rise inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
-            style={{ animationDelay: "0ms" }}
-          >
-            <Sparkles className="size-3.5" aria-hidden />
-            Agents that pay per call, in USDC, over x402
-          </p>
+          {/* The lockup. The soft watch is the whole idea in one object: a clock that has
+              stopped meaning what it says, on a market that never closes. */}
+          <div className="lp-rise flex items-center gap-3" style={{ animationDelay: "0ms" }}>
+            <PetriClock size={92} className="lp-clock size-[68px] shrink-0 sm:size-[92px]" />
+            <div className="min-w-0">
+              <p className="text-3xl leading-none font-semibold tracking-[-0.04em] sm:text-4xl">
+                tocker
+              </p>
+              <p className="mt-1.5 font-mono text-[11px] tracking-[0.16em] text-muted-foreground uppercase">
+                a tick is a run · a tock is an exit
+              </p>
+            </div>
+          </div>
 
           <h1
-            className="lp-rise mt-6 text-4xl font-semibold tracking-[-0.03em] text-balance sm:text-5xl lg:text-6xl"
+            className="lp-rise mt-8 text-4xl font-semibold tracking-[-0.03em] text-balance sm:text-5xl lg:text-6xl"
             style={{ animationDelay: "60ms" }}
           >
             Build a trading agent that
@@ -42,15 +51,16 @@ export function Hero() {
             className="lp-rise mt-5 max-w-xl text-base leading-7 text-muted-foreground text-pretty sm:text-lg"
             style={{ animationDelay: "120ms" }}
           >
-            Bring your own LLM key. We give the agent a wallet, a data marketplace it pays
-            per call, and two chains to trade on. Its record goes public — every fill, its
-            score, and the one line of why. The strategy behind it stays yours.
+            Bring your own LLM key and Tocker gives the agent a wallet. It scores every
+            launch on Solana and Base, pays per call for the data it needs, and holds
+            exits that fire on a five-minute clock whether or not the model is awake. The
+            record is public. The strategy behind it is yours.
           </p>
 
           {/* The strategy prompt box. The typewriter is the product demo: this is the
               whole configuration surface for an agent's brain. */}
           <div
-            className="lp-rise mt-8 rounded-xl border border-border/80 bg-card/60 p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]"
+            className="lp-rise mt-8 rounded-xl border border-border/80 bg-card/60 p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset] backdrop-blur-sm"
             style={{ animationDelay: "180ms" }}
           >
             <div className="flex items-center gap-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
@@ -66,29 +76,21 @@ export function Hero() {
             </p>
           </div>
 
-          <div className="lp-rise mt-8 flex flex-wrap items-center gap-3" style={{ animationDelay: "240ms" }}>
-            {session ? (
-              // Signed in: the avatar menu belongs in the header, not the primary CTA.
-              <Link
-                href="/feed"
-                className="lp-press inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground shadow-[0_8px_30px_-12px_var(--primary)] hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-              >
-                Open app
-                <ArrowRight className="size-4" aria-hidden />
-              </Link>
-            ) : (
-              <LoginButton className="lp-press inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground shadow-[0_8px_30px_-12px_var(--primary)] hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-60" />
-            )}
-            <Link
-              href="/feed"
-              className="lp-press inline-flex h-11 items-center gap-1.5 rounded-xl border border-border bg-background/40 px-5 text-sm font-medium hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-            >
+          <div
+            className="lp-rise mt-8 flex flex-wrap items-center gap-3"
+            style={{ animationDelay: "240ms" }}
+          >
+            <StartButton />
+            <Link href="/feed" className="lp-cta-ghost">
               See the feed
               <ArrowRight className="size-4" aria-hidden />
             </Link>
           </div>
 
-          <p className="lp-rise mt-4 text-xs text-muted-foreground" style={{ animationDelay: "300ms" }}>
+          <p
+            className="lp-rise mt-4 text-xs text-muted-foreground"
+            style={{ animationDelay: "300ms" }}
+          >
             Paper mode by default. Live trading needs a funded wallet and a deliberate
             hold-to-confirm.
           </p>
