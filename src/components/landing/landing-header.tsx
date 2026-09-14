@@ -16,8 +16,8 @@ export function LandingHeader() {
           href="/"
           className="flex items-center gap-2 rounded-md font-semibold tracking-tight focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
-          <PetriMark />
-          Petri
+          <PetriMark size={22} />
+          tocker
         </Link>
 
         <nav aria-label="Marketing" className="hidden items-center gap-1 text-sm sm:flex">
@@ -32,6 +32,12 @@ export function LandingHeader() {
             className="rounded-md px-3 py-1.5 text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
             Features
+          </a>
+          <a
+            href="#exits"
+            className="rounded-md px-3 py-1.5 text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          >
+            Exits
           </a>
           <Link
             href="/discover"

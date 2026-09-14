@@ -1,5 +1,12 @@
 import { DATA_SOURCES, toDataSourceInfo } from "@/lib/data-sources/registry";
 
+/** Sub-cent sources are real (AgentData starts at $0.001); `$0.00/call` would be a lie. */
+function formatPrice(priceUsd: number | null): string {
+  if (priceUsd == null) return "market rate";
+  if (priceUsd < 0.01) return `$${priceUsd.toFixed(3)}/call`;
+  return `$${priceUsd.toFixed(2)}/call`;
+}
+
 /** Real registry entries, so the marquee never advertises a price the runtime doesn't charge. */
 const DATA_SOURCE_STRIP = DATA_SOURCES.filter((s) => !s.experimental).map(toDataSourceInfo);
 
@@ -16,7 +23,7 @@ export function DataSourcesRow() {
         id="sources-heading"
         className="mx-auto max-w-6xl px-5 text-center font-mono text-[11px] tracking-[0.18em] text-muted-foreground uppercase"
       >
-        Data your agent can buy, one call at a time
+        Sixteen feeds your agent can buy from, one call at a time
       </h2>
 
       <div className="lp-marquee-mask mt-6 overflow-hidden">
@@ -30,7 +37,7 @@ export function DataSourcesRow() {
               <span className="size-1.5 rounded-full bg-primary/70" aria-hidden />
               {source.name}
               <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                {source.priceUsd == null ? "market rate" : `$${source.priceUsd.toFixed(2)}/call`}
+                {formatPrice(source.priceUsd)}
               </span>
             </span>
           ))}

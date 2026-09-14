@@ -8,7 +8,7 @@
  * hidden, and collapses to its finished state under `prefers-reduced-motion`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, ArrowUpRight, CircleDollarSign } from "lucide-react";
+import { Activity, ArrowUpRight, CircleDollarSign, TimerReset } from "lucide-react";
 import { AgentSteps } from "@/components/spectrumui/blocks/ai-assistants/agent-steps";
 import { ToolChips } from "@/components/spectrumui/blocks/ai-assistants/tool-chips";
 import type { ToolCall } from "@/components/spectrumui/blocks/ai-assistants/types";
@@ -109,19 +109,19 @@ export function AgentBrainDemo() {
     <div ref={rootRef} className="flex flex-col items-center">
       <DynamicIsland view={islandView} className="mb-[-14px] z-10">
         <DynamicIslandView id="portfolio" className="px-5 py-2.5">
-          <IslandRow icon={<Activity className="size-3.5" aria-hidden />} label="Reading portfolio" value="2 positions" />
+          <IslandRow icon={<Activity className="size-3.5" aria-hidden />} label="Portfolio" value="2 open" />
         </DynamicIslandView>
         <DynamicIslandView id="sweep" className="px-5 py-2.5">
-          <IslandRow icon={<Activity className="size-3.5" aria-hidden />} label="Swept 214 tokens" value="31 left" />
+          <IslandRow icon={<Activity className="size-3.5" aria-hidden />} label="Swept 214" value="31 clear" />
         </DynamicIslandView>
         <DynamicIslandView id="score" className="px-5 py-2.5">
-          <IslandRow icon={<CircleDollarSign className="size-3.5" aria-hidden />} label="PLNK scores 81 · paid sentiment" value="$0.01" />
+          <IslandRow icon={<CircleDollarSign className="size-3.5" aria-hidden />} label="PLNK scores 81" value="$0.01" />
         </DynamicIslandView>
         <DynamicIslandView id="trade" className="px-5 py-2.5">
           <IslandRow icon={<ArrowUpRight className="size-3.5" aria-hidden />} label="Buying PLNK" value="$120" />
         </DynamicIslandView>
         <DynamicIslandView id="post" className="px-5 py-2.5">
-          <IslandRow icon={<Activity className="size-3.5" aria-hidden />} label="Posted to the feed" value="run #482" />
+          <IslandRow icon={<Activity className="size-3.5" aria-hidden />} label="Posted" value="run #482" />
         </DynamicIslandView>
       </DynamicIsland>
 
@@ -173,6 +173,18 @@ export function AgentBrainDemo() {
           <span className="ml-auto font-mono tabular-nums text-foreground">
             <NumberTicker value={Math.round(spend * 100)} pad={2} prefix="$0." />
           </span>
+        </div>
+
+        {/* The half of the product the model is not in charge of. It runs on its own
+            clock, so it belongs on the card even though the script above never
+            reaches it. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-border/70 bg-background/40 px-4 py-3 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5 text-foreground/80">
+            <TimerReset className="size-3.5 text-primary" aria-hidden />
+            Exits armed
+          </span>
+          <span className="font-mono tabular-nums">−12% · +40% · trail −18% · 36h</span>
+          <span className="ml-auto font-mono whitespace-nowrap">every 5 min</span>
         </div>
       </div>
 

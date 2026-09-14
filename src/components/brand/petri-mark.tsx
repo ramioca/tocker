@@ -1,28 +1,56 @@
 /**
- * The Petri mark: a soft watch, after Dalí. Time melting off the edge of the dial —
- * an agent that trades while you sleep, and a market where the clock never means
- * what it says.
+ * The mark: a soft watch, after Dalí. Time melting off the edge of the dial — an agent
+ * that trades while you sleep, on a market where the clock never means what it says.
  *
- * Two densities on purpose. Below ~24px the minor ticks and the rim highlight turn
- * to mud, and a bare silhouette reads as a speech bubble, so `PetriMark` keeps bold
- * hands and three cardinal ticks and nothing else. `PetriClock` is the full dial for
- * hero sizes. Both are decorative and static: they render on every screen.
+ * Two densities on purpose. `PetriClock` is the full dial for hero and marketing sizes
+ * (~48px and up): four cardinal ticks, a rim highlight, both hands. `PetriMark` is the
+ * favicon density — below ~24px the ticks and the highlight turn to mud, so it keeps a
+ * heavier outline, two straight hands and the pivot, and nothing else.
  *
- * `ink` is the dial outline and hands, `face` the dial fill, and the pivot is always
- * the brand violet. The defaults inherit the surrounding text colour so the mark
- * works on either theme.
+ * Geometry notes, because this is hand-drawn Bézier work and it is easy to undo:
+ *   - The dial is near-circular (x 10–50, y 7–43). Flatten it and the silhouette stops
+ *     reading as a watch.
+ *   - The melt is the lower-RIGHT quadrant: the right rim slumps from y≈37 and the drip
+ *     hangs to y≈47. The drip must stay SHORT and THICK (≈7 wide, ≈9 tall). Lengthen or
+ *     narrow it and the whole thing reads as a speech bubble with a tail.
+ *   - The hour hand points up-left and the minute hand droops down-right, sagging with
+ *     the melt. In the clock the minute hand stops short of the rim so it does not merge
+ *     with the drip into one comma-shaped stroke.
+ *
+ * `ink` is the dial outline, ticks and hands; it defaults to a near-black rather than
+ * `currentColor` on purpose — the dial is porcelain (`--petri-face`) in both themes, so
+ * a light `currentColor` on a dark page makes the hands vanish into the face. The pivot
+ * is always the brand violet. Both marks are decorative and static: they render on
+ * every screen, and a logo that moves is a logo you stop trusting.
  */
-export function PetriMark({
-  size = 20,
-  className,
-  face = "var(--petri-face, #ede9fb)",
-  ink = "currentColor",
-}: {
+
+/** Dial + melt silhouette, full-detail density. */
+const CLOCK_DIAL =
+  "M30 7 C41.5 7 50 15.3 50 25.8 C50 30.6 49.4 34.2 48.6 37.6 C47.8 41 48.6 44 47.4 46.6 " +
+  "C46.2 49.2 42 48.8 41.4 45.6 C40.9 43 41.4 41.4 40.8 39.8 C36.8 42.6 31.6 43.8 26.6 43.2 " +
+  "C17 42 10 34.6 10 25.8 C10 15.3 18.5 7 30 7 Z";
+
+/** The same silhouette, opened up a little so a 3.4px outline still leaves a face at 20px. */
+const MARK_DIAL =
+  "M30 6 C42.2 6 51 14.8 51 25.8 C51 30.8 50.4 34.6 49.6 38.2 C48.8 41.8 49.6 45 48.2 47.8 " +
+  "C46.8 50.6 41.8 50.2 41.2 46.6 C40.7 43.8 41.2 42.2 40.6 40.4 C36.4 43.4 31.2 44.6 26 44 " +
+  "C16 42.8 9 35 9 25.8 C9 14.8 17.8 6 30 6 Z";
+
+const DEFAULT_INK = "#17151d";
+
+type MarkProps = {
   size?: number;
   className?: string;
   face?: string;
   ink?: string;
-}) {
+};
+
+export function PetriMark({
+  size = 20,
+  className,
+  face = "var(--petri-face, #ede9fb)",
+  ink = DEFAULT_INK,
+}: MarkProps) {
   return (
     <svg
       width={size}
@@ -33,21 +61,11 @@ export function PetriMark({
       aria-hidden
       focusable="false"
     >
-      <path
-        d="M32 8 C44 8 52 17 52 27.5 C52 32.6 51 36.2 50 39.6 C48.8 43.6 49.2 47.6 48.4 51 C47.6 54.2 44 54.4 43.2 51.2 C42.5 48 43.8 44.4 42.2 41.8 C40.4 39 36.6 38.2 32 38.2 C21 38.2 12 31.6 12 23.4 C12 15.2 20.4 8 32 8 Z"
-        fill={face}
-        stroke={ink}
-        strokeWidth="3"
-        strokeLinejoin="round"
-      />
-      <g stroke={ink} strokeWidth="3" strokeLinecap="round">
-        <path d="M32 13.5 V17" />
-        <path d="M46 23.5 H42.5" />
-        <path d="M18 23.5 H21.5" />
-        <path d="M32 25 L39.5 20.5" />
-        <path d="M32 25 C32.5 29 33.4 31.6 34.6 34.4" />
-      </g>
-      <circle cx="32" cy="25" r="3.4" fill="var(--primary)" />
+      <path d={MARK_DIAL} fill={face} stroke={ink} strokeWidth="3.4" strokeLinejoin="round" />
+      {/* Two straight hands, no ticks: at 20px a curve and a tick are the same smudge. */}
+      <path d="M29.8 25.6 L21.6 17.2" stroke={ink} strokeWidth="4.8" strokeLinecap="round" />
+      <path d="M29.8 25.6 L36.4 34.6" stroke={ink} strokeWidth="4.8" strokeLinecap="round" />
+      <circle cx="29.8" cy="25.6" r="3.8" fill="var(--primary)" />
     </svg>
   );
 }
@@ -57,13 +75,8 @@ export function PetriClock({
   size = 96,
   className,
   face = "var(--petri-face, #ede9fb)",
-  ink = "currentColor",
-}: {
-  size?: number;
-  className?: string;
-  face?: string;
-  ink?: string;
-}) {
+  ink = DEFAULT_INK,
+}: MarkProps) {
   return (
     <svg
       width={size}
@@ -74,23 +87,32 @@ export function PetriClock({
       aria-hidden
       focusable="false"
     >
+      <path d={CLOCK_DIAL} fill={face} stroke={ink} strokeWidth="2.6" strokeLinejoin="round" />
+      {/* Rim highlight: the porcelain catching light from the upper left. */}
       <path
-        d="M32 9 C43 9 51 17.5 51 28 C51 33 50 36.5 49 40 C47.8 44 48.2 48 47.4 51.4 C46.7 54.4 43.6 54.6 42.9 51.6 C42.2 48.6 43.6 45 42 42.4 C40.3 39.7 36.6 38.9 32 38.9 C21.5 38.9 13 32.3 13 24 C13 15.7 21 9 32 9 Z"
-        fill={face}
-        stroke={ink}
-        strokeWidth="2.4"
-        strokeLinejoin="round"
+        d="M16 19 C18.6 13.2 23.8 10 29.4 10"
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth="2.1"
+        strokeLinecap="round"
+        opacity="0.75"
       />
-      <path d="M19.5 20.5 C21.5 15 26.5 12 32 12" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" opacity="0.85" />
-      <g stroke={ink} strokeWidth="2.2" strokeLinecap="round">
-        <path d="M32 14.5 V17.6" />
-        <path d="M45.6 24.2 L42.5 24.6" />
-        <path d="M18.6 24.2 L21.7 24.6" />
-        <path d="M24.5 33.5 L26.3 31.4" />
+      {/* Four cardinal ticks. The 6 sits inside the sag, which is what sells the melt. */}
+      <g stroke={ink} strokeWidth="2.4" strokeLinecap="round">
+        <path d="M29.8 11.2 V14.8" />
+        <path d="M44.8 25.4 H41.2" />
+        <path d="M14.8 25.4 H18.4" />
+        <path d="M28.6 36.2 L28.4 39.4" />
       </g>
-      <path d="M32 24.5 L39 20.6" stroke={ink} strokeWidth="2.6" strokeLinecap="round" />
-      <path d="M32 24.5 C32.4 28.5 33.2 31.5 34.4 34.6" fill="none" stroke={ink} strokeWidth="2.6" strokeLinecap="round" />
-      <circle cx="32" cy="24.5" r="2.4" fill="var(--primary)" />
+      <path d="M29.8 25.6 L22.4 18" stroke={ink} strokeWidth="3.2" strokeLinecap="round" />
+      <path
+        d="M29.8 25.6 C33.2 27.2 35.4 30 36.2 33.6"
+        fill="none"
+        stroke={ink}
+        strokeWidth="3.2"
+        strokeLinecap="round"
+      />
+      <circle cx="29.8" cy="25.6" r="2.7" fill="var(--primary)" />
     </svg>
   );
 }
@@ -100,7 +122,7 @@ export function PetriLogo({ size = 20, className }: { size?: number; className?:
   return (
     <span className={`inline-flex items-center gap-2 ${className ?? ""}`}>
       <PetriMark size={size} />
-      <span className="text-sm font-semibold tracking-tight">petri</span>
+      <span className="text-sm font-semibold tracking-tight">tocker</span>
     </span>
   );
 }

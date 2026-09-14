@@ -79,18 +79,49 @@ export function HeroShader({ className }: { className?: string }) {
   const [active, setActive] = useState(false);
   const [ready, setReady] = useState(false);
 
-  // 1. Decide whether this visitor gets a shader at all. The `navigator.gpu` test happens
-  //    before the import, so a browser without WebGPU downloads nothing.
+  // 1. Decide whether this visitor gets a shader at all. Both tests happen BEFORE the
+  //    import, so a browser that cannot run it downloads nothing: first `navigator.gpu`,
+  //    then an actual adapter request — the API exists in plenty of places that cannot
+  //    grant an adapter (headless, VMs, blocklisted drivers), and those would otherwise
+  //    pull 35MB to render nothing. Requesting an adapter is cheap, creates no device,
+  //    and browsers memoize it.
   useEffect(() => {
     if (SHADER_OFF || !("gpu" in navigator)) return;
 
+    const gpu = (navigator as Navigator & { gpu?: { requestAdapter(): Promise<unknown> } }).gpu;
+    if (!gpu) return;
+
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const sync = () => setPlan(reduceMotion.matches ? null : planForDevice());
-    const cancelIdle = whenIdle(sync);
-    reduceMotion.addEventListener("change", sync);
+    let cancelled = false;
+    let hasAdapter: boolean | null = null;
+
+    const decide = () => {
+      if (cancelled) return;
+      if (reduceMotion.matches) {
+        setPlan(null);
+        return;
+      }
+      if (hasAdapter === null) {
+        void gpu
+          .requestAdapter()
+          .then((adapter) => {
+            hasAdapter = adapter != null;
+          })
+          .catch(() => {
+            hasAdapter = false;
+          })
+          .finally(decide);
+        return;
+      }
+      setPlan(hasAdapter ? planForDevice() : null);
+    };
+
+    const cancelIdle = whenIdle(decide);
+    reduceMotion.addEventListener("change", decide);
     return () => {
+      cancelled = true;
       cancelIdle();
-      reduceMotion.removeEventListener("change", sync);
+      reduceMotion.removeEventListener("change", decide);
     };
   }, []);
 

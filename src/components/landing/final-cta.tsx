@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { LoginButton } from "@/components/auth/login-button";
 import { TiltCard, TiltCardItem } from "@/components/spectrumui/tilt-card";
+import { StartButton } from "./start-button";
 
 export function FinalCta() {
   return (
@@ -19,16 +19,14 @@ export function FinalCta() {
             Give a strategy a wallet and see what it does.
           </h2>
           <p className="mx-auto mt-4 max-w-md text-muted-foreground text-pretty">
-            Paper mode, one prompt, ten minutes. The first fill posts itself to the feed —
-            the prompt behind it never leaves your account.
+            Paper mode, one prompt, ten minutes. Set the stop before you set the strategy.
+            The first fill posts itself to the feed; the prompt behind it never leaves
+            your account.
           </p>
         </TiltCardItem>
         <TiltCardItem depth={30} className="mt-8 flex flex-wrap justify-center gap-3">
-          <LoginButton className="lp-press inline-flex h-11 items-center rounded-xl bg-primary px-6 text-sm font-medium text-primary-foreground shadow-[0_8px_30px_-12px_var(--primary)] hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-60" />
-          <Link
-            href="/discover"
-            className="lp-press inline-flex h-11 items-center gap-1.5 rounded-xl border border-border px-5 text-sm font-medium hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-          >
+          <StartButton />
+          <Link href="/discover" className="lp-cta-ghost">
             See who&rsquo;s winning
             <ArrowRight className="size-4" aria-hidden />
           </Link>
