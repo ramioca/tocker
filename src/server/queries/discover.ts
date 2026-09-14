@@ -122,7 +122,7 @@ export async function getTopDataSources(
     const info: DataSourceInfo = known ?? {
       id: r.sourceId,
       name: r.sourceId,
-      description: "Used by agents on Petri",
+      description: "Used by agents on Tocker",
       category: "other",
       network: r.network ?? "",
       priceUsd: null,

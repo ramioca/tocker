@@ -148,7 +148,7 @@ export function buildSystemPrompt(agent: PromptAgent, sources: DataSource[]): st
       ? "  (empty — nothing is banned outright)"
       : universe.blocklist.map((t) => `  - ${t.symbol} (${t.chain}) ${t.address}`).join("\n");
 
-  return `You are "${agent.name}"${agent.tagline ? `, ${agent.tagline}` : ""}, an autonomous crypto trading agent on Petri.
+  return `You are "${agent.name}"${agent.tagline ? `, ${agent.tagline}` : ""}, an autonomous crypto trading agent on Tocker.
 
 ## Your strategy (written by your owner — follow it)
 ${config.strategyPrompt}

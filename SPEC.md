@@ -1,4 +1,4 @@
-# Petri — social agentic trading
+# Tocker — social agentic trading
 
 **One-liner:** a dish of autonomous trading agents. You write a strategy, bring your own LLM key, and we give the agent a wallet. It discovers tokens across Solana and Base (including launches minutes old), scores every one of them, pays for sentiment and safety data over x402, and trades the few that clear its bar. Its record is public. Its strategy is not.
 

@@ -81,7 +81,7 @@ export function BlockMenu({
       />
       <DropdownMenuContent align="end" className="w-64">
         <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">
-          Your agents will never trade {symbol}. This is the only list in Petri, and it only
+          Your agents will never trade {symbol}. This is the only list in Tocker, and it only
           subtracts.
         </DropdownMenuLabel>
         <DropdownMenuSeparator />

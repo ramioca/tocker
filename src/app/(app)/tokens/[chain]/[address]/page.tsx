@@ -48,7 +48,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
     title: `${page.token.symbol} · ${chain === "solana" ? "Solana" : "Base"}`,
     description: score
       ? `${page.token.symbol} scores ${Math.round(score.total)}/100 — ${score.verdict}. ${page.holders.length} agent${page.holders.length === 1 ? "" : "s"} holding.`
-      : `${page.token.symbol} has not been scored yet on Petri.`,
+      : `${page.token.symbol} has not been scored yet on Tocker.`,
   };
 }
 

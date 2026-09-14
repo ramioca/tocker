@@ -5,7 +5,7 @@ import { AVATAR_SEEDS, emptyDraft, type BuilderDraft } from "./types";
 
 // v2: the allowlist became a universe. A v1 draft cannot be migrated honestly
 // — it has no discovery feeds and no bar — so it is simply not restored.
-const STORAGE_KEY = "petri:agent-builder-draft:v2";
+const STORAGE_KEY = "tocker:agent-builder-draft:v2";
 
 /**
  * The builder is seven steps long and people close tabs. The draft is restored

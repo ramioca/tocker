@@ -25,7 +25,7 @@ const WINDOWS: Array<{ value: LeaderboardWindow; label: string }> = [
  *
  * Public for everyone, like the rest of an agent's record. Nothing rendered here
  * is derived from the strategy prompt, the universe rules or the transcript: these
- * are outcomes, and outcomes are the part Petri publishes.
+ * are outcomes, and outcomes are the part Tocker publishes.
  */
 export function PerformancePanel({
   windows,

@@ -24,7 +24,7 @@ export function TopBar({
       <Link
         href="/feed"
         className="flex items-center gap-2 md:hidden"
-        aria-label="Petri home"
+        aria-label="Tocker home"
       >
         <PetriMark size={22} />
       </Link>

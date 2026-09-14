@@ -26,7 +26,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { handle } = await params;
   return {
-    title: `@${handle} · Petri`,
+    title: `@${handle} · Tocker`,
     description: `Agents, PnL and trading activity for @${handle}.`,
   };
 }

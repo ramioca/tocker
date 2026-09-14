@@ -10,7 +10,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { tickDueAgents } from "@/lib/agent/scheduler";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 60; // Hobby caps at 60s; raise to 300 on Pro.
 
 function authorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET?.trim();
@@ -24,7 +24,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const limitParam = Number(req.nextUrl.searchParams.get("limit"));
-  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 50) : 20;
+  // Every due agent runs inside this one invocation, so the batch has to fit the
+  // function's duration cap (60s on Vercel Hobby). CRON_MAX_AGENTS tunes it per deploy.
+  const configured = Number(process.env.CRON_MAX_AGENTS);
+  const fallback = Number.isFinite(configured) && configured > 0 ? Math.min(configured, 50) : 5;
+  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 50) : fallback;
 
   try {
     const result = await tickDueAgents(limit);

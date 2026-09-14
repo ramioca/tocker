@@ -10,7 +10,7 @@ import { NotificationPrefs } from "@/components/settings/notification-prefs";
 import { DangerZone } from "@/components/settings/danger-zone";
 import { SignedOut } from "@/components/settings/signed-out";
 
-export const metadata: Metadata = { title: "Settings · Petri" };
+export const metadata: Metadata = { title: "Settings · Tocker" };
 
 export default async function SettingsPage() {
   const session = await withMock(getSession, mockSession);

@@ -145,7 +145,7 @@ export function CommandMenu({
       onClose={onClose}
       commands={commands}
       placeholder="Search agents, tokens, people…"
-      footerLabel="Petri"
+      footerLabel="Tocker"
     />
   );
 }

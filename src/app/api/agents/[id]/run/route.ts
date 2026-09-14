@@ -11,7 +11,7 @@ import { requireSession } from "@/lib/auth";
 import { startRun } from "@/lib/agent/run";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 60; // Hobby caps at 60s; raise to 300 on Pro.
 
 export async function POST(
   _req: Request,

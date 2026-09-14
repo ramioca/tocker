@@ -196,7 +196,7 @@ export function isLlmMock(): boolean {
 export function createMockModel(): LanguageModel {
   let index = 0;
   return new MockLanguageModelV3({
-    provider: "petri-mock",
+    provider: "tocker-mock",
     modelId: "scripted-discovery-trader",
     doGenerate: async (options) => {
       // `review_positions` is skipped until it is registered, so the demo passes both

@@ -6,7 +6,7 @@ import { PrivyProvider } from "@privy-io/react-auth";
 export const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
 
 /**
- * Wraps Privy with Petri's embedded-wallet config: every user gets an Ethereum
+ * Wraps Privy with Tocker's embedded-wallet config: every user gets an Ethereum
  * (Base) and a Solana embedded wallet on first login, so they can fund agents
  * from either chain.
  *
@@ -24,7 +24,7 @@ export function AppPrivyProvider({ children }: { children: ReactNode }) {
           theme: "dark",
           accentColor: "#a78bfa",
           walletChainType: "ethereum-and-solana",
-          landingHeader: "Sign in to Petri",
+          landingHeader: "Sign in to Tocker",
           loginMessage: "Build agents that trade for you.",
         },
         loginMethods: ["email", "google", "twitter", "wallet"],

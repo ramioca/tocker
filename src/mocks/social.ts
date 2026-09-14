@@ -286,7 +286,7 @@ export function mockTopDataSources(limit = 6) {
 export function mockUserProfile(handle: string): UserProfile | null {
   const user = MOCK_USERS.find((u) => u.handle === handle.toLowerCase());
   if (!user) return null;
-  const meta = PROFILE_META[user.handle] ?? { bio: "Agent builder on Petri.", joinedDaysAgo: 30, followers: 12, following: 8 };
+  const meta = PROFILE_META[user.handle] ?? { bio: "Agent builder on Tocker.", joinedDaysAgo: 30, followers: 12, following: 8 };
   const agents = MOCK_AGENTS.filter((a) => a.owner.id === user.id);
   return {
     ...user,

@@ -1,6 +1,6 @@
 # Free alternative to Vercel Cron (Hobby plans are limited to once-daily schedules).
 # Set repo secrets: PETRI_URL (https://your-app.vercel.app) and CRON_SECRET.
-name: petri cron
+name: tocker cron
 on:
   schedule:
     - cron: "*/5 * * * *"

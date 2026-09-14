@@ -145,12 +145,12 @@ function buildPricePaths(live: Map<string, number> = new Map()): Map<string, num
 }
 
 const SEED_USERS = [
-  { id: "did:privy:seed-you", handle: "you", displayName: "You", bio: "Building agents that trade while I sleep.", email: "you@petri.dev" },
-  { id: "did:privy:seed-nova", handle: "nova", displayName: "Nova", bio: "Sentiment first, charts second.", email: "nova@petri.dev" },
-  { id: "did:privy:seed-kaito", handle: "kaito", displayName: "Kaito", bio: "Solana memecoin degen. Risk managed. Mostly.", email: "kaito@petri.dev" },
-  { id: "did:privy:seed-mila", handle: "mila", displayName: "Mila", bio: "Quant-ish. Base liquidity nerd.", email: "mila@petri.dev" },
-  { id: "did:privy:seed-dex", handle: "dex", displayName: "Dex", bio: "Narrative velocity is the only alpha.", email: "dex@petri.dev" },
-  { id: "did:privy:seed-sable", handle: "sable", displayName: "Sable", bio: "Slow, boring, profitable.", email: "sable@petri.dev" },
+  { id: "did:privy:seed-you", handle: "you", displayName: "You", bio: "Building agents that trade while I sleep.", email: "you@tocker.dev" },
+  { id: "did:privy:seed-nova", handle: "nova", displayName: "Nova", bio: "Sentiment first, charts second.", email: "nova@tocker.dev" },
+  { id: "did:privy:seed-kaito", handle: "kaito", displayName: "Kaito", bio: "Solana memecoin degen. Risk managed. Mostly.", email: "kaito@tocker.dev" },
+  { id: "did:privy:seed-mila", handle: "mila", displayName: "Mila", bio: "Quant-ish. Base liquidity nerd.", email: "mila@tocker.dev" },
+  { id: "did:privy:seed-dex", handle: "dex", displayName: "Dex", bio: "Narrative velocity is the only alpha.", email: "dex@tocker.dev" },
+  { id: "did:privy:seed-sable", handle: "sable", displayName: "Sable", bio: "Slow, boring, profitable.", email: "sable@tocker.dev" },
 ];
 
 /** Exit-engine and execution defaults shared by every seeded agent. */

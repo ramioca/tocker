@@ -1,18 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "crons": [
-    {
-      "path": "/api/cron/tick",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/marks",
-      "schedule": "*/5 * * * *"
-    }
-  ],
   "functions": {
-    "src/app/api/cron/tick/route.ts": { "maxDuration": 300 },
-    "src/app/api/cron/marks/route.ts": { "maxDuration": 300 },
-    "src/app/api/agents/[id]/run/route.ts": { "maxDuration": 300 }
+    "src/app/api/cron/tick/route.ts": { "maxDuration": 60 },
+    "src/app/api/cron/marks/route.ts": { "maxDuration": 60 },
+    "src/app/api/agents/[id]/run/route.ts": { "maxDuration": 60 }
   }
 }

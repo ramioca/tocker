@@ -196,7 +196,7 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
             htmlFor="manual-token"
             hint={
               chain === "solana"
-                ? "Paste the mint. A symbol works for tokens Petri has already seen."
+                ? "Paste the mint. A symbol works for tokens Tocker has already seen."
                 : "Paste the contract address (0x…)."
             }
           >

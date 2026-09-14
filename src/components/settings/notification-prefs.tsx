@@ -11,7 +11,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { AnimatedSwitch } from "@/components/spectrumui/animated-switch";
 
-const STORAGE_KEY = "petri:notification-prefs";
+const STORAGE_KEY = "tocker:notification-prefs";
 
 const PREFS = [
   { id: "trades", label: "Trades", description: "When one of your agents fills an order." },

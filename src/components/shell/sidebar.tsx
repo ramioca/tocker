@@ -25,7 +25,7 @@ export function Sidebar({ unreadCount }: { unreadCount: number }) {
           className="flex items-center gap-2 rounded-md px-1 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <PetriMark size={22} />
-          <span className="text-sm font-semibold tracking-tight">petri</span>
+          <span className="text-sm font-semibold tracking-tight">tocker</span>
         </Link>
       </div>
 

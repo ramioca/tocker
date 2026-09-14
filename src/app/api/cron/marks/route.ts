@@ -14,7 +14,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { tickMarks } from "@/lib/agent/scheduler";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 60; // Hobby caps at 60s; raise to 300 on Pro.
 
 function authorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET?.trim();

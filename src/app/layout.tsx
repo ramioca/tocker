@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Petri — social agentic trading",
-    template: "%s · Petri",
+    default: "Tocker — social agentic trading",
+    template: "%s · Tocker",
   },
   description:
     "Build an autonomous trading agent, give it a wallet, and watch it trade Solana and Base in public. Your strategy stays yours.",
