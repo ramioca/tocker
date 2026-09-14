@@ -9,11 +9,119 @@
   --lp-rule: color-mix(in oklch, var(--border) 70%, transparent);
 }
 
+/* ------------------------------------------------------------------ hero backdrop
+ *
+ * Three stacked layers inside `.lp-shader-host`, painted bottom to top:
+ *   .lp-shader-fallback  the CSS composition — always there, on every device
+ *   .lp-shader-layer     the WebGPU canvas, screen-blended so it can only add light
+ *   .lp-shader-scrim     the contrast guarantee under the headline
+ *
+ * The fallback is a still of the same idea as the shader: a dark ground, violet ink
+ * bleeding from the top-left, a fine particle grid and grain over the whole thing.
+ */
+
+.petri-landing .lp-shader-host {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--lp-ground);
+}
+
+.petri-landing {
+  --lp-ground: var(--background);
+  --lp-ink-1: color-mix(in oklch, var(--primary) 62%, transparent);
+  --lp-ink-2: color-mix(in oklch, var(--primary) 34%, transparent);
+  --lp-ink-3: color-mix(in oklch, var(--chart-4) 34%, transparent);
+}
+
+/* The ink. Three blooms on one plane, drifting slowly enough to read as a fluid. */
+.petri-landing .lp-shader-fallback {
+  position: absolute;
+  inset: -14%;
+  background-image:
+    radial-gradient(34% 44% at 18% 14%, var(--lp-ink-1), transparent 66%),
+    radial-gradient(40% 40% at 62% 2%, var(--lp-ink-3), transparent 70%),
+    radial-gradient(56% 64% at 44% 40%, var(--lp-ink-2), transparent 68%);
+  animation: lp-ink-drift 54s var(--ease-in-out) infinite alternate;
+  will-change: transform;
+}
+
+/* Grain and the particle grid, over the ink, masked so the copy column stays calm. */
+.petri-landing .lp-shader-fallback::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(circle at 1px 1px, rgb(255 255 255 / 0.1) 1px, transparent 0),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23g)' opacity='0.42'/%3E%3C/svg%3E");
+  background-size:
+    5px 5px,
+    120px 120px;
+  mask-image: radial-gradient(ellipse 80% 70% at 40% 30%, #000 10%, transparent 80%);
+  opacity: 0.5;
+}
+
+@keyframes lp-ink-drift {
+  from {
+    transform: translate3d(-2%, -1%, 0) scale(1.02);
+  }
+  to {
+    transform: translate3d(3%, 2%, 0) scale(1.08);
+  }
+}
+
+/*
+ * The shader canvas. `screen` is what makes this safe: the composition's ground is
+ * #161617, so a dark or not-yet-drawn frame leaves the fallback exactly as it was.
+ */
+.petri-landing .lp-shader-layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  mix-blend-mode: screen;
+  transition: opacity 900ms var(--ease-out);
+}
+
+.petri-landing .lp-shader-layer[data-ready="true"] {
+  opacity: 0.9;
+}
+
+/* Renders the stage into a smaller box and scales it up — a real DPR cap (see hero-shader.tsx). */
+.petri-landing .lp-shader-scale {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(100% / var(--lp-shader-scale, 1));
+  height: calc(100% / var(--lp-shader-scale, 1));
+  transform: scale(var(--lp-shader-scale, 1));
+  transform-origin: 0 0;
+}
+
+/*
+ * The scrim. Headline copy sits on the left third of the hero, so the ground is darkest
+ * there, and the section fades into the page colour at the bottom edge.
+ */
+.petri-landing .lp-shader-scrim {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(
+      to right,
+      color-mix(in oklch, var(--background) 72%, transparent),
+      color-mix(in oklch, var(--background) 34%, transparent) 52%,
+      transparent 84%
+    ),
+    linear-gradient(to bottom, transparent 62%, var(--background));
+}
+
 /* Faint terminal grid + a single violet bloom behind the hero. */
 .petri-landing .lp-grid::before {
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 1;
   pointer-events: none;
   background-image:
     linear-gradient(to right, var(--lp-rule) 1px, transparent 1px),
@@ -29,6 +137,12 @@
   inset: 0;
   pointer-events: none;
   background: radial-gradient(ellipse 60% 45% at 50% -5%, color-mix(in oklch, var(--primary) 26%, transparent), transparent 70%);
+}
+
+/* The hero lockup's soft watch. A violet cast off the dial, so it sits in the ink
+   rather than on top of it. Static — a logo that moves is a logo you stop trusting. */
+.petri-landing .lp-clock {
+  filter: drop-shadow(0 10px 26px color-mix(in oklch, var(--primary) 45%, transparent));
 }
 
 /* Section rule that fades out at both ends. */
@@ -95,6 +209,63 @@
   }
 }
 
+/* ------------------------------------------------------------------ marketing CTAs
+ * One pair of classes so every call to action on the page has the same height (44px,
+ * the tap-target floor), the same press feedback and the same focus ring.
+ */
+.petri-landing .lp-cta,
+.petri-landing .lp-cta-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  height: 2.75rem;
+  padding-inline: 1.25rem;
+  border-radius: var(--radius-xl);
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform 160ms var(--ease-out),
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.petri-landing .lp-cta {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 10px 34px -14px var(--primary);
+}
+
+.petri-landing .lp-cta-ghost {
+  border: 1px solid var(--border);
+  background: color-mix(in oklch, var(--background) 55%, transparent);
+  color: var(--foreground);
+  backdrop-filter: blur(6px);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .petri-landing .lp-cta:hover {
+    background: color-mix(in oklch, var(--primary) 90%, white);
+  }
+  .petri-landing .lp-cta-ghost:hover {
+    background: var(--muted);
+  }
+}
+
+.petri-landing .lp-cta:active,
+.petri-landing .lp-cta-ghost:active {
+  transform: scale(0.97);
+}
+
+.petri-landing .lp-cta:focus-visible,
+.petri-landing .lp-cta-ghost:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 /* Press feedback on every marketing CTA. */
 .petri-landing .lp-press {
   transition: transform 160ms var(--ease-out), background-color 160ms ease, border-color 160ms ease, color 160ms ease;
@@ -105,6 +276,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .petri-landing .lp-shader-fallback {
+    animation: none;
+  }
   .petri-landing .lp-rise {
     animation: lp-fade 260ms ease forwards;
     transform: none;
@@ -116,7 +290,9 @@
     animation: none;
     opacity: 1;
   }
-  .petri-landing .lp-press:active {
+  .petri-landing .lp-press:active,
+  .petri-landing .lp-cta:active,
+  .petri-landing .lp-cta-ghost:active {
     transform: none;
   }
   @keyframes lp-fade {

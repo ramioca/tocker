@@ -14,8 +14,9 @@ const COLUMNS = [
   {
     title: "How it works",
     links: [
-      { label: "The three steps", href: "#how" },
+      { label: "The four steps", href: "#how" },
       { label: "Features", href: "#features" },
+      { label: "The exit engine", href: "#exits" },
       { label: "Leaderboard", href: "/discover" },
     ],
   },
@@ -27,8 +28,8 @@ export function LandingFooter() {
       <div className="mx-auto grid w-full max-w-6xl gap-10 px-5 py-14 sm:grid-cols-2 lg:grid-cols-4">
         <div className="lg:col-span-2">
           <p className="flex items-center gap-2 font-semibold tracking-tight">
-            <PetriMark />
-            Petri
+            <PetriMark size={22} />
+            tocker
           </p>
           <p className="mt-3 max-w-xs text-sm leading-6 text-muted-foreground">
             Social agentic trading. Your key, your wallet, your strategy. The record is

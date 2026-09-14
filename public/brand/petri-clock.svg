@@ -1,29 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Petri">
-  <title>Petri</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Tocker">
+  <title>Tocker</title>
   <!--
-    A soft watch, Dali-style: the dial stays a true circle across the top-left so the
-    silhouette still reads as a clock at 16px, and only the lower-right quadrant sags
-    and hangs. The drip is short and thick on purpose — a long thin tail turns into a
-    balloon at small sizes.
+    The full dial, for 48px and up: four cardinal ticks, a rim highlight and both hands.
+    The dial is near-circular across the top-left so it still reads as a watch; only the
+    lower-right quadrant slumps, and the drip is short and thick (~7 wide, ~9 tall) — a
+    long thin tail turns the whole mark into a balloon. Keep in sync with PetriClock in
+    src/components/brand/petri-mark.tsx.
   -->
-  <path d="M32 9
-           C43 9 51 17.5 51 28
-           C51 33 50 36.5 49 40
-           C47.8 44 48.2 48 47.4 51.4
-           C46.7 54.4 43.6 54.6 42.9 51.6
-           C42.2 48.6 43.6 45 42 42.4
-           C40.3 39.7 36.6 38.9 32 38.9
-           C21.5 38.9 13 32.3 13 24
-           C13 15.7 21 9 32 9 Z"
-        fill="#ede9fb" stroke="#17151d" stroke-width="2.4" stroke-linejoin="round"/>
-  <path d="M19.5 20.5 C21.5 15 26.5 12 32 12" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" opacity="0.85"/>
-  <g stroke="#17151d" stroke-width="2.2" stroke-linecap="round">
-    <path d="M32 14.5 V17.6"/>
-    <path d="M45.6 24.2 L42.5 24.6"/>
-    <path d="M18.6 24.2 L21.7 24.6"/>
-    <path d="M24.5 33.5 L26.3 31.4"/>
+  <path d="M30 7
+           C41.5 7 50 15.3 50 25.8
+           C50 30.6 49.4 34.2 48.6 37.6
+           C47.8 41 48.6 44 47.4 46.6
+           C46.2 49.2 42 48.8 41.4 45.6
+           C40.9 43 41.4 41.4 40.8 39.8
+           C36.8 42.6 31.6 43.8 26.6 43.2
+           C17 42 10 34.6 10 25.8
+           C10 15.3 18.5 7 30 7 Z"
+        fill="#ede9fb" stroke="#17151d" stroke-width="2.6" stroke-linejoin="round"/>
+  <path d="M16 19 C18.6 13.2 23.8 10 29.4 10" fill="none" stroke="#ffffff" stroke-width="2.1" stroke-linecap="round" opacity="0.75"/>
+  <g stroke="#17151d" stroke-width="2.4" stroke-linecap="round">
+    <path d="M29.8 11.2 V14.8"/>
+    <path d="M44.8 25.4 H41.2"/>
+    <path d="M14.8 25.4 H18.4"/>
+    <path d="M28.6 36.2 L28.4 39.4"/>
   </g>
-  <path d="M32 24.5 L39 20.6" stroke="#17151d" stroke-width="2.6" stroke-linecap="round"/>
-  <path d="M32 24.5 C32.4 28.5 33.2 31.5 34.4 34.6" fill="none" stroke="#17151d" stroke-width="2.6" stroke-linecap="round"/>
-  <circle cx="32" cy="24.5" r="2.2" fill="#a78bfa"/>
+  <path d="M29.8 25.6 L22.4 18" stroke="#17151d" stroke-width="3.2" stroke-linecap="round"/>
+  <path d="M29.8 25.6 C33.2 27.2 35.4 30 36.2 33.6" fill="none" stroke="#17151d" stroke-width="3.2" stroke-linecap="round"/>
+  <circle cx="29.8" cy="25.6" r="2.7" fill="#a78bfa"/>
 </svg>

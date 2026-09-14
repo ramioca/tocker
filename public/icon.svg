@@ -1,26 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Petri">
-  <title>Petri</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Tocker">
+  <title>Tocker</title>
   <!--
-    Small-size mark. The dial keeps bold hands and four cardinal ticks because those are
-    what say "clock"; drop them and the sagging silhouette reads as a speech bubble.
-    Everything else (rim highlight, minor ticks) is left to petri-clock.svg.
+    Favicon density. Two straight bold hands and the pivot, nothing else: at 16-20px a
+    curved hand and a minor tick are the same smudge. The melt is the lower-right
+    quadrant and the drip stays short and thick, or the silhouette reads as a speech
+    bubble. Keep in sync with PetriMark in src/components/brand/petri-mark.tsx.
   -->
-  <path d="M32 8
-           C44 8 52 17 52 27.5
-           C52 32.6 51 36.2 50 39.6
-           C48.8 43.6 49.2 47.6 48.4 51
-           C47.6 54.2 44 54.4 43.2 51.2
-           C42.5 48 43.8 44.4 42.2 41.8
-           C40.4 39 36.6 38.2 32 38.2
-           C21 38.2 12 31.6 12 23.4
-           C12 15.2 20.4 8 32 8 Z"
-        fill="#ede9fb" stroke="#17151d" stroke-width="3" stroke-linejoin="round"/>
-  <g stroke="#17151d" stroke-width="3" stroke-linecap="round">
-    <path d="M32 13.5 V17"/>
-    <path d="M46 23.5 H42.5"/>
-    <path d="M18 23.5 H21.5"/>
-    <path d="M32 25 L39.5 20.5"/>
-    <path d="M32 25 C32.5 29 33.4 31.6 34.6 34.4"/>
+  <path d="M30 6
+           C42.2 6 51 14.8 51 25.8
+           C51 30.8 50.4 34.6 49.6 38.2
+           C48.8 41.8 49.6 45 48.2 47.8
+           C46.8 50.6 41.8 50.2 41.2 46.6
+           C40.7 43.8 41.2 42.2 40.6 40.4
+           C36.4 43.4 31.2 44.6 26 44
+           C16 42.8 9 35 9 25.8
+           C9 14.8 17.8 6 30 6 Z"
+        fill="#ede9fb" stroke="#17151d" stroke-width="3.4" stroke-linejoin="round"/>
+  <g stroke="#17151d" stroke-width="4.8" stroke-linecap="round">
+    <path d="M29.8 25.6 L21.6 17.2"/>
+    <path d="M29.8 25.6 L36.4 34.6"/>
   </g>
-  <circle cx="32" cy="25" r="3.4" fill="#a78bfa"/>
+  <circle cx="29.8" cy="25.6" r="3.8" fill="#a78bfa"/>
 </svg>
