@@ -53,7 +53,7 @@ export function LandingHeader() {
           {session ? (
             <Link
               href="/feed"
-              className="lp-press inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              className="lp-press inline-flex h-11 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:h-8 sm:px-3"
             >
               Open app
               <ArrowRight className="size-3.5" aria-hidden />
@@ -66,7 +66,7 @@ export function LandingHeader() {
               >
                 See the feed
               </Link>
-              <LoginButton className="lp-press inline-flex h-8 items-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-60" />
+              <LoginButton className="lp-press inline-flex h-11 items-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-60 sm:h-8 sm:px-3" />
             </>
           )}
         </div>

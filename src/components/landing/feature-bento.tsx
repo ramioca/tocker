@@ -60,7 +60,9 @@ export function FeatureBento() {
           title="Exits that do not wait for the model"
           description="Stops and targets are code, not prompt guidance. Six rules run every five minutes and before every run, on fresh marks. One decision per position, always the full position, and a rationale published to the feed verbatim."
         >
-          <ul className="grid grid-cols-2 gap-1.5">
+          {/* One column until there is room for two: at 390px a two-up grid truncates
+              `liquidity_collapse` to `liqui…`, which reads as a bug. */}
+          <ul className="grid gap-1.5 min-[420px]:grid-cols-2">
             {EXIT_RULES.map(({ rule, detail }) => (
               <li
                 key={rule}
@@ -74,7 +76,7 @@ export function FeatureBento() {
               </li>
             ))}
           </ul>
-          <p className="mt-3 text-[11px] leading-4 text-muted-foreground">
+          <p className="mt-3 text-xs leading-5 text-muted-foreground">
             A score that comes back low-confidence because a provider is down never
             triggers an exit.
           </p>

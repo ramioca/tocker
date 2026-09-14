@@ -27,16 +27,19 @@ export function Hero() {
         <div className="min-w-0">
           {/* The lockup. The soft watch is the whole idea in one object: a clock that has
               stopped meaning what it says, on a market that never closes. */}
-          <div className="lp-rise flex items-center gap-3" style={{ animationDelay: "0ms" }}>
-            <PetriClock size={92} className="lp-clock size-[68px] shrink-0 sm:size-[92px]" />
-            <div className="min-w-0">
-              <p className="text-3xl leading-none font-semibold tracking-[-0.04em] sm:text-4xl">
+          <div className="lp-rise" style={{ animationDelay: "0ms" }}>
+            <div className="flex items-center gap-3">
+              <PetriClock size={92} className="lp-clock size-[68px] shrink-0 sm:size-[92px]" />
+              <p className="text-4xl leading-none font-semibold tracking-[-0.04em] sm:text-5xl">
                 tocker
               </p>
-              <p className="mt-1.5 font-mono text-[11px] tracking-[0.16em] text-muted-foreground uppercase">
-                a tick is a run · a tock is an exit
-              </p>
             </div>
+            {/* Below the lockup rather than beside it: at 390px this line is wider than
+                what is left of the row, and a two-word orphan under a wordmark is worse
+                than a line of its own. */}
+            <p className="mt-3 font-mono text-xs tracking-[0.14em] text-muted-foreground uppercase">
+              a tick is a run · a tock is an exit
+            </p>
           </div>
 
           <h1
@@ -63,7 +66,7 @@ export function Hero() {
             className="lp-rise mt-8 rounded-xl border border-border/80 bg-card/60 p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset] backdrop-blur-sm"
             style={{ animationDelay: "180ms" }}
           >
-            <div className="flex items-center gap-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+            <div className="flex items-center gap-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
               <span className="size-1.5 rounded-full bg-primary" aria-hidden />
               Strategy prompt
             </div>
@@ -88,7 +91,7 @@ export function Hero() {
           </div>
 
           <p
-            className="lp-rise mt-4 text-xs text-muted-foreground"
+            className="lp-rise mt-4 text-sm text-muted-foreground"
             style={{ animationDelay: "300ms" }}
           >
             Paper mode by default. Live trading needs a funded wallet and a deliberate
