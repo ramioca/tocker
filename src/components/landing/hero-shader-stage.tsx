@@ -44,46 +44,21 @@ export function HeroShaderStage({ count, onReady, onUnavailable }: HeroShaderSta
         a floor luminance.
       */}
       {/*
-        Ink flow read as a depth field by the particles. `cursorStrength={0}` keeps the
-        particles themselves still — the pointer paints the ink, it does not throw the
-        grid around, which is what stops this reading as a screensaver. Colours are the
-        brand violet cycle rather than the default rainbow so the backdrop stays one hue
-        family with the page.
+        The "Pixel Ink" preset from shaders.com (collection 127db0a9-…), installed as
+        published: ink read as a depth field by the particles, in the default rainbow
+        OKLab cycle — the neon cyan/blue/magenta band IS the preset's look, so no custom
+        colours. `cursorStrength={0}` keeps the particles themselves still — the pointer
+        paints the ink, it does not throw the grid around.
       */}
-      <ParticleField
-        count={count}
-        cursorStrength={0}
-        particleSize={0.37}
-        zoom={1.4}
-        wobble={0.42}
-        depth={0.85}
-        depthShading={0.72}
-      >
-        <InkFlow
-          radius={0.6}
-          colorMode="custom"
-          color1="#7c3aed"
-          color2="#c4b5fd"
-          color3="#3b1e83"
-          decay={0.3}
-          curl={14}
-          momentum={0.82}
-        />
+      <ParticleField count={count} cursorStrength={0} particleSize={0.37} zoom={1.4}>
+        <InkFlow radius={0.6} />
       </ParticleField>
       {/*
-        Glitch, colour bars off as specified, and everything else pulled well down from
-        the shader's defaults (intensity 0.5, rgbShift 5, mirror 0.3): a hero has headline
-        copy sitting on it, and a mirrored block behind a word is unreadable.
+        Preset glitch: colour bars off is the preset's own setting. `mirrorAmount={0}` is
+        our one deviation from its defaults — a mirrored block behind headline copy is
+        unreadable, and this hero has copy sitting on it.
       */}
-      <Glitch
-        colorBarIntensity={0}
-        intensity={0.18}
-        rgbShift={2.4}
-        blockDensity={6}
-        mirrorAmount={0}
-        scanlineIntensity={0.1}
-        speed={0.6}
-      />
+      <Glitch colorBarIntensity={0} mirrorAmount={0} />
     </Shader>
   );
 }

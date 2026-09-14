@@ -16,8 +16,9 @@
  *   .lp-shader-layer     the WebGPU canvas, screen-blended so it can only add light
  *   .lp-shader-scrim     the contrast guarantee under the headline
  *
- * The fallback is a still of the same idea as the shader: a dark ground, violet ink
- * bleeding from the top-left, a fine particle grid and grain over the whole thing.
+ * The fallback is a still of the same idea as the shader — the Pixel Ink preset's
+ * neon cyan/blue/magenta band bleeding across a dark ground, a fine particle grid
+ * and grain over the whole thing.
  */
 
 .petri-landing .lp-shader-host {
@@ -31,9 +32,10 @@
 
 .petri-landing {
   --lp-ground: var(--background);
-  --lp-ink-1: color-mix(in oklch, var(--primary) 62%, transparent);
-  --lp-ink-2: color-mix(in oklch, var(--primary) 34%, transparent);
-  --lp-ink-3: color-mix(in oklch, var(--chart-4) 34%, transparent);
+  /* Pixel Ink's three hues (cyan / electric blue / magenta), knocked back to bloom level. */
+  --lp-ink-1: color-mix(in oklch, #19e3ff 44%, transparent);
+  --lp-ink-2: color-mix(in oklch, #4338ff 38%, transparent);
+  --lp-ink-3: color-mix(in oklch, #ff2d7e 28%, transparent);
 }
 
 /* The ink. Three blooms on one plane, drifting slowly enough to read as a fluid. */

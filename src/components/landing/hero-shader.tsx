@@ -58,7 +58,7 @@ function planForDevice(): Plan {
   const narrow = window.innerWidth < 768;
   const dpr = window.devicePixelRatio || 1;
   return {
-    count: narrow ? 9_000 : cores <= 6 ? 18_000 : 30_000,
+    count: narrow ? 10_000 : cores <= 6 ? 20_000 : 40_000,
     scale: narrow || cores <= 4 ? 1.5 : dpr > 2 ? 1.25 : 1,
   };
 }
