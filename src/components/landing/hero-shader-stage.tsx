@@ -34,6 +34,16 @@ export function HeroShaderStage({ count, onReady, onUnavailable }: HeroShaderSta
     >
       <SolidColor color="#161617" />
       {/*
+        Note on what this looks like before anyone moves the mouse: InkFlow is a fluid
+        painted by the pointer, and its dye buffer starts empty, so the particle field
+        has nothing bright to sample until the cursor crosses the hero. That is fine
+        here — the canvas is screen-blended over the CSS fallback, so "no ink yet" looks
+        exactly like the fallback, and the ink then blooms under the pointer. If a
+        permanent base glow is wanted instead, the smallest change is a second dim
+        SolidColor INSIDE this ParticleField, under the InkFlow, to give every particle
+        a floor luminance.
+      */}
+      {/*
         Ink flow read as a depth field by the particles. `cursorStrength={0}` keeps the
         particles themselves still — the pointer paints the ink, it does not throw the
         grid around, which is what stops this reading as a screensaver. Colours are the
