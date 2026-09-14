@@ -1,0 +1,44 @@
+{
+  "pair": "BTC",
+  "window": "30m",
+  "asOf": "2026-09-12T09:30:00.000Z",
+  "lastPrice": 108050.2,
+  "confidence": 0.94,
+  "signals": {
+    "orderFlow": "sell-leaning",
+    "flowToxicity": "elevated",
+    "liquidity": "normal",
+    "volatility": "normal",
+    "priceTrend": "drifting-lower",
+    "activity": "busy",
+    "largeTraderShare": "typical",
+    "dealerGamma": "dampening",
+    "volRiskPremium": "options-rich"
+  },
+  "metrics": {
+    "vpin": 0.38,
+    "vpinEstimatedNull": 0.14,
+    "vpinExcess": 0.24,
+    "buySellImbalance": -0.14,
+    "cvdBase": -212.4,
+    "kyleLambda": 2.47191e-7,
+    "kyleLambdaDollarsPer1Bp": 418387.7,
+    "realizedVolAnnualized": 0.52,
+    "momentumLogReturn": -0.0021,
+    "tradesPerMinute": 812.4,
+    "largeTradeShare": 0.22,
+    "gexNetUsdPer1Pct": 182000000,
+    "gammaFlipLevel": 104800.5,
+    "vrpVolPoints": 0.062
+  },
+  "summary": "BTC order flow over the last 30 minutes is modestly sell-side. Raw VPIN is 0.38 against an estimated finite-sample baseline of 0.14, leaving excess VPIN of 0.24 — informed flow is running above its own noise floor. Liquidity is normal at roughly $418k of flow per basis point, so size is absorbing without dislocation. Positive dealer gamma may dampen moves while implied volatility remains rich to realized.",
+  "summaryModel": "claude-opus-4-8",
+  "disclaimer": "Informational description of observed market conditions and their historical tendencies; not investment advice or a trade recommendation.",
+  "sampleSize": { "trades": 24310, "optionsInstruments": 612 },
+  "coverage": {
+    "requestedWindowMinutes": 30,
+    "effectiveWindowMinutes": 30,
+    "coverageRatio": 1,
+    "partialData": false
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "status": "success",
+  "data": {
+    "summary": "Crypto Twitter has rotated back to Solana memecoins after two weeks of L2 chatter. The loudest thread is DEX volume reclaiming $3B/day; the quieter one is three launch-platform rugs inside 24h, which has the reply guys demanding LP-burn proof before they touch anything new. Majors are being discussed as boring rather than broken.",
+    "sentiment": "bullish",
+    "sentimentScore": 0.42,
+    "narratives": [
+      { "name": "solana memecoin rotation", "mentions24h": 18422, "change24hPct": 41 },
+      { "name": "launchpad rug fatigue", "mentions24h": 9110, "change24hPct": 128 },
+      { "name": "base ecosystem quiet", "mentions24h": 4180, "change24hPct": -22 }
+    ],
+    "topAccounts": ["@solanafloor", "@0xNarrative", "@basedchad"],
+    "window": "6h",
+    "generatedAt": "2026-09-12T09:30:00.000Z"
+  }
+}

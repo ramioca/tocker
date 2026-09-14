@@ -4,7 +4,7 @@ import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { paidFetch, parsePaymentOptions, selectPaymentOption } from "./paidFetch";
-import { newBudget, X402BudgetError, type AgentWalletRef, type X402Context } from "./types";
+import { chainForNetwork, newBudget, X402BudgetError, type AgentWalletRef, type X402Context } from "./types";
 
 let db: Db;
 let agentId: string;
@@ -180,6 +180,50 @@ describe("paidFetch in mock mode", () => {
     const rows = await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
     expect(rows).toHaveLength(1);
     expect(c.budget.spentUsd).toBeCloseTo(0.01, 9);
+  });
+
+  it("bills a Solana-priced source to the Solana wallet's network, not Base", async () => {
+    // SolEnrich is the one launch radar priced on Solana. `chainForNetwork` has to
+    // recognise the CAIP-2 mainnet id or the call would silently fall through to the
+    // Base wallet, which would sign a valid payment against the wrong balance.
+    const c = ctx();
+    const res = await paidFetch(c, {
+      sourceId: "solenrich-launches",
+      url: "https://api.solenrich.com/entrypoints/new-tokens/invoke",
+      method: "POST",
+      body: { min_liquidity_usd: 15_000, limit: 10 },
+      network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+      priceUsd: 0.012,
+      fixture: { tokens: [] },
+    });
+
+    expect(chainForNetwork("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp")).toBe("solana");
+    expect(res.network).toBe("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp");
+    expect(res.amountUsd).toBeCloseTo(0.012, 9);
+    expect(c.budget.spentUsd).toBeCloseTo(0.012, 9);
+
+    const rows = await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.network).toBe("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp");
+    expect(Number(rows[0]?.amountUsd)).toBeCloseTo(0.012, 9);
+  });
+
+  it("refuses a Solana-priced call the budget cannot cover", async () => {
+    const c = ctx(0.01); // one cent, against a $0.012 radar
+    await expect(
+      paidFetch(c, {
+        sourceId: "solenrich-launches",
+        url: "https://api.solenrich.com/entrypoints/new-tokens/invoke",
+        method: "POST",
+        network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+        priceUsd: 0.012,
+        fixture: {},
+      }),
+    ).rejects.toBeInstanceOf(X402BudgetError);
+    expect(c.budget.spentUsd).toBe(0);
+
+    const rows = await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
+    expect(rows).toHaveLength(0);
   });
 
   it("charges nothing for a source with no registry price", async () => {

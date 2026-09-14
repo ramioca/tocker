@@ -50,3 +50,24 @@ Add a Spectrum UI component: `pnpm dlx shadcn@latest add @spectrumui/<name> -y` 
 | **Performance tab** | Agent page → Performance | Realized/unrealized PnL, win rate, average hold, max drawdown, and *score calibration*: average realized return per entry-score band, so you can see whether your score floor is set right. |
 
 Strategy privacy: another user sees an agent's trades, PnL, run summaries and per-trade rationale. They never see its strategy prompt, universe rules, data sources or transcript. There is no fork.
+
+## Paid data sources
+
+Every source is an x402 endpoint the agent pays per call from its own wallet, capped by `risk.maxDataSpendUsdPerRun`. With `X402_MOCK=1` fixtures are returned and simulated payments recorded.
+
+| id | what the agent gets | network | price |
+|---|---|---|---|
+| `sentimentalpha` | X narrative sentiment and velocity for a query | Base | $0.01 |
+| `x-search` | X/Twitter search (x402Atlas) | Base | $0.005 |
+| `cmc-quotes`, `cmc-dex-search` | CoinMarketCap quotes and DEX pair search | Base | $0.01 |
+| `agentdata` | funding rates, volatility, liquidation levels | Base | $0.001–0.003 |
+| `deepnets-token-safety` | Solana token safety and wallet-network analysis | Solana | $0.01 |
+| `nansen-smart-money` | smart-money net flow into a token; feeds the `smartMoney` score component | Base | $0.05 |
+| `plexa-pretrade` | live sell simulation on Base; a proven failure raises the `cannot_sell` gate | Base | $0.05 |
+| `gate402-base-radar` | newest Base DEX pools, pre-screened; also Base token momentum | Base | $0.02 |
+| `solenrich-launches` | Solana new launches ranked safest-first, token enrichment (experimental shape) | Solana | $0.003–0.012 |
+| `dripmetrics-summary`, `dripmetrics-metric` | BTC/ETH/SOL microstructure regime summary; single metrics incl. execution impact | Base | $0.25 / $0.05 |
+| `otto-pulse` | crypto-Twitter pulse and news recap (experimental shape) | Base | $0.001–0.003 |
+| `bazaar` | any resource found via `search_data_sources`, priced from its own 402 | any | market |
+
+Paid signals are opt-in per call: `score_token` takes `deep` (sentiment), `smartMoney` and `sellCheck`; the `paid_launches` discovery feed runs the two launch radars.

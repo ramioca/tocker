@@ -101,6 +101,12 @@ Seed registry (`src/lib/data-sources/registry.ts`), each with `{ id, name, descr
 | `xquik-search` | Xquik tweet search https://xquik.com | eip155:8453 | see 402 |
 | `token-intel-sol` | Token Intel Solana due diligence https://token-intel-x402.echolonius.deno.net | solana | see 402 |
 | `agentdata` | AgentData API funding/volatility/indicators https://agentdata-api.com | eip155:8453 | see 402 |
+| `nansen-smart-money` | Nansen `GET https://api.nansen.ai/api/v1/smart-money/netflow` → smart-money net flow; `smartMoney` score component (weight 10, reweights like sentiment) | eip155:8453 | $0.05 |
+| `plexa-pretrade` | Plexa `https://api.getplexa.com/v1/pretrade/check` → live sell simulation; proven failure = `cannot_sell` hard gate + exit-engine deterioration | eip155:8453 | $0.05 |
+| `gate402-base-radar` | gate402 `/v1/launches` newest Base pools, `/v1/momentum` Base token flow; `paid_launches` feed | eip155:8453 | $0.02 |
+| `solenrich-launches` | SolEnrich `entrypoints/new-tokens/invoke` (experimental) safest-first Solana launches; `paid_launches` feed, paid from the Solana wallet | solana | $0.012 |
+| `dripmetrics-summary` / `dripmetrics-metric` | DripMetrics regime summary; metrics allowlist incl. `orderbook/execution-impact` for sizing | eip155:8453 | $0.25 / $0.05 |
+| `otto-pulse` | Otto AI `/twitter-summary` (experimental), `/news-recaps` | eip155:8453 | $0.001–0.003 |
 | `bazaar` | dynamic: any resource found via searchX402Resources | any | from listing |
 Exact paths for "see 402" sources: fetch the service's `/.well-known/x402` or root and read the 402 body at build time; if unreachable, keep the entry but mark `experimental: true` and ship a fixture.
 

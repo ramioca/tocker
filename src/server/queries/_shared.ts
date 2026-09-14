@@ -127,8 +127,10 @@ export function toTradeScore(snapshot: TradeScoreSnapshot | null | undefined): T
     momentum: numberOrUndefined(raw.momentum),
     organic: numberOrUndefined(raw.organic),
     distribution: numberOrUndefined(raw.distribution),
-    // sentiment is explicitly nullable: null means "the agent did not pay for it".
+    // sentiment and smartMoney are explicitly nullable: null means "the agent did
+    // not pay for it", which is a different fact from a sub-score of zero.
     sentiment: typeof raw.sentiment === "number" ? raw.sentiment : null,
+    smartMoney: typeof raw.smartMoney === "number" ? raw.smartMoney : null,
   };
   return {
     total: snapshot.total,

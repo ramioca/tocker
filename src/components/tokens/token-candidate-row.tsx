@@ -21,6 +21,7 @@ export const FEED_LABEL: Record<DiscoveryFeed, string> = {
   trending: "Trending",
   top_organic: "Top organic",
   momentum: "Momentum",
+  paid_launches: "Paid launch radar",
   manual: "Named by the agent",
 };
 

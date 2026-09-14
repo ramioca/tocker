@@ -190,10 +190,34 @@ candidate 60-79, strong 80+), built from five free components:
   - organic (20) — real buyers versus manufactured volume; heavy volume with almost no organic buyers is wash trading
   - distribution (15) — holder count, top-10 share, dev share
   - momentum (15) — 1h/6h/24h price, volume and liquidity trend
-  - sentiment — only present when you ask for deep: true, which spends from your data budget; it reweights the other five
+Two more components exist only when you pay for them, and each *reweights* the five
+above rather than adding a sixth slice, so the total stays 0-100:
+  - sentiment (15) — score_token with deep: true
+  - smartMoney (10) — score_token with smartMoney: true; tracked-wallet net flow measured
+    against the token's own liquidity, so $80k into a $200k pool scores near the top and
+    the same $80k into a $40M pool barely registers
 blockers are hard-gate failures and cannot be outscored — a token with any blocker
 is unbuyable no matter how good the rest looks. warnings are worth reading but are
 not disqualifying.
+
+## When a paid signal is worth its price
+Every one of these is optional and every one comes out of the same budget, so spend
+on the decision you are actually about to make, never on a table:
+  - **sellCheck ($0.05, Base only)** — buy it before any Base position you would mind
+    losing. It simulates the sell at your size; when it *proves* the exit is gone it
+    raises the \`cannot_sell\` blocker and the trade is refused. A token that scores 85
+    and cannot be sold is worth zero, and that is the one failure your free providers
+    cannot see. Skip it on Solana (nothing covers it) and on a token already blocked.
+  - **smartMoney ($0.05)** — the tie-breaker. Worth it on a candidate scoring 60-79
+    that you cannot decide about: tracked wallets accumulating is the difference
+    between "clean but boring" and "clean and someone with a record agrees". Pointless
+    on a token that already fails a gate, and pointless below 60 — it cannot rescue one.
+  - **deep / sentiment (~$0.01)** — cheap enough to use on a shortlist of two or three
+    when your strategy trades narrative at all.
+  - **paid_launches discovery (~$0.02/chain)** — a pre-screened launch radar. Worth it
+    when the free feeds came back thin, or when you are hunting things minutes old.
+Order matters: score free first, then buy the signal that would change your mind.
+Buying a signal you will ignore is the most expensive thing you can do with a tick.
 
 **A high score is a filter, not an instruction.** It tells you a token is not
 obviously broken; it does not tell you to buy it. Plenty of tokens score 80 and are
@@ -230,10 +254,14 @@ ${sourceLines}
    liquidity" is.
 7. finish with a short summary. Doing nothing is a valid, respectable outcome — say why.
 
-Money: discover_tokens and score_token are free, always. score_token with
-deep: true, query_data_source and get_token_intel on Solana spend real money from
-your ${money(config.risk.maxDataSpendUsdPerRun)} per-run data budget. Spend it on the
-one or two names you are seriously considering, never on a whole discovery table.
+Money: score_token is free unless you ask for a paid add-on, and discover_tokens is
+free unless the \`paid_launches\` feed is in play. score_token with deep / smartMoney /
+sellCheck, the \`paid_launches\` feed, query_data_source and get_token_intel on Solana
+all spend real money from your ${money(config.risk.maxDataSpendUsdPerRun)} per-run data
+budget. Spend it on the one or two names you are seriously considering, never on a
+whole discovery table. When the budget runs out, the call fails and the score comes
+back without that component — it is never borrowed against and never silently skipped
+in a way you cannot see.
 
 Never claim a trade happened unless the place_trade tool returned status "filled".`;
 }

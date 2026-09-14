@@ -86,7 +86,7 @@ export function ScoreBreakdown({
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-[16rem] leading-relaxed">
                     {missing
-                      ? "Not bought for this token — sentiment costs money, so it is optional."
+                      ? (component.missingNote ?? "Not bought for this token — it costs money, so it is optional.")
                       : component.reads}
                   </TooltipContent>
                 </Tooltip>
@@ -97,7 +97,7 @@ export function ScoreBreakdown({
                     className="mt-0.5 mb-1 px-1 text-[11px] leading-relaxed text-muted-foreground"
                   >
                     {missing
-                      ? "Not bought for this token — sentiment costs money, so it is optional."
+                      ? (component.missingNote ?? "Not bought for this token — it costs money, so it is optional.")
                       : component.reads}
                   </p>
                 ) : null}

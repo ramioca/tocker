@@ -1,0 +1,18 @@
+{
+  "metric": "buy-sell-volume-imbalance",
+  "pair": "SOLUSDT",
+  "exchange": "binance",
+  "window": "1h",
+  "value": 0.18,
+  "components": {
+    "buyVolumeBase": 184220.5,
+    "sellVolumeBase": 128014.8,
+    "totalVolumeBase": 312235.3,
+    "impactBps": 42.7
+  },
+  "computedAt": "2026-09-12T09:30:00.000Z",
+  "tradeCount": 41822,
+  "firstTradeTime": "2026-09-12T08:30:00.000Z",
+  "lastTradeTime": "2026-09-12T09:29:58.000Z",
+  "coverage": { "requestedWindowMinutes": 60, "effectiveWindowMinutes": 60, "coverageRatio": 1, "partialData": false }
+}

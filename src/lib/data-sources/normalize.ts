@@ -13,6 +13,37 @@ export interface Signals {
   velocity?: number;
   /** 0 (safe) .. 1 (rug-adjacent). */
   risk?: number;
+  /**
+   * Net USD flow from tracked "smart money" wallets into this token over the source's
+   * headline window. Positive = accumulation. Absolute dollars, not normalised: the
+   * scorer weighs it against the token's own liquidity.
+   */
+  smartMoneyNetflowUsd?: number;
+  /**
+   * A live sell simulation says the position can still be exited. `false` only when a
+   * source *proved* the sell fails; an inconclusive check leaves this undefined, since
+   * "we could not tell" must never read as "you cannot sell".
+   */
+  sellable?: boolean;
+}
+
+/**
+ * One token off a *paid* discovery feed, in the shape `src/lib/tokens/discover.ts`
+ * needs to build a `TokenCandidate` without a second round-trip. Deliberately the
+ * same vocabulary as `TokenFacts`, so discovery never learns a vendor schema.
+ */
+export interface PaidLaunch {
+  chain: "solana" | "base";
+  address: string;
+  symbol: string;
+  name: string | null;
+  priceUsd: number | null;
+  liquidityUsd: number | null;
+  volume24hUsd: number | null;
+  marketCapUsd: number | null;
+  holderCount: number | null;
+  ageHours: number | null;
+  priceChange24hPct: number | null;
 }
 
 export interface NormalizedResult {

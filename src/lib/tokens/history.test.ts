@@ -14,7 +14,7 @@ function score(over: Partial<TokenScore> = {}): TokenScore {
     name: "Bonk",
     total: 72,
     verdict: "candidate",
-    components: { safety: 80, liquidity: 70, organic: 65, distribution: 60, momentum: 55, sentiment: null },
+    components: { safety: 80, liquidity: 70, organic: 65, distribution: 60, momentum: 55, sentiment: null, smartMoney: null },
     blockers: [],
     warnings: [],
     priceUsd: 0.0000318,

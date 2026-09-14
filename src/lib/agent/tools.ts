@@ -122,7 +122,7 @@ async function fetchBaseIntel(address: string): Promise<ToolOutcome> {
   };
 }
 
-const discoveryFeedSchema = z.enum(["new_launches", "trending", "top_organic", "momentum"]);
+const discoveryFeedSchema = z.enum(["new_launches", "trending", "top_organic", "momentum", "paid_launches"]);
 
 /** Shrinks a score to the fields worth spending the model's context on. */
 function scorePayload(score: TokenScore): ToolOutcome {
@@ -160,7 +160,12 @@ export function buildTools(ctx: RunContext): ToolSet {
   const proposedThisTick = new Set<string>();
 
   /** Scores a token for this agent. Returns `null` only when scoring itself blew up. */
-  const scoreFor = async (chain: "solana" | "base", address: string, deep = false): Promise<TokenScore | null> => {
+  const scoreFor = async (
+    chain: "solana" | "base",
+    address: string,
+    paid: { deep?: boolean; smartMoney?: boolean; sellCheck?: boolean } = {},
+  ): Promise<TokenScore | null> => {
+    const wantsPaid = paid.deep === true || paid.smartMoney === true || paid.sellCheck === true;
     try {
       return await getTokenScore({
         chain,
@@ -168,7 +173,16 @@ export function buildTools(ctx: RunContext): ToolSet {
         universe,
         maxTradeUsd: agent.config.risk.maxTradeUsd,
         dataSources: allowedSources,
-        ...(deep ? { deep: true, x402: ctx.x402 } : {}),
+        ...(paid.deep === true ? { deep: true } : {}),
+        ...(paid.smartMoney === true || paid.sellCheck === true
+          ? {
+              paid: {
+                ...(paid.smartMoney === true ? { smartMoney: true } : {}),
+                ...(paid.sellCheck === true ? { sellCheck: true } : {}),
+              },
+            }
+          : {}),
+        ...(wantsPaid ? { x402: ctx.x402 } : {}),
       });
     } catch {
       // A scoring failure must never become a trade; the caller turns null into a refusal.
@@ -179,7 +193,7 @@ export function buildTools(ctx: RunContext): ToolSet {
   return {
     discover_tokens: tool({
       description:
-        "Sweep your discovery feeds for tradeable candidates on your chains. Free, and the first step of every tick. Returns a ranked table already filtered on the gates that can be checked for free (age, liquidity, holders, blocklist); safety gates are applied later by score_token.",
+        "Sweep your discovery feeds for tradeable candidates on your chains. Free — with one exception: the `paid_launches` feed buys a pre-screened launch radar per chain (SolEnrich on Solana, gate402 on Base, about $0.02 a chain) and only runs when your config or this call asks for it. Returns a ranked table already filtered on the gates that can be checked for free (age, liquidity, holders, blocklist); safety gates are applied later by score_token.",
       inputSchema: z.object({
         chain: chainSchema.optional().describe("Restrict to one chain; omit to sweep every chain you trade"),
         feeds: z
@@ -211,6 +225,9 @@ export function buildTools(ctx: RunContext): ToolSet {
         const candidates = await discoverCandidates({
           chains,
           universe,
+          // Only used by the `paid_launches` feed; every other feed ignores both.
+          x402: ctx.x402,
+          dataSources: allowedSources,
           ...(parsed.feeds ? { feeds: parsed.feeds } : {}),
           ...(parsed.limit === undefined ? {} : { limit: parsed.limit }),
           ...(parsed.minLiquidityUsd === undefined ? {} : { minLiquidityUsd: parsed.minLiquidityUsd }),
@@ -243,7 +260,7 @@ export function buildTools(ctx: RunContext): ToolSet {
 
     score_token: tool({
       description:
-        "The full safety + quality score for one token: a 0-100 composite, a verdict, five components, hard-gate blockers and warnings. Free. Set deep: true to also buy a sentiment reading over x402 — that spends from your per-run data budget.",
+        "The full safety + quality score for one token: a 0-100 composite, a verdict, five free components, hard-gate blockers and warnings. Free by default. Three optional paid add-ons, each charged to your per-run data budget and each folded into the same score: deep (X sentiment, ~$0.01 — reweights the rest), smartMoney (Nansen tracked-wallet netflow, $0.05 — worth it on a 60-79 candidate you cannot decide about, useless on one that already fails a gate), sellCheck (Plexa live sell simulation, $0.05, BASE ONLY — buy it before any meaningful Base position: a proven failure raises the cannot_sell blocker and makes the token unbuyable, which is far cheaper than discovering it with your own money).",
       inputSchema: z.object({
         chain: chainSchema,
         address: z.string().min(3).describe("Mint (Solana) or contract address (Base)"),
@@ -251,11 +268,31 @@ export function buildTools(ctx: RunContext): ToolSet {
           .boolean()
           .optional()
           .describe("Pay for sentiment and fold it into the score. Costs money; default false"),
+        smartMoney: z
+          .boolean()
+          .optional()
+          .describe("Pay ~$0.05 for smart-money netflow and fold it in as a sixth component. Default false"),
+        sellCheck: z
+          .boolean()
+          .optional()
+          .describe("Pay ~$0.05 for a live sell simulation (Base only). A proven failure blocks the buy. Default false"),
       }),
       execute: logged(ctx, "score_token", async (input) => {
-        const parsed = z.object({ chain: chainSchema, address: z.string(), deep: z.boolean().optional() }).parse(input);
+        const parsed = z
+          .object({
+            chain: chainSchema,
+            address: z.string(),
+            deep: z.boolean().optional(),
+            smartMoney: z.boolean().optional(),
+            sellCheck: z.boolean().optional(),
+          })
+          .parse(input);
         const token = await resolveToken(parsed.chain, parsed.address);
-        const score = await scoreFor(parsed.chain, token.address, parsed.deep === true);
+        const score = await scoreFor(parsed.chain, token.address, {
+          ...(parsed.deep === true ? { deep: true } : {}),
+          ...(parsed.smartMoney === true ? { smartMoney: true } : {}),
+          ...(parsed.sellCheck === true ? { sellCheck: true } : {}),
+        });
         if (!score) return fail(`Could not score ${token.symbol} — every data provider failed. Do not buy it.`);
         return {
           ...scorePayload(score),
@@ -343,7 +380,7 @@ export function buildTools(ctx: RunContext): ToolSet {
 
     query_data_source: tool({
       description:
-        "Buy data from one of your configured sources over x402. Costs real money against your per-run data budget. `params` must match the source's schema (see the system prompt).",
+        "Buy data from one of your configured sources over x402. Costs real money against your per-run data budget. `params` must match the source's schema (see the system prompt) — several sources take a `mode` that selects both the endpoint and the price, so read the description before you call one.",
       inputSchema: z.object({
         sourceId: z.string().min(1).describe("Registry id, e.g. 'sentimentalpha', or 'bazaar' for a discovered resource"),
         params: z.record(z.string(), z.unknown()).default({}).describe("Source-specific parameters"),

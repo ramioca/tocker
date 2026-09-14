@@ -1,0 +1,37 @@
+{
+  "status": "success",
+  "data": {
+    "recap": "Crypto is drifting lower on thin conviction rather than selling off. BTC is holding just above $108k with dealer gamma dampening the range, and the majors are following it sideways. Two developments matter: a large exchange listed three Solana memecoins in one batch, and a Base launch platform disclosed a contract bug that froze roughly $4M of LP. Alt volume is concentrated in Solana names, where DEX turnover reclaimed $3B/day. Nothing on the top-10 board moved more than 4% in either direction.",
+    "sentiment": "neutral",
+    "stories": [
+      {
+        "rank": 1,
+        "title": "Exchange lists three Solana memecoins in a single batch",
+        "whyItMatters": "Listing flow into memecoins has historically pulled retail volume back onto Solana DEXes within 48h.",
+        "url": "https://example.test/news/solana-listings",
+        "publishedAt": "2026-09-12T07:12:00.000Z",
+        "source": "The Block"
+      },
+      {
+        "rank": 2,
+        "title": "Base launch platform freezes $4M of LP after contract bug",
+        "whyItMatters": "Anything launched through that platform in the last week carries an LP-recovery risk that on-chain checks will not see.",
+        "url": "https://example.test/news/base-launchpad-bug",
+        "publishedAt": "2026-09-12T05:48:00.000Z",
+        "source": "Decrypt"
+      },
+      {
+        "rank": 3,
+        "title": "Solana DEX volume reclaims $3B/day",
+        "whyItMatters": "Depth is where the flow is; thin books elsewhere are a sizing problem, not a thesis problem.",
+        "url": "https://example.test/news/solana-dex-volume",
+        "publishedAt": "2026-09-12T03:20:00.000Z",
+        "source": "CoinDesk"
+      }
+    ],
+    "storiesStatus": "ok",
+    "articlesStatus": "ok",
+    "window": { "from": "2026-09-12T03:30:00.000Z", "to": "2026-09-12T09:30:00.000Z" },
+    "generatedAt": "2026-09-12T09:30:00.000Z"
+  }
+}

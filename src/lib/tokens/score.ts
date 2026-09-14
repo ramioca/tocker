@@ -13,9 +13,12 @@
  * | `distribution` | 15     | holder count, top-10 share, dev share                        |
  * | `momentum`     | 15     | 1h/6h/24h price trend, volume trend, liquidity trend          |
  * | `sentiment`    | 15*    | x402 sentiment, only when the agent chose to pay              |
+ * | `smartMoney`   | 10*    | x402 smart-money netflow vs liquidity, only when paid for     |
  *
- * \*`sentiment` *reweights* the rest rather than adding to them: when present the
- * five free components are scaled by 0.85 so the total stays 0-100.
+ * \*The paid components *reweight* the rest rather than adding to them: the five free
+ * components are scaled by `(100 − paid weight)/100`, so the total stays 0-100 whether
+ * the agent bought neither, one or both (0.85 with sentiment, 0.90 with smart money,
+ * 0.75 with both).
  *
  * ## Verdict bands
  * `avoid` < 40 · `watch` 40-59 · `candidate` 60-79 · `strong` 80+.
@@ -43,6 +46,13 @@ export const WEIGHTS = {
 
 /** Weight sentiment takes when the agent paid for it; the rest are scaled by 0.85. */
 export const SENTIMENT_WEIGHT = 15;
+
+/**
+ * Weight smart-money netflow takes when the agent paid for it. Lower than sentiment
+ * on purpose: it is a *confirmation* signal — a handful of tracked wallets on the
+ * same side of a memecoin is a tie-breaker, not a thesis.
+ */
+export const SMART_MONEY_WEIGHT = 10;
 
 export const VERDICT_BANDS = { watch: 40, candidate: 60, strong: 80 } as const;
 
@@ -189,6 +199,10 @@ export function toFacts(input: ScoreInput): TokenFacts {
     // Solana has no honeypot equivalent (no transfer hooks in the SPL path we route
     // through), so this stays null there and the freeze authority carries the weight.
     isHoneypot: gp?.isHoneypot ?? null,
+    // Free providers cannot simulate a sell, so this is null unless the agent paid
+    // for a pre-trade check. `false` means a source proved the exit fails; an
+    // inconclusive check arrives as `null` and gates nothing.
+    sellable: input.sellCheck?.sellable ?? null,
   };
 }
 
@@ -221,6 +235,11 @@ export function hardGates(facts: TokenFacts, universe: Universe): string[] {
   }
 
   if (facts.isHoneypot === true) blockers.push("honeypot");
+
+  // A paid pre-trade check that *proved* the position cannot be exited. Unlike the
+  // gates above, this one has no `_unknown` twin: nobody is required to buy a sell
+  // check, so "we never asked" is not a gap in the data, it is a choice not to spend.
+  if (facts.sellable === false) blockers.push("cannot_sell");
 
   if (universe.maxBuyTaxPct < 100) {
     const { buyTaxPct, sellTaxPct } = facts;
@@ -272,6 +291,7 @@ export function explainBlocker(blocker: string): string {
     freeze_authority_active: "the freeze authority is still live — balances can be frozen",
     freeze_authority_unknown: "no provider could confirm the freeze authority is revoked",
     honeypot: "the contract is a honeypot — buys succeed, sells do not",
+    cannot_sell: "a paid sell simulation proved the position cannot be exited at this block",
     liquidity_below_floor: "liquidity is under the agent's floor",
     liquidity_unknown: "no provider reported liquidity",
     holders_below_floor: "there are fewer holders than the agent's floor",
@@ -545,6 +565,35 @@ function scoreMomentum(input: ScoreInput, facts: TokenFacts, warnings: string[])
   return clamp(base);
 }
 
+/**
+ * Smart-money netflow as a 0-100 component. Mirrors {@link scoreSentiment}: present
+ * only when the agent paid for it, and `null` — not 50 — when the source answered
+ * without a number, so "nobody tracked touched this" never scores as "flow is even".
+ *
+ * The reading that matters is *relative*: $80k of net inflow is an avalanche in a
+ * $200k pool and a rounding error in a $40M one, so depth carries most of the weight
+ * and the absolute figure only stands in when liquidity is unknown.
+ */
+function scoreSmartMoney(input: ScoreInput, facts: TokenFacts): number | null {
+  const sm = input.smartMoney ?? null;
+  if (sm === null || sm.netflowUsd === null) return null;
+  const flow = sm.netflowUsd;
+
+  const depth = facts.liquidityUsd;
+  // ±20% of the pool in net tracked flow is the end of the scale in either direction.
+  const ratio = depth !== null && depth > 0 ? flow / depth : null;
+  const relative = ratio === null ? null : clamp(50 + (clamp(ratio, -0.2, 0.2) / 0.2) * 50);
+
+  // $10k → barely moves off neutral, $1M → the end of the scale, sign preserved.
+  const magnitude = logScale(Math.abs(flow), 10_000, 1_000_000);
+  const absolute = magnitude === null ? null : clamp(50 + Math.sign(flow) * (magnitude / 2));
+
+  return blend([
+    [relative, 0.65],
+    [absolute, 0.35],
+  ]);
+}
+
 function scoreSentiment(input: ScoreInput): number | null {
   const s = input.sentiment ?? null;
   if (s === null) return null;
@@ -614,6 +663,7 @@ export function scoreToken(input: ScoreInput, universe: Universe): ScoredToken {
   const distribution = scoreDistribution(facts, warnings);
   const momentum = scoreMomentum(input, facts, warnings);
   const sentiment = scoreSentiment(input);
+  const smartMoney = scoreSmartMoney(input, facts);
 
   // A component we could not compute scores 0 rather than being dropped: absent
   // safety data is not neutral, it is a reason not to size into something.
@@ -624,9 +674,14 @@ export function scoreToken(input: ScoreInput, universe: Universe): ScoredToken {
     distribution: round(distribution ?? 0),
     momentum: round(momentum ?? 0),
     sentiment: sentiment === null ? null : round(sentiment),
+    smartMoney: smartMoney === null ? null : round(smartMoney),
   };
 
-  const freeScale = sentiment === null ? 1 : (100 - SENTIMENT_WEIGHT) / 100;
+  // Each paid component takes its weight *out of* the free five rather than adding a
+  // sixth slice, so the total is on the same 0-100 scale whatever the agent bought.
+  const paidWeight =
+    (sentiment === null ? 0 : SENTIMENT_WEIGHT) + (smartMoney === null ? 0 : SMART_MONEY_WEIGHT);
+  const freeScale = (100 - paidWeight) / 100;
   let total =
     (components.safety * WEIGHTS.safety +
       components.liquidity * WEIGHTS.liquidity +
@@ -634,7 +689,8 @@ export function scoreToken(input: ScoreInput, universe: Universe): ScoredToken {
       components.distribution * WEIGHTS.distribution +
       components.momentum * WEIGHTS.momentum) *
       (freeScale / 100) +
-    (sentiment === null ? 0 : (components.sentiment ?? 0) * (SENTIMENT_WEIGHT / 100));
+    (sentiment === null ? 0 : (components.sentiment ?? 0) * (SENTIMENT_WEIGHT / 100)) +
+    (smartMoney === null ? 0 : (components.smartMoney ?? 0) * (SMART_MONEY_WEIGHT / 100));
 
   const confidence = confidenceOf(input, facts);
   if (confidence < LOW_CONFIDENCE) {
@@ -678,6 +734,8 @@ function sourcesOf(input: ScoreInput): string[] {
   if (input.dexscreener) sources.push("dexscreener");
   if (input.goplus) sources.push("goplus");
   if (input.sentiment) sources.push(input.sentiment.source);
+  if (input.smartMoney) sources.push(input.smartMoney.source);
+  if (input.sellCheck) sources.push(input.sellCheck.source);
   return sources;
 }
 
@@ -687,7 +745,7 @@ export function renderScore(score: TokenScore): string {
     `${score.symbol} [${score.chain}] score ${score.total.toFixed(1)}/100 — ${score.verdict}`,
     `safety ${score.components.safety} · liquidity ${score.components.liquidity} · organic ${score.components.organic} · distribution ${score.components.distribution} · momentum ${score.components.momentum}${
       score.components.sentiment === null ? "" : ` · sentiment ${score.components.sentiment}`
-    }`,
+    }${score.components.smartMoney === null ? "" : ` · smart money ${score.components.smartMoney}`}`,
   ];
   if (score.blockers.length > 0) {
     parts.push(`BLOCKED: ${score.blockers.map((b) => `${b} (${explainBlocker(b)})`).join("; ")}`);

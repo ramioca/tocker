@@ -1,0 +1,75 @@
+{
+  "chain": "base",
+  "token": "0x4ed4e862860bed51a9570b96d89af5e1b0efefed",
+  "verdict": "clear",
+  "triggers": [],
+  "confidence": "medium",
+  "reasons": [
+    "no provable trap detected. This is NOT a safety rating: it means none of the checks that can PROVE a trap (NO_EXIT_VENUE, EXIT_LIQUIDITY_DRAINED, TRADING_DISABLED) fired at this block, AND the liquidity sweep reached a conclusion (liquidityCoverage.conclusive). Structural risk — age, holder concentration, liquidity depth, transfer restrictions — is reported in risk_profile and can still be severe"
+  ],
+  "risk_profile": {
+    "age": { "firstTransferBlock": 24118402, "ageDays": 3.1, "note": "age measured from the first transfer seen on this chain" },
+    "concentration": {
+      "topHolderSharePct": 6.4,
+      "top10SharePct": 28.1,
+      "ageSec": null,
+      "stale": false,
+      "note": "holder shares read on this call; pool, bridge and treasury contracts are addresses too"
+    },
+    "liquidity": {
+      "exitLiquidityUsd": 412880.5,
+      "drainFloorUsd": 25000,
+      "note": "the dollars a sell can actually REACH, across up to two hops; the pot takes the bottleneck of the two hops, never their sum"
+    },
+    "oracle": { "hasChainlinkFeed": false, "note": "no first-party feed; price comes from the pools themselves" },
+    "transferRestrictions": {
+      "buyTaxBps": 0,
+      "sellTaxBps": 0,
+      "pausable": false,
+      "note": "measured by simulating a transfer at this block"
+    }
+  },
+  "flags": {
+    "F_LIQ": "ok",
+    "F_CONC": "ok",
+    "F_AGE": "warn",
+    "F_OWN": "ok",
+    "F_XFER": "ok"
+  },
+  "quote": {
+    "executablePrice": 0.0119,
+    "priceImpactBps": 74,
+    "worstCaseSlippageBps": 120,
+    "venuesConsidered": 4
+  },
+  "sizeUSD": "100",
+  "coverage": { "axesExpected": 5, "axesReporting": 5 },
+  "liquidityCoverage": {
+    "conclusive": true,
+    "poolsFound": 4,
+    "factoriesChecked": 13,
+    "exitVenuesCounted": 3,
+    "asOfBlockFirst": 24384110,
+    "asOfBlock": 24384110
+  },
+  "identity": { "name": "Tidepool", "symbol": "TIDE", "decimals": 18, "totalSupply": 100000000 },
+  "valuation": { "fdvExecutableUsd": 1190000, "basis": "totalSupply(this chain) x executablePrice(at sizeUSD)" },
+  "ownership": {
+    "ownerAddress": null,
+    "ownerRenounced": null,
+    "isMintable": false,
+    "creatorAddress": "0xe8a3ecea7d6a688ee903173024225357ddf29e93",
+    "creatorSharePct": 0.8
+  },
+  "dormancy": { "topHolderIdleDays": 2, "lastTopHolderMoveBlock": 24290118, "headBlock": 24384110 },
+  "market": { "priceUsdSpot": 0.0121, "volume24hUsd": 210000, "marketCapUsd": 1210000, "holderCount": 1840 },
+  "sources": {
+    "*": "measured",
+    "market": "vendor:dexscreener+goplus",
+    "valuation": "derived:identity.totalSupply*quote.executablePrice"
+  },
+  "disclaimer": "Informational on-chain liquidity data, not financial advice.",
+  "freeTrialApplied": false,
+  "ts": 1789381500000,
+  "validUntil": 1789381620000
+}
