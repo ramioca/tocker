@@ -16,7 +16,8 @@
     "db:seed": "tsx src/db/seed.ts",
     "tick": "tsx --env-file-if-exists=.env scripts/tick.ts",
     "demo": "tsx --env-file-if-exists=.env scripts/demo-run.ts",
-    "preflight": "tsx --env-file-if-exists=.env scripts/live-preflight.ts"
+    "preflight": "tsx --env-file-if-exists=.env scripts/live-preflight.ts",
+    "vercel-build": "drizzle-kit migrate && next build"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.52",

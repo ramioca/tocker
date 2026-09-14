@@ -1,0 +1,21 @@
+# Free alternative to Vercel Cron (Hobby plans are limited to once-daily schedules).
+# Set repo secrets: PETRI_URL (https://your-app.vercel.app) and CRON_SECRET.
+name: petri cron
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark positions and run the exit engine
+        run: curl -fsS --max-time 300 -H "Authorization: Bearer $CRON_SECRET" "$PETRI_URL/api/cron/marks" | head -c 400
+        env:
+          PETRI_URL: ${{ secrets.PETRI_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      - name: Run agents that are due
+        run: curl -fsS --max-time 300 -H "Authorization: Bearer $CRON_SECRET" "$PETRI_URL/api/cron/tick" | head -c 400
+        env:
+          PETRI_URL: ${{ secrets.PETRI_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
