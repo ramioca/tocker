@@ -55,6 +55,8 @@
 }
 
 :root {
+  /* Dial fill for the melting-clock mark. Pale on both themes: it is porcelain, not paper. */
+  --petri-face: oklch(0.94 0.02 300);
   --font-sans: var(--font-geist-sans);
 
   /* Motion curves — the built-in CSS easings are too weak (see animate skill). */
@@ -123,6 +125,7 @@
  * Near-black ground, one violet accent, green/red reserved for PnL only.
  */
 .dark {
+  --petri-face: oklch(0.93 0.025 300);
   --background: oklch(0.145 0.005 285);
   --foreground: oklch(0.965 0.002 285);
   --card: oklch(0.185 0.005 285);
