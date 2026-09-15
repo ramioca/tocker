@@ -28,6 +28,7 @@ export const metadata: Metadata = {
 export default function LandingPage() {
   return (
     <div className="petri-landing flex min-h-screen flex-1 flex-col">
+      <div className="lp-grain" aria-hidden />
       <LandingHeader />
       <main className="flex-1">
         <Hero />

@@ -36,7 +36,7 @@ export function HowItWorks() {
         own stop loss.
       </p>
 
-      <ol className="mt-12 grid gap-px overflow-hidden rounded-2xl border border-border/80 bg-border/60 sm:grid-cols-2 lg:grid-cols-4">
+      <ol className="lp-view-rise mt-12 grid gap-px overflow-hidden rounded-2xl border border-border/80 bg-border/60 sm:grid-cols-2 lg:grid-cols-4">
         {STEPS.map(({ icon: Icon, title, body, caption }, i) => (
           <li
             key={title}

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { LoginButton } from "@/components/auth/login-button";
 import { useSession } from "@/hooks/use-session";
-import { PetriMark } from "./petri-mark";
+import { TockerMark } from "./petri-mark";
 
 export function LandingHeader() {
   const { session } = useSession();
@@ -16,7 +16,7 @@ export function LandingHeader() {
           href="/"
           className="flex items-center gap-2 rounded-md font-semibold tracking-tight focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
-          <PetriMark size={22} />
+          <TockerMark size={22} />
           tocker
         </Link>
 

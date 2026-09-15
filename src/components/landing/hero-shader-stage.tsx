@@ -32,7 +32,7 @@ export function HeroShaderStage({ count, onReady, onUnavailable }: HeroShaderSta
       onUnavailable={onUnavailable}
       style={{ width: "100%", height: "100%" }}
     >
-      <SolidColor color="#161617" />
+      <SolidColor color="#050505" />
       {/*
         Note on what this looks like before anyone moves the mouse: InkFlow is a fluid
         painted by the pointer, and its dye buffer starts empty, so the particle field

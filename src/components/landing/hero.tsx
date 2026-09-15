@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { PetriClock } from "@/components/brand/petri-mark";
+import { TockerMark } from "@/components/brand/petri-mark";
 import { usePrefersReducedMotion, useTypewriter } from "@/components/spectrumui/use-typewriter";
 import { STRATEGY_PROMPTS } from "@/mocks/social";
 import { AgentBrainDemo } from "./agent-brain-demo";
@@ -19,7 +19,7 @@ export function Hero() {
   });
 
   return (
-    <section className="lp-grid relative isolate overflow-hidden border-b border-border/60">
+    <section className="relative isolate overflow-hidden border-b border-border/60">
       {/* Decorative, and readable without it: everything below sits on the scrim. */}
       <HeroShader />
 
@@ -29,7 +29,7 @@ export function Hero() {
               stopped meaning what it says, on a market that never closes. */}
           <div className="lp-rise" style={{ animationDelay: "0ms" }}>
             <div className="flex items-center gap-3">
-              <PetriClock size={92} className="lp-clock size-[68px] shrink-0 sm:size-[92px]" />
+              <TockerMark size={92} className="lp-clock size-[68px] shrink-0 sm:size-[92px]" />
               <p className="text-4xl leading-none font-semibold tracking-[-0.04em] sm:text-5xl">
                 tocker
               </p>

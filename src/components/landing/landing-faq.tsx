@@ -110,7 +110,7 @@ export function LandingFaq() {
   const router = useRouter();
 
   return (
-    <section className="mx-auto w-full max-w-3xl px-5 py-20 lg:py-28">
+    <section className="lp-view-rise mx-auto w-full max-w-3xl px-5 py-20 lg:py-28">
       <h2 className="text-3xl font-semibold tracking-[-0.02em] sm:text-4xl">Questions</h2>
       <p className="mt-3 text-muted-foreground">
         The ones worth answering before you hand software a wallet.

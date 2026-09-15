@@ -5,12 +5,11 @@
  *
  * Two layers, always in this order:
  *
- *  1. A CSS fallback — dark ground, a violet ink-flow bloom, a particle-grid texture and
- *     grain. It paints on first render, on every device, and it never goes away. It is the
- *     design, not a placeholder.
+ *  1. A CSS fallback — the preset's flat black ground, nothing else. Pixel Ink is black
+ *     until the pointer paints it, so black IS the pre-ink design, on every device.
  *  2. The WebGPU shader, composited over it with `mix-blend-mode: screen` and faded in
  *     when the renderer reports its first frame. Screen blending is deliberate: the
- *     composition's ground is #161617, so anywhere the shader is dark the fallback shows
+ *     composition's ground is #050505, so anywhere the shader is dark the fallback shows
  *     through unchanged and the ink only ever *adds* light. There is no frame in which the
  *     hero is a black rectangle.
  *

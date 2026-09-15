@@ -7,6 +7,10 @@
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --lp-rule: color-mix(in oklch, var(--border) 70%, transparent);
+  /* The marketing page sits on near-black — darker than the app shell — so the
+     pixel-ink neon carries all the light. Scoped here; the app keeps its own ground. */
+  --background: oklch(0.05 0.004 285);
+  --card: oklch(0.1 0.005 285);
 }
 
 /* ------------------------------------------------------------------ hero backdrop
@@ -16,9 +20,8 @@
  *   .lp-shader-layer     the WebGPU canvas, screen-blended so it can only add light
  *   .lp-shader-scrim     the contrast guarantee under the headline
  *
- * The fallback is a still of the same idea as the shader — the Pixel Ink preset's
- * neon cyan/blue/magenta band bleeding across a dark ground, a fine particle grid
- * and grain over the whole thing.
+ * The fallback is the preset's own ground and nothing else: the Pixel Ink look is
+ * black until the ink moves, so a browser without WebGPU gets exactly that black.
  */
 
 .petri-landing .lp-shader-host {
@@ -32,51 +35,24 @@
 
 .petri-landing {
   --lp-ground: var(--background);
-  /* Pixel Ink's three hues (cyan / electric blue / magenta), knocked back to bloom level. */
+  /* Pixel Ink's three hues (cyan / electric blue / magenta). Not painted in the hero —
+     the shader owns the ink there — but the closing CTA glow below reuses them. */
   --lp-ink-1: color-mix(in oklch, #19e3ff 44%, transparent);
   --lp-ink-2: color-mix(in oklch, #4338ff 38%, transparent);
   --lp-ink-3: color-mix(in oklch, #ff2d7e 28%, transparent);
 }
 
-/* The ink. Three blooms on one plane, drifting slowly enough to read as a fluid. */
+/* The preset's ground, matching the shader's SolidColor exactly so the canvas
+   fade-in is invisible. No blooms, no texture: black is the design. */
 .petri-landing .lp-shader-fallback {
   position: absolute;
-  inset: -14%;
-  background-image:
-    radial-gradient(34% 44% at 18% 14%, var(--lp-ink-1), transparent 66%),
-    radial-gradient(40% 40% at 62% 2%, var(--lp-ink-3), transparent 70%),
-    radial-gradient(56% 64% at 44% 40%, var(--lp-ink-2), transparent 68%);
-  animation: lp-ink-drift 54s var(--ease-in-out) infinite alternate;
-  will-change: transform;
-}
-
-/* Grain and the particle grid, over the ink, masked so the copy column stays calm. */
-.petri-landing .lp-shader-fallback::after {
-  content: "";
-  position: absolute;
   inset: 0;
-  background-image:
-    radial-gradient(circle at 1px 1px, rgb(255 255 255 / 0.1) 1px, transparent 0),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23g)' opacity='0.42'/%3E%3C/svg%3E");
-  background-size:
-    5px 5px,
-    120px 120px;
-  mask-image: radial-gradient(ellipse 80% 70% at 40% 30%, #000 10%, transparent 80%);
-  opacity: 0.5;
-}
-
-@keyframes lp-ink-drift {
-  from {
-    transform: translate3d(-2%, -1%, 0) scale(1.02);
-  }
-  to {
-    transform: translate3d(3%, 2%, 0) scale(1.08);
-  }
+  background: #050505;
 }
 
 /*
  * The shader canvas. `screen` is what makes this safe: the composition's ground is
- * #161617, so a dark or not-yet-drawn frame leaves the fallback exactly as it was.
+ * #050505, so a dark or not-yet-drawn frame leaves the fallback exactly as it was.
  */
 .petri-landing .lp-shader-layer {
   position: absolute;
@@ -87,7 +63,7 @@
 }
 
 .petri-landing .lp-shader-layer[data-ready="true"] {
-  opacity: 0.9;
+  opacity: 1;
 }
 
 /* Renders the stage into a smaller box and scales it up — a real DPR cap (see hero-shader.tsx). */
@@ -118,33 +94,12 @@
     linear-gradient(to bottom, transparent 62%, var(--background));
 }
 
-/* Faint terminal grid + a single violet bloom behind the hero. */
-.petri-landing .lp-grid::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-  background-image:
-    linear-gradient(to right, var(--lp-rule) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--lp-rule) 1px, transparent 1px);
-  background-size: 64px 64px;
-  mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, #000 20%, transparent 75%);
-  opacity: 0.5;
-}
-
-.petri-landing .lp-bloom::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(ellipse 60% 45% at 50% -5%, color-mix(in oklch, var(--primary) 26%, transparent), transparent 70%);
-}
-
-/* The hero lockup's soft watch. A violet cast off the dial, so it sits in the ink
-   rather than on top of it. Static — a logo that moves is a logo you stop trusting. */
+/* The hero lockup's soft watch. A cast in the mark's own two hues — blue off the dial,
+   magenta off the pixel fall — so it sits in the ink rather than on top of it.
+   Static — a logo that moves is a logo you stop trusting. */
 .petri-landing .lp-clock {
-  filter: drop-shadow(0 10px 26px color-mix(in oklch, var(--primary) 45%, transparent));
+  filter: drop-shadow(0 8px 24px color-mix(in oklch, #4338ff 50%, transparent))
+    drop-shadow(0 18px 40px color-mix(in oklch, #ff2d7e 22%, transparent));
 }
 
 /* Section rule that fades out at both ends. */
@@ -174,6 +129,104 @@
   100% {
     opacity: 0;
   }
+}
+
+/*
+ * Below-the-fold sections drift up as they scroll into view. CSS scroll-driven
+ * animations run entirely on the compositor (no JS, no main-thread scroll listener);
+ * browsers without support simply show the sections static, and reduced motion
+ * turns the whole thing off.
+ */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .petri-landing .lp-view-rise {
+      animation: lp-view-rise var(--ease-out) both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 55%;
+    }
+  }
+}
+
+@keyframes lp-view-rise {
+  from {
+    opacity: 0.15;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/*
+ * The closing card's shader lining. The canvas sits behind the card copy at partial
+ * opacity with a scrim over its centre, so the gradient reads as lit silk behind the
+ * words, not competition for them. It fades in on the renderer's first frame with the
+ * same cross-fade discipline as the hero: no frame in which the card flashes.
+ */
+.petri-landing .lp-cta-shader {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  /* Clips itself to the card's rounded-3xl corner. The card cannot clip for it:
+     overflow on a preserve-3d ancestor flattens the tilt items' depth. */
+  border-radius: 1.5rem;
+  overflow: hidden;
+}
+
+.petri-landing .lp-cta-shader-layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 900ms var(--ease-out);
+}
+
+.petri-landing .lp-cta-shader-layer[data-ready="true"] {
+  opacity: 0.5;
+}
+
+.petri-landing .lp-cta-shader-scrim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 75% 85% at 50% 45%,
+    color-mix(in oklch, var(--card) 78%, transparent),
+    color-mix(in oklch, var(--card) 30%, transparent) 70%,
+    transparent
+  );
+}
+
+/* The final CTA sits in a pool of the hero's own ink — the page closes on the same
+   two hues it opened with. Blurred radial pair, no animation: it's a glow, not a show. */
+.petri-landing .lp-cta-glow {
+  position: relative;
+}
+
+.petri-landing .lp-cta-glow::before {
+  content: "";
+  position: absolute;
+  inset: -12% -18%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(42% 58% at 22% 28%, var(--lp-ink-1), transparent 70%),
+    radial-gradient(40% 55% at 80% 74%, var(--lp-ink-3), transparent 70%);
+  opacity: 0.22;
+  filter: blur(44px);
+}
+
+/* Film grain over the whole marketing page. On a near-black ground even 3% is
+   clearly felt (see the brightness calibration note in the hero fallback). Fixed and
+   pointer-transparent, so it costs one composited layer and no interaction. */
+.petri-landing .lp-grain {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)' opacity='1'/%3E%3C/svg%3E");
+  background-size: 140px 140px;
+  opacity: 0.03;
 }
 
 /* Entrance for above-the-fold content. Rare-to-see, so it gets a real animation. */
@@ -278,9 +331,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .petri-landing .lp-shader-fallback {
-    animation: none;
-  }
   .petri-landing .lp-rise {
     animation: lp-fade 260ms ease forwards;
     transform: none;

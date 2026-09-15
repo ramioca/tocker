@@ -53,7 +53,7 @@ export function FeatureBento() {
         permission, and an audit trail.
       </p>
 
-      <BentoGrid className="mt-12 max-w-none">
+      <BentoGrid className="lp-view-rise mt-12 max-w-none">
         <BentoCard
           colSpan={2}
           icon={<TimerReset className="size-5" aria-hidden />}
