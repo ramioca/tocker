@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { CommandMenu } from "./command-menu";
 import { MobileTabBar } from "./mobile-tab-bar";
 import { RunIsland } from "./run-island";
-import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 import type { CommandIndex } from "./command-index";
 
@@ -32,13 +31,9 @@ export function AppShell({
   }, []);
 
   return (
-    <div className="flex min-h-dvh w-full">
-      <Sidebar unreadCount={unreadCount} />
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar unreadCount={unreadCount} onOpenSearch={() => setPaletteOpen(true)} />
-        <main className="min-w-0 flex-1 pb-20 md:pb-0">{children}</main>
-      </div>
+    <div className="flex min-h-dvh w-full flex-col">
+      <TopBar unreadCount={unreadCount} onOpenSearch={() => setPaletteOpen(true)} />
+      <main className="min-w-0 flex-1 pb-20 md:pb-0">{children}</main>
 
       <MobileTabBar unreadCount={unreadCount} />
       <RunIsland />

@@ -109,6 +109,35 @@ export async function getAgentWallets(agentId: string): Promise<AgentWalletRow[]
   return rows.map((r) => ({ id: r.id, chain: r.chain as Chain, address: r.address }));
 }
 
+/** Live balances for one known wallet row. Paper wallets and Privy errors resolve to zeros. */
+async function readWalletBalances(w: AgentWalletRow): Promise<WalletBalance> {
+  const assets = ["usdc", NATIVE_ASSET[w.chain]] as const;
+  const empty = assets.map((asset) => ({ asset, amount: 0, usd: null as number | null }));
+  if (!isPrivyConfigured() || isPaperWallet(w.id)) {
+    return { chain: w.chain, address: w.address, walletId: w.id, balances: empty };
+  }
+  try {
+    const res = await privy()
+      .wallets()
+      .balance.get(w.id, { chain: CHAIN_NAME[w.chain], asset: [...assets] });
+    const balances = (res.balances ?? []).map((b) => {
+      const decimals = b.raw_value_decimals ?? 0;
+      const amount = Number(b.raw_value ?? "0") / 10 ** decimals;
+      const usdRaw = b.display_values?.usd ?? b.display_values?.USD;
+      const usd = usdRaw === undefined ? null : Number(usdRaw);
+      return {
+        asset: String(b.asset),
+        amount: Number.isFinite(amount) ? amount : 0,
+        usd: usd !== null && Number.isFinite(usd) ? usd : null,
+      };
+    });
+    return { chain: w.chain, address: w.address, walletId: w.id, balances: balances.length ? balances : empty };
+  } catch (err) {
+    console.warn(`[wallets] balance lookup failed for ${w.id}:`, err instanceof Error ? err.message : err);
+    return { chain: w.chain, address: w.address, walletId: w.id, balances: empty };
+  }
+}
+
 /**
  * Live balances (USDC + native) for every agent wallet. Paper wallets and Privy
  * errors resolve to zeroed balances rather than throwing — the wallet card
@@ -116,36 +145,22 @@ export async function getAgentWallets(agentId: string): Promise<AgentWalletRow[]
  */
 export async function getAgentWalletBalances(agentId: string): Promise<WalletBalance[]> {
   const rows = await getAgentWallets(agentId);
-  const configured = isPrivyConfigured();
+  return Promise.all(rows.map(readWalletBalances));
+}
 
+/**
+ * Live balances for the user's own Privy *embedded* wallets (kind `user_embedded`,
+ * recorded by /api/me/sync at login). This is the "cash" the top-bar wallet chip
+ * shows — spendable by the user, distinct from any agent's trading balance.
+ */
+export async function getUserWalletBalances(userId: string): Promise<WalletBalance[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({ id: wallets.id, chain: wallets.chain, address: wallets.address })
+    .from(wallets)
+    .where(and(eq(wallets.userId, userId), eq(wallets.kind, "user_embedded")));
   return Promise.all(
-    rows.map(async (w): Promise<WalletBalance> => {
-      const assets = ["usdc", NATIVE_ASSET[w.chain]] as const;
-      const empty = assets.map((asset) => ({ asset, amount: 0, usd: null as number | null }));
-      if (!configured || isPaperWallet(w.id)) {
-        return { chain: w.chain, address: w.address, walletId: w.id, balances: empty };
-      }
-      try {
-        const res = await privy()
-          .wallets()
-          .balance.get(w.id, { chain: CHAIN_NAME[w.chain], asset: [...assets] });
-        const balances = (res.balances ?? []).map((b) => {
-          const decimals = b.raw_value_decimals ?? 0;
-          const amount = Number(b.raw_value ?? "0") / 10 ** decimals;
-          const usdRaw = b.display_values?.usd ?? b.display_values?.USD;
-          const usd = usdRaw === undefined ? null : Number(usdRaw);
-          return {
-            asset: String(b.asset),
-            amount: Number.isFinite(amount) ? amount : 0,
-            usd: usd !== null && Number.isFinite(usd) ? usd : null,
-          };
-        });
-        return { chain: w.chain, address: w.address, walletId: w.id, balances: balances.length ? balances : empty };
-      } catch (err) {
-        console.warn(`[wallets] balance lookup failed for ${w.id}:`, err instanceof Error ? err.message : err);
-        return { chain: w.chain, address: w.address, walletId: w.id, balances: empty };
-      }
-    }),
+    rows.map((r) => readWalletBalances({ id: r.id, chain: r.chain as Chain, address: r.address })),
   );
 }
 
