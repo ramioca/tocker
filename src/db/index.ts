@@ -52,8 +52,20 @@ export async function getDb(): Promise<Db> {
   return g.__tockerDbPromise;
 }
 
+/**
+ * Whether the database is the embedded PGlite file rather than a real Postgres.
+ *
+ * A predicate, so it must never throw: `/api/health` calls it *after* catching a
+ * connection failure, and an unset `DATABASE_URL` in production made `resolveUrl`
+ * throw straight through the handler — turning the one endpoint whose job is to
+ * report "there is no database" into a bare 500 with an empty body.
+ */
 export function isPglite(): boolean {
-  return resolveUrl().startsWith("pglite://");
+  const url = process.env.DATABASE_URL?.trim();
+  if (url) return url.startsWith("pglite://");
+  // Unset means the dev fallback to an on-disk file. Production has no fallback —
+  // `resolveUrl` refuses to invent one — so there is no embedded database to report.
+  return process.env.NODE_ENV !== "production";
 }
 
 export * from "./schema";
