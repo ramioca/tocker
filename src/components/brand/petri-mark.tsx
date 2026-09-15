@@ -24,6 +24,8 @@
  * every screen, and a logo that moves is a logo you stop trusting.
  */
 
+import Image from "next/image";
+
 /** Dial + melt silhouette, full-detail density. */
 const CLOCK_DIAL =
   "M30 7 C41.5 7 50 15.3 50 25.8 C50 30.6 49.4 34.2 48.6 37.6 C47.8 41 48.6 44 47.4 46.6 " +
@@ -124,5 +126,23 @@ export function PetriLogo({ size = 20, className }: { size?: number; className?:
       <PetriMark size={size} />
       <span className="text-sm font-semibold tracking-tight">tocker</span>
     </span>
+  );
+}
+
+/**
+ * The raster mark: the same soft watch, but pixel-dissolve — an electric-blue dial
+ * melting into a fall of magenta pixels (generated art, cut to alpha from a black
+ * ground). Drawn for the near-black marketing surfaces and the favicon tile; on light
+ * or mid-tone surfaces its glow halos tint, so use `PetriMark` there instead.
+ */
+export function TockerMark({ size = 22, className }: { size?: number; className?: string }) {
+  return (
+    <Image
+      src="/brand/tocker-mark.png"
+      alt=""
+      width={size}
+      height={size}
+      className={className}
+    />
   );
 }
