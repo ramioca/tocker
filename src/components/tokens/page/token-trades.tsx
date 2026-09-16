@@ -7,6 +7,11 @@
  *
  * The rationale is public on purpose (SPEC rule 1): it is after the fact, and
  * knowing why someone bought a token once does not hand over a system.
+ *
+ * Each row expands into its **receipt** — venue, quoted against filled, slippage, fees,
+ * explorer link. A receipt is as public as the trade it documents (it carries no
+ * thresholds, no sources, no transcript), and it is the difference between a table of
+ * claims and a table of checkable facts.
  */
 import Link from "next/link";
 import { Receipt } from "lucide-react";
@@ -23,15 +28,20 @@ import { RelativeTime } from "@/components/common/relative-time";
 import { formatTokenAmount, formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
 import type { TradeRow } from "@/server/types";
+import type { TradeReceiptData } from "@/db/schema";
+import { TradeReceiptSheet } from "@/components/trading";
 import { cn } from "@/lib/utils";
 
 export function TokenTrades({
   trades,
   agentNames,
+  receipts,
 }: {
   trades: TradeRow[];
   /** agentId → { slug, name }, so a row can link to whoever made it. */
   agentNames: Record<string, { slug: string; name: string }>;
+  /** tradeId → receipt. Absent for trades that predate receipts; the row still renders. */
+  receipts?: Map<string, TradeReceiptData>;
 }) {
   if (trades.length === 0) {
     return (
@@ -55,11 +65,13 @@ export function TokenTrades({
             <TableHead className="text-right">Price</TableHead>
             <TableHead className="text-right">Value</TableHead>
             <TableHead className="text-right">Score</TableHead>
+            <TableHead className="text-right">Receipt</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {trades.map((trade) => {
             const agent = agentNames[trade.agentId];
+            const receipt = receipts?.get(trade.id) ?? null;
             return (
               <TableRow key={trade.id}>
                 <TableCell className="whitespace-nowrap text-xs">
@@ -105,6 +117,17 @@ export function TokenTrades({
                       size="xs"
                       numberOnly
                     />
+                  )}
+                </TableCell>
+                <TableCell className="text-right">
+                  {receipt ? (
+                    <TradeReceiptSheet
+                      receipt={receipt}
+                      trigger="chip"
+                      title={`${trade.side.toUpperCase()} ${trade.token.symbol}${agent ? ` · ${agent.name}` : ""}`}
+                    />
+                  ) : (
+                    <span className="font-mono text-[11px] text-muted-foreground">—</span>
                   )}
                 </TableCell>
               </TableRow>

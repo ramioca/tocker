@@ -3,7 +3,7 @@
  * Used by the builder form (client), server actions (validation) and the run loop.
  */
 import { z } from "zod";
-import type { AgentConfig, AgentConfigWithSizing } from "@/db/schema";
+import type { AgentConfigWithSizing } from "@/db/schema";
 import { DEFAULT_SIZING } from "@/lib/trading/sizing";
 
 export const chainSchema = z.enum(["solana", "base"]);

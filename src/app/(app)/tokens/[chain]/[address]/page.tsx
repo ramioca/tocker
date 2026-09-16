@@ -6,15 +6,16 @@ import {
   AgentsHolding,
   BlockMenu,
   FlowStats,
-  PriceSparkline,
   ScoreHero,
   ScoreHistoryChart,
   ScoreTokenPanel,
   TokenHeader,
   TokenTrades,
 } from "@/components/tokens/page";
+import { PriceChart, pricePointsFrom } from "@/components/trading";
 import { viewerSession } from "@/components/common/data-access";
 import { agentRefs, getTokenPage, myAgentsForBlocklist } from "@/server/queries/tokens";
+import { myTokenMarkers, receiptsForTrades, tokenActivityCount, type TokenMarker } from "@/server/queries/trading";
 import type { Chain, TokenPage } from "@/server/types";
 
 /**
@@ -64,9 +65,14 @@ export default async function TokenPageRoute({ params }: Params) {
   const page = await getTokenPage(chain, address, viewerId);
   if (!page) notFound();
 
-  const [blockTargets, agents] = await Promise.all([
+  const [blockTargets, agents, markers, agentCount, receipts] = await Promise.all([
     viewerId ? myAgentsForBlocklist(viewerId, chain, address) : Promise.resolve([]),
     agentRefs(page.recentTrades.map((trade) => trade.agentId)),
+    // Owner-only by construction: `myTokenMarkers` filters on agents.ownerId in SQL and
+    // returns [] for an anonymous viewer. Nobody else's entries land on this chart.
+    myTokenMarkers(page.token.id, viewerId),
+    tokenActivityCount(page.token.id),
+    receiptsForTrades(page.recentTrades.map((trade) => trade.id)),
   ]);
 
   const blockMenu =
@@ -85,7 +91,7 @@ export default async function TokenPageRoute({ params }: Params) {
           <ScoreTokenPanel chain={chain} address={address} signedIn={Boolean(viewerId)} />
         )}
 
-        <History page={page} />
+        <History page={page} markers={markers} agentCount={agentCount} />
 
         <FlowStats stats={page.stats} />
 
@@ -97,7 +103,7 @@ export default async function TokenPageRoute({ params }: Params) {
             >
               Recent agent trades
             </h2>
-            <TokenTrades trades={page.recentTrades} agentNames={agents} />
+            <TokenTrades trades={page.recentTrades} agentNames={agents} receipts={receipts} />
           </section>
 
           <section aria-labelledby="token-holders-heading" className="min-w-0">
@@ -116,11 +122,25 @@ export default async function TokenPageRoute({ params }: Params) {
 }
 
 /**
- * Score and price over the same 30 days, at the same width. The question a token
+ * Price and score over the same 30 days, at the same width. The question a token
  * page has to answer is whether the score moved before the price did, and two
  * charts sharing an x range is the only honest way to show it.
+ *
+ * The price chart carries the viewer's **own** entries and exits. Not anyone else's: a
+ * handful of marked fills on a price line is a readable strategy, and this product
+ * promises operators it will not publish that. A viewer with no fills of their own sees
+ * the aggregate instead — how many agents traded the token, never which or when.
  */
-function History({ page }: { page: TokenPage }) {
+function History({
+  page,
+  markers,
+  agentCount,
+}: {
+  page: TokenPage;
+  markers: TokenMarker[];
+  agentCount: number;
+}) {
+  const prices = pricePointsFrom(page.history);
   return (
     <section
       aria-labelledby="token-history-heading"
@@ -128,17 +148,29 @@ function History({ page }: { page: TokenPage }) {
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="token-history-heading" className="text-sm font-medium tracking-tight">
-          Score history
+          Price
         </h2>
         <p className="tnum font-mono text-[11px] text-muted-foreground">
-          last 30 days · {page.history.length} point{page.history.length === 1 ? "" : "s"}
+          last 30 days · {prices.length} point{prices.length === 1 ? "" : "s"}
+          {markers.length > 0 ? ` · ${markers.length} of your fills` : ""}
         </p>
       </div>
 
-      <Suspense fallback={<ChartSkeleton variant="line" height={220} />}>
-        <ScoreHistoryChart history={page.history} className="mt-2" />
+      <Suspense fallback={<ChartSkeleton variant="line" height={240} />}>
+        <PriceChart points={prices} markers={markers} agentCount={agentCount} className="mt-2" />
       </Suspense>
-      <PriceSparkline history={page.history} className="mt-3 border-t border-border/50 pt-3" />
+
+      <div className="mt-4 border-t border-border/50 pt-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Score</h3>
+          <p className="tnum font-mono text-[11px] text-muted-foreground">
+            {page.history.length} point{page.history.length === 1 ? "" : "s"}
+          </p>
+        </div>
+        <Suspense fallback={<ChartSkeleton variant="line" height={220} />}>
+          <ScoreHistoryChart history={page.history} className="mt-2" />
+        </Suspense>
+      </div>
     </section>
   );
 }

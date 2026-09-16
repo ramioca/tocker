@@ -14,8 +14,10 @@ import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
 import { eq } from "drizzle-orm";
 import { agents, getDb, posts, trades } from "@/db";
-import type { AgentConfig } from "@/db/schema";
+import type { AgentConfig, AgentConfigWithSizing } from "@/db/schema";
 import { getSession } from "@/lib/auth";
+import { positionSizingSchema } from "@/lib/agent/config";
+import type { PositionSizingConfig } from "@/lib/trading/sizing";
 import { getAgentWallets, getPortfolio, toRiskPortfolio } from "@/lib/agent/portfolio";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
@@ -443,4 +445,47 @@ export async function pendingProposalsSummary(): Promise<PendingProposalsSummary
   const session = await getSession();
   if (!session) return { count: 0, latest: null };
   return (await proposalQueries()).getPendingProposalsSummary(session.userId);
+}
+
+// ------------------------------------------------------------------ sizing
+
+/**
+ * Change how big this agent's tickets are.
+ *
+ * Its own action rather than a field in the settings form, for one reason: sizing is the
+ * setting most likely to be changed in a hurry, on a live agent, in the middle of a bad
+ * day. It should be one owner-checked write that touches nothing else — not a
+ * round trip through a whole config form that could carry a stale universe with it.
+ *
+ * `maxTradeUsd` is deliberately not editable here. It is the hard ceiling, it lives in
+ * the risk form, and halving your exposure should never be a side effect of picking a
+ * different sizing mode.
+ */
+export async function setPositionSizing(
+  agentId: string,
+  sizing: PositionSizingConfig,
+): Promise<ActionResult<{ sizing: PositionSizingConfig }>> {
+  const session = await getSession();
+  if (!session) return fail("Sign in first");
+
+  const agent = await ownedAgent(agentId, session.userId);
+  if (!agent) return fail("You do not own this agent");
+
+  const parsed = positionSizingSchema.safeParse(sizing);
+  if (!parsed.success) {
+    return fail(parsed.error.issues[0]?.message ?? "That sizing configuration is not valid.");
+  }
+
+  const db = await getDb();
+  const current = agent.config as AgentConfigWithSizing;
+  const next: AgentConfigWithSizing = {
+    ...current,
+    risk: { ...current.risk, sizing: parsed.data },
+  };
+
+  await db.update(agents).set({ config: next, updatedAt: new Date() }).where(eq(agents.id, agentId));
+  revalidatePath(`/agents/${agent.slug}`);
+  revalidatePath(`/agents/${agent.slug}/settings`);
+
+  return { ok: true, data: { sizing: parsed.data } };
 }

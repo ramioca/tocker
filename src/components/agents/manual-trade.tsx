@@ -34,8 +34,11 @@ import { formatUsd } from "@/components/common/format";
 import { Field } from "@/components/agents/builder/field";
 import { ScoreBadge } from "@/components/tokens";
 import { placeManualTrade, previewTrade } from "@/server/actions/trading";
+import { SizingSummary, TradeReceiptCard } from "@/components/trading";
+import { readSizing } from "@/lib/trading/sizing";
 import { cn } from "@/lib/utils";
 import type { AgentDetail, Chain, TradePreview } from "@/server/types";
+import type { AgentRiskWithSizing, TradeReceiptData } from "@/db/schema";
 
 const SIZE_PRESETS = [10, 25, 50, 100, 250] as const;
 
@@ -56,6 +59,13 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
    * cleared synchronously when the inputs change.
    */
   const [result, setResult] = useState<{ key: string; data: TradePreview | null; error: string | null } | null>(null);
+  /**
+   * The receipt for the fill that just happened. The sheet stays open on it rather than
+   * closing straight away: a live trade that just moved real money is exactly the moment
+   * someone wants the venue, the slippage and the hash in front of them, not a toast
+   * that disappears in four seconds.
+   */
+  const [receipt, setReceipt] = useState<TradeReceiptData | null>(null);
 
   const amountUsd = Number(amount);
   const address = tokenAddress.trim();
@@ -107,7 +117,7 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
         })} ${placed.data.symbol} at ${formatUsd(placed.data.priceUsd)}${placed.data.isPaper ? " · paper" : ""}`,
       },
     );
-    setOpen(false);
+    setReceipt(placed.data.receipt);
     setTokenAddress("");
     setNote("");
     setResult(null);
@@ -117,7 +127,13 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   const blocked = !ready || previewing || preview === null || !preview.allowed;
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <Sheet
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) setReceipt(null);
+      }}
+    >
       <SheetTrigger
         render={
           <button
@@ -247,7 +263,24 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
             />
           </Field>
 
+          {/* The size the agent's own sizing mode allows right now, and why. Shown next
+              to the amount field so a refusal is never the first time anyone sees it. */}
+          <SizingSummary
+            sizing={readSizing(agent.config?.risk as AgentRiskWithSizing | undefined)}
+            maxTradeUsd={agent.config?.risk.maxTradeUsd ?? 0}
+            equityUsd={agent.equityUsd}
+          />
+
           <PreviewPanel preview={preview} error={previewError} loading={previewing} ready={ready} />
+
+          {receipt ? (
+            <section aria-label="Fill receipt" className="space-y-2">
+              <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+                Filled
+              </h3>
+              <TradeReceiptCard receipt={receipt} />
+            </section>
+          ) : null}
         </div>
 
         <SheetFooter>
