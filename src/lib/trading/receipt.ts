@@ -27,14 +27,13 @@ import type { ReceiptScoreReason, TradeReceiptData, TradeReceiptVenue } from "@/
 import { toNumeric } from "@/lib/money";
 import type { Chain, ScoreComponents, TokenScore, TradeScore } from "@/server/types";
 import type { Fill, Quote } from "./executor";
+import { SIMULATED_FILL_TEXT, SIMULATED_TX, exceededTolerance, slippageText } from "./receipt-format";
+
+export { SIMULATED_FILL_TEXT, SIMULATED_TX, exceededTolerance, slippageText };
 
 export type { TradeReceiptData, ReceiptScoreReason, TradeReceiptVenue };
 
-/** Exactly what a paper fill says, everywhere, forever. */
-export const SIMULATED_FILL_TEXT = "Simulated fill · no on-chain transaction";
 
-/** The literal written into `txHash` when there was no chain to write to. */
-export const SIMULATED_TX = "simulated";
 
 const VENUE_LABELS: Record<TradeReceiptVenue, string> = {
   jupiter: "Jupiter Ultra",
@@ -216,17 +215,7 @@ export async function getReceipts(tradeIds: readonly string[]): Promise<Map<stri
   return out;
 }
 
-/** "+19 bps" / "-4 bps" / "at the quote" — the slippage, in a phrase. */
-export function slippageText(bps: number): string {
-  if (!Number.isFinite(bps) || Math.abs(bps) < 0.5) return "at the quote";
-  const rounded = Math.round(bps);
-  return `${rounded > 0 ? "+" : "−"}${Math.abs(rounded)} bps`;
-}
 
-/** True when the fill drifted further from the quote than the agent said it would accept. */
-export function exceededTolerance(receipt: Pick<TradeReceiptData, "slippageBps" | "slippageToleranceBps">): boolean {
-  return receipt.slippageBps > receipt.slippageToleranceBps;
-}
 
 /** One line for a notification body: what filled, where, and how well. */
 export function receiptSummary(receipt: TradeReceiptData): string {
