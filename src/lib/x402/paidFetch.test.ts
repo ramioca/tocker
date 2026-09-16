@@ -103,6 +103,26 @@ describe("selectPaymentOption", () => {
   it("returns null when there is nothing to choose from", () => {
     expect(selectPaymentOption([], "eip155:8453", walletRefs)).toBeNull();
   });
+
+  // W5: the platform signs every payment, so the choice is made against the platform's
+  // chains and no agent wallet is consulted at all.
+  it("chooses without being handed any wallets — the platform's chains are the default", () => {
+    expect(selectPaymentOption([sol, base], "eip155:8453")?.network).toBe("eip155:8453");
+    expect(selectPaymentOption([sol, base], "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp")?.network).toBe(
+      "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    );
+  });
+
+  it("skips a network the platform holds no wallet on, however cheap it is", () => {
+    // CoinMarketCap offers BSC; signing there would produce a valid signature against
+    // a balance that does not exist.
+    const cheapBsc = { ...bsc, amountUsd: 0.001 };
+    expect(selectPaymentOption([cheapBsc, base], "eip155:999")?.network).toBe("eip155:8453");
+  });
+
+  it("still picks the cheapest payable option when the preferred network is not offered", () => {
+    expect(selectPaymentOption([bsc, sol, base], "eip155:999")?.amountUsd).toBe(0.005);
+  });
 });
 
 describe("paidFetch in mock mode", () => {
@@ -224,6 +244,26 @@ describe("paidFetch in mock mode", () => {
 
     const rows = await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
     expect(rows).toHaveLength(0);
+  });
+
+  it("pays for an agent that holds no wallet on the data network", async () => {
+    // The old rule was that the agent needed a wallet on the resource's network. It
+    // does not any more: the platform pays, and the agent's wallets are for trading.
+    const c: X402Context = { agentId, runId: null, mode: "paper", wallets: [], budget: newBudget(0.25) };
+    const res = await paidFetch(c, {
+      sourceId: "cmc-quotes",
+      url: "https://pro-api.coinmarketcap.com/x402/v3/cryptocurrency/quotes/latest?symbol=SOL",
+      network: "eip155:8453",
+      priceUsd: 0.01,
+      fixture: { ok: true },
+    });
+    expect(res.amountUsd).toBeCloseTo(0.01, 9);
+
+    // The payment is still recorded against the agent and its run: who paid changed,
+    // who it was *for* did not.
+    const rows = await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.agentId).toBe(agentId);
   });
 
   it("charges nothing for a source with no registry price", async () => {

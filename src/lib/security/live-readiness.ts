@@ -139,12 +139,13 @@ export async function evaluateLiveReadiness(input: ReadinessInput): Promise<Live
   const capUsd = input.capUsd ?? FIRST_TRADE_PRESET.maxTradeUsd;
   const settings = `/agents/${input.slug}/settings`;
 
-  const [database, privy, mfa, wallets, killSwitch] = await Promise.all([
+  const [database, privy, mfa, wallets, killSwitch, data] = await Promise.all([
     checkDatabase(),
     Promise.resolve(checkPrivy()),
     checkMfa(input.ownerId),
     checkWallets(input.agentId, input.config.chains, settings),
     getKillSwitch(input.ownerId),
+    checkData(input.config, settings),
   ]);
 
   const steps: ReadinessStep[] = [
@@ -155,7 +156,7 @@ export async function evaluateLiveReadiness(input: ReadinessInput): Promise<Live
     wallets.fundingStep,
     checkBudget(input.config, input.walletBudget ?? null, capUsd, settings),
     checkRisk(input.config, capUsd, settings),
-    checkDataSources(input.config, settings),
+    data,
     {
       id: "killswitch",
       title: "Trading is not paused",
@@ -427,6 +428,68 @@ function checkRisk(config: AgentConfig, capUsd: number, settings: string): Readi
       : `Not yet: ${verdict.problems.join("; ")}.`,
     fix: verdict.ok ? null : { label: "Agent settings → Risk", href: settings },
   };
+}
+
+/**
+ * The `data` step: the agent's own source list *and* the wallet that will pay for it.
+ *
+ * Both have to be true for a paid call to work, and they fail in completely different
+ * places, so the step reports whichever is wrong and sends the operator to the right
+ * screen for it.
+ */
+async function checkData(config: AgentConfig, settings: string): Promise<ReadinessStep> {
+  const step = checkDataSources(config, settings);
+  // Mock mode already fails the step for a better reason, and there is no wallet
+  // question when nothing is being paid.
+  if (isMockMode() || step.state === "fail") return step;
+
+  const platform = await checkPlatformDataWallet();
+  if (platform) {
+    return { id: "data", title: "Data sources live", state: "fail", detail: platform.detail, fix: PLATFORM_CARD };
+  }
+  return { ...step, detail: `${step.detail} The platform data wallet is funded and pays for them.` };
+}
+
+/** Where an operator goes to see the platform wallets and their balances. */
+const PLATFORM_CARD = { label: "Settings → Platform", href: "/settings#platform" } as const;
+
+/**
+ * The platform data wallet, checked only when real payments are on.
+ *
+ * Since W5 the *platform* pays for data, not the agent — so an agent whose wallets are
+ * perfectly funded still cannot score a token deeply if the platform wallet on Base is
+ * empty. That failure used to be invisible until the first run: a 402 in a run log,
+ * with nothing on this checklist that could have predicted it.
+ *
+ * Returns null when there is nothing to say (mock mode, or all is well).
+ */
+async function checkPlatformDataWallet(): Promise<{ detail: string; state: "fail" } | null> {
+  try {
+    const { DATA_CHAIN, getPlatformWallet, readPlatformBalances } = await import("@/lib/platform/wallets");
+    const wallet = await getPlatformWallet(DATA_CHAIN);
+    if (!wallet) {
+      return {
+        state: "fail",
+        detail: `No platform data wallet on ${DATA_CHAIN} yet. It is created on first use, but it has to hold USDC before a paid data call can settle — run \`pnpm preflight\` to create it and print the address to fund.`,
+      };
+    }
+    const balances = await readPlatformBalances(wallet);
+    const usdc = balances.balances
+      .filter((b) => b.asset.toLowerCase() === "usdc")
+      .reduce((sum, b) => sum + b.amount, 0);
+    if (!(usdc > 0)) {
+      return {
+        state: "fail",
+        detail: `The platform data wallet on ${DATA_CHAIN} (${wallet.address}) holds no USDC, so every paid source would answer 402. Top it up.`,
+      };
+    }
+    return null;
+  } catch (err) {
+    return {
+      state: "fail",
+      detail: `Could not check the platform data wallet: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 function checkDataSources(config: AgentConfig, settings: string): ReadinessStep {

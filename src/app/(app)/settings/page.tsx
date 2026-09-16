@@ -7,6 +7,7 @@ import { SettingsSection } from "@/components/settings/settings-section";
 import { ProfileForm } from "@/components/settings/profile-form";
 import { LlmKeysSection } from "@/components/settings/llm-keys-section";
 import { NotificationPrefs } from "@/components/settings/notification-prefs";
+import { PlatformCard } from "@/components/settings/platform-card";
 import { DangerZone } from "@/components/settings/danger-zone";
 import { SignedOut } from "@/components/settings/signed-out";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
@@ -62,6 +63,18 @@ export default async function SettingsPage() {
           description="What lands in your notification list. Stored in this browser for now."
         >
           <NotificationPrefs />
+        </SettingsSection>
+
+        {/*
+          Single-operator for now: any signed-in user sees this. See the comment on
+          `PlatformCard` — it becomes a role check the day there is a second operator.
+        */}
+        <SettingsSection
+          id="platform"
+          title="Platform"
+          description="The app's own wallets: what pays for your agents' data, and where the per-fill fee lands."
+        >
+          <PlatformCard />
         </SettingsSection>
 
         <SettingsSection id="danger" tone="danger" title="Danger zone">

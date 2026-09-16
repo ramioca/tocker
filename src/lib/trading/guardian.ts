@@ -586,14 +586,21 @@ export async function runGuardian(input: RunGuardianInput): Promise<GuardianResu
       // executed — and it cannot throw. Selling first and collecting second is the only
       // order in which a settlement problem can never cost somebody a stop loss.
       if (input.trigger !== "tick") {
-        result.settlement = await settlePlatformFees({
-          agentId: agent.id,
-          ownerId: agent.ownerId,
-          agentName: agent.name,
-          mode: agent.mode,
-          now,
-        });
-        if (result.settlement.attempted) log(agent.id, `fees: ${result.settlement.note}`);
+        // `settlePlatformFees` contains its own failures, and this catch is the second
+        // fence: a bug in the fee code must not be able to turn a pass that sold three
+        // positions into a pass that reports nothing.
+        try {
+          result.settlement = await settlePlatformFees({
+            agentId: agent.id,
+            ownerId: agent.ownerId,
+            agentName: agent.name,
+            mode: agent.mode,
+            now,
+          });
+          if (result.settlement.attempted) log(agent.id, `fees: ${result.settlement.note}`);
+        } catch (err) {
+          log(agent.id, `fee settlement threw: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
       if (wantSnapshot) {
         try {
