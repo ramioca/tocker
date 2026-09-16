@@ -142,8 +142,9 @@ describe("planFunding", () => {
     expect(plan.ready).toBe(true);
     expect(plan.legs).toHaveLength(1);
     expect(plan.legs[0]).toMatchObject({ chain: "solana", usdc: 25 });
-    expect(plan.legs[0].native).toBeCloseTo(1 / 150, 6);
-    expect(plan.totalGasUsd).toBe(1);
+    // Gas is sponsored: no native leg, whatever the request asked for.
+    expect(plan.legs[0].native).toBe(0);
+    expect(plan.totalGasUsd).toBe(0);
   });
 
   it("splits a two-chain agent proportionally to the user's balances", () => {
@@ -157,7 +158,7 @@ describe("planFunding", () => {
     expect(plan.blockers).toEqual([]);
     expect(plan.legs.map((l) => l.usdc)).toEqual([20, 30]);
     expect(plan.totalUsdc).toBe(50);
-    expect(plan.totalGasUsd).toBe(2);
+    expect(plan.totalGasUsd).toBe(0);
   });
 
   it("honours an explicit split the user dragged", () => {
@@ -214,7 +215,7 @@ describe("planFunding", () => {
     expect(blocker?.deposit).toEqual({ chain: "base", asset: "usdc" });
   });
 
-  it("blocks when the user has no native for gas, with a native deposit CTA", () => {
+  it("never blocks on native: gas is sponsored, so a wallet with USDC and no SOL is ready", () => {
     const cash = unifiedCash([wallet("solana", 100, 0)]);
     const plan = planFunding({
       mode: "fund",
@@ -223,11 +224,9 @@ describe("planFunding", () => {
       chains: ["solana"],
       cash,
     });
-    expect(plan.ready).toBe(false);
-    expect(plan.blockers.find((b) => b.kind === "chain-short-native")?.deposit).toEqual({
-      chain: "solana",
-      asset: "native",
-    });
+    expect(plan.ready).toBe(true);
+    expect(plan.blockers.some((b) => b.kind === "chain-short-native")).toBe(false);
+    expect(plan.legs[0].native).toBe(0);
   });
 
   it("does not ask for gas when the allowance is zero", () => {
@@ -268,7 +267,7 @@ describe("planFunding", () => {
 });
 
 describe("transfersFor", () => {
-  it("sends gas before USDC so a funded wallet can always move", () => {
+  it("sends only USDC — gas is sponsored, so no native transfer is ever queued", () => {
     const cash = unifiedCash([wallet("solana", 100, 1, 150)]);
     const plan = planFunding({
       mode: "fund",
@@ -277,7 +276,7 @@ describe("transfersFor", () => {
       chains: ["solana"],
       cash,
     });
-    expect(transfersFor(plan).map((t) => t.asset)).toEqual(["native", "usdc"]);
+    expect(transfersFor(plan).map((t) => t.asset)).toEqual(["usdc"]);
   });
 
   it("skips zero legs", () => {
@@ -304,7 +303,7 @@ describe("depositTargets", () => {
     expect(depositTargets(plan)).toEqual([{ chain: "solana", asset: "usdc" }]);
   });
 
-  it("keeps USDC and gas apart — they are different deposits", () => {
+  it("asks only for USDC on an empty wallet — never for gas", () => {
     const cash = unifiedCash([wallet("solana", 0, 0)]);
     const plan = planFunding({
       mode: "fund",
@@ -313,10 +312,7 @@ describe("depositTargets", () => {
       chains: ["solana"],
       cash,
     });
-    expect(depositTargets(plan)).toEqual([
-      { chain: "solana", asset: "usdc" },
-      { chain: "solana", asset: "native" },
-    ]);
+    expect(depositTargets(plan)).toEqual([{ chain: "solana", asset: "usdc" }]);
   });
 
   it("is empty for a plan with nothing blocking it", () => {

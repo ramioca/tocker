@@ -865,7 +865,7 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
 
           <Field
             label="Starting cash"
-            hint={`Minimum ${formatUsd(MIN_FUND_USD)}. Below that, gas and slippage eat the position before the strategy gets a say.`}
+            hint={`Minimum ${formatUsd(MIN_FUND_USD)}. Below that, fees and slippage eat the position before the strategy gets a say.`}
           >
             <div className="flex flex-wrap gap-2">
               {FUND_PRESETS.map((preset) => {
@@ -952,36 +952,6 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
             </Field>
           ) : null}
 
-          <Field
-            label="Gas allowance"
-            hint={`The agent signs its own trades, so each of its wallets needs a little ${chains.map((c) => NATIVE_SYMBOL[c]).join(" / ")}. This is not trading capital and is never counted as cash.`}
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">$</span>
-              <Input
-                aria-label="Gas allowance per chain in dollars"
-                value={String(funding.gasUsd)}
-                inputMode="decimal"
-                onChange={(event) => {
-                  const parsed = Number(event.target.value.replace(/[^0-9.]/g, ""));
-                  patch({ gasUsd: Number.isFinite(parsed) ? Math.min(parsed, MAX_GAS_USD) : 0 });
-                }}
-                className="tnum h-9 w-24 font-mono"
-              />
-              <span className="text-xs text-muted-foreground">per chain</span>
-            </div>
-            {plan ? (
-              <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-                {plan.legs.map((leg) => (
-                  <li key={leg.chain} className="tnum text-[11px] text-muted-foreground">
-                    ≈ {formatTokenAmount(leg.native)} {NATIVE_SYMBOL[leg.chain]} on{" "}
-                    {chainLabelFor(leg.chain)}
-                    {leg.nativePriceDerived ? "" : " (estimated price)"}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </Field>
 
           {plan && plan.blockers.length > 0 ? (
             <div className="space-y-2 rounded-xl border border-destructive/25 bg-destructive/8 p-3.5">

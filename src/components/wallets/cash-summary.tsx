@@ -61,13 +61,6 @@ export function ChainBreakdown({
         >
           <div className="min-w-0">
             <ChainBadge chain={chainCash.chain} />
-            <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Fuel aria-hidden className="size-3" />
-              <span className="tnum">
-                {formatTokenAmount(chainCash.native)} {NATIVE_SYMBOL[chainCash.chain]}
-              </span>
-              <span>gas</span>
-            </p>
           </div>
 
           <div className="text-right">
@@ -94,9 +87,8 @@ export function ChainBreakdown({
 export function CashLegend({ cash }: { cash: UnifiedCash }) {
   return (
     <p className="text-[11px] leading-relaxed text-muted-foreground">
-      Cash is USDC across your wallets on Base and Solana, shown as one balance. The{" "}
-      <span className="tnum">{formatUsd(cash.gasUsd)}</span> of ETH and SOL is gas — it pays for
-      transactions and is never traded.
+      Cash is USDC across your wallets on Base and Solana, shown as one balance. Gas is
+      sponsored, so there is nothing else to hold.
     </p>
   );
 }

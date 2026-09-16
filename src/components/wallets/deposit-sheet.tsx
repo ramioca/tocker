@@ -141,10 +141,6 @@ export function DepositSheet({
             </span>
             <span className="text-right">
               <span className="tnum block text-sm font-medium">{formatUsd(chainCash.usdcUsd)}</span>
-              <span className="tnum flex items-center justify-end gap-1 text-[11px] text-muted-foreground">
-                <Fuel aria-hidden className="size-3" />
-                {formatTokenAmount(chainCash.native)} {NATIVE_SYMBOL[chain]}
-              </span>
             </span>
           </div>
 
@@ -201,23 +197,6 @@ export function DepositSheet({
                   <span>{wording.warning}</span>
                 </p>
 
-                {asset === "native" ? (
-                  <button
-                    type="button"
-                    onClick={() => setAsset("usdc")}
-                    className="rounded text-[11px] text-muted-foreground underline-offset-2 transition-colors duration-150 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    Show the USDC wording instead
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setAsset("native")}
-                    className="rounded text-[11px] text-muted-foreground underline-offset-2 transition-colors duration-150 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    I need {NATIVE_SYMBOL[chain]} for gas instead
-                  </button>
-                )}
               </>
             ) : (
               <div className="space-y-3 text-sm text-muted-foreground">

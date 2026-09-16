@@ -48,7 +48,14 @@ export const MIN_FUND_USD = 5;
 export const DEFAULT_FUND_USD = 10;
 export const FUND_PRESETS = [10, 25, 50, 100] as const;
 
-/** A tank, not a budget: enough gas for a few dozen trades, clearly labelled and editable. */
+/**
+ * Gas is sponsored through Privy, so funding never sends native tokens and never
+ * blocks on them. The gas fields below survive for the types and for the day this
+ * flips back; with it on, every leg's `native` is 0 and `chain-short-native` never fires.
+ */
+export const GAS_SPONSORED = true;
+
+/** A tank, not a budget: enough gas for a few dozen trades — only used when gas is not sponsored. */
 export const DEFAULT_GAS_USD = 1;
 export const MAX_GAS_USD = 25;
 
@@ -287,7 +294,7 @@ export function planFunding(request: FundingRequest): FundingPlan {
 
   const blockers: FundingBlocker[] = [];
   const amountUsd = round(request.amountUsd, 2);
-  const gasUsd = round(request.gasUsd, 2);
+  const gasUsd = GAS_SPONSORED ? 0 : round(request.gasUsd, 2);
 
   if (chains.length === 0) {
     blockers.push({
@@ -303,7 +310,7 @@ export function planFunding(request: FundingRequest): FundingPlan {
     blockers.push({
       kind: "below-minimum",
       chain: null,
-      message: `Fund at least $${MIN_FUND_USD}. Below that, gas and slippage eat the position before the strategy gets a say.`,
+      message: `Fund at least $${MIN_FUND_USD}. Below that, fees and slippage eat the position before the strategy gets a say.`,
       deposit: null,
     });
   }

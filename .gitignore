@@ -51,3 +51,6 @@ next-env.d.ts
 
 # parallel-agent worktrees
 .claude/worktrees/
+
+# local dev launcher
+.claude/launch.json

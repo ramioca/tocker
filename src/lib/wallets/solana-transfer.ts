@@ -149,6 +149,27 @@ export function solTransferInstructions(input: {
 }
 
 /**
+ * In the browser the blockhash comes from our own `/api/solana/blockhash`, so the RPC
+ * URL (and any provider key in it) stays on the server. Anywhere else, or if the proxy
+ * is unreachable, it falls back to asking an RPC directly.
+ */
+async function latestBlockhash(rpcUrl?: string): Promise<string> {
+  if (typeof window !== "undefined" && !rpcUrl) {
+    try {
+      const res = await fetch("/api/solana/blockhash", { cache: "no-store" });
+      if (res.ok) {
+        const body = (await res.json()) as { blockhash?: string };
+        if (body.blockhash) return body.blockhash;
+      }
+    } catch {
+      // fall through to a direct RPC call
+    }
+  }
+  const connection = new Connection(rpcUrl ?? solanaRpcUrl(), "confirmed");
+  return (await connection.getLatestBlockhash("confirmed")).blockhash;
+}
+
+/**
  * Build a signed-by-nobody v0 transaction ready for Privy's
  * `signAndSendTransaction`. Fetches a blockhash, so it needs the network.
  */
@@ -166,8 +187,7 @@ export async function buildSolanaTransfer(input: {
       ? usdcTransferInstructions({ from, to, amount: input.amount })
       : solTransferInstructions({ from, to, amount: input.amount });
 
-  const connection = new Connection(input.rpcUrl ?? solanaRpcUrl(), "confirmed");
-  const { blockhash } = await connection.getLatestBlockhash("confirmed");
+  const blockhash = await latestBlockhash(input.rpcUrl);
   const message = new TransactionMessage({
     payerKey: from,
     recentBlockhash: blockhash,

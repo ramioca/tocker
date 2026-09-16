@@ -44,7 +44,7 @@ Set these in Vercel → Project → Settings → Environment Variables, for Prod
 | `X402_MOCK` | `1` runs on fixtures. Anything else — including unset — means **real** payments; `isMockMode()` tests for exactly `"1"`. |
 | `CRON_MAX_AGENTS` | Agents per cron invocation. Default 5; use 2 on Hobby. |
 | `LLM_MOCK` | unset (or `0`) |
-| `SOLANA_RPC_URL` | A paid RPC. The public endpoint is rate-limited and will drop trades. |
+| `SOLANA_RPC_URL` | Solana RPC, server-only. Use Helius or another provider — the public RPC is rate-limited. The browser never sees it; `/api/solana/blockhash` proxies the one call it needs. |
 | `BASE_RPC_URL` | Any Base RPC |
 | `JUPITER_API_KEY` | Optional, raises Jupiter rate limits |
 
@@ -192,3 +192,17 @@ curl -H "Authorization: Bearer $CRON_SECRET" https://your-app.vercel.app/api/cro
 
 - Agent runs happen inside the request that triggers them. This is fine at demo scale. Past a few dozen active agents, move the run loop to a queue or a worker rather than a serverless function.
 - The exit engine is the part that must never miss a beat. If you run crons on GitHub Actions, note that its scheduler can delay jobs under load; for real money, use Pro crons or a dedicated scheduler.
+
+## Gas sponsorship
+
+Tocker does not show gas anywhere and does not send native tokens to agents. That
+holds because gas is sponsored through Privy — enable **Gas sponsorship** in the Privy
+dashboard for Base and Solana, and fund it. What that covers, precisely:
+
+- Withdrawals from agent wallets and the user's own deposits/funding transfers go
+  through Privy's RPC methods, which take `sponsor: true` — covered.
+- Base **swaps** go through Privy's swap API and Solana swaps are built by Jupiter
+  Ultra with the agent as fee payer. Neither path carries a sponsorship flag in the SDK
+  today, so the first live trade is the test: if a swap fails for gas, the run's
+  trade record carries the exact error, and the fallback is a small native top-up to
+  the agent wallet from the settings page's funding drawer.

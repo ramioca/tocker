@@ -437,7 +437,7 @@ export function AgentBuilder({
             summary={
               draft.funding.mode === "paper"
                 ? "Paper only — its wallets are created empty, fund it whenever you like"
-                : `${formatUsd(draft.funding.amountUsd)} USDC + ${formatUsd(draft.funding.gasUsd)} of gas per chain, signed by you on create`
+                : `${formatUsd(draft.funding.amountUsd)} USDC, signed by you on create`
             }
             open={open.has("funding")}
             onToggle={() => toggle("funding")}
@@ -471,8 +471,7 @@ export function AgentBuilder({
           {draft.funding.mode === "fund" ? (
             <>
               You will sign transfers of{" "}
-              <span className="tnum font-mono">{formatUsd(draft.funding.amountUsd)}</span> USDC plus
-              gas right after it is created.{" "}
+              <span className="tnum font-mono">{formatUsd(draft.funding.amountUsd)}</span> USDC right after it is created.{" "}
             </>
           ) : null}
           {runsPerDay === 0 ? (

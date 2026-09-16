@@ -39,13 +39,8 @@ export function GoLiveCard({ agent }: { agent: AgentDetail }) {
     .filter((balance) => balance.asset === "usdc")
     .reduce((sum, balance) => sum + balance.amount, 0);
 
-  const gas = wallets
-    .filter((wallet) => agent.chains.includes(wallet.chain))
-    .flatMap((wallet) => wallet.balances)
-    .filter((balance) => balance.asset !== "usdc")
-    .reduce((sum, balance) => sum + (balance.usd ?? 0), 0);
 
-  const funded = usdc >= MIN_USDC && gas > 0;
+  const funded = usdc >= MIN_USDC;
   const live = agent.mode === "live";
 
   const backToPaper = async () => {
@@ -112,8 +107,6 @@ export function GoLiveCard({ agent }: { agent: AgentDetail }) {
               </dd>
             </div>
             <div className="flex items-center justify-between gap-3 text-xs">
-              <dt className="text-muted-foreground">Native balance for gas</dt>
-              <dd className={gas > 0 ? "tnum text-positive" : "tnum text-muted-foreground"}>{formatUsd(gas)}</dd>
             </div>
           </dl>
 

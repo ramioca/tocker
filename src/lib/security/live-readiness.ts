@@ -327,21 +327,17 @@ async function checkWallets(
   const gasAmount = sumAsset(relevant, (asset) => asset !== "usdc");
 
   const fundedUsdc = usdc >= MIN_USDC;
-  // Privy sometimes omits the USD quote for a native balance; a non-zero raw
-  // amount is still gas, so accept either signal rather than blocking on a quote.
-  const fundedGas = gasUsd > 0 || gasAmount > 0;
+  // Gas is sponsored through Privy, so funding is a USDC question only.
 
   const fundingStep: ReadinessStep = {
     id: "funding",
     title: "Funded above the minimum",
-    state: walletsStep.state === "fail" ? "fail" : fundedUsdc && fundedGas ? "pass" : "fail",
+    state: walletsStep.state === "fail" ? "fail" : fundedUsdc ? "pass" : "fail",
     detail:
       walletsStep.state === "fail"
         ? "Cannot check a balance until the agent has real wallets."
-        : `${usdc.toFixed(2)} USDC (need ${MIN_USDC.toFixed(2)}) and ${
-            fundedGas ? "some" : "no"
-          } native balance for gas.`,
-    fix: fundedUsdc && fundedGas ? null : { label: "Fund this agent", href: settings },
+        : `${usdc.toFixed(2)} USDC (need ${MIN_USDC.toFixed(2)}). Gas is sponsored.`,
+    fix: fundedUsdc ? null : { label: "Fund this agent", href: settings },
   };
 
   return { walletsStep, fundingStep };
