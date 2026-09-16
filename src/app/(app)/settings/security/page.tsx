@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
+import { isAdminEmail } from "@/lib/admin";
 import { listAuditEvents } from "@/lib/security/audit";
 import { getKillSwitch } from "@/lib/security/kill-switch";
 import { getMfaStatus } from "@/lib/security/mfa";
@@ -51,7 +52,7 @@ export default async function SecuritySettingsPage() {
         </p>
       </header>
 
-      <SettingsTabs />
+      <SettingsTabs isAdmin={isAdminEmail(session.email)} />
 
       <div className="mt-6 space-y-6">
         <SettingsSection
