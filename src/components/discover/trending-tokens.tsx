@@ -156,7 +156,12 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
               href={`/tokens/${score.chain}/${score.address}`}
               aria-label={`Open the ${score.symbol} token page`}
               className={cn(
-                "glass-inset absolute top-2 right-10 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
+                // Overlaid on the row, so it needs somewhere to sit that the row's
+                // own score badge is not already using. Below `sm` there is no such
+                // place — the two landed on top of each other — so it moves to the
+                // bottom-left of the row, under the age/liquidity line.
+                "glass-inset absolute inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
+                "bottom-2 left-12 sm:bottom-auto sm:left-auto sm:top-2 sm:right-10",
                 // main made this permanently visible at 70% rather than hover-only:
                 // a link nobody can see is a link nobody uses. Keep that.
                 "text-[10px] text-muted-foreground opacity-70 transition-opacity duration-150",
