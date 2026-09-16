@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
+import { SignInLink } from "./sign-in-link";
 import {
   Circle,
   Exposure,
@@ -186,7 +187,7 @@ export function IsotopeHero() {
           <a className="nav-link" href="#signals" data-cursor="magnetic">Signals</a>
           <a className="nav-link" href="#mechanics" data-cursor="magnetic">Mechanics</a>
           <a className="nav-link" href="#contact" data-cursor="magnetic">Docs</a>
-          <Link className="nav-link" href="/home" data-cursor="magnetic">Sign in</Link>
+          <SignInLink className="nav-link" />
           <button type="button" className="nav-link iso-nav-active" onClick={openWaitlist} data-cursor="magnetic">Waitlist</button>
         </nav>
       </header>
