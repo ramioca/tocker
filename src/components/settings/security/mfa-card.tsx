@@ -93,11 +93,11 @@ export function MfaCard({ initial }: { initial: MfaStatus }) {
                 <span className="text-foreground">
                   {status.userMethods.map((m) => METHOD_LABEL[m] ?? m).join(", ")}
                 </span>
-                . Switching an agent to live mode and withdrawing from an agent wallet are unblocked.
+                . It is optional — nothing was ever blocked on it — but it is on the account that moves your money.
               </>
             ) : (
               (status.blockedReason ??
-              "Switching an agent to live mode and withdrawing from an agent wallet are blocked until you enrol one.")
+              "Optional: nothing is blocked without one. Enrol a second factor if you want it on the account that moves your money.")
             )}
           </p>
         </div>

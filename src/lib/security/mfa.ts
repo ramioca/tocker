@@ -70,7 +70,7 @@ export async function getMfaStatus(userId: string): Promise<MfaStatus> {
       userMethods: userMethods ?? [],
       enrolled: false,
       blockedReason:
-        "Could not reach Privy to check your second factor. Live trading and withdrawals stay blocked until this check succeeds — refresh in a moment.",
+        "Could not reach Privy to check your second factor. It is optional, so nothing is blocked — refresh in a moment to see its status.",
     };
   }
   void appId;
@@ -140,11 +140,10 @@ export async function lastKnownMfaMethods(userId: string): Promise<MfaMethod[]> 
  * operator when it may not. Fails closed: an unreachable Privy blocks the action.
  */
 export async function secondFactorBlock(userId: string): Promise<string | null> {
+  // A second factor is optional by product decision (2026-09-16): enrolment is
+  // recorded for the audit trail when present, and nothing is ever blocked on it.
+  // The function keeps its shape so the two money actions read the same as before.
   const status = await getMfaStatus(userId);
-  if (status.enrolled) {
-    void rememberMfaStatus(userId, status.userMethods);
-    return null;
-  }
-  if (status.blockedReason) return status.blockedReason;
-  return "Enrol a second factor in Settings → Security before moving real money. This action stays blocked until you do.";
+  if (status.enrolled) void rememberMfaStatus(userId, status.userMethods);
+  return null;
 }

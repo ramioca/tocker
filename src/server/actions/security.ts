@@ -121,7 +121,7 @@ export async function noteMfaChangeAction(): Promise<ActionResult<MfaStatus>> {
     await recordAudit({
       userId: session.userId,
       kind: "mfa_unenrolled",
-      summary: `Removed a second factor (${removed.join(", ")}). Live mode and withdrawals are blocked while none is enrolled.`,
+      summary: `Removed a second factor (${removed.join(", ")}). Nothing is blocked — a second factor is optional.`,
       metadata: { methods: status.userMethods },
     });
   }

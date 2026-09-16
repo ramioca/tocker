@@ -261,12 +261,14 @@ async function checkMfa(ownerId: string): Promise<ReadinessStep> {
       fix: null,
     };
   }
+  // Optional: a second factor is recommended for an account that moves real money,
+  // but it is not a condition of going live.
   return {
     id: "mfa",
-    title: "Second factor enrolled",
-    state: "fail",
-    detail: status.blockedReason ?? "Your Privy account has no second factor enrolled.",
-    fix: { label: "Settings → Security", href: "/settings/security" },
+    title: "Second factor (optional)",
+    state: "pass",
+    detail: status.blockedReason ?? "No second factor enrolled. Optional — enrol one in Settings → Security if you want it.",
+    fix: null,
   };
 }
 

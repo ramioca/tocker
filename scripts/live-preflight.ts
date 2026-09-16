@@ -11,8 +11,7 @@
  *   5. balances read,
  *   6. Jupiter Ultra will quote for that wallet,
  *   7. an x402 payment client builds, and
- *   8. the Privy app has at least one MFA method enabled, because Tocker refuses
- *      to put an agent live for an account with no second factor.
+ *   8. whether the Privy app has an MFA method enabled — optional; noted, never fatal.
  *
  * Creates ONE throwaway Solana wallet named "petri preflight". Never sends a
  * transaction. Exit code 0 = GO, 1 = NO-GO.
@@ -95,13 +94,13 @@ async function main() {
   const privy = new PrivyClient({ appId, appSecret });
   const authorization_context = { authorization_private_keys: [authKey] };
 
-  // 3. MFA must be available in the dashboard, or nobody can ever go live.
+  // 3. MFA in the dashboard is optional: report it, do not fail on it.
   try {
     const settings = await privy.apps().getSettings();
     const methods = settings.mfa_methods ?? [];
     if (methods.length > 0) ok(`Privy app has MFA enabled (${methods.join(", ")}) — operators can enrol a second factor`);
     else {
-      bad("Privy app has NO MFA methods enabled. Tocker refuses live mode and withdrawals for an account with no second factor, so nobody could go live.");
+      ok("Privy app has no MFA methods enabled — optional; enable TOTP or Passkey in the dashboard if you want operators to enrol one");
       console.log("      Fix: dashboard.privy.io → your app → Authentication → Advanced → Multi-factor authentication → enable TOTP and/or Passkey.");
       failures++;
     }
@@ -163,7 +162,7 @@ async function main() {
 function finish(failures: number) {
   console.log(
     failures === 0
-      ? "\nGO — create a new agent in the app, then walk /agents/<slug>/live: it re-checks all of this per agent, plus funding, caps and your own MFA enrolment.\n"
+      ? "\nGO — create a new agent in the app, then walk /agents/<slug>/live: it re-checks all of this per agent, plus funding and caps.\n"
       : `\nNO-GO — ${failures} check(s) failed. Fix those before funding anything.\n`,
   );
   process.exit(failures === 0 ? 0 : 1);
