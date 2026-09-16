@@ -101,8 +101,7 @@ async function main() {
     if (methods.length > 0) ok(`Privy app has MFA enabled (${methods.join(", ")}) — operators can enrol a second factor`);
     else {
       ok("Privy app has no MFA methods enabled — optional; enable TOTP or Passkey in the dashboard if you want operators to enrol one");
-      console.log("      Fix: dashboard.privy.io → your app → Authentication → Advanced → Multi-factor authentication → enable TOTP and/or Passkey.");
-      failures++;
+      console.log("      Optional: dashboard.privy.io → your app → Authentication → Advanced → Multi-factor authentication → enable TOTP and/or Passkey.");
     }
   } catch (e) {
     bad(`could not read the Privy app settings: ${(e as Error).message}`); failures++;
