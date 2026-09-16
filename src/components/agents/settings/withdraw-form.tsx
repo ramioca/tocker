@@ -1,13 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowDownToLine, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
 import { truncateAddress } from "@/components/common/format";
-import { withdrawAction } from "@/components/agents/agent-actions";
+import { secureWithdrawAction } from "@/server/actions/security";
 import { isValidAddressForChain, addressHintForChain } from "@/lib/wallet-address";
 import { cn } from "@/lib/utils";
 import type { AgentDetail, Chain, WalletBalance } from "@/server/types";
@@ -49,9 +50,16 @@ export function WithdrawForm({
     toAddress.trim().length > 0 &&
     isValidAddressForChain(chain, toAddress);
 
+  /**
+   * Goes through `secureWithdrawAction`, not the plain one: a withdrawal requires
+   * an enrolled second factor on the account and writes an audit row with the
+   * amount, the destination and the resulting transaction hash. The address is
+   * re-validated server-side against the chosen chain before anything is signed —
+   * a Base address pasted into a Solana withdrawal is money gone.
+   */
   const send = async () => {
     setPending(true);
-    const result = await withdrawAction({
+    const result = await secureWithdrawAction({
       agentId: agent.id,
       chain,
       asset,
@@ -78,7 +86,12 @@ export function WithdrawForm({
         <h2 className="text-sm font-medium">Withdraw</h2>
       </div>
       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-        Moves funds out of the agent&apos;s wallet. It can only trade with what is left.
+        Moves funds out of the agent&apos;s wallet. It can only trade with what is left. Requires a second factor
+        on your account and is recorded in your{" "}
+        <Link href="/settings/security" className="text-foreground underline underline-offset-2">
+          audit log
+        </Link>
+        .
       </p>
 
       {reviewing ? (

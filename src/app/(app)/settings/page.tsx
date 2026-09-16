@@ -9,6 +9,7 @@ import { LlmKeysSection } from "@/components/settings/llm-keys-section";
 import { NotificationPrefs } from "@/components/settings/notification-prefs";
 import { DangerZone } from "@/components/settings/danger-zone";
 import { SignedOut } from "@/components/settings/signed-out";
+import { SettingsTabs } from "@/components/settings/settings-tabs";
 
 export const metadata: Metadata = { title: "Settings · Tocker" };
 
@@ -36,7 +37,9 @@ export default async function SettingsPage() {
         </p>
       </header>
 
-      <div className="mt-8 space-y-6">
+      <SettingsTabs />
+
+      <div className="mt-6 space-y-6">
         <SettingsSection
           id="profile"
           title="Profile"

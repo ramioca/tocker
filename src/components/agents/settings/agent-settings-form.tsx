@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Pause, Play } from "lucide-react";
 import { toast } from "sonner";
@@ -16,10 +17,24 @@ import { ExitRulesFields } from "@/components/agents/exit-rules";
 import { INTERVAL_PRESETS } from "@/components/agents/builder/types";
 import { EmptyState } from "@/components/common/empty-state";
 import { setAgentStatusAction, updateAgentAction } from "@/components/agents/agent-actions";
+import { SizingControls } from "@/components/trading";
+import { readSizing } from "@/lib/trading/sizing";
+import { setPositionSizing } from "@/server/actions/trading";
+import { noteBudgetChangeAction } from "@/server/actions/security";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { cn } from "@/lib/utils";
 import type { AgentConfig } from "@/db/schema";
 import type { AgentDetail } from "@/server/types";
+
+/** The four numbers that decide how much money can move. */
+function capsOf(config: AgentConfig) {
+  return {
+    maxTradeUsd: config.risk.maxTradeUsd,
+    maxDailyTrades: config.risk.maxDailyTrades,
+    maxPositionPct: config.risk.maxPositionPct,
+    maxDataSpendUsdPerRun: config.risk.maxDataSpendUsdPerRun,
+  };
+}
 
 /**
  * `AgentDetail.config` is null for anyone who is not the owner, so the form
@@ -73,6 +88,14 @@ function SettingsForm({
       toast.error("Not saved", { description: result.error });
       throw new Error(result.error);
     }
+    // A change to the caps is a change to how much money can move, so it goes on
+    // the audit record. Fire-and-forget: the save already succeeded, and a failed
+    // audit write must not turn a saved change into an error the operator retries.
+    void noteBudgetChangeAction({
+      agentId: agent.id,
+      before: capsOf(initialConfig),
+      after: capsOf(config),
+    });
     toast.success("Saved");
     router.refresh();
   };
@@ -241,6 +264,22 @@ function SettingsForm({
 
       <section className="space-y-3 rounded-xl border border-border/70 bg-card/30 p-4">
         <h2 className="text-sm font-medium">Risk</h2>
+        {/*
+          There are two layers of cap and they are not the same thing, so say which
+          is which: these four are enforced by `riskGuard()` in app code before any
+          executor is reached — not asked of the model in a prompt. The Wallet budget
+          card below is the layer underneath, a Privy policy the wallet itself
+          enforces even if this app is compromised.
+        */}
+        <p className="text-xs leading-5 text-muted-foreground">
+          Enforced by the risk guard before a quote is ever requested. A strategy that decides to buy ten times
+          this gets refused, and the refusal is written into the run transcript. Changes take effect from the next
+          tick and are recorded in your{" "}
+          <Link href="/settings/security" className="text-foreground underline underline-offset-2">
+            audit log
+          </Link>
+          . The wallet budget below is a second, lower layer that holds even if this app does not.
+        </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <RiskSlider
             id="settings-max-trade"
@@ -283,6 +322,26 @@ function SettingsForm({
             format={(value) => formatUsd(value)}
             meaning={`x402 calls are refused past ${formatUsd(config.risk.maxDataSpendUsdPerRun)} in a single run.`}
             onChange={(maxDataSpendUsdPerRun) => patchRisk({ maxDataSpendUsdPerRun })}
+          />
+        </div>
+
+        {/*
+          Sizing decides how big a ticket is *within* the cap above; the cap is the
+          ceiling it can never cross. It saves through its own action rather than the
+          form's Save, so the ceiling and the ticket size can never be half-applied
+          against each other.
+        */}
+        <div className="border-t border-border/50 pt-4">
+          <SizingControls
+            value={readSizing(config.risk)}
+            maxTradeUsd={config.risk.maxTradeUsd}
+            equityUsd={agent.equityUsd}
+            onSave={async (next) => {
+              const result = await setPositionSizing(agent.id, next);
+              if (!result.ok) return result.error;
+              router.refresh();
+              return null;
+            }}
           />
         </div>
       </section>
