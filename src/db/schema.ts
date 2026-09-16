@@ -708,7 +708,13 @@ export interface TradeReceiptData {
   networkFeeUsd: number | null;
   /** Venue or route fee in USD, including the paper simulator's 0.3%. */
   venueFeeUsd: number;
-  /** networkFeeUsd + venueFeeUsd. */
+  /**
+   * The flat Tocker fee charged on this fill (W5), in USD. `0` when the fee is off;
+   * absent on receipts written before the fee existed. Public on purpose — what the
+   * platform charged is a fact about the trade, not about the strategy.
+   */
+  platformFeeUsd?: number;
+  /** networkFeeUsd + venueFeeUsd + platformFeeUsd. */
   totalFeeUsd: number;
   /** Composite score at entry, frozen. Null when the trade carried no score (legacy sells). */
   scoreTotal: number | null;
@@ -870,3 +876,75 @@ export const waitlistSignups = pgTable("waitlist_signups", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 // ---- /waitlist ----
+
+// ---- W5: platform ----
+/**
+ * The platform's own wallets, and its ledger of per-trade fees.
+ *
+ * Two facts about the business live here and nowhere else:
+ *
+ *  1. **The platform pays for data.** Every x402 micropayment is signed by an
+ *     app-owned Privy server wallet (`platform_wallets`), not by the agent's. An
+ *     operator funds their agent to *trade*; sentiment and safety data is the
+ *     platform's cost of goods. The per-run budget, the per-payment cap and the
+ *     per-agent/per-run `x402_payments` record are unchanged — only the signer moved.
+ *  2. **A flat fee per executed fill.** `PLATFORM_FEE_USD` (default $0.10, `0`
+ *     disables) is charged on every fill — buy or sell, agent, approved proposal,
+ *     guardian exit or manual — and recorded here at fill time. It never touches the
+ *     trade path: a live agent's accrued fees are swept to the platform wallet in
+ *     batches by the guardian once they clear `PLATFORM_FEE_SETTLE_MIN_USD`
+ *     (default $1.00). Paper agents write rows too, already `settled` with
+ *     `tx_hash: "simulated"`, because paper cash must feel the same drag as live
+ *     cash or paper is quietly lying about the strategy.
+ */
+
+/** One app-owned Privy server wallet per chain. Unique on `chain` — see the index. */
+export const platformWallets = pgTable(
+  "platform_wallets",
+  {
+    /** Privy wallet id. Never a `paper_` placeholder: a platform wallet is real or absent. */
+    id: text("id").primaryKey(),
+    chain: chainEnum("chain").notNull(),
+    address: text("address").notNull(),
+    /** Free-form note shown on the operator card ("data + fees"). */
+    label: text("label"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  // One wallet per chain, enforced by the database: two concurrent first calls race to
+  // insert and exactly one wins, which is what makes lazy creation safe.
+  (t) => [uniqueIndex("platform_wallets_chain_idx").on(t.chain)],
+);
+
+export const platformFeeStatusEnum = pgEnum("platform_fee_status", ["accrued", "settled"]);
+
+export const platformFees = pgTable(
+  "platform_fees",
+  {
+    id: text("id").primaryKey(),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    /** Unique: exactly one fee per fill, so a retried write can never double-charge. */
+    tradeId: text("trade_id")
+      .notNull()
+      .references(() => trades.id, { onDelete: "cascade" }),
+    chain: chainEnum("chain").notNull(),
+    amountUsd: numeric("amount_usd", { precision: 18, scale: 6 }).notNull(),
+    status: platformFeeStatusEnum("status").default("accrued").notNull(),
+    /** The settlement transfer's hash, or the literal "simulated" for a paper agent. */
+    txHash: text("tx_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("platform_fees_trade_idx").on(t.tradeId),
+    index("platform_fees_agent_idx").on(t.agentId, t.status),
+    index("platform_fees_created_idx").on(t.createdAt),
+  ],
+);
+
+export const platformFeesRelations = relations(platformFees, ({ one }) => ({
+  agent: one(agents, { fields: [platformFees.agentId], references: [agents.id] }),
+  trade: one(trades, { fields: [platformFees.tradeId], references: [trades.id] }),
+}));
+// ---- /W5 ----

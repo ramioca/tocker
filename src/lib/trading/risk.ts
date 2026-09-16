@@ -22,6 +22,13 @@
  * mode, so a sizing mode can only ever tighten the allowance. An agent with no `sizing`
  * block — which is every agent written before this existed — sizes exactly as it did.
  *
+ * ## The platform fee
+ *
+ * A buy has to clear `amountUsd + PLATFORM_FEE_USD` against cash, not `amountUsd`: the
+ * flat Tocker fee is charged the moment the fill lands, and an agent that spent its last
+ * dollar would owe a dime it cannot pay. Sells are untouched — an exit is never blocked,
+ * and a sell *adds* cash, so there is nothing to check against.
+ *
  * **Exits are never blocked by entry rules.** The blocklist, the score gates,
  * `maxTradeUsd`, the sizing ceiling, `maxDailyTrades` and the enabled-chain list all decide what an agent
  * may *enter*. None of them apply to sells: blocklisting a token you hold, a position
@@ -33,6 +40,7 @@
 import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { Chain, TokenScore } from "@/server/types";
 import { explainBlocker } from "@/lib/tokens/score";
+import { buyCostUsd, platformFeeUsd } from "@/lib/platform/fee";
 import { readSizing, sizeOrder, type SizedOrder } from "./sizing";
 
 export interface RiskAgent {
@@ -228,10 +236,18 @@ export function riskGuard(
     const gate = universeGate(agent.config, order, score);
     if (!gate.ok) return gate;
 
-    if (order.amountUsd > portfolio.cashUsd + 1e-9) {
+    // The ticket *plus* the flat platform fee that will be charged the instant it fills.
+    // Checking the notional alone would let an agent spend its last dollar and then owe
+    // ten cents it does not have — a debt that only surfaces at settlement, days later.
+    const feeUsd = platformFeeUsd();
+    const cost = buyCostUsd(order.amountUsd, feeUsd);
+    if (cost > portfolio.cashUsd + 1e-9) {
       return {
         ok: false,
-        reason: `Insufficient cash: $${portfolio.cashUsd.toFixed(2)} available, $${order.amountUsd.toFixed(2)} requested.`,
+        reason:
+          feeUsd > 0
+            ? `Insufficient cash: $${portfolio.cashUsd.toFixed(2)} available, $${order.amountUsd.toFixed(2)} requested plus the $${feeUsd.toFixed(2)} Tocker fee.`
+            : `Insufficient cash: $${portfolio.cashUsd.toFixed(2)} available, $${order.amountUsd.toFixed(2)} requested.`,
       };
     }
     const equity = portfolio.equityUsd > 0 ? portfolio.equityUsd : portfolio.cashUsd;

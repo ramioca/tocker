@@ -30,6 +30,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { agents, follows, getDb, notifications, posts, tokens, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
 import { getAgentWallets, getPortfolio, toRiskPortfolio } from "@/lib/agent/portfolio";
+import { chargePlatformFee } from "@/lib/platform/fees";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { toNum } from "@/lib/money";
 import { notifyFill } from "@/lib/notifications";
@@ -513,6 +514,15 @@ export async function decideProposal(input: {
     })
     .where(eq(trades.id, input.tradeId));
 
+  // An approved proposal is a fill like any other, so it pays the same flat fee.
+  const platformFeeUsd = await chargePlatformFee({
+    agentId: row.agent.id,
+    tradeId: input.tradeId,
+    chain,
+    isPaper: executor.isPaper,
+    now: filledAt,
+  });
+
   await applyFill(
     row.agent.id,
     row.token.id,
@@ -520,7 +530,7 @@ export async function decideProposal(input: {
       side: row.trade.side,
       amountToken: fill.amountToken,
       amountUsd: fill.amountUsd,
-      feeUsd: fill.feeUsd,
+      feeUsd: fill.feeUsd + platformFeeUsd,
     },
     { priceUsd: fill.priceUsd, score, now: filledAt },
   );
@@ -537,6 +547,7 @@ export async function decideProposal(input: {
     fill,
     slippageToleranceBps: config.risk.slippageBps,
     score,
+    platformFeeUsd,
     quotedAt,
     filledAt,
   });

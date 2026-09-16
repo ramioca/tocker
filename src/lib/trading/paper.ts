@@ -11,6 +11,7 @@
  */
 import { and, eq } from "drizzle-orm";
 import { agents, getDb, trades } from "@/db";
+import { chargedFeesUsd } from "@/lib/platform/fees";
 import type { Chain } from "@/server/types";
 import { getPriceUsd } from "./prices";
 import { jupiterQuotePrice } from "./jupiter";
@@ -66,17 +67,24 @@ export class PaperExecutor implements TradeExecutor {
 /**
  * Recomputes an agent's paper cash from its filled trades. Never trusts a stored
  * balance, so a replayed or repaired ledger always produces the right number.
+ *
+ * `platformFeesUsd` is every Tocker fee the agent has been charged (W5). It is a
+ * separate argument rather than part of the ledger because it is a separate table:
+ * `trades.feeUsd` stays the *venue's* fee, and the receipt shows the split. A paper
+ * agent that did not pay the platform fee would quietly outperform the same strategy
+ * run live, which is the one thing paper mode must never do.
  */
 export function computePaperCash(
   paperStartingUsd: number,
   ledger: ReadonlyArray<{ side: "buy" | "sell"; amountUsd: number; feeUsd: number }>,
+  platformFeesUsd = 0,
 ): number {
   let cash = paperStartingUsd;
   for (const t of ledger) {
     cash += t.side === "buy" ? -t.amountUsd : t.amountUsd;
     cash -= t.feeUsd;
   }
-  return cash;
+  return cash - (Number.isFinite(platformFeesUsd) && platformFeesUsd > 0 ? platformFeesUsd : 0);
 }
 
 /** Database-backed version of {@link computePaperCash}. */
@@ -91,5 +99,6 @@ export async function getPaperCash(agentId: string): Promise<number> {
   return computePaperCash(
     Number(agent[0].paperStartingUsd),
     rows.map((r) => ({ side: r.side, amountUsd: Number(r.amountUsd), feeUsd: Number(r.feeUsd) })),
+    await chargedFeesUsd(agentId),
   );
 }

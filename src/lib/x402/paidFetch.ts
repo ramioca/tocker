@@ -6,9 +6,25 @@
  *   2. on 402, parse the price *before* paying (v2 `PAYMENT-REQUIRED` header, or the
  *      v1 JSON body with `accepts[].maxAmountRequired`);
  *   3. check the price against the per-run budget (`risk.maxDataSpendUsdPerRun`);
- *   4. retry through `wrapFetchWithPayment(fetch, x402Client)` — one client per
- *      agent per chain, cached;
+ *   4. retry through `wrapFetchWithPayment(fetch, x402Client)`, signed by the
+ *      **platform** wallet on the resource's network, with a per-payment cap;
  *   5. decode the `PAYMENT-RESPONSE` header and write an `x402_payments` row.
+ *
+ * ## Who pays (changed in W5)
+ *
+ * The platform pays for data, not the agent. The signer is the app-owned Privy server
+ * wallet for the option's network (`src/lib/platform/wallets.ts`) — Base in practice.
+ * An operator funds their agent to *trade*; sentiment and safety data is the platform's
+ * cost of goods, recovered through the flat per-fill fee.
+ *
+ * Everything else about the call is unchanged and still per-agent: the per-run budget
+ * (`risk.maxDataSpendUsdPerRun`), the per-payment spend cap, and the `x402_payments`
+ * row keyed to the agent and the run. An agent no longer needs a wallet on the data
+ * network at all — it needs one to *trade* on a chain, which is a different question.
+ *
+ * When the platform wallet is missing or cannot pay, the error names the wallet and its
+ * address, so the run log says "top up the platform data wallet on base (0x…)" rather
+ * than "402".
  *
  * With `X402_MOCK=1` (the dev default) nothing is paid: the registry fixture is
  * returned and a `simulated: true` payment row is written at the registry price so
@@ -19,11 +35,11 @@ import { decodePaymentResponseHeader } from "@x402/fetch";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import type { PaymentRequired } from "@x402/fetch";
 import { getDb, x402Payments } from "@/db";
+import type { Chain } from "@/server/types";
 import {
   chainForNetwork,
   X402BudgetError,
   X402RequestError,
-  type AgentWalletRef,
   type PaidRequest,
   type PaidResponse,
   type ParsedPaymentOption,
@@ -127,33 +143,79 @@ export async function parsePaymentOptions(res: Response): Promise<ParsedPaymentO
   return [];
 }
 
+/** The chains the platform holds wallets on, and therefore the ones a 402 can be paid on. */
+const PAYABLE_CHAINS: ReadonlyArray<{ chain: Chain }> = [{ chain: "base" }, { chain: "solana" }];
+
 /**
- * Picks the option the agent can actually pay: prefer one on the network the
- * registry expects, then any network we hold a wallet for, cheapest first.
+ * Picks the option we can actually pay: prefer one on the network the registry
+ * expects, then any network the payer holds a wallet for, cheapest first.
+ *
+ * `payable` defaults to the platform's chains, which is the real answer now that the
+ * platform signs every payment. It stays a parameter because "which wallets exist" is
+ * still the question being asked, and passing a set makes the choice testable without
+ * a database — an `AgentWalletRef[]` fits structurally.
  */
 export function selectPaymentOption(
   options: ParsedPaymentOption[],
   preferredNetwork: string,
-  wallets: AgentWalletRef[],
+  payable: ReadonlyArray<{ chain: Chain }> = PAYABLE_CHAINS,
 ): ParsedPaymentOption | null {
-  const payable = options.filter((o) => {
+  const affordable = options.filter((o) => {
     const chain = chainForNetwork(o.network);
-    return chain !== null && wallets.some((w) => w.chain === chain);
+    return chain !== null && payable.some((w) => w.chain === chain);
   });
-  const pool = payable.length > 0 ? payable : options;
+  const pool = affordable.length > 0 ? affordable : options;
   if (pool.length === 0) return null;
   const exact = pool.filter((o) => o.network === preferredNetwork);
   const ranked = (exact.length > 0 ? exact : pool).slice().sort((a, b) => a.amountUsd - b.amountUsd);
   return ranked[0] ?? null;
 }
 
-function walletFor(ctx: X402Context, network: string): AgentWalletRef | null {
+/** A wallet that can sign an x402 payment. Today, always a platform wallet. */
+interface PayingWallet {
+  chain: Chain;
+  walletId: string;
+  address: string;
+}
+
+/**
+ * The platform wallet that pays a 402 on this network, created on first use.
+ *
+ * Throws an {@link X402RequestError} that names the wallet: the operator reading a run
+ * log needs to know *which* wallet to fund, and "no wallet for eip155:8453" does not
+ * tell them that.
+ */
+async function payingWalletFor(network: string, sourceId: string): Promise<PayingWallet> {
   const chain = chainForNetwork(network);
-  if (!chain) return null;
-  const wallet = ctx.wallets.find((w) => w.chain === chain);
-  if (!wallet) return null;
-  if (wallet.walletId.startsWith("paper_")) return null;
-  return wallet;
+  if (!chain) {
+    throw new X402RequestError(
+      `${sourceId} priced its 402 on ${network}, which the platform holds no wallet for (Base and Solana only).`,
+      402,
+    );
+  }
+  try {
+    const { ensurePlatformWallet } = await import("@/lib/platform/wallets");
+    const wallet = await ensurePlatformWallet(chain);
+    return { chain, walletId: wallet.walletId, address: wallet.address };
+  } catch (err) {
+    throw new X402RequestError(
+      `${sourceId} needs a payment on ${chain}, but the platform data wallet is unavailable: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      402,
+    );
+  }
+}
+
+/** Anything that went wrong while paying, written so the fix is obvious. */
+function payFailure(sourceId: string, wallet: PayingWallet, amountUsd: number, detail: string): X402RequestError {
+  const broke = /insufficient|not enough|balance|funds|0x1 |exceeds/i.test(detail);
+  return new X402RequestError(
+    broke
+      ? `Could not pay $${amountUsd.toFixed(4)} for ${sourceId}: the platform data wallet on ${wallet.chain} is out of USDC. Top up the platform data wallet at ${wallet.address}.`
+      : `Could not pay $${amountUsd.toFixed(4)} for ${sourceId} from the platform data wallet on ${wallet.chain} (${wallet.address}): ${detail}`,
+    402,
+  );
 }
 
 /**
@@ -166,7 +228,7 @@ function walletFor(ctx: X402Context, network: string): AgentWalletRef | null {
  * enforces `maxAmountPerPayment` before signing, so anything above the quote is
  * rejected. A fresh client per call keeps that cap from racing across runs.
  */
-async function buildPaidFetch(wallet: AgentWalletRef, capUsd: number): Promise<WrappedFetch> {
+async function buildPaidFetch(wallet: PayingWallet, capUsd: number): Promise<WrappedFetch> {
   // Dynamic imports: these modules pull in `server-only` / native deps and must not
   // be loaded in mock mode (or from unit tests and CLI scripts).
   const [{ privy, authorizationContext }, { createX402Client }, { wrapFetchWithPayment }] = await Promise.all([
@@ -271,8 +333,9 @@ export async function paidFetch(ctx: X402Context, req: PaidRequest): Promise<Pai
   }
 
   // Live mode. Serialized per run so parallel tool calls cannot race the shared
-  // budget or the per-payment cap. A live agent with no wallet on the resource's
-  // network is refused at the pay step below — it never trades on fixture data.
+  // budget or the per-payment cap. The payer is the platform wallet on the resource's
+  // network; a missing or empty one is refused at the pay step below with a message
+  // that names it — the agent never trades on fixture data.
   return withRunLock(ctx.runId ?? ctx.agentId, async () => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), req.timeoutMs ?? 20_000);
@@ -294,20 +357,31 @@ export async function paidFetch(ctx: X402Context, req: PaidRequest): Promise<Pai
       }
 
       const options = await parsePaymentOptions(probe);
-      const option = selectPaymentOption(options, req.network, ctx.wallets);
+      const option = selectPaymentOption(options, req.network);
       if (!option) throw new X402RequestError(`${req.sourceId} returned a 402 we cannot parse or pay`, 402);
 
       const remaining = ctx.budget.maxUsd - ctx.budget.spentUsd;
       if (option.amountUsd > remaining) throw new X402BudgetError(option.amountUsd, Math.max(0, remaining));
 
-      const payWallet = walletFor(ctx, option.network);
-      if (!payWallet) throw new X402RequestError(`No agent wallet for network ${option.network}`, 402);
+      // The platform pays. The agent's wallets are not consulted: they are for trading.
+      const payWallet = await payingWalletFor(option.network, req.sourceId);
 
       // Pay at most the quote (+5% slack for rounding). A resource that reprices
       // upward on the paid retry is rejected by the client's spend control.
       const capUsd = Math.max(option.amountUsd * 1.05, 0.000001);
       const wrapped = await buildPaidFetch(payWallet, capUsd);
-      const res = await wrapped(req.url, buildInit(req, controller.signal));
+      let res: Response;
+      try {
+        res = await wrapped(req.url, buildInit(req, controller.signal));
+      } catch (err) {
+        // `wrapFetchWithPayment` throws when signing or settlement fails — an empty
+        // platform wallet lands here, and the message has to name the wallet to top up.
+        throw payFailure(req.sourceId, payWallet, option.amountUsd, err instanceof Error ? err.message : String(err));
+      }
+      if (res.status === 402) {
+        // Paid and still refused: the facilitator did not see the money.
+        throw payFailure(req.sourceId, payWallet, option.amountUsd, "the resource still answered 402 after payment");
+      }
       if (!res.ok) throw new X402RequestError(`${req.sourceId} responded ${res.status} after payment`, res.status);
 
       let txHash: string | null = null;

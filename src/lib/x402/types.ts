@@ -37,6 +37,15 @@ export interface X402Context {
   agentId: string;
   runId: string | null;
   mode: "paper" | "live";
+  /**
+   * The agent's trading wallets.
+   *
+   * **Not the payer.** Since W5 every x402 payment is signed by the *platform* wallet
+   * on the resource's network (`src/lib/platform/wallets.ts`); an agent no longer needs
+   * a wallet on a data network at all. Kept on the context because it identifies the
+   * run's agent to anything that wants it, and because the payment row is still written
+   * per agent and per run.
+   */
   wallets: AgentWalletRef[];
   budget: RunBudget;
 }

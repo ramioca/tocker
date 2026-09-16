@@ -33,6 +33,9 @@
  *    sell-side checks can fire (position exists, priceable, not oversold) — see the
  *    header of `./risk.ts`.
  *  - **Live agents with placeholder wallets are skipped, loudly, not crashed.**
+ *  - **Money owed is collected last.** On every non-tick pass, *after* the exits, the
+ *    agent's accrued platform fees are swept in batches (`platform/settlement.ts`).
+ *    It cannot throw and it cannot delay an exit; a failure retries in five minutes.
  */
 import { nanoid } from "nanoid";
 import { and, desc, eq, gte, lt, lte } from "drizzle-orm";
@@ -41,6 +44,8 @@ import type { AgentConfig } from "@/db/schema";
 import { parseAgentConfig } from "@/lib/agent/config";
 import { getAgentWallets, getPortfolio, snapshotEquity, toRiskPortfolio, type Portfolio } from "@/lib/agent/portfolio";
 import { toNumeric } from "@/lib/money";
+import { chargePlatformFee } from "@/lib/platform/fees";
+import { settlePlatformFees, type SettlementResult } from "@/lib/platform/settlement";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { hasDigest, sendDailyDigest, utcDay } from "@/lib/notifications";
 import type { Chain, ExitReason, TokenScore } from "@/server/types";
@@ -110,6 +115,11 @@ export interface GuardianResult {
   /** Positions an exit was wanted for but could not be taken. */
   skipped: GuardianSkip[];
   equityUsd: number | null;
+  /**
+   * What the platform-fee sweep did this pass, or null when it was not reached (a
+   * `tick` pass never sweeps — the run owns that time). Always after the exits.
+   */
+  settlement: SettlementResult | null;
   error: string | null;
 }
 
@@ -124,6 +134,7 @@ function emptyResult(input: RunGuardianInput, note: string | null): GuardianResu
     exits: [],
     skipped: [],
     equityUsd: null,
+    settlement: null,
     error: null,
   };
 }
@@ -432,10 +443,25 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
     })
     .where(eq(trades.id, tradeId));
 
+  // An exit is a fill, so it pays the fee like any other. Charged here, settled later:
+  // a stop loss must never wait on a USDC transfer.
+  const platformFeeUsd = await chargePlatformFee({
+    agentId: agent.id,
+    tradeId,
+    chain: decision.chain,
+    isPaper: executor.isPaper,
+    now: filledAt,
+  });
+
   await applyFill(
     agent.id,
     decision.tokenId,
-    { side: "sell", amountToken: fill.amountToken, amountUsd: fill.amountUsd, feeUsd: fill.feeUsd },
+    {
+      side: "sell",
+      amountToken: fill.amountToken,
+      amountUsd: fill.amountUsd,
+      feeUsd: fill.feeUsd + platformFeeUsd,
+    },
     { priceUsd: fill.priceUsd, now: filledAt },
   );
 
@@ -451,6 +477,7 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
     fill,
     slippageToleranceBps: agent.config.risk.slippageBps,
     score,
+    platformFeeUsd,
     quotedAt,
     filledAt,
   });
@@ -543,6 +570,7 @@ export async function runGuardian(input: RunGuardianInput): Promise<GuardianResu
       exits: [],
       skipped: [],
       equityUsd: portfolio.equityUsd,
+      settlement: null,
       error: null,
     };
 
@@ -551,6 +579,22 @@ export async function runGuardian(input: RunGuardianInput): Promise<GuardianResu
       // Not on `tick`: a run already writes its own summary, and two of these for the
       // same day would be one too many if the dedupe ever regressed.
       if (input.trigger !== "tick") await maybeSendDigest(agent, now);
+
+      // The fee sweep, in the same non-tick pass and for the same reasons: it already
+      // runs every five minutes for every agent, and it is the one place in the system
+      // that is allowed to be slow. Critically, it is *here* — after every exit has been
+      // executed — and it cannot throw. Selling first and collecting second is the only
+      // order in which a settlement problem can never cost somebody a stop loss.
+      if (input.trigger !== "tick") {
+        result.settlement = await settlePlatformFees({
+          agentId: agent.id,
+          ownerId: agent.ownerId,
+          agentName: agent.name,
+          mode: agent.mode,
+          now,
+        });
+        if (result.settlement.attempted) log(agent.id, `fees: ${result.settlement.note}`);
+      }
       if (wantSnapshot) {
         try {
           // Re-read after exits so the snapshot reflects them.

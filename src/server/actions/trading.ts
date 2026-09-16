@@ -19,6 +19,7 @@ import { getSession } from "@/lib/auth";
 import { positionSizingSchema } from "@/lib/agent/config";
 import type { PositionSizingConfig } from "@/lib/trading/sizing";
 import { getAgentWallets, getPortfolio, toRiskPortfolio } from "@/lib/agent/portfolio";
+import { chargePlatformFee } from "@/lib/platform/fees";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
 import { applyFill } from "@/lib/trading/positions";
@@ -344,6 +345,16 @@ export async function placeManualTrade(
     })
     .where(eq(trades.id, tradeId));
 
+  // The owner's own trade pays the same flat fee the agent's does. "Manual" is a
+  // judgement call, not a discount.
+  const platformFeeUsd = await chargePlatformFee({
+    agentId: agent.id,
+    tradeId,
+    chain: input.chain,
+    isPaper: executor.isPaper,
+    now: filledAt,
+  });
+
   await applyFill(
     agent.id,
     token.id,
@@ -351,7 +362,7 @@ export async function placeManualTrade(
       side: input.side,
       amountToken: fill.amountToken,
       amountUsd: fill.amountUsd,
-      feeUsd: fill.feeUsd,
+      feeUsd: fill.feeUsd + platformFeeUsd,
     },
     // A manual buy opens a position like any other, so the exit engine needs the same
     // entry facts frozen onto it — otherwise the stop loss has nothing to measure from.
@@ -367,6 +378,7 @@ export async function placeManualTrade(
     fill,
     slippageToleranceBps: config.risk.slippageBps,
     score,
+    platformFeeUsd,
     quotedAt,
     filledAt,
   });

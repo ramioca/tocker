@@ -198,6 +198,17 @@ export function TradeReceiptDetail({
 
       <Group title="Costs">
         <Field label="Venue fee">{formatUsd(receipt.venueFeeUsd)}</Field>
+        {/*
+          The platform's own cut, named the way it is named everywhere else ("Tocker
+          fee" — see PLATFORM_FEE_LABEL). Shown only when there was one: a receipt from
+          before the fee existed, or from a deploy with PLATFORM_FEE_USD=0, should not
+          grow a row that says $0.00 and makes the reader wonder what they missed.
+        */}
+        {receipt.platformFeeUsd && receipt.platformFeeUsd > 0 ? (
+          <Field label="Tocker fee" hint="per fill">
+            {formatUsd(receipt.platformFeeUsd)}
+          </Field>
+        ) : null}
         <Field label="Network fee">
           {receipt.networkFeeUsd === null ? (
             <span className="text-muted-foreground">not reported</span>
