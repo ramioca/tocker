@@ -128,7 +128,7 @@ export function GoLiveCard({ agent }: { agent: AgentDetail }) {
                 Start the first-live-trade checklist
               </Link>
             </LiquidMetal>
-            {funded ? null : <FundAgentDrawer agentName={agent.name} wallets={wallets} />}
+            {funded ? null : <FundAgentDrawer agentId={agent.id} agentName={agent.name} wallets={wallets} />}
           </div>
         </>
       )}

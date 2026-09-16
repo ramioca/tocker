@@ -794,3 +794,63 @@ export type AgentConfigWithSizing = Omit<AgentConfig, "risk"> & { risk: AgentRis
 export const W4_NOTIFICATION_KINDS = ["fill", "digest"] as const;
 
 // ---- /W4 ----
+
+// ---- W1: unified cash ----
+/**
+ * A transfer the user asked for while funding an agent.
+ *
+ * Funding is signed client-side by the user's own embedded wallet, so the server
+ * cannot make it happen — it can only record what was asked for and what came
+ * back. That record is the whole point: an agent created with a funding plan
+ * whose second transfer was rejected must be able to say so on its settings
+ * page rather than silently looking funded.
+ *
+ * `status` moves pending → sent | failed | cancelled, once, from the client that
+ * signed it.
+ */
+export const fundingIntentStatusEnum = pgEnum("funding_intent_status", [
+  "pending",
+  "sent",
+  "failed",
+  "cancelled",
+]);
+
+export const agentFundingIntents = pgTable(
+  "agent_funding_intents",
+  {
+    id: text("id").primaryKey(),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    chain: chainEnum("chain").notNull(),
+    /** "usdc" is the agent's trading cash; "native" is the gas it signs with. */
+    asset: text("asset").notNull(),
+    /** Human units (12.5 USDC, 0.006667 SOL), per the money conventions above. */
+    amount: numeric("amount", { precision: 38, scale: 18 }).notNull(),
+    /** What that was worth when the user agreed to it. Display only. */
+    amountUsd: numeric("amount_usd", { precision: 18, scale: 6 }),
+    status: fundingIntentStatusEnum("status").default("pending").notNull(),
+    /** Where the money was going — the agent's server wallet at the time. */
+    toAddress: text("to_address").notNull(),
+    txHash: text("tx_hash"),
+    /** The user-facing reason a transfer did not happen. Never a raw stack. */
+    error: text("error"),
+    /** True when the plan was made during agent creation rather than later. */
+    onCreate: boolean("on_create").default(false).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("agent_funding_intents_agent_idx").on(t.agentId, t.createdAt),
+    index("agent_funding_intents_user_idx").on(t.userId, t.createdAt),
+  ],
+);
+
+export const agentFundingIntentsRelations = relations(agentFundingIntents, ({ one }) => ({
+  agent: one(agents, { fields: [agentFundingIntents.agentId], references: [agents.id] }),
+  user: one(users, { fields: [agentFundingIntents.userId], references: [users.id] }),
+}));
+// ---- /W1 ----
