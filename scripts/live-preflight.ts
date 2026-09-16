@@ -17,6 +17,7 @@
  * transaction. Exit code 0 = GO, 1 = NO-GO.
  */
 import { createPrivateKey, createPublicKey } from "node:crypto";
+import { databaseUrl } from "../src/db/url";
 import { PrivyClient } from "@privy-io/node";
 
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";

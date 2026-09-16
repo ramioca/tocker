@@ -12,7 +12,9 @@
  */
 export type DatabaseUrlKind = "app" | "migrate";
 
-function firstMatching(env: NodeJS.ProcessEnv, suffixes: string[]): string | undefined {
+type Env = Record<string, string | undefined>;
+
+function firstMatching(env: Env, suffixes: string[]): string | undefined {
   for (const suffix of suffixes) {
     for (const [key, value] of Object.entries(env)) {
       if (!value?.trim()) continue;
@@ -22,7 +24,7 @@ function firstMatching(env: NodeJS.ProcessEnv, suffixes: string[]): string | und
   return undefined;
 }
 
-export function databaseUrl(kind: DatabaseUrlKind = "app", env: NodeJS.ProcessEnv = process.env): string | undefined {
+export function databaseUrl(kind: DatabaseUrlKind = "app", env: Env = process.env): string | undefined {
   const explicit = env.DATABASE_URL?.trim();
   if (explicit) return explicit;
   if (kind === "migrate") {
