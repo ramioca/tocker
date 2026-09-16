@@ -1,18 +1,34 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { Check, KeyRound, Plus, Shuffle, X } from "lucide-react";
+import { AlertTriangle, Check, KeyRound, Plus, Shuffle, X } from "lucide-react";
 import { toast } from "sonner";
 import { DEFAULT_MODELS } from "@/lib/agent/config";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { AgentAvatar } from "@/components/common/agent-avatar";
+import { ChainBadge } from "@/components/common/chain-badge";
 import { ModeBadge } from "@/components/common/mode-badge";
-import { formatUsd } from "@/components/common/format";
+import { formatTokenAmount, formatUsd } from "@/components/common/format";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { addLlmKeyAction } from "@/components/agents/agent-actions";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
 import { ExitRulesFields } from "@/components/agents/exit-rules";
+import { CashTotal } from "@/components/wallets/cash-summary";
+import { DepositSheet } from "@/components/wallets/deposit-sheet";
+import { useFundingPlan } from "@/components/wallets/use-funding-plan";
+import {
+  FUND_PRESETS,
+  MAX_GAS_USD,
+  MIN_FUND_USD,
+  NATIVE_SYMBOL,
+  cashOn,
+  chainLabelFor,
+  depositTargets,
+  round,
+  transferLabel,
+  transfersFor,
+} from "@/lib/wallets/funding";
 import { Field, RiskSlider, StepHeading, Toggle } from "./field";
 import { UniverseControls } from "./universe-controls";
 import { SimpleSelect } from "./simple-select";
@@ -24,7 +40,7 @@ import {
   type BuilderDraft,
 } from "./types";
 import { cn } from "@/lib/utils";
-import type { DataSourceInfo, LlmKeyRow } from "@/server/types";
+import type { Chain, DataSourceInfo, LlmKeyRow } from "@/server/types";
 
 export interface StepProps {
   draft: BuilderDraft;
@@ -697,6 +713,342 @@ export function ScheduleStep({ draft, update, updateConfig, hideHeading }: StepP
         checked={draft.activate}
         onChange={(activate) => update({ activate })}
       />
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ funding
+
+function SegmentedChoice({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string; hint: string }>;
+}) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {options.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(option.value)}
+            className={cn(
+              "rounded-xl border p-3 text-left",
+              "transition-[border-color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              active
+                ? "border-primary/50 bg-primary/8"
+                : "border-border/70 bg-card/30 hover:border-border hover:bg-card/60",
+            )}
+          >
+            <span className="block text-sm font-medium">{option.label}</span>
+            <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+              {option.hint}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Funding. The one part of the builder that spends real money, so it defaults to
+ * not spending any: every agent is created on paper, and this is where you decide
+ * whether it also gets a wallet with something in it.
+ *
+ * The rule the whole card is built around: never silently fund less than asked.
+ * A shortfall on one chain blocks with a deposit CTA, rather than quietly
+ * shrinking the number the user typed.
+ */
+export function FundingStep({ draft, update, hideHeading }: StepProps) {
+  const funding = draft.funding;
+  const chains = draft.config.chains as Chain[];
+  const [depositFor, setDepositFor] = useState<{ chain: Chain; asset: "usdc" | "native" } | null>(
+    null,
+  );
+  const [customAmount, setCustomAmount] = useState("");
+
+  const { plan, cash, wallets, loading } = useFundingPlan({
+    mode: funding.mode,
+    amountUsd: funding.amountUsd,
+    gasUsd: funding.gasUsd,
+    chains,
+    split: funding.split,
+  });
+
+  const patch = (next: Partial<BuilderDraft["funding"]>) =>
+    update({ funding: { ...funding, ...next } });
+
+  const setAmount = (amountUsd: number) => patch({ amountUsd, split: null });
+
+  const setLeg = (chain: Chain, value: number) => {
+    const current: Partial<Record<Chain, number>> = { ...(funding.split ?? {}) };
+    for (const entry of chains) {
+      if (current[entry] === undefined) {
+        current[entry] = plan?.legs.find((l) => l.chain === entry)?.usdc ?? 0;
+      }
+    }
+    current[chain] = value;
+    patch({ split: current });
+  };
+
+  const paper = funding.mode === "paper";
+
+  return (
+    <div className="space-y-5">
+      {hideHeading ? null : (
+        <StepHeading
+          title="Give it money, or not yet"
+          blurb="Every agent is created on paper — fake money, real prices. Funding it now means it is ready the moment you switch it to live."
+        />
+      )}
+
+      <SegmentedChoice
+        value={funding.mode}
+        onChange={(mode) => patch({ mode: mode as "paper" | "fund" })}
+        options={[
+          {
+            value: "paper",
+            label: "Paper only",
+            hint: `It trades ${formatUsd(draft.paperStartingUsd)} of imaginary money at real quotes. Nothing is transferred.`,
+          },
+          {
+            value: "fund",
+            label: "Fund with USDC",
+            hint: "Move real USDC into its wallets as soon as it is created. You sign each transfer.",
+          },
+        ]}
+      />
+
+      {paper ? (
+        <div className="rounded-xl border border-border/70 bg-card/30 p-3.5">
+          <p className="text-sm font-medium">Paper agents skip funding</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            Its wallets are still created, and they stay empty until you put something in them.
+            When the record convinces you, fund it from its settings page and switch to live —
+            nothing here is a one-way door.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="glass rounded-2xl border border-border/60 px-4 py-3.5">
+            <p className="text-[11px] text-muted-foreground">Your cash</p>
+            <CashTotal cash={cash} size="lg" className="mt-0.5 block" />
+            {cash ? (
+              <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                {chains.map((chain) => {
+                  const chainCash = cashOn(cash, chain);
+                  return (
+                    <li key={chain} className="flex items-center gap-1.5 text-xs">
+                      <ChainBadge chain={chain} />
+                      <span className="tnum">{formatUsd(chainCash.usdcUsd)}</span>
+                      <span className="tnum text-muted-foreground">
+                        · {formatTokenAmount(chainCash.native)} {NATIVE_SYMBOL[chain]}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {loading ? "Reading your wallet balances…" : "Sign in to see your balance."}
+              </p>
+            )}
+          </div>
+
+          <Field
+            label="Starting cash"
+            hint={`Minimum ${formatUsd(MIN_FUND_USD)}. Below that, gas and slippage eat the position before the strategy gets a say.`}
+          >
+            <div className="flex flex-wrap gap-2">
+              {FUND_PRESETS.map((preset) => {
+                const active = funding.amountUsd === preset && !funding.split;
+                return (
+                  <button
+                    key={preset}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setAmount(preset)}
+                    className={cn(
+                      "tnum rounded-xl border px-3 py-2 font-mono text-sm",
+                      "transition-[border-color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      active
+                        ? "border-primary/50 bg-primary/8"
+                        : "border-border/70 hover:border-border hover:bg-muted/40",
+                    )}
+                  >
+                    {formatUsd(preset)}
+                  </button>
+                );
+              })}
+              <Input
+                aria-label="Custom starting cash in USDC"
+                value={customAmount}
+                inputMode="decimal"
+                placeholder="Custom"
+                onChange={(event) => {
+                  const next = event.target.value.replace(/[^0-9.]/g, "");
+                  setCustomAmount(next);
+                  const parsed = Number(next);
+                  if (Number.isFinite(parsed) && parsed > 0) setAmount(round(parsed, 2));
+                }}
+                className="tnum h-10 w-28 font-mono"
+              />
+            </div>
+          </Field>
+
+          {chains.length > 1 ? (
+            <Field
+              label="Split across chains"
+              hint="There is no bridge yet, so USDC has to come from the chain it is already on. The default follows your balances."
+            >
+              <div className="space-y-2">
+                {chains.map((chain) => {
+                  const leg = plan?.legs.find((l) => l.chain === chain);
+                  return (
+                    <div
+                      key={chain}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-border/50 bg-background/40 px-3 py-2.5"
+                    >
+                      <div>
+                        <ChainBadge chain={chain} />
+                        <p className="tnum mt-1 text-[11px] text-muted-foreground">
+                          you hold {formatUsd(cash ? cashOn(cash, chain).usdc : 0)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-muted-foreground">$</span>
+                        <Input
+                          aria-label={`USDC to send on ${chainLabelFor(chain)}`}
+                          value={leg ? String(leg.usdc) : ""}
+                          inputMode="decimal"
+                          onChange={(event) =>
+                            setLeg(chain, Number(event.target.value.replace(/[^0-9.]/g, "")) || 0)
+                          }
+                          className="tnum h-9 w-24 font-mono"
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+                {funding.split ? (
+                  <button
+                    type="button"
+                    onClick={() => patch({ split: null })}
+                    className="rounded text-xs text-muted-foreground underline-offset-2 transition-colors duration-150 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    Back to a proportional split
+                  </button>
+                ) : null}
+              </div>
+            </Field>
+          ) : null}
+
+          <Field
+            label="Gas allowance"
+            hint={`The agent signs its own trades, so each of its wallets needs a little ${chains.map((c) => NATIVE_SYMBOL[c]).join(" / ")}. This is not trading capital and is never counted as cash.`}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">$</span>
+              <Input
+                aria-label="Gas allowance per chain in dollars"
+                value={String(funding.gasUsd)}
+                inputMode="decimal"
+                onChange={(event) => {
+                  const parsed = Number(event.target.value.replace(/[^0-9.]/g, ""));
+                  patch({ gasUsd: Number.isFinite(parsed) ? Math.min(parsed, MAX_GAS_USD) : 0 });
+                }}
+                className="tnum h-9 w-24 font-mono"
+              />
+              <span className="text-xs text-muted-foreground">per chain</span>
+            </div>
+            {plan ? (
+              <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                {plan.legs.map((leg) => (
+                  <li key={leg.chain} className="tnum text-[11px] text-muted-foreground">
+                    ≈ {formatTokenAmount(leg.native)} {NATIVE_SYMBOL[leg.chain]} on{" "}
+                    {chainLabelFor(leg.chain)}
+                    {leg.nativePriceDerived ? "" : " (estimated price)"}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </Field>
+
+          {plan && plan.blockers.length > 0 ? (
+            <div className="space-y-2 rounded-xl border border-destructive/25 bg-destructive/8 p-3.5">
+              <p className="flex items-center gap-2 text-sm font-medium">
+                <AlertTriangle aria-hidden className="size-4 text-destructive" />
+                Not ready to fund
+              </p>
+              <ul className="space-y-1">
+                {plan.blockers.map((blocker, index) => (
+                  <li
+                    key={`${blocker.kind}-${blocker.chain ?? "all"}-${index}`}
+                    className="text-xs leading-relaxed text-muted-foreground"
+                  >
+                    {blocker.message}
+                  </li>
+                ))}
+              </ul>
+
+              {/* Every reason is listed, but two reasons that lead to the same
+                  deposit get one button — one action per thing to do. */}
+              <div className="flex flex-wrap gap-2 pt-0.5">
+                {depositTargets(plan).map((target) => (
+                  <button
+                    key={`${target.chain}-${target.asset}`}
+                    type="button"
+                    onClick={() => setDepositFor(target)}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium transition-colors duration-150 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <Plus aria-hidden className="size-3.5" />
+                    Deposit {target.asset === "usdc" ? "USDC" : NATIVE_SYMBOL[target.chain]} on{" "}
+                    {chainLabelFor(target.chain)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {plan?.ready ? (
+            <div className="rounded-xl border border-border/70 bg-card/30 p-3.5">
+              <p className="text-sm font-medium">What happens when you create it</p>
+              <ol className="mt-1.5 space-y-1 text-xs leading-relaxed text-muted-foreground">
+                <li>1. The agent and its wallets are created.</li>
+                {transfersFor(plan).map((transfer) => (
+                  <li key={`${transfer.chain}-${transfer.asset}`} className="tnum">
+                    · You sign a transfer of {transferLabel(transfer)}.
+                  </li>
+                ))}
+                <li>
+                  If you reject one of those, the agent still exists — unfunded, and saying so on
+                  its settings page. You can finish from there.
+                </li>
+              </ol>
+            </div>
+          ) : null}
+
+          <DepositSheet
+            open={depositFor !== null}
+            onOpenChange={(open) => {
+              if (!open) setDepositFor(null);
+            }}
+            wallets={wallets}
+            cash={cash}
+            initialChain={depositFor?.chain ?? "base"}
+            initialAsset={depositFor?.asset ?? "usdc"}
+          />
+        </>
+      )}
     </div>
   );
 }

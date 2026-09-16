@@ -1,9 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { AlertTriangle, Plus } from "lucide-react";
 import { toast } from "sonner";
-import { encodeFunctionData, parseEther, parseUnits } from "viem";
-import { useSendTransaction } from "@privy-io/react-auth";
 import {
   Sheet,
   SheetContent,
@@ -16,80 +15,174 @@ import { Input } from "@/components/ui/input";
 import { TransferFundsCard } from "@/components/spectrumui/transfer-funds-card";
 import { Address } from "@/components/common/address";
 import { ChainBadge } from "@/components/common/chain-badge";
-import { SimpleSelect } from "@/components/agents/builder/simple-select";
-import { truncateAddress } from "@/components/common/format";
+import { formatTokenAmount, formatUsd, truncateAddress } from "@/components/common/format";
+import { CashTotal } from "@/components/wallets/cash-summary";
+import { DepositSheet } from "@/components/wallets/deposit-sheet";
+import { useRefreshCash, useUserWallets } from "@/components/wallets/use-cash";
+import { useTransfer } from "@/components/wallets/use-transfer";
+import { useSession } from "@/hooks/use-session";
+import {
+  FUND_PRESETS,
+  NATIVE_SYMBOL,
+  NETWORK_WORDING,
+  cashOn,
+  chainLabelFor,
+  floorTo,
+} from "@/lib/wallets/funding";
+import {
+  recordFundingIntents,
+  settleFundingIntent,
+} from "@/server/actions/wallets";
 import { cn } from "@/lib/utils";
 import type { Chain, WalletBalance } from "@/server/types";
-
-const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
-const ERC20_TRANSFER_ABI = [
-  {
-    name: "transfer",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "to", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
-  },
-] as const;
 
 /** Privy is only wired once an app id exists; until then this is a copy-address flow. */
 const PRIVY_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID);
 
 interface FundProps {
+  agentId: string;
   agentName: string;
+  /** The agent's own server wallets, one per enabled chain. */
   wallets: WalletBalance[];
 }
 
-function Controls({
-  chain,
-  setChain,
-  asset,
-  setAsset,
-  amount,
-  setAmount,
-  wallets,
-}: {
-  chain: Chain;
-  setChain: (chain: Chain) => void;
-  asset: "usdc" | "native";
-  setAsset: (asset: "usdc" | "native") => void;
-  amount: string;
-  setAmount: (amount: string) => void;
-  wallets: WalletBalance[];
-}) {
+/**
+ * Funding moves real value, so the flow is deliberately plain: pick chain and
+ * asset, type an amount, read the card back, confirm once. Nothing animates
+ * except the card's own press feedback.
+ *
+ * The amount is checked against the user's actual balance on that chain before
+ * they are asked to sign — an over-ask becomes a deposit prompt rather than a
+ * failed transaction and a wasted signature.
+ */
+function FundBody({ agentId, agentName, wallets }: FundProps) {
+  const { ready, session } = useSession();
+  const { data } = useUserWallets(Boolean(ready && session));
+  const [chain, setChain] = useState<Chain>(wallets[0]?.chain ?? "base");
+  const [asset, setAsset] = useState<"usdc" | "native">("usdc");
+  const [amount, setAmount] = useState("");
+  const [pending, setPending] = useState(false);
+  const [depositOpen, setDepositOpen] = useState(false);
+  const { send, available } = useTransfer();
+  const refresh = useRefreshCash();
+
+  const target = wallets.find((entry) => entry.chain === chain) ?? wallets[0];
+  const myCash = data?.cash;
+  const myChain = myCash ? cashOn(myCash, chain) : null;
+  const nativeSymbol = NATIVE_SYMBOL[chain];
+  const assetSymbol = asset === "usdc" ? "USDC" : nativeSymbol;
+  const availableHere = myChain ? (asset === "usdc" ? myChain.usdc : myChain.native) : 0;
+
+  const parsed = Number(amount);
+  const positive = Number.isFinite(parsed) && parsed > 0;
+  const overBalance = positive && myChain !== null && parsed > availableHere;
+  const valid = positive && Boolean(target) && !overBalance;
+
+  const summary = useMemo(
+    () => [
+      { label: "Network", value: NETWORK_WORDING[chain].network },
+      { label: "Network fee", value: "paid from your wallet" },
+      {
+        label: "Agent receives",
+        value: positive ? `${parsed} ${assetSymbol}` : `— ${assetSymbol}`,
+        emphasized: true,
+      },
+    ],
+    [chain, parsed, positive, assetSymbol],
+  );
+
+  const confirm = async () => {
+    if (!valid || !target || pending) return;
+    setPending(true);
+
+    const recorded = await recordFundingIntents({
+      agentId,
+      transfers: [{ chain, asset, amount: parsed, amountUsd: asset === "usdc" ? parsed : undefined }],
+    });
+    const intentId = recorded.ok ? recorded.data.ids[0] : undefined;
+
+    try {
+      const result = await send({ chain, asset, amount: parsed, to: target.address });
+      if (intentId) {
+        void settleFundingIntent({ id: intentId, status: "sent", txHash: result.hash });
+      }
+      toast.success("Funding sent", {
+        description: `${truncateAddress(result.hash, 8, 6)} — balances update once it confirms.`,
+      });
+      setAmount("");
+      void refresh();
+      void refresh(12_000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Your wallet rejected the request.";
+      if (intentId) {
+        void settleFundingIntent({ id: intentId, status: "failed", error: message });
+      }
+      toast.error("Transfer failed", { description: message });
+    } finally {
+      setPending(false);
+    }
+  };
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+      <div className="flex items-baseline justify-between gap-3 rounded-xl border border-border/50 bg-background/40 px-3 py-2.5">
+        <span className="text-xs text-muted-foreground">Your cash</span>
+        <span className="text-right">
+          <CashTotal cash={myCash} size="sm" />
+          {myChain ? (
+            <span className="tnum block text-[11px] text-muted-foreground">
+              {formatUsd(myChain.usdcUsd)} · {formatTokenAmount(myChain.native)} {nativeSymbol} on{" "}
+              {chainLabelFor(chain)}
+            </span>
+          ) : null}
+        </span>
+      </div>
+
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label htmlFor="fund-chain" className="mb-1 block text-xs text-muted-foreground">
-            Chain
-          </label>
-          <SimpleSelect
-            id="fund-chain"
-            value={chain}
-            options={wallets.map((wallet) => ({
-              value: wallet.chain,
-              label: wallet.chain === "solana" ? "Solana" : "Base",
-            }))}
-            onChange={(next) => setChain(next as Chain)}
-          />
+          <span className="mb-1 block text-xs text-muted-foreground">Chain</span>
+          <div className="grid grid-cols-2 gap-1 rounded-xl border border-border/60 bg-muted/20 p-1">
+            {wallets.map((wallet) => (
+              <button
+                key={wallet.chain}
+                type="button"
+                aria-pressed={wallet.chain === chain}
+                onClick={() => setChain(wallet.chain)}
+                className={cn(
+                  "h-8 rounded-lg text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  wallet.chain === chain
+                    ? "bg-card text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {chainLabelFor(wallet.chain)}
+              </button>
+            ))}
+          </div>
         </div>
         <div>
-          <label htmlFor="fund-asset" className="mb-1 block text-xs text-muted-foreground">
-            Asset
-          </label>
-          <SimpleSelect
-            id="fund-asset"
-            value={asset}
-            options={[
-              { value: "usdc", label: "USDC" },
-              { value: "native", label: chain === "solana" ? "SOL" : "ETH" },
-            ]}
-            onChange={(next) => setAsset(next as "usdc" | "native")}
-          />
+          <span className="mb-1 block text-xs text-muted-foreground">Asset</span>
+          <div className="grid grid-cols-2 gap-1 rounded-xl border border-border/60 bg-muted/20 p-1">
+            {(["usdc", "native"] as const).map((entry) => (
+              <button
+                key={entry}
+                type="button"
+                aria-pressed={entry === asset}
+                onClick={() => {
+                  setAsset(entry);
+                  setAmount("");
+                }}
+                className={cn(
+                  "h-8 rounded-lg text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  entry === asset
+                    ? "bg-card text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {entry === "usdc" ? "USDC" : `${nativeSymbol} · gas`}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -101,95 +194,53 @@ function Controls({
           id="fund-amount"
           value={amount}
           inputMode="decimal"
-          placeholder="250"
+          placeholder={asset === "usdc" ? "25" : "0.01"}
           onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))}
           className="tnum font-mono"
         />
+        {asset === "usdc" ? (
+          <div className="mt-2 flex items-center gap-1.5">
+            {FUND_PRESETS.map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setAmount(String(preset))}
+                className="tnum h-7 flex-1 rounded-lg border border-border text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                ${preset}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setAmount(String(floorTo(availableHere, 2)))}
+              className="h-7 flex-1 rounded-lg border border-border text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Max
+            </button>
+          </div>
+        ) : null}
       </div>
-    </div>
-  );
-}
 
-/**
- * Funding moves real value, so the flow is deliberately plain: pick chain and
- * asset, type an amount, read the card back, confirm once. Nothing animates
- * except the card's own press feedback.
- */
-function FundBody({ agentName, wallets }: FundProps) {
-  const [chain, setChain] = useState<Chain>(wallets[0]?.chain ?? "base");
-  const [asset, setAsset] = useState<"usdc" | "native">("usdc");
-  const [amount, setAmount] = useState("");
-  const [pending, setPending] = useState(false);
-  const { sendTransaction } = useSendTransaction();
-
-  const wallet = wallets.find((entry) => entry.chain === chain) ?? wallets[0];
-  const nativeSymbol = chain === "solana" ? "SOL" : "ETH";
-  const assetSymbol = asset === "usdc" ? "USDC" : nativeSymbol;
-  const parsed = Number(amount);
-  const valid = Number.isFinite(parsed) && parsed > 0 && Boolean(wallet);
-
-  const summary = useMemo(
-    () => [
-      { label: "Network", value: chain === "solana" ? "Solana" : "Base" },
-      { label: "Network fee", value: "paid from your wallet" },
-      {
-        label: "Agent receives",
-        value: valid ? `${parsed} ${assetSymbol}` : `— ${assetSymbol}`,
-        emphasized: true,
-      },
-    ],
-    [chain, parsed, valid, assetSymbol],
-  );
-
-  const confirm = async () => {
-    if (!valid || !wallet || pending) return;
-    if (chain === "solana") {
-      toast.info("Send SOL or USDC to the agent's Solana address", {
-        description:
-          "In-app Solana transfers land with the runtime workstream. Copy the address and send from your wallet for now.",
-      });
-      return;
-    }
-
-    setPending(true);
-    try {
-      const request =
-        asset === "native"
-          ? { to: wallet.address, value: parseEther(amount) }
-          : {
-              to: BASE_USDC,
-              data: encodeFunctionData({
-                abi: ERC20_TRANSFER_ABI,
-                functionName: "transfer",
-                args: [wallet.address as `0x${string}`, parseUnits(amount, 6)],
-              }),
-            };
-
-      const result = await sendTransaction({ ...request, chainId: 8453 });
-      toast.success("Funding sent", {
-        description: `${truncateAddress(result.hash, 8, 6)} — balances update once it confirms.`,
-      });
-      setAmount("");
-    } catch (error) {
-      toast.error("Transfer failed", {
-        description: error instanceof Error ? error.message : "Your wallet rejected the request.",
-      });
-    } finally {
-      setPending(false);
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <Controls
-        chain={chain}
-        setChain={setChain}
-        asset={asset}
-        setAsset={setAsset}
-        amount={amount}
-        setAmount={setAmount}
-        wallets={wallets}
-      />
+      {overBalance ? (
+        <div className="space-y-2 rounded-xl border border-destructive/25 bg-destructive/8 p-3">
+          <p className="flex gap-2 text-xs leading-relaxed text-muted-foreground">
+            <AlertTriangle aria-hidden className="mt-px size-3.5 shrink-0 text-destructive" />
+            <span>
+              You have {asset === "usdc" ? formatUsd(availableHere) : `${formatTokenAmount(availableHere)} ${nativeSymbol}`}{" "}
+              on {chainLabelFor(chain)}. Deposit more, or send less — this never quietly sends the
+              smaller amount.
+            </span>
+          </p>
+          <button
+            type="button"
+            onClick={() => setDepositOpen(true)}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium transition-colors duration-150 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Plus aria-hidden className="size-3.5" />
+            Deposit {asset === "usdc" ? "USDC" : nativeSymbol} on {chainLabelFor(chain)}
+          </button>
+        </div>
+      ) : null}
 
       <TransferFundsCard
         title={`Fund ${agentName}`}
@@ -200,17 +251,32 @@ function FundBody({ agentName, wallets }: FundProps) {
         fromLabel="From"
         fromAccount="Your embedded wallet"
         toLabel="To"
-        toAccount={wallet ? `${agentName} · ${truncateAddress(wallet.address, 6, 6)}` : "—"}
+        toAccount={target ? `${agentName} · ${truncateAddress(target.address, 6, 6)}` : "—"}
         summary={summary}
-        buttonLabel={pending ? "Confirming…" : `Send ${assetSymbol}`}
+        buttonLabel={
+          pending
+            ? "Waiting for your wallet to confirm…"
+            : available
+              ? `Send ${assetSymbol}`
+              : "Privy is not configured"
+        }
         onConfirm={() => void confirm()}
         className={cn(!valid && "opacity-90")}
+      />
+
+      <DepositSheet
+        open={depositOpen}
+        onOpenChange={setDepositOpen}
+        wallets={data?.wallets ?? []}
+        cash={data?.cash}
+        initialChain={chain}
+        initialAsset={asset}
       />
     </div>
   );
 }
 
-function FundFallback({ agentName, wallets }: FundProps) {
+function FundFallback({ agentName, wallets }: Omit<FundProps, "agentId">) {
   return (
     <div className="space-y-3">
       <p className="rounded-xl border border-border/70 bg-card/40 p-3 text-sm leading-relaxed text-muted-foreground">
@@ -222,10 +288,15 @@ function FundFallback({ agentName, wallets }: FundProps) {
         {wallets.map((wallet) => (
           <li
             key={wallet.walletId}
-            className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/40 px-3 py-2.5"
+            className="space-y-1.5 rounded-xl border border-border/70 bg-card/40 px-3 py-2.5"
           >
-            <ChainBadge chain={wallet.chain} />
-            <Address address={wallet.address} label={`${wallet.chain} address`} />
+            <div className="flex items-center justify-between gap-3">
+              <ChainBadge chain={wallet.chain} />
+              <Address address={wallet.address} label={`${wallet.chain} address`} />
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {NETWORK_WORDING[wallet.chain].asset} · {NETWORK_WORDING[wallet.chain].network}
+            </p>
           </li>
         ))}
       </ul>
@@ -234,6 +305,7 @@ function FundFallback({ agentName, wallets }: FundProps) {
 }
 
 export function FundAgentDrawer({
+  agentId,
   agentName,
   wallets,
   trigger,
@@ -263,7 +335,7 @@ export function FundAgentDrawer({
         </SheetHeader>
         <div className="px-4 pb-6">
           {PRIVY_CONFIGURED ? (
-            <FundBody agentName={agentName} wallets={wallets} />
+            <FundBody agentId={agentId} agentName={agentName} wallets={wallets} />
           ) : (
             <FundFallback agentName={agentName} wallets={wallets} />
           )}

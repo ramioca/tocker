@@ -485,6 +485,95 @@ export const notifications = pgTable(
   (t) => [index("notifications_user_idx").on(t.userId, t.createdAt)],
 );
 
+// ---- W3: security ----
+/**
+ * Everything in this block is owned by the "premium security" workstream. It is
+ * additive: nothing above it changed.
+ */
+
+/** What an audit row can describe. Append new kinds; never reuse an old one for a new meaning. */
+export const auditKindEnum = pgEnum("audit_kind", [
+  "withdraw",
+  "budget_change",
+  "go_live",
+  "go_paper",
+  "agent_paused",
+  "agent_resumed",
+  "llm_key_added",
+  "llm_key_rotated",
+  "llm_key_removed",
+  "kill_switch_on",
+  "kill_switch_off",
+  "mfa_enrolled",
+  "mfa_unenrolled",
+  "first_trade_preset",
+  "manual_run",
+]);
+
+/**
+ * Append-only audit trail. Written by every action that can move money, change how
+ * much money can move, or change who is allowed to move it.
+ *
+ * It is deliberately *not* a general event log: it records the operator's own
+ * sensitive actions so that "did I do that, and when?" has an answer. It is never
+ * updated and never deleted except by cascade when the user is deleted.
+ *
+ * `ip` and `userAgent` are best-effort request metadata, null when unavailable
+ * (a cron-triggered write, or a proxy that strips the header).
+ */
+export const auditEvents = pgTable(
+  "audit_events",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: auditKindEnum("kind").notNull(),
+    /** The agent the action was about, when there is one. Not a FK: the row outlives the agent. */
+    agentId: text("agent_id"),
+    /** Denormalised so the log still reads correctly after the agent is deleted. */
+    agentName: text("agent_name"),
+    /** One human sentence: what happened, in the past tense. */
+    summary: text("summary").notNull(),
+    /** Structured detail — amounts, addresses, before/after values. Never a secret. */
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("audit_events_user_idx").on(t.userId, t.createdAt), index("audit_events_agent_idx").on(t.agentId)],
+);
+
+/**
+ * Per-user security state. One row per user, created on first write.
+ *
+ * `tradingPaused` is the kill switch: while it is true the scheduler skips every
+ * agent this user owns, so no new position is ever opened. The exit engine
+ * (`/api/cron/marks` → `runGuardian`) is deliberately *not* filtered by it — a
+ * kill switch that also stopped stop-losses would trap the operator in a position,
+ * which is the opposite of what the control is for.
+ */
+export const userSecurity = pgTable("user_security", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  tradingPaused: boolean("trading_paused").default(false).notNull(),
+  tradingPausedAt: timestamp("trading_paused_at", { withTimezone: true }),
+  /** Mirror of Privy's enrolment, refreshed whenever we ask Privy. Advisory only: the gate re-reads Privy. */
+  mfaMethods: jsonb("mfa_methods").$type<string[]>(),
+  mfaCheckedAt: timestamp("mfa_checked_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const auditEventsRelations = relations(auditEvents, ({ one }) => ({
+  user: one(users, { fields: [auditEvents.userId], references: [users.id] }),
+}));
+
+export const userSecurityRelations = relations(userSecurity, ({ one }) => ({
+  user: one(users, { fields: [userSecurity.userId], references: [users.id] }),
+}));
+// ---- /W3 ----
+
 // ---------- relations ----------
 export const usersRelations = relations(users, ({ many }) => ({
   agents: many(agents),
@@ -705,3 +794,63 @@ export type AgentConfigWithSizing = Omit<AgentConfig, "risk"> & { risk: AgentRis
 export const W4_NOTIFICATION_KINDS = ["fill", "digest"] as const;
 
 // ---- /W4 ----
+
+// ---- W1: unified cash ----
+/**
+ * A transfer the user asked for while funding an agent.
+ *
+ * Funding is signed client-side by the user's own embedded wallet, so the server
+ * cannot make it happen — it can only record what was asked for and what came
+ * back. That record is the whole point: an agent created with a funding plan
+ * whose second transfer was rejected must be able to say so on its settings
+ * page rather than silently looking funded.
+ *
+ * `status` moves pending → sent | failed | cancelled, once, from the client that
+ * signed it.
+ */
+export const fundingIntentStatusEnum = pgEnum("funding_intent_status", [
+  "pending",
+  "sent",
+  "failed",
+  "cancelled",
+]);
+
+export const agentFundingIntents = pgTable(
+  "agent_funding_intents",
+  {
+    id: text("id").primaryKey(),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    chain: chainEnum("chain").notNull(),
+    /** "usdc" is the agent's trading cash; "native" is the gas it signs with. */
+    asset: text("asset").notNull(),
+    /** Human units (12.5 USDC, 0.006667 SOL), per the money conventions above. */
+    amount: numeric("amount", { precision: 38, scale: 18 }).notNull(),
+    /** What that was worth when the user agreed to it. Display only. */
+    amountUsd: numeric("amount_usd", { precision: 18, scale: 6 }),
+    status: fundingIntentStatusEnum("status").default("pending").notNull(),
+    /** Where the money was going — the agent's server wallet at the time. */
+    toAddress: text("to_address").notNull(),
+    txHash: text("tx_hash"),
+    /** The user-facing reason a transfer did not happen. Never a raw stack. */
+    error: text("error"),
+    /** True when the plan was made during agent creation rather than later. */
+    onCreate: boolean("on_create").default(false).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("agent_funding_intents_agent_idx").on(t.agentId, t.createdAt),
+    index("agent_funding_intents_user_idx").on(t.userId, t.createdAt),
+  ],
+);
+
+export const agentFundingIntentsRelations = relations(agentFundingIntents, ({ one }) => ({
+  agent: one(agents, { fields: [agentFundingIntents.agentId], references: [agents.id] }),
+  user: one(users, { fields: [agentFundingIntents.userId], references: [users.id] }),
+}));
+// ---- /W1 ----
