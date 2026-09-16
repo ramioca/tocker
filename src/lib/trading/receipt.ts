@@ -21,7 +21,7 @@
  *
  * Everything except {@link saveReceipt} is pure.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getDb, tradeReceipts } from "@/db";
 import type { ReceiptScoreReason, TradeReceiptData, TradeReceiptVenue } from "@/db/schema";
 import { toNumeric } from "@/lib/money";
@@ -214,22 +214,6 @@ export async function getReceipts(tradeIds: readonly string[]): Promise<Map<stri
     // A receipt is a nice-to-have on the read path too.
   }
   return out;
-}
-
-/** Every receipt an agent wrote in a window — the raw material for the daily digest. */
-export async function agentReceipts(agentId: string, tradeIds: readonly string[]): Promise<TradeReceiptData[]> {
-  const unique = [...new Set(tradeIds)].filter(Boolean);
-  if (unique.length === 0) return [];
-  try {
-    const db = await getDb();
-    const rows = await db
-      .select()
-      .from(tradeReceipts)
-      .where(and(eq(tradeReceipts.agentId, agentId), inArray(tradeReceipts.tradeId, unique)));
-    return rows.map((r) => r.data);
-  } catch {
-    return [];
-  }
 }
 
 /** "+19 bps" / "-4 bps" / "at the quote" — the slippage, in a phrase. */

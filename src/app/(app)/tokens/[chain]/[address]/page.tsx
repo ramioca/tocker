@@ -15,7 +15,7 @@ import {
 import { PriceChart, pricePointsFrom } from "@/components/trading";
 import { viewerSession } from "@/components/common/data-access";
 import { agentRefs, getTokenPage, myAgentsForBlocklist } from "@/server/queries/tokens";
-import { myTokenMarkers, receiptsForTrades, tokenActivityCount, type TokenMarker } from "@/server/queries/trading";
+import { myTokenMarkers, receiptsFor, tokenActivityCount, type TokenMarker } from "@/server/queries/trading";
 import type { Chain, TokenPage } from "@/server/types";
 
 /**
@@ -72,7 +72,7 @@ export default async function TokenPageRoute({ params }: Params) {
     // returns [] for an anonymous viewer. Nobody else's entries land on this chart.
     myTokenMarkers(page.token.id, viewerId),
     tokenActivityCount(page.token.id),
-    receiptsForTrades(page.recentTrades.map((trade) => trade.id)),
+    receiptsFor(page.recentTrades.map((trade) => trade.id)),
   ]);
 
   const blockMenu =

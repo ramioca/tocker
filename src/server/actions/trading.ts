@@ -22,7 +22,9 @@ import { getAgentWallets, getPortfolio, toRiskPortfolio } from "@/lib/agent/port
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
 import { applyFill } from "@/lib/trading/positions";
+import { getPriceUsd } from "@/lib/trading/prices";
 import { recentRangePct } from "@/lib/trading/range";
+import { checkQuoteSanity } from "@/lib/trading/sanity";
 import { buildReceipt, saveReceipt, type TradeReceiptData } from "@/lib/trading/receipt";
 import { notifyFill } from "@/lib/notifications";
 import {
@@ -305,6 +307,19 @@ export async function placeManualTrade(
     const message = err instanceof Error ? err.message : "quote failed";
     await db.update(trades).set({ status: "failed", error: message }).where(eq(trades.id, tradeId));
     return fail(`Could not quote ${token.symbol}: ${message}`);
+  }
+
+  // A manual trade is often somebody's first live one, so it gets the same last check
+  // the agent's own orders get. Buys only; an exit is never blocked.
+  const sanity = checkQuoteSanity({
+    side: input.side,
+    symbol: token.symbol,
+    quotePriceUsd: quote.priceUsd,
+    referencePriceUsd: await getPriceUsd(input.chain, token.address),
+  });
+  if (!sanity.ok) {
+    await db.update(trades).set({ status: "failed", error: sanity.reason }).where(eq(trades.id, tradeId));
+    return fail(sanity.reason);
   }
 
   await db.update(trades).set({ status: "submitted" }).where(eq(trades.id, tradeId));

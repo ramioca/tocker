@@ -39,6 +39,7 @@ import { applyFill } from "./positions";
 import { buildReceipt, saveReceipt } from "./receipt";
 import { getPriceUsd } from "./prices";
 import { riskGuard, type OrderIntent } from "./risk";
+import { checkQuoteSanity } from "./sanity";
 
 /** The agent fields every proposal operation needs. */
 export interface ProposalAgent {
@@ -476,6 +477,16 @@ export async function decideProposal(input: {
   } catch (err) {
     return settleFailed(`Could not quote ${row.token.symbol}: ${err instanceof Error ? err.message : "quote failed"}`);
   }
+
+  // Same last check as the automatic path: an approved proposal is a trade, and a
+  // human tapping Approve is not a reason to skip the sanity comparison. Buys only.
+  const sanity = checkQuoteSanity({
+    side: row.trade.side,
+    symbol: row.token.symbol,
+    quotePriceUsd: quote.priceUsd,
+    referencePriceUsd: await getPriceUsd(chain, row.token.address),
+  });
+  if (!sanity.ok) return settleRejected(sanity.reason);
 
   await db
     .update(trades)

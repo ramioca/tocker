@@ -19,6 +19,7 @@ import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/tradin
 import { applyFill } from "@/lib/trading/positions";
 import { getPriceUsd } from "@/lib/trading/prices";
 import { recentRangePct } from "@/lib/trading/range";
+import { checkQuoteSanity } from "@/lib/trading/sanity";
 import { buildReceipt, saveReceipt } from "@/lib/trading/receipt";
 import { notifyFill } from "@/lib/notifications";
 import {
@@ -634,6 +635,21 @@ export function buildTools(ctx: RunContext): ToolSet {
           const message = err instanceof Error ? err.message : "quote failed";
           await db.update(trades).set({ status: "failed", error: message }).where(eq(trades.id, tradeId));
           return fail(`Could not quote ${token.symbol}: ${message}`);
+        }
+
+        // Last check before real money moves: does the venue's quote agree with an
+        // independently-sourced mark? Not a slippage guard — this catches the
+        // order-of-magnitude failures (wrong decimals, wrong token, empty pool). Buys
+        // only; an exit is never blocked. See @/lib/trading/sanity.
+        const sanity = checkQuoteSanity({
+          side: parsed.side,
+          symbol: token.symbol,
+          quotePriceUsd: quote.priceUsd,
+          referencePriceUsd: await getPriceUsd(parsed.chain, token.address),
+        });
+        if (!sanity.ok) {
+          await db.update(trades).set({ status: "failed", error: sanity.reason }).where(eq(trades.id, tradeId));
+          return fail(sanity.reason, { rejected: true, deviationBps: sanity.deviationBps });
         }
 
         await db.update(trades).set({ status: "submitted" }).where(eq(trades.id, tradeId));

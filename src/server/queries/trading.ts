@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, gte, inArray } from "drizzle-orm";
+import { and, asc, eq, gte } from "drizzle-orm";
 import { agents, getDb, trades } from "@/db";
 import type { TradeReceiptData } from "@/db/schema";
 import { getReceipts } from "@/lib/trading/receipt";
@@ -29,15 +29,15 @@ import type { Chain, ExitReason, TradeOrigin } from "@/server/types";
 
 export type { TradeReceiptData };
 
-/** Receipts for a set of trades, keyed by trade id. Missing ones are simply absent. */
+/**
+ * Receipts for a set of trades, keyed by trade id, in one round trip. Trades with no
+ * receipt (they failed, or they predate receipts) are simply absent from the map, and
+ * every consumer renders that case as "no receipt" rather than as an error.
+ */
 export async function receiptsFor(tradeIds: readonly string[]): Promise<Map<string, TradeReceiptData>> {
-  return getReceipts(tradeIds);
-}
-
-/** One receipt, for a trade the caller has already decided is visible. */
-export async function receiptFor(tradeId: string): Promise<TradeReceiptData | null> {
-  const map = await getReceipts([tradeId]);
-  return map.get(tradeId) ?? null;
+  const unique = [...new Set(tradeIds)].filter(Boolean);
+  if (unique.length === 0) return new Map();
+  return getReceipts(unique);
 }
 
 /** One of the viewer's own fills, positioned on a price chart. */
@@ -140,40 +140,4 @@ export async function tokenActivityCount(tokenId: string, days = 30): Promise<nu
   } catch {
     return 0;
   }
-}
-
-/** Receipts for the trades on a token page, in one round trip. */
-export async function receiptsForTrades(tradeIds: readonly string[]): Promise<Map<string, TradeReceiptData>> {
-  const unique = [...new Set(tradeIds)].filter(Boolean);
-  if (unique.length === 0) return new Map();
-  return getReceipts(unique);
-}
-
-/** Trade ids an agent filled in a window — used by digests and analytics. */
-export async function filledTradeIds(agentId: string, since: Date): Promise<string[]> {
-  try {
-    const db = await getDb();
-    const rows = await db
-      .select({ id: trades.id })
-      .from(trades)
-      .where(and(eq(trades.agentId, agentId), eq(trades.status, "filled"), gte(trades.createdAt, since)));
-    return rows.map((r) => r.id);
-  } catch {
-    return [];
-  }
-}
-
-/** Agent names for a set of ids, for marker tooltips. */
-export async function agentNames(ids: readonly string[]): Promise<Map<string, string>> {
-  const unique = [...new Set(ids)].filter(Boolean);
-  const out = new Map<string, string>();
-  if (unique.length === 0) return out;
-  try {
-    const db = await getDb();
-    const rows = await db.select({ id: agents.id, name: agents.name }).from(agents).where(inArray(agents.id, unique));
-    for (const row of rows) out.set(row.id, row.name);
-  } catch {
-    // Markers fall back to the agent id, which is never rendered.
-  }
-  return out;
 }
