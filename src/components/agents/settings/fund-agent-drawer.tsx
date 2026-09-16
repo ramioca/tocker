@@ -18,7 +18,6 @@ import { ChainBadge } from "@/components/common/chain-badge";
 import { formatTokenAmount, formatUsd, truncateAddress } from "@/components/common/format";
 import { CashTotal } from "@/components/wallets/cash-summary";
 import { DepositSheet } from "@/components/wallets/deposit-sheet";
-import { GLASS_ROW } from "@/components/wallets/surfaces";
 import { useRefreshCash, useUserWallets } from "@/components/wallets/use-cash";
 import { useTransfer } from "@/components/wallets/use-transfer";
 import { useSession } from "@/hooks/use-session";
@@ -126,7 +125,7 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
 
   return (
     <div className="space-y-4">
-      <div className={cn(GLASS_ROW, "flex items-baseline justify-between gap-3 px-3 py-2.5")}>
+      <div className="flex items-baseline justify-between gap-3 rounded-xl border border-border/50 bg-background/40 px-3 py-2.5">
         <span className="text-xs text-muted-foreground">Your cash</span>
         <span className="text-right">
           <CashTotal cash={myCash} size="sm" />

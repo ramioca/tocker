@@ -6,7 +6,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { CashLegend, CashTotal, ChainBreakdown } from "@/components/wallets/cash-summary";
 import { DepositSheet } from "@/components/wallets/deposit-sheet";
 import { useUserWallets } from "@/components/wallets/use-cash";
-import { GLASS_HEAVY } from "@/components/wallets/surfaces";
 import { useSession } from "@/hooks/use-session";
 import { cn } from "@/lib/utils";
 import { WithdrawModal } from "./withdraw-modal";
@@ -44,11 +43,11 @@ export function WalletChip() {
     <>
       <Popover open={panelOpen} onOpenChange={setPanelOpen}>
         <PopoverTrigger
-          className="hidden h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-2.5 text-sm transition-colors duration-150 hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:flex"
-          aria-label="Cash balance"
+          className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-2.5 text-sm transition-colors duration-150 hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:h-8"
+          aria-label="Cash balance — deposit or withdraw"
         >
           <CashTotal cash={data?.cash} size="sm" />
-          <span className="text-xs text-muted-foreground">cash</span>
+          <span className="hidden text-xs text-muted-foreground sm:inline">cash</span>
           <ChevronDown
             aria-hidden
             className={cn(
@@ -58,7 +57,7 @@ export function WalletChip() {
           />
         </PopoverTrigger>
 
-        <PopoverContent align="end" className={cn(GLASS_HEAVY, "w-80 space-y-3 p-4")}>
+        <PopoverContent align="end" className="glass-heavy w-80 space-y-3 rounded-2xl border border-border/60 p-4">
           <div>
             <p className="text-[11px] text-muted-foreground">Cash</p>
             <CashTotal cash={data?.cash} size="lg" className="mt-0.5 block" />

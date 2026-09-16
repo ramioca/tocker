@@ -4,6 +4,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { agentFundingIntents, agents, getDb, wallets } from "@/db";
 import { getSession } from "@/lib/auth";
 import {
+  applyAgentBudgetPolicy,
   getAgentWallets,
   getAgentWalletBalances as loadBalances,
   getUserWalletBalances,
@@ -281,5 +282,50 @@ export async function withdrawFromAgent(input: {
   } catch (err) {
     console.error("[withdrawFromAgent]", err);
     return fail(err instanceof Error ? err.message : "Withdrawal failed");
+  }
+}
+
+/**
+ * Owner-only. Set the agent's wallet-layer budget: the per-transaction USDC cap
+ * enforced by Privy policies attached to the agent's server wallets. This is the
+ * hard floor under the app-level risk config — the wallet refuses to sign an
+ * over-cap transfer even if every other control fails.
+ */
+export async function setAgentWalletBudget(input: {
+  agentId: string;
+  perTxUsd: number;
+}): Promise<ActionResult<{ perTxUsd: number }>> {
+  const session = await getSession();
+  if (!session) return fail("Sign in first");
+
+  const perTxUsd = Number(input.perTxUsd);
+  if (!Number.isFinite(perTxUsd) || perTxUsd < 1 || perTxUsd > 100_000) {
+    return fail("Budget must be between $1 and $100,000 per transaction");
+  }
+
+  const db = await getDb();
+  const [agent] = await db
+    .select({ id: agents.id, ownerId: agents.ownerId, name: agents.name, slug: agents.slug, walletBudget: agents.walletBudget })
+    .from(agents)
+    .where(eq(agents.id, input.agentId))
+    .limit(1);
+  if (!agent) return fail("Agent not found");
+  if (agent.ownerId !== session.userId) return fail("You do not own this agent");
+
+  try {
+    const walletBudget = await applyAgentBudgetPolicy({
+      agentId: agent.id,
+      agentName: agent.name,
+      perTxUsd,
+      existing: agent.walletBudget,
+    });
+    if (!walletBudget) return fail("This agent has no real wallets to attach a policy to");
+
+    await db.update(agents).set({ walletBudget }).where(eq(agents.id, agent.id));
+    revalidatePath(`/agents/${agent.slug}/settings`);
+    return { ok: true, data: { perTxUsd: walletBudget.perTxUsd } };
+  } catch (err) {
+    console.error("[setAgentWalletBudget]", err);
+    return fail(err instanceof Error ? err.message : "Could not apply the budget policy");
   }
 }

@@ -16,7 +16,6 @@ import { ExecutionControls } from "@/components/agents/proposals/execution-contr
 import { ExitRulesFields } from "@/components/agents/exit-rules";
 import { CashTotal } from "@/components/wallets/cash-summary";
 import { DepositSheet } from "@/components/wallets/deposit-sheet";
-import { GLASS, GLASS_ROW } from "@/components/wallets/surfaces";
 import { useFundingPlan } from "@/components/wallets/use-funding-plan";
 import {
   FUND_PRESETS,
@@ -47,17 +46,21 @@ export interface StepProps {
   update: (patch: Partial<BuilderDraft>) => void;
   updateConfig: (patch: Partial<BuilderDraft["config"]>) => void;
   errors: Record<string, string>;
+  /** The one-page builder renders its own section headers; steps drop theirs. */
+  hideHeading?: boolean;
 }
 
 // ------------------------------------------------------------------ identity
 
-export function IdentityStep({ draft, update, errors }: StepProps) {
+export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) {
   return (
     <div className="space-y-5">
-      <StepHeading
+      {hideHeading ? null : (
+        <StepHeading
         title="Give it a name"
         blurb="This is what shows up in the feed above every trade it makes, so make it something you would follow."
-      />
+        />
+      )}
 
       <Field label="Name" htmlFor="agent-name" error={errors.name}>
         <Input
@@ -231,6 +234,7 @@ export function BrainStep({
   errors,
   llmKeys,
   onKeyAdded,
+  hideHeading,
 }: StepProps & { llmKeys: LlmKeyRow[]; onKeyAdded: (key: LlmKeyRow) => void }) {
   const provider = draft.config.llm.provider;
   const models = DEFAULT_MODELS[provider];
@@ -238,10 +242,12 @@ export function BrainStep({
 
   return (
     <div className="space-y-5">
-      <StepHeading
+      {hideHeading ? null : (
+        <StepHeading
         title="Pick its brain"
         blurb="You bring the API key; the agent burns your tokens, not ours. Pick a model that can hold a thesis over a dozen tool calls."
-      />
+        />
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Provider" htmlFor="llm-provider">
@@ -304,7 +310,16 @@ export function BrainStep({
         </div>
       </Field>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      {/* Tuning is advanced by definition: the defaults are right for nearly
+          everyone, so the sliders live one level down (the values still show). */}
+      <details className="group rounded-xl border border-border/60 bg-card/20 px-3.5 py-2.5">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground [&::-webkit-details-marker]:hidden">
+          <span>Model tuning</span>
+          <span className="tnum font-mono text-xs">
+            temp {draft.config.llm.temperature.toFixed(1)} · {Math.round(draft.config.llm.maxSteps)} steps
+          </span>
+        </summary>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <RiskSlider
           id="llm-temperature"
           label="Temperature"
@@ -334,7 +349,8 @@ export function BrainStep({
             updateConfig({ llm: { ...draft.config.llm, maxSteps: Math.round(maxSteps) } })
           }
         />
-      </div>
+        </div>
+      </details>
 
       <Field
         label="Strategy"
@@ -384,6 +400,7 @@ export function DataStep({
   draft,
   updateConfig,
   sources,
+  hideHeading,
 }: StepProps & { sources: DataSourceInfo[] }) {
   const selected = new Set(draft.config.dataSources);
   const estimate = useMemo(
@@ -410,10 +427,12 @@ export function DataStep({
 
   return (
     <div className="space-y-5">
-      <StepHeading
+      {hideHeading ? null : (
+        <StepHeading
         title="What it gets to see"
         blurb="Each source is a paid API the agent calls over x402, from its own wallet. It pays per request, so every source you add is a recurring cost."
-      />
+        />
+      )}
 
       <div className="grid gap-2 sm:grid-cols-2">
         {sources.map((source) => {
@@ -479,15 +498,17 @@ export function DataStep({
 
 // ------------------------------------------------------------------ universe
 
-export function UniverseStep({ draft, updateConfig, errors }: StepProps) {
+export function UniverseStep({ draft, updateConfig, errors, hideHeading }: StepProps) {
   const universe = draft.config.universe;
 
   return (
     <div className="space-y-6">
-      <StepHeading
+      {hideHeading ? null : (
+        <StepHeading
         title="Its hunting ground, and its bar"
         blurb="There is no allowlist. The agent can reach any token on the chains you pick — including one minted a minute ago — so what keeps it honest is where it looks and how high it sets the bar."
-      />
+        />
+      )}
 
       <UniverseControls
         chains={draft.config.chains}
@@ -502,16 +523,18 @@ export function UniverseStep({ draft, updateConfig, errors }: StepProps) {
 
 // ---------------------------------------------------------------------- risk
 
-export function RiskStep({ draft, updateConfig }: StepProps) {
+export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
   const risk = draft.config.risk;
   const patch = (next: Partial<typeof risk>) => updateConfig({ risk: { ...risk, ...next } });
 
   return (
     <div className="space-y-4">
-      <StepHeading
+      {hideHeading ? null : (
+        <StepHeading
         title="The rules it cannot break"
         blurb="These are enforced in code before any trade reaches a chain. The model does not get a vote."
-      />
+        />
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <RiskSlider
@@ -590,13 +613,15 @@ export function RiskStep({ draft, updateConfig }: StepProps) {
 
 // ----------------------------------------------------------- schedule & mode
 
-export function ScheduleStep({ draft, update, updateConfig }: StepProps) {
+export function ScheduleStep({ draft, update, updateConfig, hideHeading }: StepProps) {
   return (
     <div className="space-y-5">
-      <StepHeading
+      {hideHeading ? null : (
+        <StepHeading
         title="How often it wakes up"
         blurb="Every tick costs LLM tokens and data credits whether it trades or not. Slower is usually smarter."
-      />
+        />
+      )}
 
       <Field label="Interval">
         <div className="grid gap-2 sm:grid-cols-3">
@@ -733,15 +758,15 @@ function SegmentedChoice({
 }
 
 /**
- * Funding. The one step in the builder that spends real money, so it defaults to
+ * Funding. The one part of the builder that spends real money, so it defaults to
  * not spending any: every agent is created on paper, and this is where you decide
  * whether it also gets a wallet with something in it.
  *
- * The rule the whole step is built around: never silently fund less than asked.
- * A shortfall on one chain stops the step and offers a deposit, rather than
- * quietly shrinking the number the user typed.
+ * The rule the whole card is built around: never silently fund less than asked.
+ * A shortfall on one chain blocks with a deposit CTA, rather than quietly
+ * shrinking the number the user typed.
  */
-export function FundingStep({ draft, update }: StepProps) {
+export function FundingStep({ draft, update, hideHeading }: StepProps) {
   const funding = draft.funding;
   const chains = draft.config.chains as Chain[];
   const [depositFor, setDepositFor] = useState<{ chain: Chain; asset: "usdc" | "native" } | null>(
@@ -777,10 +802,12 @@ export function FundingStep({ draft, update }: StepProps) {
 
   return (
     <div className="space-y-5">
-      <StepHeading
-        title="Give it money, or not yet"
-        blurb="Every agent is created on paper — fake money, real prices. Funding it now means it is ready the moment you switch it to live."
-      />
+      {hideHeading ? null : (
+        <StepHeading
+          title="Give it money, or not yet"
+          blurb="Every agent is created on paper — fake money, real prices. Funding it now means it is ready the moment you switch it to live."
+        />
+      )}
 
       <SegmentedChoice
         value={funding.mode}
@@ -810,7 +837,7 @@ export function FundingStep({ draft, update }: StepProps) {
         </div>
       ) : (
         <>
-          <div className={cn(GLASS, "px-4 py-3.5")}>
+          <div className="glass rounded-2xl border border-border/60 px-4 py-3.5">
             <p className="text-[11px] text-muted-foreground">Your cash</p>
             <CashTotal cash={cash} size="lg" className="mt-0.5 block" />
             {cash ? (
@@ -888,7 +915,7 @@ export function FundingStep({ draft, update }: StepProps) {
                   return (
                     <div
                       key={chain}
-                      className={cn(GLASS_ROW, "flex items-center justify-between gap-3 px-3 py-2.5")}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-border/50 bg-background/40 px-3 py-2.5"
                     >
                       <div>
                         <ChainBadge chain={chain} />

@@ -249,7 +249,6 @@ export const STEPS = [
   { id: "data", label: "Data" },
   { id: "universe", label: "Universe" },
   { id: "risk", label: "Risk" },
-  { id: "funding", label: "Funding" },
   { id: "schedule", label: "Schedule" },
   { id: "review", label: "Review" },
 ] as const;

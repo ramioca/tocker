@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { Zap } from "lucide-react";
 import { toast } from "sonner";
+import { LiquidMetal } from "@/components/common/liquid-metal";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { formatUsd } from "@/components/common/format";
@@ -95,13 +96,16 @@ export function GoLiveCard({ agent }: { agent: AgentDetail }) {
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             {funded ? (
-              <HoldToConfirmButton
-                size="sm"
-                duration={1_800}
-                label="Hold to go live"
-                confirmedLabel="Live"
-                onConfirm={() => void setMode("live")}
-              />
+              /* The one truly consequential button in settings gets the chrome. */
+              <LiquidMetal preset="chromatic" theme="dark" strength={0.85}>
+                <HoldToConfirmButton
+                  size="sm"
+                  duration={1_800}
+                  label="Hold to go live"
+                  confirmedLabel="Live"
+                  onConfirm={() => void setMode("live")}
+                />
+              </LiquidMetal>
             ) : (
               <>
                 <p className="text-xs text-muted-foreground">

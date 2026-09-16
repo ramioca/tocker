@@ -12,16 +12,10 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { tickMarks } from "@/lib/agent/scheduler";
+import { cronAuthorized as authorized } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Hobby caps at 60s; raise to 300 on Pro.
-
-function authorized(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET?.trim();
-  if (!secret) return false;
-  const header = req.headers.get("authorization") ?? "";
-  return header === `Bearer ${secret}`;
-}
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   if (!authorized(req)) {

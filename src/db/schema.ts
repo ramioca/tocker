@@ -82,6 +82,16 @@ export const llmKeys = pgTable(
   (t) => [index("llm_keys_user_idx").on(t.userId)],
 );
 
+/**
+ * A hard, wallet-layer budget. `perTxUsd` caps every outbound USDC transfer at the
+ * Privy policy engine — enforced when the wallet signs, regardless of what the app
+ * or the model asks for. `policyIds` are the Privy policy objects per chain.
+ */
+export interface WalletBudget {
+  perTxUsd: number;
+  policyIds: { base?: string; solana?: string };
+}
+
 // ---------- wallets ----------
 /**
  * Every wallet we know about. User embedded wallets (created client-side by Privy on login)
@@ -183,6 +193,8 @@ export const agents = pgTable(
     config: jsonb("config").$type<AgentConfig>().notNull(),
     /** Paper-mode starting balance in USD; live mode uses real wallet balances. */
     paperStartingUsd: numeric("paper_starting_usd", { precision: 18, scale: 2 }).default("10000").notNull(),
+    /** Wallet-layer spend cap (Privy policy). Null until the first policy is applied. */
+    walletBudget: jsonb("wallet_budget").$type<WalletBudget | null>(),
     nextRunAt: timestamp("next_run_at", { withTimezone: true }),
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { agentRuns, agents, getDb, llmKeys, posts } from "@/db";
 import { agentConfigSchema, type AgentConfigInput } from "@/lib/agent/config";
 import { getSession } from "@/lib/auth";
-import { createAgentWallets } from "@/lib/wallets";
+import { applyAgentBudgetPolicy, createAgentWallets, getAgentWalletBalances } from "@/lib/wallets";
 import { newId, uniqueSlug } from "@/server/queries/_shared";
 import type { ActionResult, AgentMode, AgentStatus } from "@/server/types";
 
@@ -95,6 +95,21 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
 
     await createAgentWallets({ agentId: id, userId: session.userId, name, chains: config.chains });
 
+    // Wallet-layer budget, defaulted to the app-level trade cap: even a compromised
+    // run loop cannot move more USDC per transaction than the policy allows. Failure
+    // is non-fatal — the app-level risk guard still stands, and the owner can apply
+    // the policy later from settings.
+    try {
+      const walletBudget = await applyAgentBudgetPolicy({
+        agentId: id,
+        agentName: name,
+        perTxUsd: config.risk.maxTradeUsd,
+      });
+      if (walletBudget) await db.update(agents).set({ walletBudget }).where(eq(agents.id, id));
+    } catch (err) {
+      console.warn("[createAgent] budget policy not applied:", err instanceof Error ? err.message : err);
+    }
+
     await db.insert(posts).values({
       id: newId("post"),
       authorId: session.userId,
@@ -158,6 +173,23 @@ export async function updateAgent(id: string, input: Partial<CreateAgentInput>):
   }
 
   await db.update(agents).set(patch).where(eq(agents.id, id));
+
+  // Keep the wallet-layer cap from drifting below the app-level trade cap when the
+  // owner raises it. Best-effort: the app-level risk guard still holds if Privy fails.
+  if (patch.config && patch.config.risk.maxTradeUsd !== agent.walletBudget?.perTxUsd) {
+    try {
+      const walletBudget = await applyAgentBudgetPolicy({
+        agentId: id,
+        agentName: patch.name ?? agent.name,
+        perTxUsd: patch.config.risk.maxTradeUsd,
+        existing: agent.walletBudget,
+      });
+      if (walletBudget) await db.update(agents).set({ walletBudget }).where(eq(agents.id, id));
+    } catch (err) {
+      console.warn("[updateAgent] budget policy not re-applied:", err instanceof Error ? err.message : err);
+    }
+  }
+
   revalidateAgent(agent.slug, session.handle);
   return { ok: true, data: undefined };
 }
@@ -202,6 +234,21 @@ export async function deleteAgent(id: string): Promise<ActionResult> {
   const [agent] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
   if (!agent) return fail("Agent not found");
   if (agent.ownerId !== session.userId) return fail("You do not own this agent");
+
+  // Deletion is irreversible and there is no in-app path to a deleted agent's
+  // wallet, so refuse while it still holds value. Paper wallets always read zero.
+  const balances = await getAgentWalletBalances(id);
+  const heldUsdc = balances.reduce(
+    (sum, w) => sum + (w.balances.find((b) => b.asset === "usdc")?.amount ?? 0),
+    0,
+  );
+  const heldNativeUsd = balances.reduce(
+    (sum, w) => sum + w.balances.filter((b) => b.asset !== "usdc").reduce((s, b) => s + (b.usd ?? 0), 0),
+    0,
+  );
+  if (heldUsdc > 0.01 || heldNativeUsd > 1) {
+    return fail("This agent's wallet still holds funds. Withdraw them first, or they'll be stranded.");
+  }
 
   await db.delete(agents).where(eq(agents.id, id));
   revalidateAgent(agent.slug, session.handle);

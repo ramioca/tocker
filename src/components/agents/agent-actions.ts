@@ -7,6 +7,7 @@
  */
 import { revalidatePath } from "next/cache";
 import { withMock } from "@/lib/data";
+import { isValidAddressForChain, addressHintForChain } from "@/lib/wallet-address";
 import {
   agentRuns,
   agentTrades,
@@ -168,7 +169,9 @@ export async function withdrawAction(input: {
   toAddress: string;
 }): Promise<ActionResult<{ txHash: string }>> {
   if (!(input.amount > 0)) return { ok: false, error: "Enter an amount greater than zero." };
-  if (input.toAddress.trim().length < 20) return { ok: false, error: "That destination address looks wrong." };
+  if (!isValidAddressForChain(input.chain, input.toAddress)) {
+    return { ok: false, error: addressHintForChain(input.chain) };
+  }
   return withMock(
     () => withdrawFromAgent(input),
     () => ({ ok: true as const, data: { txHash: "0xmocked000withdrawal000hash" } }),

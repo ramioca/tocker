@@ -5,7 +5,6 @@ import { ChainBadge } from "@/components/common/chain-badge";
 import { formatTokenAmount, formatUsd } from "@/components/common/format";
 import { NATIVE_SYMBOL, chainLabelFor, type UnifiedCash } from "@/lib/wallets/funding";
 import { cn } from "@/lib/utils";
-import { GLASS_ROW } from "./surfaces";
 import type { Chain } from "@/server/types";
 
 /**
@@ -58,7 +57,7 @@ export function ChainBreakdown({
       {cash.perChain.map((chainCash) => (
         <li
           key={chainCash.chain}
-          className={cn(GLASS_ROW, "flex items-center justify-between gap-3 px-3 py-2.5")}
+          className="flex items-center justify-between gap-3 rounded-xl border border-border/50 bg-background/40 px-3 py-2.5"
         >
           <div className="min-w-0">
             <ChainBadge chain={chainCash.chain} />

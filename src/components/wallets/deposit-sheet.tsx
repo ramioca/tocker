@@ -24,7 +24,6 @@ import { cn } from "@/lib/utils";
 import { CashTotal, ChainBreakdown } from "./cash-summary";
 import { OnrampButton } from "./onramp-button";
 import { QrCode } from "./qr-code";
-import { GLASS, GLASS_ROW } from "./surfaces";
 import { useSyncWallets } from "./use-cash";
 import type { Chain, WalletBalance } from "@/server/types";
 
@@ -98,7 +97,7 @@ export function DepositSheet({
         </SheetHeader>
 
         <div className="space-y-4 px-4 pb-8">
-          <div className={cn(GLASS, "px-4 py-3.5")}>
+          <div className="glass rounded-2xl border border-border/60 px-4 py-3.5">
             <p className="text-[11px] text-muted-foreground">Your cash</p>
             <CashTotal cash={resolved} size="lg" className="mt-0.5" />
             <p className="mt-1 text-[11px] text-muted-foreground">
@@ -136,7 +135,7 @@ export function DepositSheet({
             })}
           </div>
 
-          <div className={cn(GLASS_ROW, "flex items-center justify-between px-3 py-2.5")}>
+          <div className="flex items-center justify-between rounded-xl border border-border/50 bg-background/40 px-3 py-2.5">
             <span className="text-xs text-muted-foreground">
               On {chainLabelFor(chain)} you hold
             </span>
@@ -158,7 +157,7 @@ export function DepositSheet({
             Card or exchange, through Privy. Settles in a few minutes.
           </p>
 
-          <div className={cn(GLASS, "space-y-3 p-4")}>
+          <div className="glass space-y-3 rounded-2xl border border-border/60 p-4">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-medium">Receive</h3>
               <ChainBadge chain={chain} />

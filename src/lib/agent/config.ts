@@ -111,7 +111,9 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
     exitScoreBelow: 40, // a held token that falls to "avoid" is sold
     exitOnLiquidityDropPct: 50, // half the pool gone = the exit door is closing
   },
-  execution: { mode: "auto", proposalTtlMinutes: 60 },
+  // Ask-before-trading is the recommended first-agent posture (the builder says
+  // so too). A new operator opts into "trade on its own"; they don't get it by default.
+  execution: { mode: "approve", proposalTtlMinutes: 60 },
   schedule: { intervalMinutes: 15 },
   llm: { provider: "anthropic", model: "claude-sonnet-5", temperature: 0.4, maxSteps: 12 },
 };

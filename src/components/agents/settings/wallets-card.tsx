@@ -7,10 +7,8 @@ import { ChainBadge } from "@/components/common/chain-badge";
 import { formatTokenAmount, formatUsd } from "@/components/common/format";
 import { RelativeTime } from "@/components/common/relative-time";
 import { fetchWalletBalances } from "@/components/agents/agent-actions";
-import { GLASS_ROW } from "@/components/wallets/surfaces";
 import { NATIVE_SYMBOL, chainLabelFor } from "@/lib/wallets/funding";
 import { getFundingIntents, type FundingIntentRow } from "@/server/actions/wallets";
-import { cn } from "@/lib/utils";
 import { FundAgentDrawer } from "./fund-agent-drawer";
 import type { WalletBalance } from "@/server/types";
 
@@ -154,7 +152,7 @@ export function WalletsCard({
 
           <ul className="mt-3 space-y-2">
             {wallets.map((wallet) => (
-              <li key={wallet.walletId} className={cn(GLASS_ROW, "p-3")}>
+              <li key={wallet.walletId} className="rounded-xl border border-border/50 bg-background/40 p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <ChainBadge chain={wallet.chain} />
                   <Address address={wallet.address} label={`${wallet.chain} address`} />
