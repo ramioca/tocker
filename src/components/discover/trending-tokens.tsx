@@ -156,12 +156,13 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
               href={`/tokens/${score.chain}/${score.address}`}
               aria-label={`Open the ${score.symbol} token page`}
               className={cn(
-                // Overlaid on the row, so it needs somewhere to sit that the row's
-                // own score badge is not already using. Below `sm` there is no such
-                // place — the two landed on top of each other — so it moves to the
-                // bottom-left of the row, under the age/liquidity line.
-                "glass-inset absolute inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
-                "bottom-2 left-12 sm:bottom-auto sm:left-auto sm:top-2 sm:right-10",
+                // Overlaid on a row this workstream does not own, so it can only sit
+                // where that row leaves a gap. On a phone the row has no gap — it is
+                // two dense lines — and every position tried landed on top of either
+                // the score badge or the age/liquidity line. So it is desktop-only:
+                // on a phone the row's own chevron opens the breakdown, which is the
+                // thing you actually want on that screen.
+                "glass-inset absolute top-2 right-10 hidden items-center gap-1 rounded-md px-1.5 py-0.5 sm:inline-flex",
                 // main made this permanently visible at 70% rather than hover-only:
                 // a link nobody can see is a link nobody uses. Keep that.
                 "text-[10px] text-muted-foreground opacity-70 transition-opacity duration-150",
