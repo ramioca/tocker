@@ -1,20 +1,34 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
+import { Input } from "@/components/ui/input";
 import { deleteAgentAction } from "@/components/agents/agent-actions";
 import type { AgentDetail } from "@/server/types";
+import { cn } from "@/lib/utils";
 
 /**
- * Deleting is irreversible and rare, so it gets the slowest interaction in the
- * app: a two-second deliberate hold, snapping back instantly on release.
+ * Deleting is irreversible and rare, so it gets two gates, in this order:
+ *
+ *  1. **Type the name.** A hold alone only proves the operator meant to press
+ *     *something*. Typing the agent's name proves they know *which* agent they
+ *     are on — which is the actual mistake in an app where every settings page
+ *     looks identical.
+ *  2. **A two-second hold**, which snaps back instantly on release.
+ *
+ * The comparison is trimmed and case-insensitive: the point is recognition, not
+ * transcription, and demanding exact case would just train people to paste.
  */
 export function DangerZone({ agent }: { agent: AgentDetail }) {
   const router = useRouter();
+  const [typed, setTyped] = useState("");
+  const confirmed = typed.trim().toLowerCase() === agent.name.trim().toLowerCase();
 
   const remove = async () => {
+    if (!confirmed) return;
     const result = await deleteAgentAction(agent.id);
     if (!result.ok) {
       toast.error("Not deleted", { description: result.error });
@@ -31,18 +45,35 @@ export function DangerZone({ agent }: { agent: AgentDetail }) {
         <h2 className="text-sm font-medium text-destructive">Danger zone</h2>
       </div>
       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-        Deleting removes the agent, its runs, its trade history and its posts. Any funds still in
-        its wallets should be withdrawn first — this does not move them for you.
+        Deleting removes the agent, its runs, its trade history and its posts. Any funds still in its wallets
+        should be withdrawn first — this does not move them for you, and the wallets become unreachable from
+        Tocker once the agent is gone.
       </p>
-      <div className="mt-3">
-        <HoldToConfirmButton
-          size="sm"
-          duration={2_000}
-          label={`Hold to delete ${agent.name}`}
-          confirmedLabel="Deleted"
-          icon={<Trash2 className="size-3.5" />}
-          onConfirm={() => void remove()}
+
+      <div className="mt-3 space-y-2">
+        <label htmlFor="danger-confirm" className="block text-xs text-muted-foreground">
+          Type <span className="font-mono text-foreground">{agent.name}</span> to confirm
+        </label>
+        <Input
+          id="danger-confirm"
+          value={typed}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={agent.name}
+          onChange={(event) => setTyped(event.target.value)}
+          className={cn("max-w-xs font-mono text-xs", confirmed && "border-destructive/50")}
         />
+        <div className="pt-1">
+          <HoldToConfirmButton
+            size="sm"
+            duration={2_000}
+            label={confirmed ? `Hold to delete ${agent.name}` : "Type the name first"}
+            confirmedLabel="Deleted"
+            icon={<Trash2 className="size-3.5" />}
+            disabled={!confirmed}
+            onConfirm={() => void remove()}
+          />
+        </div>
       </div>
     </section>
   );

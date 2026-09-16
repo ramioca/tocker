@@ -16,10 +16,22 @@ import { ExitRulesFields } from "@/components/agents/exit-rules";
 import { INTERVAL_PRESETS } from "@/components/agents/builder/types";
 import { EmptyState } from "@/components/common/empty-state";
 import { setAgentStatusAction, updateAgentAction } from "@/components/agents/agent-actions";
+import { noteBudgetChangeAction } from "@/server/actions/security";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
+import { BudgetCard } from "./budget-card";
 import { cn } from "@/lib/utils";
 import type { AgentConfig } from "@/db/schema";
 import type { AgentDetail } from "@/server/types";
+
+/** The four numbers that decide how much money can move. */
+function capsOf(config: AgentConfig) {
+  return {
+    maxTradeUsd: config.risk.maxTradeUsd,
+    maxDailyTrades: config.risk.maxDailyTrades,
+    maxPositionPct: config.risk.maxPositionPct,
+    maxDataSpendUsdPerRun: config.risk.maxDataSpendUsdPerRun,
+  };
+}
 
 /**
  * `AgentDetail.config` is null for anyone who is not the owner, so the form
@@ -73,6 +85,14 @@ function SettingsForm({
       toast.error("Not saved", { description: result.error });
       throw new Error(result.error);
     }
+    // A change to the caps is a change to how much money can move, so it goes on
+    // the audit record. Fire-and-forget: the save already succeeded, and a failed
+    // audit write must not turn a saved change into an error the operator retries.
+    void noteBudgetChangeAction({
+      agentId: agent.id,
+      before: capsOf(initialConfig),
+      after: capsOf(config),
+    });
     toast.success("Saved");
     router.refresh();
   };
@@ -238,6 +258,8 @@ function SettingsForm({
           })}
         </div>
       </section>
+
+      <BudgetCard config={config} />
 
       <section className="space-y-3 rounded-xl border border-border/70 bg-card/30 p-4">
         <h2 className="text-sm font-medium">Risk</h2>

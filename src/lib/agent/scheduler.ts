@@ -13,8 +13,8 @@
  * be able to lose everything between two thoughts, and its equity curve was a step
  * function with one point per run.
  */
-import { and, asc, eq, gt, isNotNull, lte, sql } from "drizzle-orm";
-import { agents, getDb, positions } from "@/db";
+import { and, asc, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { agents, getDb, positions, userSecurity } from "@/db";
 import { runGuardian, type GuardianResult } from "@/lib/trading/guardian";
 import { getPortfolio, snapshotEquity } from "./portfolio";
 import { runAgent, type RunAgentResult } from "./run";
@@ -36,12 +36,29 @@ async function inBatches<T, R>(items: readonly T[], fn: (item: T) => Promise<R>)
   return out;
 }
 
+/**
+ * Due agents, minus every agent whose owner has pulled the account-wide kill
+ * switch (`user_security.tradingPaused`). The filter lives here rather than in
+ * `/api/cron/tick` so that anything reaching the scheduler honours it.
+ *
+ * `tickMarks` / `findGuardableAgents` is deliberately NOT filtered: exits must
+ * keep running while trading is paused.
+ */
 export async function findDueAgents(limit = 20, now: Date = new Date()): Promise<string[]> {
   const db = await getDb();
   const rows = await db
     .select({ id: agents.id })
     .from(agents)
-    .where(and(eq(agents.status, "active"), isNotNull(agents.nextRunAt), lte(agents.nextRunAt, now)))
+    .leftJoin(userSecurity, eq(userSecurity.userId, agents.ownerId))
+    .where(
+      and(
+        eq(agents.status, "active"),
+        isNotNull(agents.nextRunAt),
+        lte(agents.nextRunAt, now),
+        // No security row means the switch was never touched, i.e. not paused.
+        or(isNull(userSecurity.tradingPaused), eq(userSecurity.tradingPaused, false)),
+      ),
+    )
     .orderBy(asc(agents.nextRunAt))
     .limit(limit);
   return rows.map((r) => r.id);

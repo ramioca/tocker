@@ -7,26 +7,32 @@
  * holding something, and snapshot equity for every active agent. This is what makes a
  * stop loss a rule instead of a suggestion.
  *
- * Auth: `Authorization: Bearer $CRON_SECRET` only, exactly like `/api/cron/tick`. The
+ * Auth: `Authorization: Bearer $CRON_SECRET` only, compared in constant time and
+ * refused when the secret is unset or too short (`src/lib/security/cron.ts`). The
  * `x-vercel-cron` header is not trusted: any client can send it.
+ *
+ * The user-level kill switch deliberately does NOT filter this loop. Pausing
+ * trading stops new positions from being opened (`/api/cron/tick`); it must never
+ * stop a stop loss, or the operator would be trapped in every open position at
+ * exactly the moment they decided something was wrong.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { tickMarks } from "@/lib/agent/scheduler";
+import { authorizeCron } from "@/lib/security/cron";
+import { RATE_LIMITS, clientKey, limiter, rateLimitHeaders } from "@/lib/security/rate-limit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Hobby caps at 60s; raise to 300 on Pro.
 
-function authorized(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET?.trim();
-  if (!secret) return false;
-  const header = req.headers.get("authorization") ?? "";
-  return header === `Bearer ${secret}`;
-}
-
 export async function GET(req: NextRequest): Promise<NextResponse> {
-  if (!authorized(req)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const verdict = limiter.consume(clientKey(req.headers, "cron:marks"), RATE_LIMITS.cron);
+  if (!verdict.ok) {
+    return NextResponse.json({ error: "rate limited" }, { status: 429, headers: rateLimitHeaders(verdict) });
   }
+
+  const auth = authorizeCron(req.headers.get("authorization"));
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
   const limitParam = Number(req.nextUrl.searchParams.get("limit"));
   const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 100;
 
