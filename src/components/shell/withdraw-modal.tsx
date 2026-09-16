@@ -14,6 +14,7 @@ import { SimpleSelect } from "@/components/agents/builder/simple-select";
 import { formatUsd, truncateAddress } from "@/components/common/format";
 import { useRefreshCash } from "@/components/wallets/use-cash";
 import { useTransfer } from "@/components/wallets/use-transfer";
+import { addressHintForChain, isValidAddressForChain } from "@/lib/wallet-address";
 import { NETWORK_WORDING, cashOn, chainLabelFor, unifiedCash } from "@/lib/wallets/funding";
 import { cn } from "@/lib/utils";
 import type { Chain, WalletBalance } from "@/server/types";
@@ -55,10 +56,7 @@ export function WithdrawModal({
   const availableUsdc = chainCash.usdc;
   const parsed = Number(amount);
   const validAmount = Number.isFinite(parsed) && parsed > 0 && parsed <= availableUsdc;
-  const destinationOk =
-    chain === "base"
-      ? /^0x[a-fA-F0-9]{40}$/.test(destination.trim())
-      : /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(destination.trim());
+  const destinationOk = isValidAddressForChain(chain, destination);
 
   const summary = useMemo(
     () =>
@@ -170,6 +168,9 @@ export function WithdrawModal({
               onChange={(event) => setDestination(event.target.value)}
               className="font-mono text-xs"
             />
+            {destination.trim() && !destinationOk ? (
+              <p className="mt-1 text-[11px] text-destructive">{addressHintForChain(chain)}</p>
+            ) : null}
           </div>
 
           {available ? null : (

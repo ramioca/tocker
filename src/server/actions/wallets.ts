@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { and, desc, eq } from "drizzle-orm";
 import { agentFundingIntents, agents, getDb, wallets } from "@/db";
 import { getSession } from "@/lib/auth";
+import { addressHintForChain, isValidAddressForChain } from "@/lib/wallet-address";
 import {
   applyAgentBudgetPolicy,
   getAgentWallets,
@@ -253,10 +254,7 @@ export async function withdrawFromAgent(input: {
   if (!(input.amount > 0)) return fail("Enter an amount greater than zero");
   const to = input.toAddress?.trim();
   if (!to) return fail("Enter a destination address");
-  if (input.chain === "base" && !/^0x[a-fA-F0-9]{40}$/.test(to)) return fail("That is not a valid Base address");
-  if (input.chain === "solana" && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(to)) {
-    return fail("That is not a valid Solana address");
-  }
+  if (!isValidAddressForChain(input.chain, to)) return fail(addressHintForChain(input.chain));
 
   const db = await getDb();
   const [agent] = await db
