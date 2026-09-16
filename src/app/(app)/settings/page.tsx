@@ -8,19 +8,15 @@ import { SettingsSection } from "@/components/settings/settings-section";
 import { ProfileForm } from "@/components/settings/profile-form";
 import { LlmKeysSection } from "@/components/settings/llm-keys-section";
 import { NotificationPrefs } from "@/components/settings/notification-prefs";
-import { CreatePlatformWallets } from "@/components/settings/create-platform-wallets";
-import { PlatformCard } from "@/components/settings/platform-card";
-import { listPlatformWallets } from "@/lib/platform/wallets";
 import { DangerZone } from "@/components/settings/danger-zone";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
+import { isAdminEmail } from "@/lib/admin";
 
 export const metadata: Metadata = { title: "Settings · Tocker" };
 
 export default async function SettingsPage() {
   const session = await withMock(getSession, mockSession);
   if (!session) redirect(`/login?next=${encodeURIComponent("/settings")}`);
-  // Whether the operator card should offer to create the platform wallets or to verify them.
-  const platformHasWallets = (await listPlatformWallets().catch(() => [])).length > 0;
 
   const [keys, profile] = await Promise.all([
     withMock(
@@ -42,7 +38,7 @@ export default async function SettingsPage() {
         </p>
       </header>
 
-      <SettingsTabs />
+      <SettingsTabs isAdmin={isAdminEmail(session.email)} />
 
       <div className="mt-6 space-y-6">
         <SettingsSection
@@ -70,18 +66,11 @@ export default async function SettingsPage() {
         </SettingsSection>
 
         {/*
-          Single-operator for now: any signed-in user sees this. See the comment on
-          `PlatformCard` — it becomes a role check the day there is a second operator.
+          The Platform card used to sit here, visible to any signed-in user "until there
+          is a role check". There is one now: it moved to Settings → Admin, behind
+          `requireAdmin()`. The platform's own wallets and fee ledger are not a tenant's
+          business, and this page is every tenant's.
         */}
-        <SettingsSection
-          id="platform"
-          title="Platform"
-          description="The app's own wallets: what pays for your agents' data, and where the per-fill fee lands."
-        >
-          <PlatformCard />
-          <CreatePlatformWallets hasWallets={platformHasWallets} />
-        </SettingsSection>
-
         <SettingsSection id="danger" tone="danger" title="Danger zone">
           <DangerZone />
         </SettingsSection>

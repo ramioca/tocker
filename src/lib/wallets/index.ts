@@ -109,8 +109,14 @@ export async function getAgentWallets(agentId: string): Promise<AgentWalletRow[]
   return rows.map((r) => ({ id: r.id, chain: r.chain as Chain, address: r.address }));
 }
 
-/** Live balances for one known wallet row. Paper wallets and Privy errors resolve to zeros. */
-async function readWalletBalances(w: AgentWalletRow): Promise<WalletBalance> {
+/**
+ * Live balances for one known wallet row. Paper wallets and Privy errors resolve to zeros.
+ *
+ * Exported for the admin dashboard, which reads hundreds of wallets and needs to own
+ * the concurrency and the caching itself rather than fanning out one `Promise.all` per
+ * agent. Everything else should go through `getAgentWalletBalances`.
+ */
+export async function readWalletBalances(w: AgentWalletRow): Promise<WalletBalance> {
   const assets = ["usdc", NATIVE_ASSET[w.chain]] as const;
   const empty = assets.map((asset) => ({ asset, amount: 0, usd: null as number | null }));
   if (!isPrivyConfigured() || isPaperWallet(w.id)) {

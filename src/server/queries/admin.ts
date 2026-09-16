@@ -1,0 +1,758 @@
+import "server-only";
+/**
+ * The admin dashboard's read side — the only place in the app that queries across
+ * every user.
+ *
+ * **Scope.** Every other query module is scoped: by session, by ownership, or by
+ * `isPublic`. These are not, and that is the point — an admin needs to know how many
+ * agents exist, not how many they own. Access is decided once, at the route, by
+ * `requireAdmin()`; nothing in here takes an identifier from the request, so there is
+ * no id to tamper with.
+ *
+ * **What is deliberately absent.** No strategy prompt, no universe rules, no data-source
+ * list, no run transcript, no LLM key material — not truncated, not redacted, *absent*.
+ * A strategy is its author's IP (SPEC rule 1) and an admin is not an exception to that;
+ * an operator's recipe is not a support tool. What an admin gets is metadata and money:
+ * names, counts, notionals, timestamps, and the two columns of `config` the product
+ * already publishes on every agent card (chains and model). The one shape that crosses
+ * into private territory is `agents.config`, and it is never selected here.
+ *
+ * **Every number is a fact.** Counts and sums come from SQL; balances come from Privy.
+ * There is no "growth %" on this page because nothing in the database supports one
+ * honestly, and a made-up trend on an admin dashboard is how an operator talks
+ * themselves into a bad decision.
+ */
+import { and, desc, eq, gte, inArray, isNotNull, sql, type SQLWrapper } from "drizzle-orm";
+import {
+  agents,
+  auditEvents,
+  getDb,
+  platformFees,
+  tokens,
+  trades,
+  users,
+  wallets,
+  waitlistSignups,
+  x402Payments,
+  type Db,
+} from "@/db";
+import { toNum } from "@/lib/money";
+import { isPaperWallet, readWalletBalances, type AgentWalletRow } from "@/lib/wallets";
+import type { AgentCard, Chain } from "@/server/types";
+import { buildAgentCards } from "./_shared";
+
+// ---------------------------------------------------------------- view models
+
+export interface AdminUserTotals {
+  total: number;
+  new7d: number;
+  new30d: number;
+}
+
+export interface AdminAgentTotals {
+  total: number;
+  live: number;
+  paper: number;
+  active: number;
+  paused: number;
+  draft: number;
+  error: number;
+}
+
+export interface AdminWalletTotals {
+  /** Server wallets created for agents, one per chain per agent. */
+  agentServer: number;
+  /** Privy embedded wallets belonging to users, recorded at login. */
+  userEmbedded: number;
+}
+
+export interface AdminVolumeWindow {
+  notionalUsd: number;
+  count: number;
+  liveNotionalUsd: number;
+  liveCount: number;
+  paperNotionalUsd: number;
+  paperCount: number;
+}
+
+export interface AdminVolume {
+  allTime: AdminVolumeWindow;
+  d30: AdminVolumeWindow;
+  d7: AdminVolumeWindow;
+}
+
+export interface AdminFeeTotals {
+  /** Charged and not yet swept to a platform wallet. */
+  accruedUsd: number;
+  /** Swept in (paper agents' rows are written settled at accrual — see the schema). */
+  collectedUsd: number;
+}
+
+export interface AdminDataSpend {
+  /** Real x402 payments only. Fixtures (`simulated`) cost nothing and are counted apart. */
+  usd: number;
+  count: number;
+  simulatedCount: number;
+}
+
+export interface AdminHeadline {
+  users: AdminUserTotals;
+  agents: AdminAgentTotals;
+  wallets: AdminWalletTotals;
+  volume: AdminVolume;
+  fees: AdminFeeTotals;
+  dataSpend: AdminDataSpend;
+  waitlistSignups: number;
+}
+
+/** One UTC day of a daily series. `day` is `YYYY-MM-DD`. */
+export interface AdminDailyPoint {
+  day: string;
+  value: number;
+}
+
+export interface AdminSeries {
+  signups: AdminDailyPoint[];
+  volumeUsd: AdminDailyPoint[];
+  feesUsd: AdminDailyPoint[];
+}
+
+export interface AdminUserRow {
+  id: string;
+  handle: string;
+  displayName: string | null;
+  email: string | null;
+  createdAt: string;
+  agentCount: number;
+  liveAgentCount: number;
+  lastRunAt: string | null;
+}
+
+/** An agent card plus the two admin-only columns: what its wallets hold. */
+export interface AdminAgentRow {
+  card: AgentCard;
+  /** USDC across this agent's server wallets, from the balance snapshot. Null when unread. */
+  fundedUsdc: number | null;
+}
+
+export interface AdminTradeRow {
+  id: string;
+  createdAt: string;
+  agentName: string;
+  agentSlug: string;
+  ownerHandle: string;
+  side: "buy" | "sell";
+  chain: Chain;
+  tokenSymbol: string;
+  tokenAddress: string;
+  notionalUsd: number;
+  isPaper: boolean;
+  /** The platform's flat fee on this fill, when one was recorded. */
+  platformFeeUsd: number | null;
+}
+
+export interface AdminAuditRow {
+  id: string;
+  kind: string;
+  summary: string;
+  handle: string | null;
+  agentName: string | null;
+  ip: string | null;
+  createdAt: string;
+}
+
+export interface AdminWalletBalanceRow {
+  walletId: string;
+  agentId: string;
+  agentName: string;
+  agentSlug: string;
+  chain: Chain;
+  address: string;
+  usdc: number;
+  native: number;
+  isPaper: boolean;
+}
+
+export interface AdminBalancesSnapshot {
+  rows: AdminWalletBalanceRow[];
+  /** Agent wallets holding more than zero USDC. */
+  fundedCount: number;
+  /** USDC across every wallet in `rows`. */
+  totalUsdc: number;
+  /** When Privy was actually read. The page prints this, never "now". */
+  readAt: string;
+  /** Agent server wallets on record, before the cap. */
+  walletsOnRecord: number;
+  /** True when more real wallets exist than were read. */
+  capped: boolean;
+  /** False in local dev without Privy credentials: every balance below is a zero, not a reading. */
+  privyConfigured: boolean;
+}
+
+// ------------------------------------------------------------------- windowing
+
+const DAY_MS = 86_400_000;
+
+function daysAgo(now: Date, days: number): Date {
+  return new Date(now.getTime() - days * DAY_MS);
+}
+
+/** Start of the UTC day `days` back, so a daily series has whole buckets. */
+function startOfUtcDay(now: Date, daysBack = 0): Date {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  return new Date(d.getTime() - daysBack * DAY_MS);
+}
+
+function utcDayKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * A `YYYY-MM-DD` bucket key for a timestamptz column, computed in Postgres so the
+ * grouping happens where the rows are. `at time zone 'UTC'` first: the column is
+ * timestamptz, and truncating it without pinning the zone buckets by whatever the
+ * server's `TimeZone` happens to be.
+ */
+function dayKeyExpr(column: SQLWrapper) {
+  return sql<string>`to_char(date_trunc('day', ${column} at time zone 'UTC'), 'YYYY-MM-DD')`;
+}
+
+/** Fill a 30-day (inclusive) series so the chart has one bar per day, zeros included. */
+function densify(rows: Array<{ day: string; value: number }>, now: Date, days = 30): AdminDailyPoint[] {
+  const byDay = new Map(rows.map((r) => [r.day, r.value]));
+  const out: AdminDailyPoint[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const day = utcDayKey(startOfUtcDay(now, i));
+    out.push({ day, value: byDay.get(day) ?? 0 });
+  }
+  return out;
+}
+
+// -------------------------------------------------------------------- headline
+
+async function userTotals(db: Db, now: Date): Promise<AdminUserTotals> {
+  const [[total], [n7], [n30]] = await Promise.all([
+    db.select({ n: sql<number>`count(*)::int` }).from(users),
+    db.select({ n: sql<number>`count(*)::int` }).from(users).where(gte(users.createdAt, daysAgo(now, 7))),
+    db.select({ n: sql<number>`count(*)::int` }).from(users).where(gte(users.createdAt, daysAgo(now, 30))),
+  ]);
+  return { total: Number(total?.n ?? 0), new7d: Number(n7?.n ?? 0), new30d: Number(n30?.n ?? 0) };
+}
+
+async function agentTotals(db: Db): Promise<AdminAgentTotals> {
+  const rows = await db
+    .select({ mode: agents.mode, status: agents.status, n: sql<number>`count(*)::int` })
+    .from(agents)
+    .groupBy(agents.mode, agents.status);
+
+  const out: AdminAgentTotals = { total: 0, live: 0, paper: 0, active: 0, paused: 0, draft: 0, error: 0 };
+  for (const row of rows) {
+    const n = Number(row.n ?? 0);
+    out.total += n;
+    if (row.mode === "live") out.live += n;
+    else out.paper += n;
+    out[row.status] += n;
+  }
+  return out;
+}
+
+async function walletTotals(db: Db): Promise<AdminWalletTotals> {
+  const rows = await db
+    .select({ kind: wallets.kind, n: sql<number>`count(*)::int` })
+    .from(wallets)
+    .groupBy(wallets.kind);
+  const out: AdminWalletTotals = { agentServer: 0, userEmbedded: 0 };
+  for (const row of rows) {
+    if (row.kind === "agent_server") out.agentServer = Number(row.n ?? 0);
+    else if (row.kind === "user_embedded") out.userEmbedded = Number(row.n ?? 0);
+  }
+  return out;
+}
+
+const EMPTY_WINDOW: AdminVolumeWindow = {
+  notionalUsd: 0,
+  count: 0,
+  liveNotionalUsd: 0,
+  liveCount: 0,
+  paperNotionalUsd: 0,
+  paperCount: 0,
+};
+
+/**
+ * Filled notional in one window, split live/paper.
+ *
+ * Only `status = 'filled'` counts. A proposal nobody approved and a trade the risk
+ * guard rejected are not volume, and counting them would make the dashboard's headline
+ * number the one number on it that is not true.
+ */
+async function volumeWindow(db: Db, since: Date | null): Promise<AdminVolumeWindow> {
+  const where = since
+    ? and(eq(trades.status, "filled"), gte(trades.createdAt, since))
+    : eq(trades.status, "filled");
+  const rows = await db
+    .select({
+      isPaper: trades.isPaper,
+      total: sql<string>`coalesce(sum(${trades.amountUsd}), 0)`,
+      n: sql<number>`count(*)::int`,
+    })
+    .from(trades)
+    .where(where)
+    .groupBy(trades.isPaper);
+
+  const out: AdminVolumeWindow = { ...EMPTY_WINDOW };
+  for (const row of rows) {
+    const usd = toNum(row.total);
+    const n = Number(row.n ?? 0);
+    out.notionalUsd += usd;
+    out.count += n;
+    if (row.isPaper) {
+      out.paperNotionalUsd += usd;
+      out.paperCount += n;
+    } else {
+      out.liveNotionalUsd += usd;
+      out.liveCount += n;
+    }
+  }
+  return out;
+}
+
+async function feeTotals(db: Db): Promise<AdminFeeTotals> {
+  const rows = await db
+    .select({ status: platformFees.status, total: sql<string>`coalesce(sum(${platformFees.amountUsd}), 0)` })
+    .from(platformFees)
+    .groupBy(platformFees.status);
+  const out: AdminFeeTotals = { accruedUsd: 0, collectedUsd: 0 };
+  for (const row of rows) {
+    if (row.status === "accrued") out.accruedUsd = toNum(row.total);
+    else out.collectedUsd = toNum(row.total);
+  }
+  return out;
+}
+
+async function dataSpend(db: Db): Promise<AdminDataSpend> {
+  const rows = await db
+    .select({
+      simulated: x402Payments.simulated,
+      total: sql<string>`coalesce(sum(${x402Payments.amountUsd}), 0)`,
+      n: sql<number>`count(*)::int`,
+    })
+    .from(x402Payments)
+    .groupBy(x402Payments.simulated);
+  const out: AdminDataSpend = { usd: 0, count: 0, simulatedCount: 0 };
+  for (const row of rows) {
+    if (row.simulated) out.simulatedCount = Number(row.n ?? 0);
+    else {
+      out.usd = toNum(row.total);
+      out.count = Number(row.n ?? 0);
+    }
+  }
+  return out;
+}
+
+/** Every headline tile, in one round of parallel queries. */
+export async function getAdminHeadline(now: Date = new Date()): Promise<AdminHeadline> {
+  const db = await getDb();
+  const [userRow, agentRow, walletRow, allTime, d30, d7, fees, spend, [waitlist]] = await Promise.all([
+    userTotals(db, now),
+    agentTotals(db),
+    walletTotals(db),
+    volumeWindow(db, null),
+    volumeWindow(db, daysAgo(now, 30)),
+    volumeWindow(db, daysAgo(now, 7)),
+    feeTotals(db),
+    dataSpend(db),
+    db.select({ n: sql<number>`count(*)::int` }).from(waitlistSignups),
+  ]);
+
+  return {
+    users: userRow,
+    agents: agentRow,
+    wallets: walletRow,
+    volume: { allTime, d30, d7 },
+    fees,
+    dataSpend: spend,
+    waitlistSignups: Number(waitlist?.n ?? 0),
+  };
+}
+
+// ---------------------------------------------------------------------- series
+
+/** Signups, filled notional and fees charged, per UTC day, over the last 30 days. */
+export async function getAdminSeries(now: Date = new Date()): Promise<AdminSeries> {
+  const db = await getDb();
+  const since = startOfUtcDay(now, 29);
+
+  const signupDay = dayKeyExpr(waitlistSignups.createdAt);
+  const tradeDay = dayKeyExpr(trades.createdAt);
+  const feeDay = dayKeyExpr(platformFees.createdAt);
+
+  const [signupRows, tradeRows, feeRows] = await Promise.all([
+    db
+      .select({ day: signupDay, n: sql<number>`count(*)::int` })
+      .from(waitlistSignups)
+      .where(gte(waitlistSignups.createdAt, since))
+      .groupBy(signupDay),
+    db
+      .select({ day: tradeDay, total: sql<string>`coalesce(sum(${trades.amountUsd}), 0)` })
+      .from(trades)
+      .where(and(eq(trades.status, "filled"), gte(trades.createdAt, since)))
+      .groupBy(tradeDay),
+    db
+      .select({ day: feeDay, total: sql<string>`coalesce(sum(${platformFees.amountUsd}), 0)` })
+      .from(platformFees)
+      .where(gte(platformFees.createdAt, since))
+      .groupBy(feeDay),
+  ]);
+
+  return {
+    signups: densify(
+      signupRows.map((r) => ({ day: r.day, value: Number(r.n ?? 0) })),
+      now,
+    ),
+    volumeUsd: densify(
+      tradeRows.map((r) => ({ day: r.day, value: toNum(r.total) })),
+      now,
+    ),
+    feesUsd: densify(
+      feeRows.map((r) => ({ day: r.day, value: toNum(r.total) })),
+      now,
+    ),
+  };
+}
+
+// ---------------------------------------------------------------------- tables
+
+/** Anything unknown → a stable ISO string or null. `max()` comes back as a Date on one
+ *  driver and a string on another, and neither is worth branching on at every call. */
+function isoOf(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+export const ADMIN_TABLE_LIMIT = 100;
+export const ADMIN_FEED_LIMIT = 50;
+
+/** Newest users first, with how many agents they run and when one last ran. */
+export async function listAdminUsers(limit = ADMIN_TABLE_LIMIT): Promise<AdminUserRow[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      id: users.id,
+      handle: users.handle,
+      displayName: users.displayName,
+      email: users.email,
+      createdAt: users.createdAt,
+    })
+    .from(users)
+    .orderBy(desc(users.createdAt))
+    .limit(Math.min(Math.max(limit, 1), 500));
+  if (rows.length === 0) return [];
+
+  const ids = rows.map((r) => r.id);
+  const counts = await db
+    .select({
+      ownerId: agents.ownerId,
+      total: sql<number>`count(*)::int`,
+      live: sql<number>`coalesce(sum(case when ${agents.mode} = 'live' then 1 else 0 end), 0)::int`,
+      lastRunAt: sql<unknown>`max(${agents.lastRunAt})`,
+    })
+    .from(agents)
+    .where(inArray(agents.ownerId, ids))
+    .groupBy(agents.ownerId);
+
+  const byOwner = new Map(counts.map((c) => [c.ownerId, c]));
+  return rows.map((row) => {
+    const agg = byOwner.get(row.id);
+    return {
+      id: row.id,
+      handle: row.handle,
+      displayName: row.displayName,
+      email: row.email,
+      createdAt: row.createdAt.toISOString(),
+      agentCount: Number(agg?.total ?? 0),
+      liveAgentCount: Number(agg?.live ?? 0),
+      lastRunAt: isoOf(agg?.lastRunAt),
+    };
+  });
+}
+
+/**
+ * Every agent, newest first, as the same public `AgentCard` the rest of the app renders
+ * — so this table cannot accidentally grow a strategy column: the shape has no field
+ * for one.
+ */
+export async function listAdminAgents(
+  balances: AdminBalancesSnapshot | null,
+  limit = ADMIN_TABLE_LIMIT,
+): Promise<AdminAgentRow[]> {
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(agents)
+    .orderBy(desc(agents.createdAt))
+    .limit(Math.min(Math.max(limit, 1), 500));
+  const cards = await buildAgentCards(db, rows);
+
+  const usdcByAgent = new Map<string, number>();
+  for (const row of balances?.rows ?? []) {
+    usdcByAgent.set(row.agentId, (usdcByAgent.get(row.agentId) ?? 0) + row.usdc);
+  }
+
+  return cards.map((card) => ({
+    card,
+    fundedUsdc: balances === null ? null : (usdcByAgent.get(card.id) ?? 0),
+  }));
+}
+
+/** The last fills across the whole platform, with the fee each one was charged. */
+export async function listAdminTrades(limit = ADMIN_FEED_LIMIT): Promise<AdminTradeRow[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      id: trades.id,
+      createdAt: trades.createdAt,
+      side: trades.side,
+      chain: trades.chain,
+      amountUsd: trades.amountUsd,
+      isPaper: trades.isPaper,
+      agentName: agents.name,
+      agentSlug: agents.slug,
+      ownerHandle: users.handle,
+      tokenSymbol: tokens.symbol,
+      tokenAddress: tokens.address,
+      platformFeeUsd: platformFees.amountUsd,
+    })
+    .from(trades)
+    .innerJoin(agents, eq(trades.agentId, agents.id))
+    .innerJoin(users, eq(agents.ownerId, users.id))
+    .innerJoin(tokens, eq(trades.tokenId, tokens.id))
+    .leftJoin(platformFees, eq(platformFees.tradeId, trades.id))
+    .where(eq(trades.status, "filled"))
+    .orderBy(desc(trades.createdAt))
+    .limit(Math.min(Math.max(limit, 1), 200));
+
+  return rows.map((row) => ({
+    id: row.id,
+    createdAt: row.createdAt.toISOString(),
+    agentName: row.agentName,
+    agentSlug: row.agentSlug,
+    ownerHandle: row.ownerHandle,
+    side: row.side,
+    chain: row.chain as Chain,
+    tokenSymbol: row.tokenSymbol,
+    tokenAddress: row.tokenAddress,
+    notionalUsd: toNum(row.amountUsd),
+    isPaper: row.isPaper,
+    platformFeeUsd: row.platformFeeUsd === null ? null : toNum(row.platformFeeUsd),
+  }));
+}
+
+/**
+ * The audit trail across every user — the one read in the app that is not user-scoped.
+ * `metadata` is not selected: it is written by a dozen call sites and, while nothing is
+ * supposed to put a secret in it, an admin table is the wrong place to find out.
+ */
+export async function listAdminAuditEvents(limit = ADMIN_FEED_LIMIT): Promise<AdminAuditRow[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      id: auditEvents.id,
+      kind: auditEvents.kind,
+      summary: auditEvents.summary,
+      agentName: auditEvents.agentName,
+      ip: auditEvents.ip,
+      createdAt: auditEvents.createdAt,
+      handle: users.handle,
+    })
+    .from(auditEvents)
+    .leftJoin(users, eq(auditEvents.userId, users.id))
+    .orderBy(desc(auditEvents.createdAt))
+    .limit(Math.min(Math.max(limit, 1), 200));
+
+  return rows.map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    summary: row.summary,
+    handle: row.handle ?? null,
+    agentName: row.agentName,
+    ip: row.ip,
+    createdAt: row.createdAt.toISOString(),
+  }));
+}
+
+// -------------------------------------------------------------------- balances
+
+/**
+ * How many agent wallets get a live Privy read, and how long a reading stays good.
+ *
+ * `readWalletBalances` costs two Privy calls per wallet (one per asset — the SDK
+ * mis-serialises an asset array, see the note there), so a hundred agents on two chains
+ * is four hundred calls. Three things keep that from being the page's cost:
+ *
+ *  - paper wallets resolve to zeros with no call at all;
+ *  - real wallets are capped, ordered by recent activity, so the cap drops the dormant
+ *    ones rather than an arbitrary slice;
+ *  - the whole snapshot is cached in-process, and the page prints the time it was taken
+ *    with a refresh button next to it, rather than implying it is live.
+ */
+export const ADMIN_BALANCE_WALLET_CAP = 200;
+export const ADMIN_BALANCE_TTL_MS = 60_000;
+const ADMIN_BALANCE_CONCURRENCY = 4;
+
+interface CachedSnapshot {
+  snapshot: AdminBalancesSnapshot;
+  expiresAt: number;
+}
+
+/**
+ * Module-level, so it is per server instance rather than per request — which is the
+ * whole point (a page render must not re-read Privy for every component that wants a
+ * number). Serverless means several instances may hold different snapshots; each one
+ * shows its own "as of", so that is visible rather than silently wrong.
+ */
+let cached: CachedSnapshot | null = null;
+let inflight: Promise<AdminBalancesSnapshot> | null = null;
+
+/** Drop the cached reading. The refresh button's server action calls this. */
+export function resetAdminBalanceCache(): void {
+  cached = null;
+  inflight = null;
+}
+
+/** Run `task` over `items`, at most `limit` at a time, results in input order. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  task: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const index = next++;
+      if (index >= items.length) return;
+      out[index] = await task(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+type BalanceReader = (wallet: AgentWalletRow) => Promise<{
+  balances: Array<{ asset: string; amount: number }>;
+}>;
+
+function sumAsset(balances: Array<{ asset: string; amount: number }>, asset: string): number {
+  return balances
+    .filter((b) => b.asset.toLowerCase() === asset)
+    .reduce((sum, b) => sum + (Number.isFinite(b.amount) ? b.amount : 0), 0);
+}
+
+async function readSnapshot(now: Date, read: BalanceReader): Promise<AdminBalancesSnapshot> {
+  const db = await getDb();
+  const [{ n: onRecord } = { n: 0 }] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(wallets)
+    .where(eq(wallets.kind, "agent_server"));
+
+  // Ordered by recent activity: a wallet whose agent ran an hour ago matters more than
+  // one whose agent has never run, so the cap removes the right end of the list.
+  const rows = await db
+    .select({
+      walletId: wallets.id,
+      chain: wallets.chain,
+      address: wallets.address,
+      agentId: agents.id,
+      agentName: agents.name,
+      agentSlug: agents.slug,
+    })
+    .from(wallets)
+    .innerJoin(agents, eq(wallets.agentId, agents.id))
+    .where(and(eq(wallets.kind, "agent_server"), isNotNull(wallets.agentId)))
+    .orderBy(
+      sql`coalesce(${agents.lastRunAt}, ${agents.updatedAt}, ${agents.createdAt}) desc`,
+      desc(wallets.id),
+    );
+
+  const paperRows = rows.filter((r) => isPaperWallet(r.walletId));
+  const realRows = rows.filter((r) => !isPaperWallet(r.walletId)).slice(0, ADMIN_BALANCE_WALLET_CAP);
+  const realOnRecord = rows.length - paperRows.length;
+
+  const readings = await mapWithConcurrency(realRows, ADMIN_BALANCE_CONCURRENCY, (row) =>
+    read({ id: row.walletId, chain: row.chain as Chain, address: row.address }),
+  );
+
+  const out: AdminWalletBalanceRow[] = [];
+  // Paper first would bury the wallets that hold money; real first, in activity order.
+  realRows.forEach((row, i) => {
+    const balances = readings[i]?.balances ?? [];
+    out.push({
+      walletId: row.walletId,
+      agentId: row.agentId,
+      agentName: row.agentName,
+      agentSlug: row.agentSlug,
+      chain: row.chain as Chain,
+      address: row.address,
+      usdc: sumAsset(balances, "usdc"),
+      native: sumAsset(balances, row.chain === "base" ? "eth" : "sol"),
+      isPaper: false,
+    });
+  });
+  for (const row of paperRows) {
+    // A paper wallet holds nothing, by construction. Reading it would be two Privy
+    // calls to be told about an address that does not exist on any chain.
+    out.push({
+      walletId: row.walletId,
+      agentId: row.agentId,
+      agentName: row.agentName,
+      agentSlug: row.agentSlug,
+      chain: row.chain as Chain,
+      address: row.address,
+      usdc: 0,
+      native: 0,
+      isPaper: true,
+    });
+  }
+
+  const { isPrivyConfigured } = await import("@/lib/privy");
+  return {
+    rows: out,
+    fundedCount: out.filter((r) => r.usdc > 0).length,
+    totalUsdc: out.reduce((sum, r) => sum + r.usdc, 0),
+    readAt: now.toISOString(),
+    walletsOnRecord: Number(onRecord ?? 0),
+    capped: realOnRecord > realRows.length,
+    privyConfigured: isPrivyConfigured(),
+  };
+}
+
+/**
+ * The balance snapshot, from the in-process cache when it is under a minute old.
+ *
+ * `read` is a test seam: without Privy credentials every real reading is a zero, which
+ * would make a test about funded wallets pass for the wrong reason. Passing a reader
+ * also bypasses the cache — a test must never be served another test's snapshot.
+ */
+export async function getAdminBalances(opts?: {
+  force?: boolean;
+  now?: Date;
+  read?: BalanceReader;
+}): Promise<AdminBalancesSnapshot> {
+  const now = opts?.now ?? new Date();
+  if (opts?.read) return readSnapshot(now, opts.read);
+
+  if (!opts?.force && cached && cached.expiresAt > now.getTime()) return cached.snapshot;
+  if (!opts?.force && inflight) return inflight;
+
+  const promise = readSnapshot(now, readWalletBalances)
+    .then((snapshot) => {
+      cached = { snapshot, expiresAt: Date.now() + ADMIN_BALANCE_TTL_MS };
+      return snapshot;
+    })
+    .finally(() => {
+      inflight = null;
+    });
+  inflight = promise;
+  return promise;
+}
