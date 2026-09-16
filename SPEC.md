@@ -156,6 +156,10 @@ Deliberately, a high score is necessary but not sufficient: the LLM still decide
 - Prices for PnL marks: Jupiter Price API v3 `GET https://api.jup.ag/price/v3?ids=` for Solana; CMC x402 or DexScreener public `https://api.dexscreener.com/tokens/v1/base/<addrs>` for Base. Cache 30s.
 - Quote asset: USDC. Solana USDC `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`, Base USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`. Native SOL mint `So11111111111111111111111111111111111111112`, Base ETH `native`/`0xEeee...`.
 
+**Trade receipts (`trade_receipts`, 2026-09-16).** Every fill — agent `place_trade`, approved proposal, guardian exit, manual trade — writes one receipt keyed by `tradeId`: venue, tx hash + explorer URL (or `"simulated"`), quoted vs filled price, slippage bps signed from the trader's view, fees, the score at entry with its top reasons, timestamps. It is a separate table on purpose: a receipt exists only for a fill, is read whole, and its key set is closed by test so a receipt can never carry strategy. Public on the feed and token page; the strategy stays private.
+
+**Position sizing (`risk.sizing`).** `fixed_usd` (legacy behaviour), `percent_equity`, `volatility_scaled` — pure functions in `src/lib/trading/sizing.ts`. `maxTradeUsd` is checked first and stays the hard ceiling over every mode; `volatility_scaled` only ever shrinks; missing inputs degrade downward. A buy is also refused when the venue's quote is more than 50% off an independent mark (`sanity.ts`) — sells are never checked.
+
 ### Agent run loop (Runtime owner)
 `runAgent({ agentId, trigger })`:
 1. Create `agent_runs` row (status running). Load agent + config + decrypted LLM key + wallets.

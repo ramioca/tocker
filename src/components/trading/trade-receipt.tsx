@@ -11,7 +11,7 @@ import {
   exceededTolerance,
   slippageText,
   type TradeReceiptData,
-} from "@/lib/trading/receipt";
+} from "@/lib/trading/receipt-format";
 
 /**
  * The receipt, in two densities.

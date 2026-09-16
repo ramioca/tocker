@@ -63,6 +63,10 @@ export async function seedAgent(
     ...DEFAULT_AGENT_CONFIG,
     ...overrides.config,
     risk: { ...DEFAULT_AGENT_CONFIG.risk, ...overrides.config?.risk },
+    // The product default is `approve` (a new operator opts into autonomous trading),
+    // but a seeded test agent trades unless the test says otherwise: most of the suite
+    // exercises the fill path, and the approval tests pass `execution` explicitly.
+    execution: overrides.config?.execution ?? { ...DEFAULT_AGENT_CONFIG.execution, mode: "auto" },
   };
 
   await db.insert(schema.agents).values({
