@@ -32,11 +32,14 @@ import type { AgentConfig } from "@/db/schema";
 import { getAgentWallets, getPortfolio, toRiskPortfolio } from "@/lib/agent/portfolio";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { toNum } from "@/lib/money";
+import { notifyFill } from "@/lib/notifications";
 import type { Chain, TokenScore, TradeStatus } from "@/server/types";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "./executor";
 import { applyFill } from "./positions";
+import { buildReceipt, saveReceipt } from "./receipt";
 import { getPriceUsd } from "./prices";
 import { riskGuard, type OrderIntent } from "./risk";
+import { checkQuoteSanity } from "./sanity";
 
 /** The agent fields every proposal operation needs. */
 export interface ProposalAgent {
@@ -467,12 +470,23 @@ export async function decideProposal(input: {
     return settleFailed(err instanceof Error ? err.message : "No executor available for this chain.");
   }
 
+  const quotedAt = new Date();
   let quote;
   try {
     quote = await executor.quote(request);
   } catch (err) {
     return settleFailed(`Could not quote ${row.token.symbol}: ${err instanceof Error ? err.message : "quote failed"}`);
   }
+
+  // Same last check as the automatic path: an approved proposal is a trade, and a
+  // human tapping Approve is not a reason to skip the sanity comparison. Buys only.
+  const sanity = checkQuoteSanity({
+    side: row.trade.side,
+    symbol: row.token.symbol,
+    quotePriceUsd: quote.priceUsd,
+    referencePriceUsd: await getPriceUsd(chain, row.token.address),
+  });
+  if (!sanity.ok) return settleRejected(sanity.reason);
 
   await db
     .update(trades)
@@ -499,12 +513,34 @@ export async function decideProposal(input: {
     })
     .where(eq(trades.id, input.tradeId));
 
-  await applyFill(row.agent.id, row.token.id, {
+  await applyFill(
+    row.agent.id,
+    row.token.id,
+    {
+      side: row.trade.side,
+      amountToken: fill.amountToken,
+      amountUsd: fill.amountUsd,
+      feeUsd: fill.feeUsd,
+    },
+    { priceUsd: fill.priceUsd, score, now: filledAt },
+  );
+
+  // An approved proposal is a trade, so it gets the same receipt. The quote here is the
+  // *fresh* one taken at approval, not the indicative price from when it was proposed —
+  // slippage is measured against what we were actually offered.
+  const receipt = buildReceipt({
+    chain,
     side: row.trade.side,
-    amountToken: fill.amountToken,
-    amountUsd: fill.amountUsd,
-    feeUsd: fill.feeUsd,
+    symbol: row.token.symbol,
+    tokenAddress: row.token.address,
+    quote,
+    fill,
+    slippageToleranceBps: config.risk.slippageBps,
+    score,
+    quotedAt,
+    filledAt,
   });
+  await saveReceipt(input.tradeId, row.agent.id, receipt);
 
   // The feed post and the follower notifications are identical to an auto trade's —
   // an approved trade is a trade, and the record must not read differently.
@@ -523,6 +559,14 @@ export async function decideProposal(input: {
     row.trade.rationale ?? "",
     `/agents/${row.agent.slug}`,
   );
+
+  await notifyFill({
+    ownerId: row.agent.ownerId,
+    agentName: row.agent.name,
+    tradeId: input.tradeId,
+    receipt,
+    origin: "agent",
+  });
 
   return {
     ok: true,

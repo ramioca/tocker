@@ -14,12 +14,19 @@ import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
 import { eq } from "drizzle-orm";
 import { agents, getDb, posts, trades } from "@/db";
-import type { AgentConfig } from "@/db/schema";
+import type { AgentConfig, AgentConfigWithSizing } from "@/db/schema";
 import { getSession } from "@/lib/auth";
+import { positionSizingSchema } from "@/lib/agent/config";
+import type { PositionSizingConfig } from "@/lib/trading/sizing";
 import { getAgentWallets, getPortfolio, toRiskPortfolio } from "@/lib/agent/portfolio";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
 import { applyFill } from "@/lib/trading/positions";
+import { getPriceUsd } from "@/lib/trading/prices";
+import { recentRangePct } from "@/lib/trading/range";
+import { checkQuoteSanity } from "@/lib/trading/sanity";
+import { buildReceipt, saveReceipt, type TradeReceiptData } from "@/lib/trading/receipt";
+import { notifyFill } from "@/lib/notifications";
 import {
   decideProposal,
   indicativePrice,
@@ -128,6 +135,9 @@ export async function previewTrade(input: PreviewTradeInput): Promise<ActionResu
     tokenAddress: token.address,
     symbol: token.symbol,
     amountUsd,
+    // The preview must be sized by the same rule the real order will be, or it will
+    // say "allowed" for a ticket the guard is about to refuse.
+    rangePct: input.side === "buy" ? await recentRangePct(token.id) : null,
   };
   const verdict = riskGuard({ id: agent.id, mode: agent.mode, config }, toRiskPortfolio(portfolio), order, score);
 
@@ -193,6 +203,8 @@ export interface ManualTradeResult {
   amountToken: number;
   priceUsd: number;
   isPaper: boolean;
+  /** The document behind the fill, so the sheet can show it without a round trip. */
+  receipt: TradeReceiptData;
 }
 
 export async function placeManualTrade(
@@ -234,6 +246,7 @@ export async function placeManualTrade(
     tokenAddress: token.address,
     symbol: token.symbol,
     amountUsd,
+    rangePct: input.side === "buy" ? await recentRangePct(token.id) : null,
   };
   const verdict = riskGuard({ id: agent.id, mode: agent.mode, config }, toRiskPortfolio(portfolio), order, score);
   if (!verdict.ok) return fail(manualRejection(verdict.reason, token.symbol, score, config));
@@ -286,6 +299,7 @@ export async function placeManualTrade(
     decidedBy: "owner",
   });
 
+  const quotedAt = new Date();
   let quote;
   try {
     quote = await executor.quote(request);
@@ -293,6 +307,19 @@ export async function placeManualTrade(
     const message = err instanceof Error ? err.message : "quote failed";
     await db.update(trades).set({ status: "failed", error: message }).where(eq(trades.id, tradeId));
     return fail(`Could not quote ${token.symbol}: ${message}`);
+  }
+
+  // A manual trade is often somebody's first live one, so it gets the same last check
+  // the agent's own orders get. Buys only; an exit is never blocked.
+  const sanity = checkQuoteSanity({
+    side: input.side,
+    symbol: token.symbol,
+    quotePriceUsd: quote.priceUsd,
+    referencePriceUsd: await getPriceUsd(input.chain, token.address),
+  });
+  if (!sanity.ok) {
+    await db.update(trades).set({ status: "failed", error: sanity.reason }).where(eq(trades.id, tradeId));
+    return fail(sanity.reason);
   }
 
   await db.update(trades).set({ status: "submitted" }).where(eq(trades.id, tradeId));
@@ -303,6 +330,7 @@ export async function placeManualTrade(
     return fail(`${token.symbol} ${input.side} failed: ${message}`);
   }
 
+  const filledAt = new Date();
   await db
     .update(trades)
     .set({
@@ -312,16 +340,37 @@ export async function placeManualTrade(
       priceUsd: fill.priceUsd.toFixed(12),
       feeUsd: fill.feeUsd.toFixed(6),
       txHash: fill.txHash,
-      filledAt: new Date(),
+      filledAt,
     })
     .where(eq(trades.id, tradeId));
 
-  await applyFill(agent.id, token.id, {
+  await applyFill(
+    agent.id,
+    token.id,
+    {
+      side: input.side,
+      amountToken: fill.amountToken,
+      amountUsd: fill.amountUsd,
+      feeUsd: fill.feeUsd,
+    },
+    // A manual buy opens a position like any other, so the exit engine needs the same
+    // entry facts frozen onto it — otherwise the stop loss has nothing to measure from.
+    { priceUsd: fill.priceUsd, score, now: filledAt },
+  );
+
+  const receipt = buildReceipt({
+    chain: input.chain,
     side: input.side,
-    amountToken: fill.amountToken,
-    amountUsd: fill.amountUsd,
-    feeUsd: fill.feeUsd,
+    symbol: token.symbol,
+    tokenAddress: token.address,
+    quote,
+    fill,
+    slippageToleranceBps: config.risk.slippageBps,
+    score,
+    quotedAt,
+    filledAt,
   });
+  await saveReceipt(tradeId, agent.id, receipt);
 
   // A manual fill is as public as an automatic one: the record is the product.
   await db.insert(posts).values({
@@ -340,6 +389,14 @@ export async function placeManualTrade(
     `/agents/${agent.slug}`,
   );
 
+  await notifyFill({
+    ownerId: agent.ownerId,
+    agentName: agent.name,
+    tradeId,
+    receipt,
+    origin: "manual",
+  });
+
   revalidatePath(`/agents/${agent.slug}`);
   revalidatePath("/feed");
 
@@ -353,6 +410,7 @@ export async function placeManualTrade(
       amountToken: fill.amountToken,
       priceUsd: fill.priceUsd,
       isPaper: executor.isPaper,
+      receipt,
     },
   };
 }
@@ -402,4 +460,47 @@ export async function pendingProposalsSummary(): Promise<PendingProposalsSummary
   const session = await getSession();
   if (!session) return { count: 0, latest: null };
   return (await proposalQueries()).getPendingProposalsSummary(session.userId);
+}
+
+// ------------------------------------------------------------------ sizing
+
+/**
+ * Change how big this agent's tickets are.
+ *
+ * Its own action rather than a field in the settings form, for one reason: sizing is the
+ * setting most likely to be changed in a hurry, on a live agent, in the middle of a bad
+ * day. It should be one owner-checked write that touches nothing else — not a
+ * round trip through a whole config form that could carry a stale universe with it.
+ *
+ * `maxTradeUsd` is deliberately not editable here. It is the hard ceiling, it lives in
+ * the risk form, and halving your exposure should never be a side effect of picking a
+ * different sizing mode.
+ */
+export async function setPositionSizing(
+  agentId: string,
+  sizing: PositionSizingConfig,
+): Promise<ActionResult<{ sizing: PositionSizingConfig }>> {
+  const session = await getSession();
+  if (!session) return fail("Sign in first");
+
+  const agent = await ownedAgent(agentId, session.userId);
+  if (!agent) return fail("You do not own this agent");
+
+  const parsed = positionSizingSchema.safeParse(sizing);
+  if (!parsed.success) {
+    return fail(parsed.error.issues[0]?.message ?? "That sizing configuration is not valid.");
+  }
+
+  const db = await getDb();
+  const current = agent.config as AgentConfigWithSizing;
+  const next: AgentConfigWithSizing = {
+    ...current,
+    risk: { ...current.risk, sizing: parsed.data },
+  };
+
+  await db.update(agents).set({ config: next, updatedAt: new Date() }).where(eq(agents.id, agentId));
+  revalidatePath(`/agents/${agent.slug}`);
+  revalidatePath(`/agents/${agent.slug}/settings`);
+
+  return { ok: true, data: { sizing: parsed.data } };
 }
