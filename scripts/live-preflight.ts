@@ -129,8 +129,12 @@ async function main() {
 
   // 6. balances
   try {
-    const b = await privy.wallets().balance.get(walletId, { chain: "solana", asset: ["usdc", "sol"] });
-    ok(`balance read: ${b.balances.map((x) => `${x.asset} ${x.display_values?.usd ?? x.raw_value}`).join(", ") || "empty (new wallet)"}`);
+    // One call per asset — the SDK comma-joins an array and the API rejects it.
+    const reads = await Promise.all(
+      (["usdc", "sol"] as const).map((asset) => privy.wallets().balance.get(walletId, { chain: "solana", asset })),
+    );
+    const balances = reads.flatMap((b) => b.balances);
+    ok(`balance read: ${balances.map((x) => `${x.asset} ${x.display_values?.usd ?? x.raw_value}`).join(", ") || "empty (new wallet)"}`);
   } catch (e) {
     bad(`balance read failed: ${(e as Error).message}`); failures++;
   }

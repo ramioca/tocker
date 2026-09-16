@@ -117,10 +117,13 @@ async function readWalletBalances(w: AgentWalletRow): Promise<WalletBalance> {
     return { chain: w.chain, address: w.address, walletId: w.id, balances: empty };
   }
   try {
-    const res = await privy()
-      .wallets()
-      .balance.get(w.id, { chain: CHAIN_NAME[w.chain], asset: [...assets] });
-    const balances = (res.balances ?? []).map((b) => {
+    // One call per asset. The SDK's types accept an `asset` array, but it serialises
+    // one as a single comma-joined query value ("usdc,sol") and the API rejects that
+    // with a 400 — every balance read in the app was failing. Found by `pnpm preflight`.
+    const results = await Promise.all(
+      assets.map((asset) => privy().wallets().balance.get(w.id, { chain: CHAIN_NAME[w.chain], asset })),
+    );
+    const balances = results.flatMap((res) => res.balances ?? []).map((b) => {
       const decimals = b.raw_value_decimals ?? 0;
       const amount = Number(b.raw_value ?? "0") / 10 ** decimals;
       const usdRaw = b.display_values?.usd ?? b.display_values?.USD;
