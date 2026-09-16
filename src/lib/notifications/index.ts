@@ -241,6 +241,22 @@ export interface SendDigestInput {
  * fires twelve times an hour, a manual guardian pass and a redeploy all converge on one
  * notification. Never throws.
  */
+/**
+ * Whether the digest for this agent-day already went out. Cheap on purpose: the
+ * guardian asks this every pass before it spends three queries assembling a digest
+ * that `sendDailyDigest` would then discard as a duplicate.
+ */
+export async function hasDigest(ownerId: string, agentSlug: string, day: string): Promise<boolean> {
+  const db = await getDb();
+  const href = digestHref(agentSlug, day);
+  const [existing] = await db
+    .select({ id: notifications.id })
+    .from(notifications)
+    .where(and(eq(notifications.userId, ownerId), eq(notifications.kind, "digest"), eq(notifications.href, href)))
+    .limit(1);
+  return Boolean(existing);
+}
+
 export async function sendDailyDigest(input: SendDigestInput): Promise<Digest | null> {
   try {
     const db = await getDb();
