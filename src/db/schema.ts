@@ -854,3 +854,19 @@ export const agentFundingIntentsRelations = relations(agentFundingIntents, ({ on
   user: one(users, { fields: [agentFundingIntents.userId], references: [users.id] }),
 }));
 // ---- /W1 ----
+
+// ---- waitlist ----
+/**
+ * Landing-page waitlist signups. The only CTA on the front page must not lose data:
+ * the API route inserts here when a database is reachable and falls back to a log
+ * line when it is not (a first deploy with no DATABASE_URL), never to a 500.
+ */
+export const waitlistSignups = pgTable("waitlist_signups", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull(),
+  volume: text("volume").notNull(),
+  chains: jsonb("chains").$type<string[]>().notNull().default([]),
+  style: text("style"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+// ---- /waitlist ----

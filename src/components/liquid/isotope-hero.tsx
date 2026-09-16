@@ -172,7 +172,7 @@ export function IsotopeHero() {
       <div className="iso-scrim" aria-hidden />
 
       <header className="iso-header reveal" style={{ "--reveal-delay": "0s" } as CSSProperties}>
-        <Link href="/liquid" className="iso-logo" data-cursor="magnetic">
+        <Link href="/" className="iso-logo" data-cursor="magnetic">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
             <circle cx="12" cy="12" r="2.4" fill="currentColor" />
             <g className="orbit">
@@ -186,6 +186,7 @@ export function IsotopeHero() {
           <a className="nav-link" href="#signals" data-cursor="magnetic">Signals</a>
           <a className="nav-link" href="#mechanics" data-cursor="magnetic">Mechanics</a>
           <a className="nav-link" href="#contact" data-cursor="magnetic">Docs</a>
+          <Link className="nav-link" href="/home" data-cursor="magnetic">Sign in</Link>
           <button type="button" className="nav-link iso-nav-active" onClick={openWaitlist} data-cursor="magnetic">Waitlist</button>
         </nav>
       </header>

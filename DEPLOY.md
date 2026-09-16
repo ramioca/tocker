@@ -43,7 +43,6 @@ Set these in Vercel → Project → Settings → Environment Variables, for Prod
 | `NEXT_PUBLIC_APP_URL` | `https://your-app.vercel.app` |
 | `X402_MOCK` | `1` runs on fixtures. Anything else — including unset — means **real** payments; `isMockMode()` tests for exactly `"1"`. |
 | `CRON_MAX_AGENTS` | Agents per cron invocation. Default 5; use 2 on Hobby. |
-| `NEXT_PUBLIC_SHADER` | `off` disables the WebGPU landing hero and uses the static fallback |
 | `LLM_MOCK` | unset (or `0`) |
 | `SOLANA_RPC_URL` | A paid RPC. The public endpoint is rate-limited and will drop trades. |
 | `BASE_RPC_URL` | Any Base RPC |

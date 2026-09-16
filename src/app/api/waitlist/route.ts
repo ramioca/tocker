@@ -1,16 +1,17 @@
 import { appendFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import { nanoid } from "nanoid";
+import { getDb, waitlistSignups } from "@/db";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * Landing-page waitlist capture. Deliberately tiny: email + monthly volume are
  * the only hard requirements (volume is how we prioritize onboarding), the rest
- * is segmentation. Best-effort append to a local JSONL for now.
- *
- * TODO: swap the file append for a real store — a `waitlist` table or an ESP
- * (Resend/Loops) — before this goes to production traffic.
+ * is segmentation. Stored in `waitlist_signups`; when there is no database yet
+ * (a first deploy) it falls back to a local JSONL append, then to a log line —
+ * a signup is never answered with a 500 over storage.
  */
 export async function POST(req: Request) {
   let body: unknown;
@@ -40,11 +41,22 @@ export async function POST(req: Request) {
   };
 
   try {
-    await appendFile(path.join(process.cwd(), ".waitlist.jsonl"), JSON.stringify(entry) + "\n");
-  } catch {
-    // Read-only FS (serverless) — the log still captures the signal until a
-    // real store is wired. Don't fail the user's submission over storage.
-    console.log("[waitlist]", JSON.stringify(entry));
+    const db = await getDb();
+    await db.insert(waitlistSignups).values({
+      id: nanoid(),
+      email: entry.email,
+      volume: entry.volume,
+      chains: entry.chains as string[],
+      style: entry.style,
+    });
+  } catch (err) {
+    console.warn("[waitlist] database unavailable, falling back:", err instanceof Error ? err.message : err);
+    try {
+      await appendFile(path.join(process.cwd(), ".waitlist.jsonl"), JSON.stringify(entry) + "\n");
+    } catch {
+      // Read-only FS (serverless) with no database: the log is the last resort.
+      console.log("[waitlist]", JSON.stringify(entry));
+    }
   }
 
   return NextResponse.json({ ok: true });
