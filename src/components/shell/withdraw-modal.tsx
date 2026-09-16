@@ -2,9 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { encodeFunctionData, parseUnits } from "viem";
-import { useSendTransaction } from "@privy-io/react-auth";
-import { useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
   DialogContent,
@@ -15,23 +12,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
 import { formatUsd, truncateAddress } from "@/components/common/format";
+import { useRefreshCash } from "@/components/wallets/use-cash";
+import { useTransfer } from "@/components/wallets/use-transfer";
+import { NETWORK_WORDING, cashOn, chainLabelFor, unifiedCash } from "@/lib/wallets/funding";
 import { cn } from "@/lib/utils";
 import type { Chain, WalletBalance } from "@/server/types";
-
-/** Base USDC mint — the same constant the funding drawer uses. */
-const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
-const ERC20_TRANSFER_ABI = [
-  {
-    name: "transfer",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "to", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
-  },
-] as const;
 
 const PERCENT_CHIPS = [
   { label: "10%", fraction: 0.1 },
@@ -40,18 +25,14 @@ const PERCENT_CHIPS = [
   { label: "Max", fraction: 1 },
 ] as const;
 
-const ME_WALLETS_QUERY_KEY = ["me-wallets"] as const;
-
-function usdcAmount(wallet: WalletBalance | undefined): number {
-  const usdc = wallet?.balances.find((b) => b.asset === "usdc");
-  return usdc?.amount ?? 0;
-}
-
 /**
  * Withdraw USDC from the user's embedded wallet to any external address —
- * fomo's withdraw card: amount with percentage chips against the available
- * balance, then one explicit confirm. Signing happens client-side with the
- * user's own Privy embedded wallet; the server never holds this key.
+ * amount with percentage chips against the available balance, then one explicit
+ * confirm. Signing happens client-side with the user's own Privy embedded
+ * wallet; the server never holds this key.
+ *
+ * A withdrawal is per-chain even though the balance above it is unified: the
+ * USDC has to leave from where it actually is, and the chain picker says so.
  */
 export function WithdrawModal({
   open,
@@ -66,43 +47,36 @@ export function WithdrawModal({
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
   const [pending, setPending] = useState(false);
-  const { sendTransaction } = useSendTransaction();
-  const queryClient = useQueryClient();
+  const { send, available } = useTransfer();
+  const refresh = useRefreshCash();
 
-  const wallet = wallets.find((entry) => entry.chain === chain) ?? wallets[0];
-  const available = usdcAmount(wallet);
+  const cash = useMemo(() => unifiedCash(wallets), [wallets]);
+  const chainCash = cashOn(cash, chain);
+  const availableUsdc = chainCash.usdc;
   const parsed = Number(amount);
-  const validAmount = Number.isFinite(parsed) && parsed > 0 && parsed <= available;
+  const validAmount = Number.isFinite(parsed) && parsed > 0 && parsed <= availableUsdc;
   const destinationOk =
     chain === "base"
       ? /^0x[a-fA-F0-9]{40}$/.test(destination.trim())
       : /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(destination.trim());
 
   const summary = useMemo(
-    () => (validAmount && destinationOk ? `${parsed} USDC → ${truncateAddress(destination.trim(), 6, 6)}` : null),
+    () =>
+      validAmount && destinationOk
+        ? `${parsed} USDC → ${truncateAddress(destination.trim(), 6, 6)}`
+        : null,
     [validAmount, destinationOk, parsed, destination],
   );
 
   const confirm = async () => {
     if (!validAmount || !destinationOk || pending) return;
-    if (chain === "solana") {
-      toast.info("Solana withdrawals are not in-app yet", {
-        description:
-          "They land with the runtime workstream. For now, export your embedded wallet in Settings and send from any Solana wallet.",
-      });
-      return;
-    }
-
     setPending(true);
     try {
-      const result = await sendTransaction({
-        to: BASE_USDC,
-        data: encodeFunctionData({
-          abi: ERC20_TRANSFER_ABI,
-          functionName: "transfer",
-          args: [destination.trim() as `0x${string}`, parseUnits(amount, 6)],
-        }),
-        chainId: 8453,
+      const result = await send({
+        chain,
+        asset: "usdc",
+        amount: parsed,
+        to: destination.trim(),
       });
       toast.success("Withdrawal sent", {
         description: `${truncateAddress(result.hash, 8, 6)} — your balance updates once it confirms.`,
@@ -110,7 +84,8 @@ export function WithdrawModal({
       setAmount("");
       setDestination("");
       onOpenChange(false);
-      void queryClient.invalidateQueries({ queryKey: ME_WALLETS_QUERY_KEY });
+      void refresh();
+      void refresh(12_000);
     } catch (error) {
       toast.error("Withdrawal failed", {
         description: error instanceof Error ? error.message : "Your wallet rejected the request.",
@@ -125,7 +100,9 @@ export function WithdrawModal({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Withdraw to crypto wallet</DialogTitle>
-          <DialogDescription>USDC from your Tocker cash wallet to any address you choose.</DialogDescription>
+          <DialogDescription>
+            USDC from your Tocker cash to any address you choose.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
@@ -138,10 +115,13 @@ export function WithdrawModal({
               value={chain}
               options={(wallets.length ? wallets : [{ chain: "base" as Chain }]).map((entry) => ({
                 value: entry.chain,
-                label: entry.chain === "solana" ? "Solana" : "Base",
+                label: chainLabelFor(entry.chain),
               }))}
               onChange={(next) => setChain(next as Chain)}
             />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Leaves on {NETWORK_WORDING[chain].network}. Make sure the destination accepts it.
+            </p>
           </div>
 
           <div>
@@ -161,7 +141,9 @@ export function WithdrawModal({
                 <button
                   key={chip.label}
                   type="button"
-                  onClick={() => setAmount(String(Math.floor(available * chip.fraction * 100) / 100))}
+                  onClick={() =>
+                    setAmount(String(Math.floor(availableUsdc * chip.fraction * 100) / 100))
+                  }
                   className="h-7 flex-1 rounded-lg border border-border text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 >
                   {chip.label}
@@ -169,12 +151,16 @@ export function WithdrawModal({
               ))}
             </div>
             <p className="tnum mt-2 text-xs text-muted-foreground">
-              Available balance {formatUsd(available)}
+              {formatUsd(chainCash.usdcUsd)} on {chainLabelFor(chain)} ·{" "}
+              {formatUsd(cash.totalUsd)} in total
             </p>
           </div>
 
           <div>
-            <label htmlFor="withdraw-destination" className="mb-1 block text-xs text-muted-foreground">
+            <label
+              htmlFor="withdraw-destination"
+              className="mb-1 block text-xs text-muted-foreground"
+            >
               Destination address
             </label>
             <Input
@@ -186,17 +172,28 @@ export function WithdrawModal({
             />
           </div>
 
+          {available ? null : (
+            <p className="rounded-xl border border-border/70 bg-muted/20 p-3 text-xs leading-relaxed text-muted-foreground">
+              In-app withdrawals need Privy configured. Export your embedded wallet from Settings
+              and send from any wallet for now.
+            </p>
+          )}
+
           <button
             type="button"
             onClick={() => void confirm()}
-            disabled={!validAmount || !destinationOk || pending}
+            disabled={!validAmount || !destinationOk || pending || !available}
             className={cn(
               "flex h-10 w-full items-center justify-center rounded-xl bg-primary text-sm font-medium text-primary-foreground",
               "transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.98]",
               "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50 disabled:active:scale-100",
             )}
           >
-            {pending ? "Confirming…" : summary ? `Send ${summary}` : "Continue"}
+            {pending
+              ? "Waiting for your wallet to confirm…"
+              : summary
+                ? `Send ${summary}`
+                : "Continue"}
           </button>
         </div>
       </DialogContent>

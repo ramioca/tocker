@@ -1,10 +1,26 @@
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { DEFAULT_FUND_USD, DEFAULT_GAS_USD } from "@/lib/wallets/funding";
 import type { AgentConfigInput } from "@/lib/agent/config";
 import type { AgentConfig } from "@/db/schema";
 
 export type UniverseConfig = AgentConfig["universe"];
 export type DiscoveryFeedId = UniverseConfig["discovery"][number];
 export type BlocklistEntry = UniverseConfig["blocklist"][number];
+
+/**
+ * What the Funding step collects (W1). Real money, so it is opt-in: every agent
+ * is created on paper, and `mode: "fund"` means the user also wants to move USDC
+ * into its wallets right after it exists.
+ */
+export interface BuilderFunding {
+  mode: "paper" | "fund";
+  /** Total USDC the agent should end up with, in dollars. */
+  amountUsd: number;
+  /** Dollar value of native gas to send per funded chain. */
+  gasUsd: number;
+  /** Explicit per-chain USDC amounts once the user drags the split; null = proportional. */
+  split: Partial<Record<"solana" | "base", number>> | null;
+}
 
 export interface BuilderDraft {
   name: string;
@@ -14,6 +30,7 @@ export interface BuilderDraft {
   llmKeyId: string | null;
   paperStartingUsd: number;
   activate: boolean;
+  funding: BuilderFunding;
   config: AgentConfigInput;
 }
 
@@ -42,6 +59,12 @@ export function emptyDraft(): BuilderDraft {
     llmKeyId: null,
     paperStartingUsd: 10_000,
     activate: true,
+    funding: {
+      mode: "paper",
+      amountUsd: DEFAULT_FUND_USD,
+      gasUsd: DEFAULT_GAS_USD,
+      split: null,
+    },
     config: {
       ...DEFAULT_AGENT_CONFIG,
       risk: { ...DEFAULT_AGENT_CONFIG.risk },
@@ -226,6 +249,7 @@ export const STEPS = [
   { id: "data", label: "Data" },
   { id: "universe", label: "Universe" },
   { id: "risk", label: "Risk" },
+  { id: "funding", label: "Funding" },
   { id: "schedule", label: "Schedule" },
   { id: "review", label: "Review" },
 ] as const;

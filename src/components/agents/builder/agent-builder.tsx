@@ -13,15 +13,32 @@ import { ModeBadge } from "@/components/common/mode-badge";
 import { formatUsd } from "@/components/common/format";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { createAgentAction } from "@/components/agents/agent-actions";
-import { BrainStep, DataStep, IdentityStep, RiskStep, ScheduleStep, UniverseStep } from "./steps";
+import {
+  BrainStep,
+  DataStep,
+  FundingStep,
+  IdentityStep,
+  RiskStep,
+  ScheduleStep,
+  UniverseStep,
+} from "./steps";
 import { universeSentence } from "./universe-controls";
 import { StepHeading } from "./field";
 import { useDraft } from "./use-draft";
 import { STEPS, type StepId } from "./types";
 import { cn } from "@/lib/utils";
 import { ScoreBadge } from "@/components/tokens/score-badge";
+import { useFundingPlan } from "@/components/wallets/use-funding-plan";
+import { useTransfer } from "@/components/wallets/use-transfer";
+import { useRefreshCash } from "@/components/wallets/use-cash";
+import { chainLabelFor, transferLabel, transfersFor, type FundingPlan } from "@/lib/wallets/funding";
+import {
+  getAgentFundingTargets,
+  recordFundingIntents,
+  settleFundingIntent,
+} from "@/server/actions/wallets";
 import type { AgentConfig } from "@/db/schema";
-import type { DataSourceInfo, LlmKeyRow } from "@/server/types";
+import type { Chain, DataSourceInfo, LlmKeyRow } from "@/server/types";
 
 function validate(draft: ReturnType<typeof useDraft>["draft"]): Record<string, string> {
   const errors: Record<string, string> = {};
@@ -48,9 +65,83 @@ const STEP_ERROR_KEYS: Record<StepId, string[]> = {
   data: ["dataSources"],
   universe: ["chains", "universe"],
   risk: ["risk"],
+  // Funding is validated against live balances, not the config schema — see
+  // `useFundingPlan` below.
+  funding: [],
   schedule: ["schedule"],
   review: [],
 };
+
+/**
+ * Sign every transfer in the plan, in order, recording each outcome.
+ *
+ * Deliberately best-effort and honest about it: the agent already exists by the
+ * time this runs, so a rejected signature leaves a real, unfunded agent rather
+ * than an error. It stops at the first refusal — a second wallet popup after
+ * someone just closed one is nagging, not helpfulness — and marks the rest so
+ * the settings page can offer to finish the job.
+ */
+async function runFundingPlan(input: {
+  agentId: string;
+  plan: FundingPlan;
+  send: ReturnType<typeof useTransfer>["send"];
+}): Promise<{ sent: number; total: number; firstError: string | null }> {
+  const transfers = transfersFor(input.plan);
+  if (transfers.length === 0) return { sent: 0, total: 0, firstError: null };
+
+  const targets = await getAgentFundingTargets(input.agentId);
+  if (!targets.ok) return { sent: 0, total: transfers.length, firstError: targets.error };
+
+  const recorded = await recordFundingIntents({
+    agentId: input.agentId,
+    onCreate: true,
+    transfers: transfers.map((transfer) => ({
+      chain: transfer.chain,
+      asset: transfer.asset,
+      amount: transfer.amount,
+      amountUsd: transfer.asset === "usdc" ? transfer.amount : undefined,
+    })),
+  });
+  const ids = recorded.ok ? recorded.data.ids : [];
+
+  let sent = 0;
+  let firstError: string | null = null;
+
+  for (let i = 0; i < transfers.length; i += 1) {
+    const transfer = transfers[i];
+    const to = targets.data.find((t) => t.chain === transfer.chain)?.address;
+    if (firstError !== null) {
+      if (ids[i]) {
+        void settleFundingIntent({
+          id: ids[i],
+          status: "cancelled",
+          error: "Skipped after the previous transfer was not signed.",
+        });
+      }
+      continue;
+    }
+    if (!to) {
+      firstError = `The agent has no ${chainLabelFor(transfer.chain)} wallet.`;
+      if (ids[i]) void settleFundingIntent({ id: ids[i], status: "failed", error: firstError });
+      continue;
+    }
+    try {
+      const result = await input.send({
+        chain: transfer.chain,
+        asset: transfer.asset,
+        amount: transfer.amount,
+        to,
+      });
+      sent += 1;
+      if (ids[i]) void settleFundingIntent({ id: ids[i], status: "sent", txHash: result.hash });
+    } catch (error) {
+      firstError = error instanceof Error ? error.message : "Your wallet rejected the transfer.";
+      if (ids[i]) void settleFundingIntent({ id: ids[i], status: "failed", error: firstError });
+    }
+  }
+
+  return { sent, total: transfers.length, firstError };
+}
 
 export function AgentBuilder({
   sources,
@@ -65,12 +156,30 @@ export function AgentBuilder({
   const [index, setIndex] = useState(0);
   const [touched, setTouched] = useState<Set<StepId>>(new Set());
 
+  const { send } = useTransfer();
+  const refreshCash = useRefreshCash();
+
   const errors = useMemo(() => validate(draft), [draft]);
   const step = STEPS[index];
   const stepErrors = STEP_ERROR_KEYS[step.id].filter((key) => errors[key]);
   const showErrors = touched.has(step.id);
   const visibleErrors = showErrors ? errors : {};
-  const blocked = stepErrors.length > 0;
+
+  // Funding cannot be validated from the draft alone — it depends on what the
+  // user actually holds right now — so it gets its own gate.
+  const { plan: fundingPlan, loading: fundingLoading } = useFundingPlan({
+    mode: draft.funding.mode,
+    amountUsd: draft.funding.amountUsd,
+    gasUsd: draft.funding.gasUsd,
+    chains: draft.config.chains as Chain[],
+    split: draft.funding.split,
+  });
+  const fundingReady = draft.funding.mode === "paper" || Boolean(fundingPlan?.ready);
+  const fundingMessage = fundingLoading
+    ? "Reading your wallet balances…"
+    : (fundingPlan?.blockers[0]?.message ?? null);
+
+  const blocked = stepErrors.length > 0 || (step.id === "funding" && !fundingReady);
 
   const goNext = () => {
     if (blocked) {
@@ -112,12 +221,38 @@ export function AgentBuilder({
       throw new Error(result.error);
     }
 
+    // The agent exists from here on. Funding is signed by the user in their own
+    // wallet, so it can fail on its own — and when it does, the agent stays.
+    let funding: { sent: number; total: number; firstError: string | null } | null = null;
+    if (draft.funding.mode === "fund" && fundingPlan?.ready) {
+      funding = await runFundingPlan({ agentId: result.data.id, plan: fundingPlan, send });
+      void refreshCash();
+      void refreshCash(12_000);
+    }
+
     clear();
-    toast.success(`${draft.name.trim()} is live on paper`, {
-      description: draft.activate
-        ? "It will take its first tick on schedule. You can also run it now from its page."
-        : "It is paused. Activate it from settings when you are ready.",
-    });
+
+    if (funding && funding.firstError) {
+      toast.warning(`${draft.name.trim()} was created, but it is not funded`, {
+        description:
+          funding.sent > 0
+            ? `${funding.sent} of ${funding.total} transfers went through. ${funding.firstError} Finish funding from its settings page.`
+            : `${funding.firstError} The agent is on paper until you fund it from its settings page.`,
+      });
+    } else if (funding && funding.sent > 0) {
+      toast.success(`${draft.name.trim()} is funded`, {
+        description: `${transfersFor(fundingPlan!)
+          .map(transferLabel)
+          .join(", ")} on the way. Balances update once they confirm.`,
+      });
+    } else {
+      toast.success(`${draft.name.trim()} is live on paper`, {
+        description: draft.activate
+          ? "It will take its first tick on schedule. You can also run it now from its page."
+          : "It is paused. Activate it from settings when you are ready.",
+      });
+    }
+
     router.push(`/agents/${result.data.slug}`);
   };
 
@@ -190,6 +325,13 @@ export function AgentBuilder({
             updateConfig={updateConfig}
             errors={visibleErrors}
           />
+        ) : step.id === "funding" ? (
+          <FundingStep
+            draft={draft}
+            update={update}
+            updateConfig={updateConfig}
+            errors={visibleErrors}
+          />
         ) : step.id === "schedule" ? (
           <ScheduleStep
             draft={draft}
@@ -254,6 +396,10 @@ export function AgentBuilder({
       {showErrors && stepErrors.length > 0 ? (
         <p role="alert" className="mt-2 text-right text-xs text-destructive">
           {errors[stepErrors[0]]}
+        </p>
+      ) : step.id === "funding" && !fundingReady && fundingMessage ? (
+        <p role="status" className="mt-2 text-right text-xs text-muted-foreground">
+          {fundingMessage}
         </p>
       ) : null}
     </div>
@@ -344,6 +490,16 @@ function ReviewStep({
         </SummaryRow>
         <SummaryRow label="Paper balance">
           <span className="tnum">{formatUsd(draft.paperStartingUsd)}</span>
+        </SummaryRow>
+        <SummaryRow label="Funding">
+          {draft.funding.mode === "paper" ? (
+            "Paper only — nothing transferred"
+          ) : (
+            <span className="tnum">
+              {formatUsd(draft.funding.amountUsd)} USDC + {formatUsd(draft.funding.gasUsd)} gas per
+              chain
+            </span>
+          )}
         </SummaryRow>
         <SummaryRow label="Risk">
           <span className="tnum">

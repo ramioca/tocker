@@ -108,7 +108,7 @@ export function GoLiveCard({ agent }: { agent: AgentDetail }) {
                   Fund the wallet first — at least {formatUsd(MIN_USDC)} of USDC and a little native
                   for gas.
                 </p>
-                <FundAgentDrawer agentName={agent.name} wallets={wallets} />
+                <FundAgentDrawer agentId={agent.id} agentName={agent.name} wallets={wallets} />
               </>
             )}
           </div>
