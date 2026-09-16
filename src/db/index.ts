@@ -7,6 +7,7 @@
  * Both return a drizzle instance with the same schema, so app code never cares.
  */
 import * as schema from "./schema";
+import { databaseUrl } from "./url";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
@@ -14,7 +15,7 @@ export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 const g = globalThis as unknown as { __tockerDb?: Db; __tockerDbPromise?: Promise<Db> };
 
 function resolveUrl(): string {
-  const url = process.env.DATABASE_URL?.trim();
+  const url = databaseUrl("app");
   if (url) return url;
   if (process.env.NODE_ENV === "production") throw new Error("DATABASE_URL is required in production");
   return "pglite://./.pglite";
@@ -61,7 +62,7 @@ export async function getDb(): Promise<Db> {
  * report "there is no database" into a bare 500 with an empty body.
  */
 export function isPglite(): boolean {
-  const url = process.env.DATABASE_URL?.trim();
+  const url = databaseUrl("app");
   if (url) return url.startsWith("pglite://");
   // Unset means the dev fallback to an on-disk file. Production has no fallback —
   // `resolveUrl` refuses to invent one — so there is no embedded database to report.

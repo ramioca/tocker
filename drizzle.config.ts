@@ -1,6 +1,7 @@
 import { defineConfig } from "drizzle-kit";
+import { databaseUrl } from "./src/db/url";
 
-const url = process.env.DATABASE_URL?.trim() || "pglite://./.pglite";
+const url = databaseUrl("migrate") || "pglite://./.pglite";
 const pglite = url.startsWith("pglite://");
 
 export default defineConfig({

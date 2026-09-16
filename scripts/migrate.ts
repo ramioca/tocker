@@ -9,7 +9,9 @@
  */
 import { execFileSync } from "node:child_process";
 
-const url = process.env.DATABASE_URL?.trim();
+import { databaseUrl } from "../src/db/url";
+
+const url = databaseUrl("migrate");
 
 if (!url) {
   console.warn("[migrate] DATABASE_URL is not set — skipping migrations.");
@@ -25,5 +27,5 @@ if (url.startsWith("pglite://")) {
 }
 
 console.log("[migrate] running drizzle-kit migrate…");
-execFileSync("pnpm", ["exec", "drizzle-kit", "migrate"], { stdio: "inherit" });
+execFileSync("pnpm", ["exec", "drizzle-kit", "migrate"], { stdio: "inherit", env: { ...process.env, DATABASE_URL: url } });
 console.log("[migrate] done.");

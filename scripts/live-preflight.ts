@@ -60,7 +60,7 @@ async function main() {
     failures++;
   } else ok(`CRON_SECRET set (${cronSecret.length} chars)`);
 
-  const dbUrl = process.env.DATABASE_URL?.trim();
+  const dbUrl = databaseUrl("app");
   if (!dbUrl) { bad("DATABASE_URL missing"); failures++; }
   else if (dbUrl.startsWith("pglite://")) {
     bad("DATABASE_URL points at embedded PGlite — a file on an ephemeral disk. Every live trade it records is lost when the instance recycles.");
