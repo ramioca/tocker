@@ -55,7 +55,7 @@ function Split({
   empty: string;
 }) {
   return (
-    <section className="rounded-xl border border-border/70 bg-card/30 p-3 sm:p-4">
+    <section className="glass-panel rounded-2xl p-3 sm:p-4">
       <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{heading}</h3>
       {rows.length === 0 ? (
         <p className="mt-3 text-xs text-muted-foreground">{empty}</p>

@@ -36,7 +36,7 @@ function Highlight({ trade, tone }: { trade: TradeRow; tone: "best" | "worst" })
     <Link
       href={`/tokens/${trade.token.chain}/${trade.token.address}`}
       className={cn(
-        "group block rounded-xl border bg-card/40 p-3 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-4",
+        "group block rounded-xl border bg-card/40 p-3 transition-colors duration-150 focus-ring sm:p-4",
         tone === "best"
           ? "border-positive/25 hover:bg-positive/5"
           : "border-negative/25 hover:bg-negative/5",

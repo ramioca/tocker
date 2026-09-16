@@ -34,7 +34,7 @@ export function BeamSearchInput({
       <label htmlFor={id} className="sr-only">
         {label}
       </label>
-      <div className="relative overflow-hidden rounded-xl border border-border/80 bg-card/60 transition-colors duration-150 focus-within:border-ring">
+      <div className="relative overflow-hidden glass-card transition-colors duration-150 focus-within:border-ring rounded-xl">
         <Search
           className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
           aria-hidden
@@ -54,7 +54,7 @@ export function BeamSearchInput({
             type="button"
             onClick={() => onValueChange("")}
             aria-label="Clear search"
-            className="absolute top-1/2 right-2 grid size-6 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition-[color,transform] duration-150 hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            className="absolute top-1/2 right-2 grid size-6 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition-[color,transform] duration-150 hover:text-foreground active:scale-95 focus-ring"
           >
             <X className="size-3.5" aria-hidden />
           </button>

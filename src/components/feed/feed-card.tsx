@@ -13,7 +13,12 @@ import { RelativeTime } from "@/components/common/relative-time";
 import { TokenIcon } from "@/components/common/token-icon";
 import { formatTokenAmount, formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
+import { TradeReceiptRow } from "@/components/trading";
 import { cn } from "@/lib/utils";
+// The client-safe half of the receipt module. Importing the type from `@/db/schema`
+// would work (types are erased) but this is the boundary the split exists to make
+// obvious, so a later value import cannot quietly pull `postgres` into the bundle.
+import type { TradeReceiptData } from "@/lib/trading/receipt-format";
 import type { FeedItem, TradeRow } from "@/server/types";
 
 function explorerUrl(trade: TradeRow): string | null {
@@ -38,7 +43,7 @@ function SideChip({ side }: { side: "buy" | "sell" }) {
   );
 }
 
-function TradeBlock({ trade }: { trade: TradeRow }) {
+function TradeBlock({ trade, receipt }: { trade: TradeRow; receipt: TradeReceiptData | null }) {
   const url = explorerUrl(trade);
   const failed = trade.status === "failed" || trade.status === "rejected";
   const entryScore = trade.entryScore ?? trade.score?.total ?? null;
@@ -46,8 +51,8 @@ function TradeBlock({ trade }: { trade: TradeRow }) {
   return (
     <div
       className={cn(
-        "mt-2.5 rounded-xl border bg-card/40 px-3 py-2.5",
-        failed ? "border-destructive/30" : "border-border/70",
+        "glass-inset mt-3 rounded-xl px-3 py-2.5",
+        failed && "border-destructive/30",
       )}
     >
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
@@ -56,7 +61,7 @@ function TradeBlock({ trade }: { trade: TradeRow }) {
         {/* The symbol is the way into the token's own record: score, history, who else holds it. */}
         <Link
           href={`/tokens/${trade.token.chain}/${trade.token.address}`}
-          className="rounded text-sm font-semibold hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="focus-ring rounded text-sm font-semibold hover:underline"
         >
           {trade.token.symbol}
         </Link>
@@ -97,12 +102,20 @@ function TradeBlock({ trade }: { trade: TradeRow }) {
         <p className="mt-2 text-xs text-destructive">{trade.error}</p>
       ) : null}
 
-      {url ? (
+      {/*
+        The execution receipt owns this line when there is one: venue, quote → fill,
+        slippage against the tolerance the agent was configured with, fees, and the
+        explorer link — the numbers you screenshot when a fill looks wrong. A trade
+        that predates receipts falls back to the hash on its own.
+      */}
+      {receipt ? (
+        <TradeReceiptRow receipt={receipt} className="mt-2" />
+      ) : url ? (
         <a
           href={url}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-2 inline-flex items-center gap-1 rounded font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="mt-2 inline-flex items-center gap-1 rounded font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-ring"
         >
           {trade.txHash?.slice(0, 10)}…{trade.txHash?.slice(-6)}
           <ArrowUpRight aria-hidden className="size-3" />
@@ -124,10 +137,13 @@ const KIND_ICON = {
 
 export function FeedCard({
   item,
+  receipt = null,
   onLike,
   onOpenComments,
 }: {
   item: FeedItem;
+  /** The fill's execution receipt, when the trade has one. */
+  receipt?: TradeReceiptData | null;
   onLike: (postId: string, liked: boolean) => void;
   onOpenComments: (item: FeedItem) => void;
 }) {
@@ -151,13 +167,13 @@ export function FeedCard({
   return (
     <article
       id={item.id}
-      className="border-b border-border/70 px-4 py-4 transition-colors duration-150 hover:bg-card/30 sm:px-5"
+      className="glass-card glass-hover scroll-mt-24 rounded-2xl px-4 py-4 sm:px-5"
     >
       <div className="flex gap-3">
         {agent ? (
           <Link
             href={`/agents/${agent.slug}`}
-            className="shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="focus-ring shrink-0 rounded-lg"
             aria-label={agent.name}
           >
             <AgentAvatar seed={agent.avatarSeed} name={agent.name} size="md" />
@@ -171,7 +187,7 @@ export function FeedCard({
             {agent ? (
               <Link
                 href={`/agents/${agent.slug}`}
-                className="rounded font-semibold tracking-tight hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded font-semibold tracking-tight hover:underline focus-ring"
               >
                 {agent.name}
               </Link>
@@ -180,7 +196,7 @@ export function FeedCard({
             )}
             <Link
               href={`/u/${item.author.handle}`}
-              className="rounded text-muted-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded text-muted-foreground hover:underline focus-ring"
             >
               @{item.author.handle}
             </Link>
@@ -194,7 +210,9 @@ export function FeedCard({
             ) : null}
           </div>
 
-          {item.kind === "trade" && item.trade ? <TradeBlock trade={item.trade} /> : null}
+          {item.kind === "trade" && item.trade ? (
+            <TradeBlock trade={item.trade} receipt={receipt} />
+          ) : null}
 
           {item.body ? (
             item.kind === "trade" ? (
@@ -211,7 +229,7 @@ export function FeedCard({
             )
           ) : null}
 
-          <div className="mt-2 flex items-center gap-1">
+          <div className="mt-2.5 flex items-center gap-1 border-t border-[var(--glass-hairline)] pt-2">
             <LikeButton
               liked={liked}
               // LikeButton adds +1 for the viewer's own like, so pass the count excluding it.
@@ -225,7 +243,7 @@ export function FeedCard({
             <button
               type="button"
               onClick={() => onOpenComments(item)}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-[color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted/60 hover:text-foreground active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-[color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted/60 hover:text-foreground active:scale-[0.97] focus-ring"
             >
               <MessageCircle aria-hidden className="size-4" />
               <span className="tnum">{item.commentCount || ""}</span>

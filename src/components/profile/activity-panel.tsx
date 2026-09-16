@@ -1,4 +1,6 @@
+import { CalendarRange } from "lucide-react";
 import { CalendarHeatmap } from "@/components/spectrumui/charts/calendar-heatmap";
+import { EmptyState } from "@/components/common/empty-state";
 
 /**
  * Trades per day for the last year.
@@ -18,14 +20,16 @@ export function ActivityPanel({
 
   if (total === 0) {
     return (
-      <p className="rounded-2xl border border-dashed border-border py-16 text-center text-sm text-muted-foreground">
-        @{handle} hasn&rsquo;t run an agent yet. Nothing to plot.
-      </p>
+      <EmptyState
+        icon={<CalendarRange />}
+        title="No trading days yet"
+        description={`@${handle} hasn't run an agent yet, so there is nothing to plot. The heatmap fills in one square per day of fills.`}
+      />
     );
   }
 
   return (
-    <div className="rounded-2xl border border-border/80 bg-card/50 p-4 sm:p-5">
+    <div className="glass-panel rounded-2xl p-4 sm:p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-sm font-medium">Trading activity</h3>
         <p className="font-mono text-xs tabular-nums text-muted-foreground">

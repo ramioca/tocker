@@ -7,16 +7,20 @@ import { PnlText } from "@/components/social-common/pnl-text";
 import { Sparkline } from "@/components/social-common/sparkline";
 import { formatCount, formatUsd } from "@/components/social-common/format";
 
+/**
+ * `h-full` plus `mt-auto` on the footer: a one-line tagline and a two-line one
+ * still produce a grid with a single baseline across the row.
+ */
 export function AgentGridCard({ agent }: { agent: AgentCardType }) {
   return (
-    <article className="group relative flex flex-col rounded-2xl border border-border/80 bg-card/60 p-4 transition-[border-color,background-color] duration-150 hover:border-border hover:bg-card">
+    <article className="glass-card glass-hover group relative flex h-full flex-col rounded-2xl p-4">
       <div className="flex items-start gap-3">
         <AgentAvatar seed={agent.avatarSeed ?? agent.slug} label={agent.name} />
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-medium">
             <Link
               href={`/agents/${agent.slug}`}
-              className="rounded before:absolute before:inset-0 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              className="rounded before:absolute before:inset-0 focus-ring"
             >
               {agent.name}
             </Link>
@@ -38,7 +42,7 @@ export function AgentGridCard({ agent }: { agent: AgentCardType }) {
         <ModelChip model={agent.model} />
       </div>
 
-      <div className="mt-4 flex items-end justify-between gap-3 border-t border-border/60 pt-3">
+      <div className="mt-auto flex items-end justify-between gap-3 border-t border-[var(--glass-hairline)] pt-4">
         <div>
           <p className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
             All-time

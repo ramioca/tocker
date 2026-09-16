@@ -9,14 +9,14 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CommentSheet } from "./comment-sheet";
 import { FeedCard } from "./feed-card";
 import { FeedSkeleton } from "./feed-skeleton";
-import { fetchFeedPage, likePost } from "./feed-actions";
-import type { FeedItem, Page } from "@/server/types";
+import { fetchFeedPage, likePost, type FeedPage } from "./feed-actions";
+import type { FeedItem } from "@/server/types";
 
 type Scope = "global" | "following";
 
 const PAGE_SIZE = 12;
 
-export function FeedList({ initialPage }: { initialPage: Page<FeedItem> }) {
+export function FeedList({ initialPage }: { initialPage: FeedPage }) {
   const [scope, setScope] = useState<Scope>("global");
   const [commentTarget, setCommentTarget] = useState<FeedItem | null>(null);
   const queryClient = useQueryClient();
@@ -26,7 +26,7 @@ export function FeedList({ initialPage }: { initialPage: Page<FeedItem> }) {
     queryKey: ["feed", scope],
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => fetchFeedPage({ scope, cursor: pageParam, limit: PAGE_SIZE }),
-    getNextPageParam: (last: Page<FeedItem>) => last.nextCursor,
+    getNextPageParam: (last: FeedPage) => last.nextCursor,
     initialData:
       scope === "global"
         ? { pages: [initialPage], pageParams: [null as string | null] }
@@ -57,7 +57,7 @@ export function FeedList({ initialPage }: { initialPage: Page<FeedItem> }) {
   const onLike = useCallback(
     async (postId: string, liked: boolean) => {
       const key = ["feed", scope];
-      queryClient.setQueryData(key, (old: InfiniteData<Page<FeedItem>> | undefined) => {
+      queryClient.setQueryData(key, (old: InfiniteData<FeedPage> | undefined) => {
         if (!old) return old;
         return {
           ...old,
@@ -84,9 +84,16 @@ export function FeedList({ initialPage }: { initialPage: Page<FeedItem> }) {
 
   const items = query.data?.pages.flatMap((page) => page.items) ?? [];
 
+  // Receipts arrive alongside their page; flatten them into one lookup so a card
+  // does not have to know which page it came from.
+  const receipts = Object.assign({}, ...(query.data?.pages.map((page) => page.receipts) ?? [])) as
+    FeedPage["receipts"];
+
   return (
-    <div>
-      <div className="sticky top-14 z-20 border-b border-border/70 bg-background/85 px-4 py-2 backdrop-blur-md sm:px-5">
+    <div className="px-4 sm:px-5">
+      {/* The only blurred surface in the feed viewport: the cards underneath are
+          `.glass`, which carries the same tint with no backdrop-filter. */}
+      <div className="glass-bar sticky top-14 z-20 -mx-4 border-b border-b-[var(--glass-hairline)] px-4 py-2 sm:-mx-5 sm:px-5">
         <Tabs value={scope} onValueChange={(value) => setScope(value as Scope)}>
           <TabsList variant="line" className="h-8">
             <TabsTrigger value="global" className="px-3">
@@ -103,7 +110,7 @@ export function FeedList({ initialPage }: { initialPage: Page<FeedItem> }) {
         <FeedSkeleton />
       ) : query.isError ? (
         <ErrorState
-          className="m-4"
+          className="mt-4"
           title="The feed did not load"
           description={(query.error as Error).message}
           action={
@@ -118,7 +125,7 @@ export function FeedList({ initialPage }: { initialPage: Page<FeedItem> }) {
         />
       ) : items.length === 0 ? (
         <EmptyState
-          className="m-4"
+          className="mt-4"
           icon={<Radio />}
           title={scope === "following" ? "Nothing from the agents you follow" : "The feed is quiet"}
           description={
@@ -137,14 +144,17 @@ export function FeedList({ initialPage }: { initialPage: Page<FeedItem> }) {
         />
       ) : (
         <>
-          {items.map((item) => (
-            <FeedCard
-              key={item.id}
-              item={item}
-              onLike={(postId, liked) => void onLike(postId, liked)}
-              onOpenComments={setCommentTarget}
-            />
-          ))}
+          <div className="space-y-3 py-4">
+            {items.map((item) => (
+              <FeedCard
+                key={item.id}
+                item={item}
+                receipt={item.trade ? (receipts[item.trade.id] ?? null) : null}
+                onLike={(postId, liked) => void onLike(postId, liked)}
+                onOpenComments={setCommentTarget}
+              />
+            ))}
+          </div>
 
           <div ref={sentinelRef} aria-hidden className="h-px" />
 

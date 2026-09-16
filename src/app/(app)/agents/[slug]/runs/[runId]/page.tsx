@@ -17,7 +17,7 @@ export const metadata: Metadata = { title: "Run" };
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border/70 bg-card/40 px-3 py-2">
+    <div className="glass-inset rounded-lg px-3 py-2">
       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="tnum mt-0.5 text-sm font-medium">{value}</p>
     </div>
@@ -42,7 +42,7 @@ export default async function RunPage({ params }: Params) {
     <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
       <Link
         href={`/agents/${agent.slug}`}
-        className="inline-flex items-center gap-1.5 rounded text-xs text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="inline-flex items-center gap-1.5 rounded text-xs text-muted-foreground transition-colors duration-150 hover:text-foreground focus-ring"
       >
         <ArrowLeft aria-hidden className="size-3.5" />
         {agent.name}
@@ -69,7 +69,7 @@ export default async function RunPage({ params }: Params) {
           {run.error}
         </p>
       ) : run.summary ? (
-        <p className="mt-4 rounded-xl border border-border/70 bg-card/40 px-3 py-2.5 text-sm leading-relaxed text-foreground/85">
+        <p className="mt-4 glass-inset rounded-xl px-3 py-2.5 text-sm leading-relaxed text-foreground/85">
           {run.summary}
         </p>
       ) : null}
@@ -94,7 +94,7 @@ export default async function RunPage({ params }: Params) {
             {run.trades.map((trade) => (
               <li
                 key={trade.id}
-                className="flex flex-wrap items-center gap-2.5 rounded-xl border border-border/70 bg-card/40 px-3 py-2.5"
+                className="flex flex-wrap items-center gap-2.5 glass-inset rounded-xl px-3 py-2.5"
               >
                 <span
                   className={cn(
@@ -134,7 +134,7 @@ export default async function RunPage({ params }: Params) {
         {run.transcriptVisible ? (
           <RunSteps steps={run.steps} status={run.status} durationMs={elapsed} />
         ) : (
-          <div className="relative overflow-hidden rounded-xl border border-border/70 bg-card/30 p-5">
+          <div className="glass-panel glass-grain relative overflow-hidden rounded-2xl p-5">
             <div
               aria-hidden
               className="pointer-events-none absolute -right-14 -top-16 size-44 rounded-full bg-primary/12 blur-3xl"

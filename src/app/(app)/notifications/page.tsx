@@ -50,6 +50,12 @@ export default async function NotificationsPage() {
         <MarkAllRead unreadCount={unread} />
       </header>
 
+      {/*
+        No wrapper surface: `NotificationList` (owned by another workstream)
+        already groups its rows into their own panels, and a panel of panels is
+        one material too many. The page composition is the header and the
+        spacing; the list keeps its own anatomy.
+      */}
       <div className="mt-8">
         <NotificationList items={page.items} now={now} proposals={proposals} />
       </div>

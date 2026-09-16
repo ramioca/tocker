@@ -39,13 +39,13 @@ function RunRow({
       : null;
 
   return (
-    <li className="border-b border-border/70 last:border-b-0">
+    <li>
       <div className="flex items-center gap-3 px-3 py-2.5">
         <button
           type="button"
           onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.995] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.995] focus-ring"
         >
           <ChevronDown
             aria-hidden
@@ -70,7 +70,7 @@ function RunRow({
         <Link
           href={`/agents/${agentSlug}/runs/${run.id}`}
           aria-label="Open full run"
-          className="grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-ring"
         >
           <ExternalLink aria-hidden className="size-3.5" />
         </Link>
@@ -165,7 +165,7 @@ export function RunsTimeline({
 
   return (
     <div className="space-y-3">
-      <ul className="overflow-hidden rounded-xl border border-border/70">
+      <ul className="glass-card divide-y divide-[var(--glass-hairline)] overflow-hidden rounded-xl">
         {runs.map((run) => (
           <RunRow key={run.id} run={run} agentId={agentId} agentSlug={agentSlug} />
         ))}
@@ -176,7 +176,7 @@ export function RunsTimeline({
           type="button"
           onClick={() => void query.fetchNextPage()}
           disabled={query.isFetchingNextPage}
-          className="w-full rounded-lg border border-border py-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-full rounded-lg border border-border py-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground disabled:opacity-50 focus-ring"
         >
           {query.isFetchingNextPage ? "Loading…" : "Load older runs"}
         </button>

@@ -6,6 +6,7 @@ import { ArrowUpRight, Sparkles } from "lucide-react";
 import type { ScoreVerdict, TokenScore } from "@/server/types";
 import { TokenScoreRow } from "@/components/tokens/token-candidate-row";
 import { VERDICT_META, verdictTint } from "@/components/tokens";
+import { EmptyState } from "@/components/common/empty-state";
 import { cn } from "@/lib/utils";
 
 type SortKey = "score" | "age" | "liquidity" | "change";
@@ -56,9 +57,12 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
     return (
       <section aria-labelledby="scoreboard-heading">
         <Heading />
-        <p className="mt-5 rounded-2xl border border-dashed border-border py-14 text-center text-sm text-muted-foreground">
-          Nothing has been scored in the last day. Quiet chains, or a quiet sweep.
-        </p>
+        <EmptyState
+          className="mt-5"
+          icon={<Sparkles />}
+          title="Nothing scored in the last day"
+          description="Quiet chains, or a quiet sweep. The board fills itself from the free discovery feeds the moment an agent runs."
+        />
       </section>
     );
   }
@@ -91,7 +95,7 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
         <div
           role="group"
           aria-label="Sort the scoreboard"
-          className="flex flex-wrap gap-1 rounded-lg border border-border/70 bg-card/30 p-1"
+          className="glass-card flex flex-wrap gap-1 rounded-lg p-1"
         >
           {SORTS.map((option) => {
             const active = sort === option.key;
@@ -139,7 +143,7 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
         </p>
       </div>
 
-      <div className="mt-3 divide-y divide-border/70 overflow-hidden rounded-2xl border border-border/80 bg-card/50">
+      <div className="glass-panel mt-3 divide-y divide-[var(--glass-hairline)] overflow-hidden rounded-2xl">
         {rows.map((score) => (
           <div key={score.tokenId} className="group/row relative">
             <TokenScoreRow score={score} showTopBlocker />
@@ -152,9 +156,17 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
               href={`/tokens/${score.chain}/${score.address}`}
               aria-label={`Open the ${score.symbol} token page`}
               className={cn(
-                "absolute top-2 right-10 inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/80 px-1.5 py-0.5",
+                // Overlaid on a row this workstream does not own, so it can only sit
+                // where that row leaves a gap. On a phone the row has no gap — it is
+                // two dense lines — and every position tried landed on top of either
+                // the score badge or the age/liquidity line. So it is desktop-only:
+                // on a phone the row's own chevron opens the breakdown, which is the
+                // thing you actually want on that screen.
+                "glass-inset absolute top-2 right-10 hidden items-center gap-1 rounded-md px-1.5 py-0.5 sm:inline-flex",
+                // main made this permanently visible at 70% rather than hover-only:
+                // a link nobody can see is a link nobody uses. Keep that.
                 "text-[10px] text-muted-foreground opacity-70 transition-opacity duration-150",
-                "hover:opacity-100 group-hover/row:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "focus-ring hover:opacity-100 group-hover/row:opacity-100 focus-visible:opacity-100",
               )}
             >
               Token page

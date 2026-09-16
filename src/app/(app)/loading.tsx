@@ -5,7 +5,7 @@
  */
 export default function AppLoading() {
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6" role="status" aria-label="Loading">
+    <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8" role="status" aria-label="Loading">
       <div className="flex items-center gap-3">
         <span className="size-12 rounded-xl bg-muted/70 motion-safe:animate-pulse" aria-hidden />
         <div className="flex-1 space-y-2">
@@ -28,7 +28,7 @@ export default function AppLoading() {
         {Array.from({ length: 5 }, (_, i) => (
           <span
             key={i}
-            className="block h-16 rounded-xl bg-muted/50 motion-safe:animate-pulse"
+            className="glass-card block h-16 rounded-xl motion-safe:animate-pulse"
             aria-hidden
           />
         ))}

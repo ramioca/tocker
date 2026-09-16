@@ -21,12 +21,12 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border/80 px-6 py-14 text-center",
+        "flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-[var(--glass-hairline)] px-6 py-14 text-center",
         className,
       )}
     >
       {icon ? (
-        <span className="grid size-10 place-items-center rounded-lg bg-muted/60 text-muted-foreground [&_svg]:size-5">
+        <span className="glass-inset grid size-10 place-items-center rounded-xl text-muted-foreground [&_svg]:size-5">
           {icon}
         </span>
       ) : null}
@@ -55,7 +55,7 @@ export function ErrorState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-3 rounded-xl border border-destructive/25 bg-destructive/5 px-6 py-12 text-center",
+        "flex flex-col items-center justify-center gap-3 rounded-2xl border border-destructive/25 bg-destructive/[0.06] px-6 py-12 text-center",
         className,
       )}
     >

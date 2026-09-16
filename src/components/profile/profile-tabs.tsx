@@ -46,7 +46,7 @@ export function ProfileTabs({
             aria-selected={active === tab.id}
             aria-controls="profile-panel"
             onClick={() => setActive(tab.id)}
-            className={`relative z-10 h-7 rounded-[7px] px-3.5 text-xs font-medium transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
+            className={`relative z-10 h-7 rounded-[7px] px-3.5 text-xs font-medium transition-colors duration-150 focus-ring ${
               active === tab.id ? "text-foreground" : "text-muted-foreground hover:text-foreground"
             }`}
           >

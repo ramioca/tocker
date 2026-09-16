@@ -14,7 +14,7 @@ import type { AgentDetail } from "@/server/types";
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border/70 bg-card/40 px-3 py-2.5">
+    <div className="glass-inset rounded-lg px-3 py-2.5">
       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="tnum mt-0.5 truncate text-sm font-medium">{value}</p>
     </div>
@@ -33,7 +33,7 @@ export function PrivateStrategyPanel({ agent }: { agent: AgentDetail }) {
 
   return (
     <div className="space-y-4">
-      <section className="relative overflow-hidden rounded-xl border border-border/70 bg-card/30 p-5 sm:p-6">
+      <section className="relative overflow-hidden glass-panel rounded-2xl p-5 sm:p-6">
         {/* One soft violet wash, the app's single accent, so the panel reads as a
             deliberate surface rather than a missing one. */}
         <div

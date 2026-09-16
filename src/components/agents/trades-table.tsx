@@ -89,7 +89,7 @@ export function TradesTable({
         />
       ) : (
         <div className="space-y-3">
-          <div className="overflow-x-auto rounded-xl border border-border/70">
+          <div className="glass-card overflow-x-auto rounded-xl">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -148,7 +148,7 @@ export function TradesTable({
                       <TableCell>
                         <Link
                           href={`/tokens/${trade.token.chain}/${trade.token.address}`}
-                          className="inline-flex items-center gap-1.5 rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="inline-flex items-center gap-1.5 rounded hover:underline focus-ring"
                         >
                           <TokenIcon token={trade.token} size="xs" />
                           <span className="font-medium">{trade.token.symbol}</span>
@@ -172,7 +172,7 @@ export function TradesTable({
                         {trade.entryScore === null ? (
                           <Link
                             href={`/tokens/${trade.token.chain}/${trade.token.address}`}
-                            className="rounded font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            className="rounded font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-ring"
                           >
                             score now
                           </Link>
@@ -192,7 +192,7 @@ export function TradesTable({
                             href={url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-0.5 rounded font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            className="inline-flex items-center gap-0.5 rounded font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-ring"
                           >
                             {trade.txHash?.slice(0, 6)}
                             <ArrowUpRight aria-hidden className="size-3" />
@@ -213,7 +213,7 @@ export function TradesTable({
               type="button"
               onClick={() => void query.fetchNextPage()}
               disabled={query.isFetchingNextPage}
-              className="w-full rounded-lg border border-border py-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-full rounded-lg border border-border py-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground disabled:opacity-50 focus-ring"
             >
               {query.isFetchingNextPage ? "Loading…" : "Load more trades"}
             </button>

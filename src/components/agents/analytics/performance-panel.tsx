@@ -43,7 +43,7 @@ export function PerformancePanel({
         <div
           role="group"
           aria-label="Analytics window"
-          className="flex gap-1 rounded-lg border border-border/70 bg-card/30 p-1"
+          className="glass-card flex gap-1 rounded-lg p-1"
         >
           {WINDOWS.map((option) => {
             const active = window === option.value;
@@ -55,7 +55,7 @@ export function PerformancePanel({
                 onClick={() => setWindow(option.value)}
                 className={cn(
                   "rounded-md px-2.5 py-1 text-xs font-medium transition-colors duration-150",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  "focus-ring",
                   active
                     ? "bg-primary/12 text-primary"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",

@@ -99,13 +99,16 @@
   --accent: oklch(0.95 0.02 300);
   --accent-foreground: oklch(0.28 0.08 300);
   --destructive: oklch(0.58 0.22 25);
-  --positive: oklch(0.58 0.15 155);
+  /* Light-theme green was 3.9:1 on a card — under AA for the small, dense PnL
+     numbers it is used for. L 0.53 clears 4.5:1 on every glass weight and is the
+     same hue, so a column of gains still reads as one colour. */
+  --positive: oklch(0.53 0.15 155);
   --negative: oklch(0.58 0.2 22);
   --border: oklch(0.9 0.004 285);
   --input: oklch(0.9 0.004 285);
   --ring: oklch(0.55 0.22 300 / 55%);
   --chart-1: oklch(0.55 0.22 300);
-  --chart-2: oklch(0.58 0.15 155);
+  --chart-2: oklch(0.53 0.15 155);
   --chart-3: oklch(0.58 0.2 22);
   --chart-4: oklch(0.62 0.12 250);
   --chart-5: oklch(0.6 0.02 285);
@@ -161,6 +164,281 @@
   --sidebar-ring: oklch(0.72 0.19 300 / 60%);
 }
 
+/* ===========================================================================
+ * GLASS — the material system
+ * ===========================================================================
+ *
+ * Apple's rule: material weight encodes hierarchy. Heavier material sits closer
+ * to the viewer — more blur, more body, a brighter top edge — so depth is
+ * something you can see rather than something you have to be told.
+ *
+ * Five weights, lightest to heaviest:
+ *
+ *   .glass-card    a repeating surface in the page flow: a feed card, a grid
+ *                  card, a table shell. Deliberately NOT blurred. A page of
+ *                  thirty blurred cards is not premium, it is a dropped frame;
+ *                  this carries the same tint and top edge so it still reads as
+ *                  the same material.
+ *   .glass-bar     page-edge chrome — the top bar, the mobile tab bar, a sticky
+ *                  filter strip. Tinted from the page ground, not the popover
+ *                  colour, and the thinnest blurred weight: you should be able
+ *                  to tell that content is still moving underneath it.
+ *   .glass-panel   a page module — one section of a page, the thing a heading
+ *                  names. Blurred, tinted from the card colour.
+ *   .glass         floating chrome: menus, popovers, the run island. Blurred,
+ *                  popover-tinted, and thicker than anything anchored to the
+ *                  page, because it is in front of the page.
+ *   .glass-heavy   the heaviest surface in the app — modals and the command
+ *                  palette. Whatever is behind it is meant to be out of play.
+ *
+ * Rules, all of them load-bearing:
+ *
+ *   1. Never nest a backdrop-filter inside another backdrop-filter. This is
+ *      structural here, not a convention: `.glass-card` and `.glass-inset` are
+ *      the two surfaces with no blur, and they are the two you are allowed to
+ *      nest. The blurred weights are never placed inside one another.
+ *   2. Cap the blurred surfaces per viewport: one bar, one overlay, a handful of
+ *      panels. Repeating things — lists, grids, table rows — get `.glass-card`.
+ *   3. `prefers-reduced-transparency: reduce` turns the whole system back into
+ *      solid paint, and `prefers-contrast: more` goes further and gives every
+ *      surface a defined edge. Neither changes a size, so nothing reflows.
+ *   4. Text contrast stays >= 4.5:1 on every weight, in both themes. That is
+ *      what sets the alpha floors below, not taste: a material thin enough to be
+ *      pretty but too thin to read on is a bug.
+ *
+ * Modifiers: `.glass-hover` (interactive lift), `.glass-grain` (a whisper of
+ * noise, for large mostly-empty surfaces only), `.glass-inset` (a recessed
+ * sub-surface inside a card — the trade receipt in a feed post, a stat well).
+ */
+:root {
+  /* What the material is cut from. Chrome comes from the page ground, content
+     surfaces from the card colour, floating things from the popover colour. */
+  --glass-chrome-tint: var(--background);
+  --glass-tint: var(--card);
+  --glass-float-tint: var(--popover);
+
+  /* Alpha floors, set by the contrast requirement. */
+  --glass-card-alpha: 62%;
+  --glass-bar-alpha: 62%;
+  --glass-panel-alpha: 72%;
+  --glass-float-alpha: 72%;
+  --glass-heavy-alpha: 80%;
+  --glass-inset-alpha: 45%;
+
+  --glass-blur-bar: 20px;
+  --glass-blur-panel: 10px;
+  --glass-blur-float: 20px;
+  --glass-blur-heavy: 28px;
+  /* Saturation is what keeps a blurred backdrop from going grey and dead. */
+  --glass-saturate: 1.6;
+  --glass-saturate-heavy: 1.7;
+
+  /* The 1px light along the top edge. Light theme: a white sheen. */
+  --glass-edge: oklch(1 0 0 / 0.75);
+  --glass-hairline: oklch(0.72 0.006 285 / 0.28);
+  /* The hover/focus state of the hairline — one step more present, never a
+     different colour. */
+  --glass-hairline-strong: oklch(0.6 0.006 285 / 0.45);
+  --glass-shadow: 0 1px 2px oklch(0.2 0.01 285 / 0.05), 0 8px 24px -12px oklch(0.2 0.01 285 / 0.12);
+  --glass-shadow-heavy: 0 24px 64px -24px oklch(0.2 0.01 285 / 0.35);
+  --glass-grain-opacity: 0.035;
+
+  /* Pre-mixed, for the handful of third-party components (the Spectrum command
+     palette) that own their own background/box-shadow utilities and can only be
+     steered by being handed a colour. Same recipe as `.glass-heavy`. */
+  --glass-overlay: color-mix(in oklch, var(--glass-float-tint) var(--glass-heavy-alpha), transparent);
+  --glass-overlay-shadow: inset 0 1px 0 0 var(--glass-edge), var(--glass-shadow-heavy);
+}
+
+.dark {
+  /* On near-black the same alphas read heavier, so the anchored weights thin out
+     a little and the edge becomes a sliver of light rather than a sheen. The
+     floating weights keep their values — they were tuned against this ground. */
+  --glass-card-alpha: 55%;
+  --glass-panel-alpha: 66%;
+  --glass-inset-alpha: 40%;
+
+  --glass-edge: oklch(1 0 0 / 0.1);
+  --glass-hairline: oklch(1 0 0 / 0.09);
+  --glass-hairline-strong: oklch(1 0 0 / 0.18);
+  --glass-shadow: 0 1px 2px oklch(0 0 0 / 0.3), 0 10px 30px -14px oklch(0 0 0 / 0.55);
+  --glass-shadow-heavy: 0 24px 64px -24px oklch(0 0 0 / 0.5);
+  --glass-grain-opacity: 0.05;
+}
+
+@layer components {
+  /* --- anchored to the page ---------------------------------------------- */
+
+  /* The repeating surface. No blur, by design — see rule 2. */
+  .glass-card {
+    background-color: color-mix(in oklch, var(--glass-tint) var(--glass-card-alpha), transparent);
+    border: 1px solid var(--glass-hairline);
+    box-shadow: inset 0 1px 0 0 var(--glass-edge);
+  }
+
+  /* A page module. One blurred surface holding many unblurred rows. */
+  .glass-panel {
+    background-color: color-mix(in oklch, var(--glass-tint) var(--glass-panel-alpha), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur-panel)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-panel)) saturate(var(--glass-saturate));
+    border: 1px solid var(--glass-hairline);
+    box-shadow:
+      inset 0 1px 0 0 var(--glass-edge),
+      var(--glass-shadow);
+  }
+
+  /* --- floating over the page -------------------------------------------- */
+
+  /* Page-edge chrome. Tinted from the ground it is attached to. */
+  .glass-bar {
+    background: color-mix(in oklch, var(--glass-chrome-tint) var(--glass-bar-alpha), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur-bar)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-bar)) saturate(var(--glass-saturate));
+  }
+
+  /* Free-floating chrome: menus, popovers, the run island. */
+  .glass {
+    background: color-mix(in oklch, var(--glass-float-tint) var(--glass-float-alpha), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur-float)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-float)) saturate(var(--glass-saturate));
+    border-top: 1px solid var(--glass-edge);
+  }
+
+  /* The heaviest surface in the app. */
+  .glass-heavy {
+    background: color-mix(in oklch, var(--glass-float-tint) var(--glass-heavy-alpha), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur-heavy)) saturate(var(--glass-saturate-heavy));
+    backdrop-filter: blur(var(--glass-blur-heavy)) saturate(var(--glass-saturate-heavy));
+    border-top: 1px solid var(--glass-edge);
+    box-shadow: var(--glass-shadow-heavy);
+  }
+
+  /* --- modifiers ---------------------------------------------------------- */
+
+  /* A recessed sub-surface: the trade receipt inside a feed card, a stat well
+     inside a panel. Flat and dark, so the card above it reads as the lit face.
+     No blur, so it is always safe to put inside any weight. */
+  .glass-inset {
+    background-color: color-mix(in oklch, var(--glass-tint) var(--glass-inset-alpha), transparent);
+    border: 1px solid var(--glass-hairline);
+  }
+
+  /* Interactive cards. Colour plus a 1px rise over 140ms — fast enough that a
+     mouse sweeping a grid never looks like it is dragging the cards with it. */
+  .glass-hover {
+    transition:
+      background-color 140ms var(--ease-out-strong),
+      border-color 140ms var(--ease-out-strong),
+      transform 140ms var(--ease-out-strong);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .glass-hover:hover {
+      background-color: color-mix(
+        in oklch,
+        var(--glass-tint) calc(var(--glass-card-alpha) + 16%),
+        transparent
+      );
+      border-color: var(--glass-hairline-strong);
+      transform: translateY(-1px);
+    }
+  }
+
+  .glass-hover:active {
+    transform: translateY(0) scale(0.997);
+  }
+
+  /* Grain. Only worth it on a large, mostly empty surface — it gives the
+     material a tooth so a big flat pane does not read as a colour swatch. */
+  .glass-grain {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .glass-grain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    border-radius: inherit;
+    opacity: var(--glass-grain-opacity);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)'/%3E%3C/svg%3E");
+    background-size: 140px 140px;
+  }
+}
+
+/* Rule 3. Transparency off → the material becomes paint. Only the blur and the
+   alpha go away; nothing moves and nothing reflows. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass-card,
+  .glass-bar,
+  .glass-panel,
+  .glass,
+  .glass-heavy,
+  .glass-inset {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .glass-bar {
+    background: var(--background);
+  }
+  .glass-card,
+  .glass-panel,
+  .glass-inset {
+    background-color: var(--card);
+  }
+  .glass,
+  .glass-heavy {
+    background: var(--popover);
+  }
+  .glass-grain::after {
+    display: none;
+  }
+  /* Sonner styles the toast with its own class weight, so solidify it directly
+     rather than relying on a utility class winning the cascade. */
+  [data-sonner-toast] {
+    background: var(--popover) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+
+/*
+ * High-contrast escalation. Glass grounds and hairline separators nearly vanish
+ * for users who ask for more contrast, so make every surface solid and bump the
+ * borders to a defined edge.
+ */
+@media (prefers-contrast: more) {
+  .glass-card,
+  .glass-bar,
+  .glass-panel,
+  .glass,
+  .glass-heavy,
+  .glass-inset,
+  [data-sonner-toast] {
+    background: var(--popover) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    border-color: var(--foreground) !important;
+  }
+}
+
+/* Safari/Firefox without backdrop-filter get an opaque surface rather than a
+   washed-out one — legibility first, the effect second. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-bar {
+    background: var(--background);
+  }
+  .glass-panel {
+    background-color: var(--card);
+  }
+  .glass,
+  .glass-heavy {
+    background: var(--popover);
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -200,6 +478,18 @@
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
   }
+
+  /* One focus treatment for the whole app. `outline` rather than a ring shadow
+     so it composes with the glass classes, which already own `box-shadow`. */
+  .focus-ring:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  .focus-ring-inset:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -207,74 +497,5 @@
     animation: none;
     opacity: 1;
     transform: none;
-  }
-}
-
-/*
- * Translucent materials (Apple: material weight encodes hierarchy).
- * `glass` is floating chrome — menus, popovers, the run island. `glass-heavy`
- * is a bigger surface and reads thicker: more blur, more body, deeper shadow.
- * `glass-bar` is page-edge chrome (top bar, tab bar) tinted from the page
- * ground rather than the popover color. The bright top edge is light catching
- * the material. Reduced transparency turns them back into solid surfaces.
- */
-@layer components {
-  .glass {
-    background: color-mix(in oklch, var(--popover) 72%, transparent);
-    -webkit-backdrop-filter: blur(20px) saturate(160%);
-    backdrop-filter: blur(20px) saturate(160%);
-    border-top: 1px solid rgb(255 255 255 / 0.09);
-  }
-
-  .glass-heavy {
-    background: color-mix(in oklch, var(--popover) 80%, transparent);
-    -webkit-backdrop-filter: blur(28px) saturate(170%);
-    backdrop-filter: blur(28px) saturate(170%);
-    border-top: 1px solid rgb(255 255 255 / 0.1);
-    box-shadow: 0 24px 64px -24px rgb(0 0 0 / 0.5);
-  }
-
-  .glass-bar {
-    background: color-mix(in oklch, var(--background) 62%, transparent);
-    -webkit-backdrop-filter: blur(20px) saturate(160%);
-    backdrop-filter: blur(20px) saturate(160%);
-  }
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .glass,
-  .glass-heavy {
-    background: var(--popover);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-  .glass-bar {
-    background: var(--background);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-  /* Sonner styles the toast with its own class weight, so solidify it directly
-     rather than relying on a utility class winning the cascade. */
-  [data-sonner-toast] {
-    background: var(--popover) !important;
-    -webkit-backdrop-filter: none !important;
-    backdrop-filter: none !important;
-  }
-}
-
-/*
- * High-contrast escalation. Glass grounds and hairline separators nearly vanish
- * for users who ask for more contrast, so make floating surfaces solid and bump
- * the borders/rings to a defined edge.
- */
-@media (prefers-contrast: more) {
-  .glass,
-  .glass-heavy,
-  .glass-bar,
-  [data-sonner-toast] {
-    background: var(--popover) !important;
-    -webkit-backdrop-filter: none !important;
-    backdrop-filter: none !important;
-    border-color: var(--foreground) !important;
   }
 }

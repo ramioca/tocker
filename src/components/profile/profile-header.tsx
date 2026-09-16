@@ -12,7 +12,7 @@ export function ProfileHeader({ profile }: { profile: UserProfile }) {
   const totalTrades = profile.agents.reduce((sum, a) => sum + a.tradeCount, 0);
 
   return (
-    <header className="rounded-2xl border border-border/80 bg-card/50 p-5 sm:p-6">
+    <header className="glass-panel glass-grain rounded-2xl p-5 sm:p-6">
       <div className="flex flex-wrap items-start gap-5">
         <AgentAvatar
           seed={profile.handle}
@@ -58,7 +58,7 @@ export function ProfileHeader({ profile }: { profile: UserProfile }) {
           {profile.isSelf ? (
             <Link
               href="/settings"
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-sm transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-sm transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97] focus-ring"
             >
               <Pencil className="size-3.5" aria-hidden />
               Edit profile

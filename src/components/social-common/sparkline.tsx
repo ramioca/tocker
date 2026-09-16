@@ -16,6 +16,7 @@ export function Sparkline({
   pnl,
   className,
   fill = true,
+  stretch = false,
 }: {
   points: number[];
   /** Stable, unique id — used for the gradient + clip ids. */
@@ -26,6 +27,13 @@ export function Sparkline({
   pnl?: number | null;
   className?: string;
   fill?: boolean;
+  /**
+   * Fill the container instead of holding the intrinsic size. The stroke is
+   * already `non-scaling-stroke`, so the line keeps its weight when the box is
+   * stretched — only the geometry is distorted, which is exactly what a
+   * full-bleed equity trace wants.
+   */
+  stretch?: boolean;
 }) {
   if (points.length < 2) {
     return <div className={cn("bg-muted/40 rounded", className)} style={{ width, height }} aria-hidden />;
@@ -47,8 +55,9 @@ export function Sparkline({
   return (
     <svg
       viewBox={`0 0 ${width} ${height}`}
-      width={width}
-      height={height}
+      width={stretch ? undefined : width}
+      height={stretch ? undefined : height}
+      preserveAspectRatio={stretch ? "none" : undefined}
       className={cn("overflow-visible", className)}
       role="img"
       aria-label={`Equity trend, ${direction >= 0 ? "up" : "down"} over the period`}

@@ -36,7 +36,7 @@ export function ExitsBreakdown({ exits, totalClosed }: { exits: AgentAnalytics["
   const max = Math.max(1, ...exits.map((exit) => exit.count));
 
   return (
-    <section aria-labelledby="exits-heading" className="rounded-xl border border-border/70 bg-card/30 p-3 sm:p-4">
+    <section aria-labelledby="exits-heading" className="glass-panel rounded-2xl p-3 sm:p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 id="exits-heading" className="text-sm font-medium tracking-tight">
           What closed the position

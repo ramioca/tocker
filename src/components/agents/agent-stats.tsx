@@ -5,8 +5,12 @@ import { formatUsd } from "@/components/common/format";
 import type { AgentDetail } from "@/server/types";
 
 /**
- * Five numbers, in the order an owner asks them: what is it worth, is it up,
- * does it win, how often does it act, and what is the data habit costing.
+ * Six numbers, in the order an owner asks them: what is it worth, is it up, does
+ * it win, how often does it act, how often does it think, and what is the data
+ * habit costing.
+ *
+ * Six rather than five because the grid is three across: five cards leave a hole
+ * in the second row, and a hole reads as a missing card rather than a choice.
  */
 export function AgentStats({ agent }: { agent: AgentDetail }) {
   const equity = agent.equityUsd ?? agent.paperStartingUsd;
@@ -42,7 +46,16 @@ export function AgentStats({ agent }: { agent: AgentDetail }) {
       value: agent.tradeCount,
       format: (value) => value.toFixed(0),
       goodWhen: "up",
-      caption: `${agent.stats.runCount} runs`,
+      caption: `${agent.positions.length} open now`,
+    },
+    {
+      label: "Runs",
+      value: agent.stats.runCount,
+      format: (value) => value.toFixed(0),
+      caption:
+        agent.stats.runCount === 0
+          ? "Never run"
+          : `${(agent.tradeCount / Math.max(1, agent.stats.runCount)).toFixed(1)} trades per run`,
     },
     {
       label: "Data spend",

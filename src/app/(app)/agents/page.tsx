@@ -18,7 +18,7 @@ export default async function MyAgentsPage() {
   const active = agents.filter((agent) => agent.status === "active").length;
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6">
+    <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">My agents</h1>
@@ -31,7 +31,7 @@ export default async function MyAgentsPage() {
 
         <Link
           href="/agents/new"
-          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.97] focus-ring"
         >
           <Plus aria-hidden className="size-4" />
           New agent
@@ -54,11 +54,13 @@ export default async function MyAgentsPage() {
           }
         />
       ) : (
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {agents.map((agent, index) => (
-            <AgentCard key={agent.id} agent={agent} index={index} />
+            <li key={agent.id}>
+              <AgentCard agent={agent} index={index} />
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </div>
   );
