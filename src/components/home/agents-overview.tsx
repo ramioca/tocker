@@ -8,9 +8,9 @@ import type { HomeOverview } from "@/server/queries/home";
  * Your agents, as cards.
  *
  * Deliberately NOT a `.glass-panel`: this is a grid of up to a dozen repeating
- * surfaces, and `AgentCard` is `.glass` — the unblurred weight. Wrapping them in
- * a blurred panel would put a backdrop-filter behind twelve more, which is the
- * one thing the material system forbids.
+ * surfaces, and `AgentCard` is `.glass-card` — the unblurred weight. Wrapping
+ * them in a blurred panel would put a backdrop-filter behind twelve more, which
+ * is the one thing the material system forbids.
  */
 export function AgentsOverview({
   agents,

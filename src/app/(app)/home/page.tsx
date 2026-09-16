@@ -20,7 +20,7 @@ export const metadata: Metadata = {
  * agents are; this is your own book.
  *
  * Material budget: two blurred surfaces (the portfolio panel and the activity
- * panel) plus the chrome. The agent grid is unblurred `.glass` cards, because
+ * panel) plus the chrome. The agent grid is unblurred `.glass-card`, because
  * there can be a dozen of them.
  */
 export default async function HomePage() {
