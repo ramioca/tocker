@@ -6,10 +6,12 @@ import { Address } from "@/components/common/address";
 import { formatAbsolute, formatUsd } from "@/components/common/format";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-// `@/lib/trading/receipt` also holds the db reads, which pull in the postgres
-// driver; this is the same helpers from the half that cannot reach a database.
-import { SIMULATED_FILL_TEXT, exceededTolerance, slippageText } from "@/lib/trading/receipt-display";
-import type { TradeReceiptData } from "@/db/schema";
+import {
+  SIMULATED_FILL_TEXT,
+  exceededTolerance,
+  slippageText,
+  type TradeReceiptData,
+} from "@/lib/trading/receipt-format";
 
 /**
  * The receipt, in two densities.

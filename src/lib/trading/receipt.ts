@@ -27,23 +27,13 @@ import type { ReceiptScoreReason, TradeReceiptData, TradeReceiptVenue } from "@/
 import { toNumeric } from "@/lib/money";
 import type { Chain, ScoreComponents, TokenScore, TradeScore } from "@/server/types";
 import type { Fill, Quote } from "./executor";
+import { SIMULATED_FILL_TEXT, SIMULATED_TX, exceededTolerance, slippageText } from "./receipt-format";
+
+export { SIMULATED_FILL_TEXT, SIMULATED_TX, exceededTolerance, slippageText };
 
 export type { TradeReceiptData, ReceiptScoreReason, TradeReceiptVenue };
 
-/**
- * The display half lives in `./receipt-display`, which has no path to `@/db` — a
- * client component that imports one of these from here would otherwise pull the
- * `postgres` driver into its browser bundle. Re-exported so every existing import
- * site is unchanged.
- */
-export {
-  SIMULATED_FILL_TEXT,
-  SIMULATED_TX,
-  slippageText,
-  exceededTolerance,
-  receiptSummary,
-} from "./receipt-display";
-import { SIMULATED_FILL_TEXT, SIMULATED_TX, slippageText } from "./receipt-display";
+
 
 const VENUE_LABELS: Record<TradeReceiptVenue, string> = {
   jupiter: "Jupiter Ultra",
@@ -225,3 +215,11 @@ export async function getReceipts(tradeIds: readonly string[]): Promise<Map<stri
   return out;
 }
 
+
+
+/** One line for a notification body: what filled, where, and how well. */
+export function receiptSummary(receipt: TradeReceiptData): string {
+  const fee = receipt.totalFeeUsd > 0 ? `, $${receipt.totalFeeUsd.toFixed(2)} fees` : "";
+  const where = receipt.simulated ? SIMULATED_FILL_TEXT : receipt.venueLabel;
+  return `${where} · ${slippageText(receipt.slippageBps)} vs quote${fee}`;
+}

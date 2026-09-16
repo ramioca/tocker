@@ -48,3 +48,6 @@ next-env.d.ts
 .worktrees/
 .gstack/
 .pglite.lock
+
+# parallel-agent worktrees
+.claude/worktrees/
