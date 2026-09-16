@@ -14,7 +14,7 @@ import { WalletChip } from "./wallet-chip";
 
 /** The links that live in the bar itself; the rest hang off the avatar menu. */
 const BAR_NAV = NAV_ITEMS.filter((item) =>
-  ["/feed", "/discover", "/agents"].includes(item.href),
+  ["/home", "/feed", "/discover", "/agents"].includes(item.href),
 );
 
 /**
@@ -35,7 +35,7 @@ export function TopBar({
   return (
     <header className="glass-bar sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border/60 px-4">
       <Link
-        href="/feed"
+        href="/home"
         className="flex shrink-0 items-center gap-2 rounded-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         aria-label="Tocker home"
       >
@@ -81,12 +81,11 @@ export function TopBar({
         </kbd>
       </button>
 
-      <LiquidMetal
-        preset="chromatic"
-        theme="dark"
-        strength={0.85}
-        className="hidden shrink-0 md:block"
-      >
+      {/* Visibility lives on this wrapper, not on the MetalFx root: the library's own
+          display rules (inline style on the fallback, an injected stylesheet on the live
+          root) outrank Tailwind's `hidden`, so at phone widths the button showed anyway. */}
+      <div className="hidden shrink-0 md:block">
+      <LiquidMetal preset="chromatic" theme="dark" strength={0.85}>
         <Link
           href="/agents/new"
           className={cn(
@@ -100,6 +99,7 @@ export function TopBar({
           New agent
         </Link>
       </LiquidMetal>
+      </div>
 
       <Link
         href="/agents/new"
