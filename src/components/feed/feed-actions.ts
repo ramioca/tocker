@@ -12,7 +12,7 @@ import { commentsPage, feedPage, viewerSession } from "@/components/common/data-
 import { addComment, toggleFollow, toggleLike } from "@/server/actions/social";
 import { receiptsFor } from "@/server/queries/trading";
 import { mockComments } from "@/mocks/core";
-import type { TradeReceiptData } from "@/db/schema";
+import type { TradeReceiptData } from "@/lib/trading/receipt-format";
 import type { ActionResult, CommentRow, FeedItem, Page } from "@/server/types";
 
 /**

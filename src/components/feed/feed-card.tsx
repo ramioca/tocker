@@ -15,7 +15,10 @@ import { formatTokenAmount, formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
 import { TradeReceiptRow } from "@/components/trading";
 import { cn } from "@/lib/utils";
-import type { TradeReceiptData } from "@/db/schema";
+// The client-safe half of the receipt module. Importing the type from `@/db/schema`
+// would work (types are erased) but this is the boundary the split exists to make
+// obvious, so a later value import cannot quietly pull `postgres` into the bundle.
+import type { TradeReceiptData } from "@/lib/trading/receipt-format";
 import type { FeedItem, TradeRow } from "@/server/types";
 
 function explorerUrl(trade: TradeRow): string | null {
