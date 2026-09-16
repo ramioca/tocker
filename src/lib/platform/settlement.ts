@@ -122,6 +122,37 @@ export async function settlePlatformFees(input: SettleFeesInput): Promise<Settle
   }
 }
 
+/**
+ * The same sweep, for a caller that has only an agent id.
+ *
+ * Used by the marks loop for **flat** agents: the guardian is not run for an agent with
+ * nothing to guard, so without this a live agent that closed its last position while
+ * owing $1.50 would wait for its next position to be collected from. Never throws; an
+ * agent that no longer exists is simply nothing to do.
+ */
+export async function settleFeesForAgent(agentId: string, now?: Date): Promise<SettlementResult> {
+  try {
+    const { eq } = await import("drizzle-orm");
+    const { agents, getDb } = await import("@/db");
+    const db = await getDb();
+    const [agent] = await db
+      .select({ id: agents.id, ownerId: agents.ownerId, name: agents.name, mode: agents.mode })
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .limit(1);
+    if (!agent) return result({ note: "agent not found" });
+    return settlePlatformFees({
+      agentId: agent.id,
+      ownerId: agent.ownerId,
+      agentName: agent.name,
+      mode: agent.mode,
+      now,
+    });
+  } catch (err) {
+    return result({ note: `settlement failed: ${err instanceof Error ? err.message : String(err)}` });
+  }
+}
+
 type Withdraw = (input: {
   agentId: string;
   chain: Chain;

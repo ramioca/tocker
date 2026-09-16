@@ -15,6 +15,7 @@
  */
 import { and, asc, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { agents, getDb, positions, userSecurity } from "@/db";
+import { settleFeesForAgent } from "@/lib/platform/settlement";
 import { runGuardian, type GuardianResult } from "@/lib/trading/guardian";
 import { getPortfolio, snapshotEquity } from "./portfolio";
 import { runAgent, type RunAgentResult } from "./run";
@@ -122,9 +123,10 @@ export async function findGuardableAgents(limit = 100): Promise<{ holding: strin
 /**
  * One pass of the marks loop. Never throws: every agent's outcome is in `results`.
  *
- * Agents holding something get a full guardian pass (which snapshots equity itself);
- * flat agents get only the snapshot, so a paused-but-active flat agent still has a
- * continuous equity curve to draw.
+ * Agents holding something get a full guardian pass (which snapshots equity itself and,
+ * after its exits, sweeps accrued platform fees); flat agents get the snapshot and the
+ * sweep, so a paused-but-active flat agent still has a continuous equity curve to draw
+ * and still pays what it owes.
  */
 export async function tickMarks(limit = 100, now: Date = new Date()): Promise<MarksTickResult> {
   const { holding, flat } = await findGuardableAgents(limit);
@@ -135,6 +137,11 @@ export async function tickMarks(limit = 100, now: Date = new Date()): Promise<Ma
   const flatSnapshots = await inBatches(flat, async (agentId) => {
     const portfolio = await getPortfolio(agentId);
     await snapshotEquity(portfolio);
+    // A flat agent still gets the platform-fee sweep. It does not get a guardian pass
+    // (there is nothing to guard), and without this a live agent that closed its last
+    // position while owing fees would not be collected from until it opened another.
+    // Never throws — see `settleFeesForAgent`.
+    await settleFeesForAgent(agentId, now);
     return true;
   });
 

@@ -114,11 +114,12 @@ export interface ParsedPaymentOption {
 }
 
 /**
- * Which agent wallet, if any, can pay on a given CAIP-2 network.
+ * Which of our chains, if any, a CAIP-2 network maps to.
  *
- * Deliberately narrow: agents hold funds on Base and Solana only. A 402 that offers
- * BSC or Polygon (CoinMarketCap offers both) is filtered out rather than signed with
- * the Base wallet, which would produce a valid signature against an empty balance.
+ * Deliberately narrow: the platform (and every agent) holds funds on Base and Solana
+ * only. A 402 that offers BSC or Polygon (CoinMarketCap offers both) is filtered out
+ * rather than signed with the Base wallet, which would produce a valid signature
+ * against an empty balance.
  */
 export function chainForNetwork(network: string): Chain | null {
   if (network === "solana" || network.startsWith("solana:")) return "solana";

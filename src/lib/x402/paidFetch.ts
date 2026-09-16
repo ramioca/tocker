@@ -301,7 +301,7 @@ function buildInit(req: PaidRequest, signal: AbortSignal): RequestInit {
 }
 
 /**
- * Fetch a resource, paying with the agent's wallet if the server asks for payment.
+ * Fetch a resource, paying from the platform wallet if the server asks for payment.
  * Throws {@link X402BudgetError} when the call would blow the per-run data budget.
  */
 export async function paidFetch(ctx: X402Context, req: PaidRequest): Promise<PaidResponse> {
