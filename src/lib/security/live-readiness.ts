@@ -4,9 +4,10 @@ import { getDb, isPglite } from "@/db";
 import { isPrivyConfigured } from "@/lib/privy";
 import { getAgentWalletBalances, isPaperWallet } from "@/lib/wallets";
 import { getDataSource } from "@/lib/data-sources/registry";
+import { isMockMode } from "@/lib/x402/paidFetch";
 import { getMfaStatus } from "./mfa";
 import { getKillSwitch } from "./kill-switch";
-import type { AgentConfig } from "@/db/schema";
+import type { AgentConfig, WalletBudget } from "@/db/schema";
 import type { Chain } from "@/server/types";
 
 /**
@@ -128,6 +129,8 @@ export interface ReadinessInput {
   slug: string;
   ownerId: string;
   config: AgentConfig;
+  /** The wallet-layer Privy policy, from `agents.walletBudget`. */
+  walletBudget?: WalletBudget | null;
   /** The per-trade cap the operator typed. Defaults to the preset. */
   capUsd?: number;
 }
@@ -150,7 +153,7 @@ export async function evaluateLiveReadiness(input: ReadinessInput): Promise<Live
     mfa,
     wallets.walletsStep,
     wallets.fundingStep,
-    checkBudget(input.config, capUsd, settings),
+    checkBudget(input.config, input.walletBudget ?? null, capUsd, settings),
     checkRisk(input.config, capUsd, settings),
     checkDataSources(input.config, settings),
     {
@@ -355,27 +358,63 @@ function sumAsset(
 }
 
 /**
- * The budget step.
+ * The budget step — two layers, and the operator is told which is which.
  *
- * What "budget policy applied" means here is precise, and the UI says so: the caps
- * Tocker enforces itself, in `riskGuard()`, before any executor is reached —
- * `maxTradeUsd`, `maxDailyTrades`, `maxPositionPct`, `maxDataSpendUsdPerRun`. It is
- * NOT a Privy wallet policy: attaching a wrong one to a server wallet bricks
- * trading, and building it blind against an API we cannot exercise here would be
- * worse than not having it. DEPLOY.md records that as the next hardening step.
+ *  - **App layer:** `riskGuard()` enforces `maxTradeUsd`, `maxDailyTrades`,
+ *    `maxPositionPct` and `maxDataSpendUsdPerRun` before any executor is reached.
+ *  - **Wallet layer:** a Privy policy attached to the agent's server wallets
+ *    (`agents.walletBudget`, applied by the Wallet budget card in settings) that
+ *    refuses to sign an over-cap USDC transfer no matter who asks — the model, a
+ *    buggy run loop, or a compromised route in this app.
+ *
+ * Both must sit at or under the per-trade cap the operator typed into the wizard.
+ * A missing wallet policy is a hard fail for a *first live trade* specifically:
+ * the whole point of the first one is that the floor under it is real.
  */
-function checkBudget(config: AgentConfig, capUsd: number, settings: string): ReadinessStep {
+function checkBudget(
+  config: AgentConfig,
+  walletBudget: WalletBudget | null,
+  capUsd: number,
+  settings: string,
+): ReadinessStep {
   const { risk } = config;
-  const withinCap = risk.maxTradeUsd <= capUsd;
   const dailyMax = risk.maxTradeUsd * risk.maxDailyTrades;
+  const appWithinCap = risk.maxTradeUsd <= capUsd;
+  const appLayer = `Per trade $${risk.maxTradeUsd} (your cap: $${capUsd}), at most ${risk.maxDailyTrades} a day — $${dailyMax.toFixed(2)} of turnover, plus $${risk.maxDataSpendUsdPerRun} of data per run, enforced before the executor.`;
+
+  if (!appWithinCap) {
+    return {
+      id: "budget",
+      title: "Spend caps applied",
+      state: "fail",
+      detail: `Its per-trade cap is $${risk.maxTradeUsd}, above the $${capUsd} you entered.`,
+      fix: { label: "Agent settings → Risk", href: settings },
+    };
+  }
+  if (!walletBudget) {
+    return {
+      id: "budget",
+      title: "Spend caps applied",
+      state: "fail",
+      detail: `${appLayer} But no wallet budget is attached: nothing below this app refuses an over-cap transfer, so a bug here has no floor under it.`,
+      fix: { label: "Agent settings → Wallet budget", href: settings },
+    };
+  }
+  if (walletBudget.perTxUsd > capUsd) {
+    return {
+      id: "budget",
+      title: "Spend caps applied",
+      state: "fail",
+      detail: `${appLayer} The wallet policy caps transfers at $${walletBudget.perTxUsd}, above the $${capUsd} you entered.`,
+      fix: { label: "Agent settings → Wallet budget", href: settings },
+    };
+  }
   return {
     id: "budget",
     title: "Spend caps applied",
-    state: withinCap ? "pass" : "fail",
-    detail: withinCap
-      ? `Per trade $${risk.maxTradeUsd} (your cap: $${capUsd}), at most ${risk.maxDailyTrades} a day — $${dailyMax.toFixed(2)} of turnover, plus $${risk.maxDataSpendUsdPerRun} of data per run. Enforced before the executor, not by the prompt.`
-      : `Its per-trade cap is $${risk.maxTradeUsd}, above the $${capUsd} you entered.`,
-    fix: withinCap ? null : { label: "Agent settings → Risk", href: settings },
+    state: "pass",
+    detail: `${appLayer} Underneath it, a Privy policy makes the wallet itself refuse any USDC transfer above $${walletBudget.perTxUsd} — enforced when it signs, whatever this app asks for.`,
+    fix: null,
   };
 }
 
@@ -393,15 +432,18 @@ function checkRisk(config: AgentConfig, capUsd: number, settings: string): Readi
 }
 
 function checkDataSources(config: AgentConfig, settings: string): ReadinessStep {
-  const mockOn = process.env.X402_MOCK !== "0";
+  // `isMockMode()` is the authority on what the runtime actually does: mock only
+  // when X402_MOCK is exactly "1". Reading it rather than re-deriving the rule is
+  // the point — a checklist that disagrees with the code it is checking is worse
+  // than no checklist.
   const unknown = config.dataSources.filter((id) => !getDataSource(id));
 
-  if (mockOn) {
+  if (isMockMode()) {
     return {
       id: "data",
       title: "Data sources live",
       state: "fail",
-      detail: `X402_MOCK is ${process.env.X402_MOCK ?? "unset (treated as 1)"}, so every paid source returns a fixture. The agent would trade real money on canned data.`,
+      detail: "X402_MOCK=1, so every paid source returns a fixture. The agent would trade real money on canned data.",
       fix: null,
     };
   }
@@ -427,7 +469,7 @@ function checkDataSources(config: AgentConfig, settings: string): ReadinessStep 
     id: "data",
     title: "Data sources live",
     state: "pass",
-    detail: `X402_MOCK=0 and ${config.dataSources.length} registered source${config.dataSources.length === 1 ? "" : "s"} will be paid for real, capped at $${config.risk.maxDataSpendUsdPerRun} a run.`,
+    detail: `Real x402 payments are on, and ${config.dataSources.length} registered source${config.dataSources.length === 1 ? "" : "s"} will be paid for, capped at $${config.risk.maxDataSpendUsdPerRun} a run.`,
     fix: null,
   };
 }

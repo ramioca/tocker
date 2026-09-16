@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { EmptyState } from "@/components/common/empty-state";
 import { LiveWizard } from "@/components/live/live-wizard";
-import { agentBySlug, viewerSession } from "@/components/common/data-access";
+import { agentBySlug, agentWalletBudget, viewerSession } from "@/components/common/data-access";
 import { evaluateLiveReadiness } from "@/lib/security/live-readiness";
 
 type Params = { params: Promise<{ slug: string }> };
@@ -41,11 +41,13 @@ export default async function LiveWizardPage({ params }: Params) {
     );
   }
 
+  const walletBudget = await agentWalletBudget(agent.id);
   const readiness = await evaluateLiveReadiness({
     agentId: agent.id,
     slug: agent.slug,
     ownerId: agent.owner.id,
     config: agent.config,
+    walletBudget,
     capUsd: agent.config.risk.maxTradeUsd,
   });
 

@@ -76,7 +76,8 @@ async function main() {
     failures++;
   }
   if (process.env.LLM_MOCK === "1") { bad("LLM_MOCK=1 — the agent will use the scripted model, not your key"); failures++; }
-  if (process.env.X402_MOCK !== "0") { bad(`X402_MOCK=${process.env.X402_MOCK ?? "(unset → 1)"} — data calls return fixtures. Set X402_MOCK=0 before trading real money on them.`); failures++; }
+  // `isMockMode()` in paidFetch is the authority: mock only when X402_MOCK is exactly "1".
+  if (process.env.X402_MOCK === "1") { bad("X402_MOCK=1 — data calls return fixtures. Unset it (or set 0) before trading real money on canned data."); failures++; }
   if (process.env.TOKENS_MOCK === "1") { bad("TOKENS_MOCK=1 — discovery and scoring read local fixtures"); failures++; }
 
   if (!appId || !appSecret || !authKey) return finish(failures);

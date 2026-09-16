@@ -157,6 +157,7 @@ export async function checkLiveReadinessAction(
       slug: agent.slug,
       ownerId: agent.ownerId,
       config: agent.config,
+      walletBudget: agent.walletBudget,
       capUsd,
     }),
   };
@@ -201,6 +202,7 @@ export async function applyFirstTradePresetAction(agentId: string): Promise<Acti
       slug: agent.slug,
       ownerId: agent.ownerId,
       config: parsed.data,
+      walletBudget: agent.walletBudget,
       capUsd: parsed.data.risk.maxTradeUsd,
     }),
   };
@@ -236,6 +238,7 @@ export async function goLiveAction(input: {
     slug: agent.slug,
     ownerId: agent.ownerId,
     config: agent.config,
+    walletBudget: agent.walletBudget,
     capUsd: input.capUsd,
   });
   if (!readiness.ready) {

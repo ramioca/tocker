@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Pause, Play } from "lucide-react";
 import { toast } from "sonner";
@@ -18,7 +19,6 @@ import { EmptyState } from "@/components/common/empty-state";
 import { setAgentStatusAction, updateAgentAction } from "@/components/agents/agent-actions";
 import { noteBudgetChangeAction } from "@/server/actions/security";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
-import { BudgetCard } from "./budget-card";
 import { cn } from "@/lib/utils";
 import type { AgentConfig } from "@/db/schema";
 import type { AgentDetail } from "@/server/types";
@@ -259,10 +259,24 @@ function SettingsForm({
         </div>
       </section>
 
-      <BudgetCard config={config} />
-
       <section className="space-y-3 rounded-xl border border-border/70 bg-card/30 p-4">
         <h2 className="text-sm font-medium">Risk</h2>
+        {/*
+          There are two layers of cap and they are not the same thing, so say which
+          is which: these four are enforced by `riskGuard()` in app code before any
+          executor is reached — not asked of the model in a prompt. The Wallet budget
+          card below is the layer underneath, a Privy policy the wallet itself
+          enforces even if this app is compromised.
+        */}
+        <p className="text-xs leading-5 text-muted-foreground">
+          Enforced by the risk guard before a quote is ever requested. A strategy that decides to buy ten times
+          this gets refused, and the refusal is written into the run transcript. Changes take effect from the next
+          tick and are recorded in your{" "}
+          <Link href="/settings/security" className="text-foreground underline underline-offset-2">
+            audit log
+          </Link>
+          . The wallet budget below is a second, lower layer that holds even if this app does not.
+        </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <RiskSlider
             id="settings-max-trade"
