@@ -22,7 +22,7 @@ import { DataTable, EmptyRow, TableShell, Td, Th } from "./table-shell";
  */
 export function AdminAgentsTable({ rows, balancesRead }: { rows: AdminAgentRow[]; balancesRead: boolean }) {
   return (
-    <TableShell title="Agents" hint={`${rows.length} newest first`}>
+    <TableShell title="Agents" hint={rows.length === 0 ? undefined : `${rows.length}, newest first`}>
       <DataTable label="Agents" minWidth="62rem">
         <thead>
           <tr>

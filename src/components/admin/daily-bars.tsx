@@ -72,7 +72,7 @@ export function DailyBars({
           x2={width}
           y1={height - 0.5}
           y2={height - 0.5}
-          stroke="var(--border)"
+          stroke="var(--glass-hairline-strong)"
           strokeWidth="1"
           vectorEffect="non-scaling-stroke"
         />

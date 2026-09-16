@@ -16,7 +16,7 @@ import { DataTable, EmptyRow, TableShell, Td, Th } from "./table-shell";
  */
 export function AdminAuditTable({ rows }: { rows: AdminAuditRow[] }) {
   return (
-    <TableShell title="Audit events" hint={`last ${rows.length}, every user, newest first`}>
+    <TableShell title="Audit events" hint={rows.length === 0 ? undefined : `last ${rows.length}, every user, newest first`}>
       <DataTable label="Audit events" minWidth="50rem">
         <thead>
           <tr>

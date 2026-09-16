@@ -14,7 +14,7 @@ import { DataTable, EmptyRow, TableShell, Td, Th } from "./table-shell";
  */
 export function AdminUsersTable({ rows }: { rows: AdminUserRow[] }) {
   return (
-    <TableShell title="Users" hint={`${rows.length} newest first`}>
+    <TableShell title="Users" hint={rows.length === 0 ? undefined : `${rows.length}, newest first`}>
       <DataTable label="Users" minWidth="46rem">
         <thead>
           <tr>

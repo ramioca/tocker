@@ -21,7 +21,7 @@ import { DataTable, EmptyRow, TableShell, Td, Th } from "./table-shell";
  */
 export function AdminTradesTable({ rows }: { rows: AdminTradeRow[] }) {
   return (
-    <TableShell title="Recent fills" hint={`last ${rows.length}, newest first`}>
+    <TableShell title="Recent fills" hint={rows.length === 0 ? undefined : `last ${rows.length}, newest first`}>
       <DataTable label="Recent fills" minWidth="56rem">
         <thead>
           <tr>

@@ -42,8 +42,17 @@ function Tile({
   );
 }
 
+/**
+ * One fact under a tile's number.
+ *
+ * Deliberately *not* `whitespace-nowrap`: at 390px a tile is about 140px wide, and a
+ * nowrap phrase ("swept into a platform wallet") overflows it silently — the page does
+ * not scroll sideways, the text just runs under the tile next to it. Numbers are atomic
+ * on their own ("$188K" has no space in it), so letting the line wrap costs nothing and
+ * fixes every one of those.
+ */
 function Sub({ children, className }: { children: ReactNode; className?: string }) {
-  return <span className={cn("whitespace-nowrap", className)}>{children}</span>;
+  return <span className={cn("min-w-0", className)}>{children}</span>;
 }
 
 export function HeadlineTiles({
@@ -126,10 +135,8 @@ export function HeadlineTiles({
         sub={
           <>
             <Sub>{formatCount(volume.allTime.count)} fills</Sub>
-            <Sub>
-              {fmtUsd(volume.allTime.liveNotionalUsd, { compact: true })} live ·{" "}
-              {fmtUsd(volume.allTime.paperNotionalUsd, { compact: true })} paper
-            </Sub>
+            <Sub>{fmtUsd(volume.allTime.liveNotionalUsd, { compact: true })} live</Sub>
+            <Sub>{fmtUsd(volume.allTime.paperNotionalUsd, { compact: true })} paper</Sub>
           </>
         }
       />
