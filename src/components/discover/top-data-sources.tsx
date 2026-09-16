@@ -37,10 +37,14 @@ export function TopDataSources({ sources }: { sources: Row[] }) {
       <ul className="glass-panel mt-5 divide-y divide-[var(--glass-hairline)] overflow-hidden rounded-2xl">
         {sources.map((source) => (
           <li key={source.id} className="relative px-4 py-3.5 sm:px-5">
-            {/* Spend bar sits behind the row — a bar chart you read as a list. */}
+            {/*
+              Spend bar behind the row — a bar chart you read as a list. It fades
+              out rather than ending on a hard edge: a flat block that stops
+              mid-sentence reads as a redaction, not a measurement.
+            */}
             <span
               aria-hidden
-              className="absolute inset-y-0 left-0 bg-primary/[0.07]"
+              className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary/[0.14] to-transparent"
               style={{ width: `${(source.spendUsd / maxSpend) * 100}%` }}
             />
             <div className="relative flex flex-wrap items-center gap-x-3 gap-y-1">

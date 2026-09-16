@@ -24,19 +24,22 @@ export function AgentCard({
       href={`/agents/${agent.slug}`}
       style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
       className={cn(
-        "glass glass-hover focus-ring animate-rise group flex flex-col gap-3 rounded-xl p-4",
+        "glass glass-hover focus-ring animate-rise group flex h-full flex-col gap-3 rounded-xl p-4",
         className,
       )}
     >
       <div className="flex items-start gap-3">
         <AgentAvatar seed={agent.avatarSeed} name={agent.name} size="lg" />
         <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-1.5">
-            <span className="truncate font-semibold tracking-tight">{agent.name}</span>
+          {/* The name gets the whole line. Paper-vs-live is the most consequential
+              fact on the card, but it is a badge, not a title, so it sits on the
+              meta line where it cannot squeeze the thing you are scanning for. */}
+          <p className="truncate font-semibold tracking-tight">{agent.name}</p>
+          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
             <ModeBadge mode={agent.mode} size="xs" />
-          </p>
-          <p className="truncate text-xs text-muted-foreground">
-            @{agent.owner.handle} · <span className="font-mono">{agent.model}</span>
+            <span className="truncate">
+              @{agent.owner.handle} · <span className="font-mono">{agent.model}</span>
+            </span>
           </p>
         </div>
         <StatusBadge status={agent.status} />
@@ -46,7 +49,12 @@ export function AgentCard({
         <p className="line-clamp-2 text-sm text-foreground/80">{agent.tagline}</p>
       ) : null}
 
-      <MiniSparkline values={agent.sparkline} />
+      <MiniSparkline
+        id={`agent-${agent.id}`}
+        values={agent.sparkline}
+        pnl={agent.pnlPct}
+        className="mt-auto"
+      />
 
       <div className="flex items-end justify-between gap-3">
         <div>

@@ -40,7 +40,6 @@ export default async function HomePage() {
   ]);
 
   const pendingCount = activity.filter((item) => item.kind === "proposal").length;
-  const name = session.displayName ?? `@${session.handle}`;
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
@@ -48,8 +47,8 @@ export default async function HomePage() {
         <h1 className="text-2xl font-semibold tracking-tight">Home</h1>
         <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
           {overview.counts.total === 0
-            ? `Welcome, ${name}. Nothing is trading yet — build an agent and it starts on paper.`
-            : `Everything ${name} owns: unified cash, capital at work, and what the agents did with it.`}
+            ? "Nothing is trading yet. Build an agent — it starts on paper, so the first mistake costs nothing."
+            : "Your cash, the capital your agents are working with, and what they did with it."}
         </p>
       </header>
 

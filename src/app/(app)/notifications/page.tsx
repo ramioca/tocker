@@ -51,11 +51,12 @@ export default async function NotificationsPage() {
       </header>
 
       {/*
-        One page module, one blurred surface. The list's own rows are the
-        repeating content inside it, so they never carry a backdrop-filter of
-        their own — see the material notes at the top of globals.css.
+        No wrapper surface: `NotificationList` (owned by another workstream)
+        already groups its rows into their own panels, and a panel of panels is
+        one material too many. The page composition is the header and the
+        spacing; the list keeps its own anatomy.
       */}
-      <div className="glass-panel mt-8 overflow-hidden rounded-2xl">
+      <div className="mt-8">
         <NotificationList items={page.items} now={now} proposals={proposals} />
       </div>
     </div>

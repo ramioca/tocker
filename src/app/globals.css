@@ -99,13 +99,16 @@
   --accent: oklch(0.95 0.02 300);
   --accent-foreground: oklch(0.28 0.08 300);
   --destructive: oklch(0.58 0.22 25);
-  --positive: oklch(0.58 0.15 155);
+  /* Light-theme green was 3.9:1 on a card — under AA for the small, dense PnL
+     numbers it is used for. L 0.53 clears 4.5:1 on every glass weight and is the
+     same hue, so a column of gains still reads as one colour. */
+  --positive: oklch(0.53 0.15 155);
   --negative: oklch(0.58 0.2 22);
   --border: oklch(0.9 0.004 285);
   --input: oklch(0.9 0.004 285);
   --ring: oklch(0.55 0.22 300 / 55%);
   --chart-1: oklch(0.55 0.22 300);
-  --chart-2: oklch(0.58 0.15 155);
+  --chart-2: oklch(0.53 0.15 155);
   --chart-3: oklch(0.58 0.2 22);
   --chart-4: oklch(0.62 0.12 250);
   --chart-5: oklch(0.6 0.02 285);
@@ -221,6 +224,9 @@
   /* The 1px light along the top edge. Light theme: a white sheen. */
   --glass-edge: oklch(1 0 0 / 0.75);
   --glass-hairline: oklch(0.72 0.006 285 / 0.28);
+  /* The hover/focus state of the hairline — one step more present, never a
+     different colour. */
+  --glass-hairline-strong: oklch(0.6 0.006 285 / 0.45);
   --glass-shadow: 0 1px 2px oklch(0.2 0.01 285 / 0.05), 0 8px 24px -12px oklch(0.2 0.01 285 / 0.12);
   --glass-shadow-heavy: 0 24px 64px -24px oklch(0.2 0.01 285 / 0.35);
   --glass-grain-opacity: 0.035;
@@ -243,6 +249,7 @@
 
   --glass-edge: oklch(1 0 0 / 0.1);
   --glass-hairline: oklch(1 0 0 / 0.09);
+  --glass-hairline-strong: oklch(1 0 0 / 0.18);
   --glass-shadow: 0 1px 2px oklch(0 0 0 / 0.3), 0 10px 30px -14px oklch(0 0 0 / 0.55);
   --glass-shadow-heavy: 0 28px 70px -24px oklch(0 0 0 / 0.7);
   --glass-grain-opacity: 0.05;
@@ -317,7 +324,7 @@
         var(--glass-tint) calc(var(--glass-card-alpha) + 16%),
         transparent
       );
-      border-color: color-mix(in oklab, var(--glass-hairline) 100%, var(--foreground) 8%);
+      border-color: var(--glass-hairline-strong);
       transform: translateY(-1px);
     }
   }
