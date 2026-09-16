@@ -366,3 +366,77 @@ describe("the universe gate (what replaced the allowlist)", () => {
     expect(verdict).toEqual({ ok: true });
   });
 });
+
+/**
+ * Sizing modes in the guard. The invariant under every case here is the same one the
+ * module doc states: a mode can only ever *tighten* what `maxTradeUsd` already allows,
+ * and none of it touches a sell.
+ */
+describe("position sizing", () => {
+  function sizedAgent(sizing: Record<string, unknown>, maxTradeUsd = 1_000): RiskAgent {
+    const agent = agentWith({ risk: { ...DEFAULT_AGENT_CONFIG.risk, maxTradeUsd } });
+    // `sizing` is the additive W4 block on `risk`; see AgentRiskWithSizing in the schema.
+    (agent.config.risk as unknown as Record<string, unknown>).sizing = sizing;
+    return agent;
+  }
+
+  it("leaves an agent with no sizing block exactly where it was", () => {
+    const agent = agentWith({ risk: { ...DEFAULT_AGENT_CONFIG.risk, maxTradeUsd: 100 } });
+    expect(riskGuard(agent, portfolio(), { ...buy, amountUsd: 100 }, scoreWith())).toEqual({ ok: true });
+    expect(riskGuard(agent, portfolio(), { ...buy, amountUsd: 100.01 }, scoreWith()).ok).toBe(false);
+  });
+
+  it("refuses a ticket above the percent-of-equity allowance, and explains the number", () => {
+    const agent = sizedAgent({ mode: "percent_equity", percentOfEquity: 5, referenceRangePct: 25, minTradeUsd: 5 });
+    const book = portfolio({ cashUsd: 10_000, equityUsd: 10_000 });
+    expect(riskGuard(agent, book, { ...buy, amountUsd: 500 }, scoreWith())).toEqual({ ok: true });
+    const refused = riskGuard(agent, book, { ...buy, amountUsd: 501 }, scoreWith());
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(refused.reason).toContain("percent equity");
+      expect(refused.reason).toContain("$500.00");
+    }
+  });
+
+  it("keeps maxTradeUsd as the hard cap when the percentage would allow more", () => {
+    const agent = sizedAgent(
+      { mode: "percent_equity", percentOfEquity: 90, referenceRangePct: 25, minTradeUsd: 5 },
+      100,
+    );
+    const book = portfolio({ cashUsd: 1_000_000, equityUsd: 1_000_000 });
+    expect(riskGuard(agent, book, { ...buy, amountUsd: 100 }, scoreWith())).toEqual({ ok: true });
+    expect(riskGuard(agent, book, { ...buy, amountUsd: 150 }, scoreWith()).ok).toBe(false);
+  });
+
+  it("shrinks the allowance for a wide-ranging token under volatility scaling", () => {
+    const agent = sizedAgent({ mode: "volatility_scaled", percentOfEquity: 10, referenceRangePct: 25, minTradeUsd: 5 });
+    const book = portfolio({ cashUsd: 10_000, equityUsd: 10_000 });
+    // 100% range against a 25% reference = quarter size: $1,000 → $250.
+    expect(riskGuard(agent, book, { ...buy, amountUsd: 250, rangePct: 100 }, scoreWith())).toEqual({ ok: true });
+    expect(riskGuard(agent, book, { ...buy, amountUsd: 260, rangePct: 100 }, scoreWith()).ok).toBe(false);
+    // A calm token keeps the full percent-of-equity clip.
+    expect(riskGuard(agent, book, { ...buy, amountUsd: 1_000, rangePct: 10 }, scoreWith())).toEqual({ ok: true });
+  });
+
+  it("falls back to the 24h move when the caller measured no range", () => {
+    const agent = sizedAgent({ mode: "volatility_scaled", percentOfEquity: 10, referenceRangePct: 25, minTradeUsd: 5 });
+    const book = portfolio({ cashUsd: 10_000, equityUsd: 10_000 });
+    const violent = scoreWith({ priceChange24hPct: -100 });
+    expect(riskGuard(agent, book, { ...buy, amountUsd: 250 }, violent)).toEqual({ ok: true });
+    expect(riskGuard(agent, book, { ...buy, amountUsd: 400 }, violent).ok).toBe(false);
+  });
+
+  it("never lets a sizing mode block an exit", () => {
+    const agent = sizedAgent({ mode: "percent_equity", percentOfEquity: 1, referenceRangePct: 25, minTradeUsd: 5 }, 10);
+    const book = portfolio({
+      cashUsd: 0,
+      equityUsd: 5_000,
+      tradesToday: 99,
+      positions: [
+        { tokenId: `solana:${BONK}`, chain: "solana", address: BONK, symbol: "BONK", amountToken: 10, valueUsd: 5_000 },
+      ],
+    });
+    // $5,000 is five hundred times the sizing allowance. It is still a legal exit.
+    expect(riskGuard(agent, book, { ...buy, side: "sell", amountUsd: 5_000 }, null)).toEqual({ ok: true });
+  });
+});

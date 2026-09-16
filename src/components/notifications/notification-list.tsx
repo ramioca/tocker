@@ -3,17 +3,22 @@ import {
   ArrowLeftRight,
   AtSign,
   Bell,
+  CalendarDays,
   CircleDollarSign,
+  DoorOpen,
   Gavel,
   Heart,
   MessageCircle,
+  ReceiptText,
   TriangleAlert,
   Trophy,
   UserPlus,
 } from "lucide-react";
 import type { NotificationRow, ProposalRow } from "@/server/types";
+import type { TradeReceiptData } from "@/db/schema";
 import { dayBucket, formatAgo } from "@/components/social-common/format";
 import { ProposalCard } from "@/components/agents/proposals/proposal-card";
+import { TradeReceiptRow } from "@/components/trading";
 
 const ICONS: Record<string, typeof Bell> = {
   trade: ArrowLeftRight,
@@ -25,7 +30,20 @@ const ICONS: Record<string, typeof Bell> = {
   run_failed: TriangleAlert,
   proposal: Gavel,
   data: CircleDollarSign,
+  // Owner-only kinds. `fill` is one per executed trade and carries its receipt;
+  // `exit` is the exit engine naming the rule that fired; `digest` is the once-a-day
+  // summary. See src/lib/notifications.
+  fill: ReceiptText,
+  exit: DoorOpen,
+  digest: CalendarDays,
 };
+
+/** `?trade=<id>` on a fill notification's href — how a row finds its own receipt. */
+function tradeIdFrom(href: string | null): string | null {
+  if (!href) return null;
+  const match = /[?&]trade=([^&]+)/.exec(href);
+  return match?.[1] ?? null;
+}
 
 /** `/agents/slug?proposal=<id>` → the id, so a notification can find its own proposal. */
 function proposalIdFrom(href: string | null): string | null {
@@ -39,10 +57,20 @@ export function NotificationList({
   now,
   /** Proposals still awaiting a decision, so a `proposal` row is actionable in place. */
   proposals = [],
+  /**
+   * tradeId → receipt, so a `fill` row shows the execution line rather than making the
+   * owner navigate to find out how the trade actually went. Optional: without it, fill
+   * rows render exactly as any other notification.
+   *
+   * The page wires this with `receiptsFor(ids)` from `@/server/queries/trading`, where
+   * `ids` are the trade ids parsed out of the fill rows' hrefs.
+   */
+  receipts,
 }: {
   items: NotificationRow[];
   now: number;
   proposals?: ProposalRow[];
+  receipts?: Map<string, TradeReceiptData>;
 }) {
   if (items.length === 0) {
     return (
@@ -90,7 +118,7 @@ export function NotificationList({
                       <ProposalCard proposal={pending} showAgent />
                     </div>
                   ) : (
-                    <Row row={row} now={now} />
+                    <Row row={row} now={now} receipt={receipts?.get(tradeIdFrom(row.href) ?? "") ?? null} />
                   )}
                 </li>
               );
@@ -102,7 +130,15 @@ export function NotificationList({
   );
 }
 
-function Row({ row, now }: { row: NotificationRow; now: number }) {
+function Row({
+  row,
+  now,
+  receipt = null,
+}: {
+  row: NotificationRow;
+  now: number;
+  receipt?: TradeReceiptData | null;
+}) {
   const Icon = ICONS[row.kind] ?? Bell;
   const unread = row.readAt === null;
   const failed = row.kind === "run_failed";
@@ -123,6 +159,7 @@ function Row({ row, now }: { row: NotificationRow; now: number }) {
         {row.body ? (
           <p className="mt-0.5 line-clamp-2 text-sm leading-6 text-muted-foreground">{row.body}</p>
         ) : null}
+        {receipt ? <TradeReceiptRow receipt={receipt} className="mt-1.5" /> : null}
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1.5">
         <time

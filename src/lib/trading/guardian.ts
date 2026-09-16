@@ -16,8 +16,9 @@
  *   4. `evaluateExits`;
  *   5. execute each exit through the normal executor, recorded exactly like a
  *      `place_trade` sell: a `trades` row (`origin: "guardian"`, `exitReason`,
- *      `rationale`, `scoreSnapshot`), `applyFill`, a `posts` row, a notification to the
- *      owner (kind `exit`) and to followers (kind `trade`);
+ *      `rationale`, `scoreSnapshot`), a `trade_receipts` row (quoted vs filled, venue,
+ *      fees, explorer link), `applyFill`, a `posts` row, a notification to the owner
+ *      (kind `exit`, with the receipt line on it) and to followers (kind `trade`);
  *   6. snapshot equity, so the curve is real between runs instead of a step function.
  *
  * Safety properties, all deliberate:
@@ -34,13 +35,14 @@
  *  - **Live agents with placeholder wallets are skipped, loudly, not crashed.**
  */
 import { nanoid } from "nanoid";
-import { and, desc, eq, gte } from "drizzle-orm";
-import { agents, follows, getDb, notifications, positions as positionsTable, posts, trades } from "@/db";
+import { and, desc, eq, gte, lt, lte } from "drizzle-orm";
+import { agentRuns, agents, equitySnapshots, follows, getDb, notifications, positions as positionsTable, posts, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
 import { parseAgentConfig } from "@/lib/agent/config";
 import { getAgentWallets, getPortfolio, snapshotEquity, toRiskPortfolio, type Portfolio } from "@/lib/agent/portfolio";
 import { toNumeric } from "@/lib/money";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
+import { sendDailyDigest, utcDay } from "@/lib/notifications";
 import type { Chain, ExitReason, TokenScore } from "@/server/types";
 import { getExecutor, LiveWalletError, type ExecutorAgent, type TradeRequest } from "./executor";
 import {
@@ -53,6 +55,7 @@ import {
   type ExitPosition,
 } from "./exits";
 import { applyFill, updatePeaks } from "./positions";
+import { buildReceipt, receiptSummary, saveReceipt } from "./receipt";
 import { riskGuard, type OrderIntent } from "./risk";
 import { ensureQuoteToken } from "./tokens";
 
@@ -227,6 +230,64 @@ interface ExitContext {
   decimals: Map<string, number>;
 }
 
+
+/**
+ * Yesterday's digest, sent at most once per agent per day.
+ *
+ * The guardian is the right place for this and the cron route is not: the guardian
+ * already runs every five minutes for every agent with a book, it already knows the
+ * agent's equity, and `/api/cron/marks` belongs to another workstream. The first pass
+ * after midnight UTC sends the previous day; `sendDailyDigest` dedupes on the day, so
+ * the other 287 passes do nothing.
+ *
+ * Never throws — a digest is a courtesy, and losing one must not cost an exit.
+ */
+async function maybeSendDigest(agent: AgentRecord, now: Date): Promise<void> {
+  try {
+    const day = utcDay(new Date(now.getTime() - 86_400_000));
+    const from = new Date(`${day}T00:00:00.000Z`);
+    const to = new Date(from.getTime() + 86_400_000);
+    const db = await getDb();
+
+    const [opening] = await db
+      .select({ equityUsd: equitySnapshots.equityUsd })
+      .from(equitySnapshots)
+      .where(and(eq(equitySnapshots.agentId, agent.id), lte(equitySnapshots.at, from)))
+      .orderBy(desc(equitySnapshots.at))
+      .limit(1);
+    const [closing] = await db
+      .select({ equityUsd: equitySnapshots.equityUsd })
+      .from(equitySnapshots)
+      .where(and(eq(equitySnapshots.agentId, agent.id), lt(equitySnapshots.at, to)))
+      .orderBy(desc(equitySnapshots.at))
+      .limit(1);
+    const failedRuns = await db
+      .select({ id: agentRuns.id })
+      .from(agentRuns)
+      .where(
+        and(
+          eq(agentRuns.agentId, agent.id),
+          eq(agentRuns.status, "failed"),
+          gte(agentRuns.createdAt, from),
+          lt(agentRuns.createdAt, to),
+        ),
+      );
+
+    await sendDailyDigest({
+      agentId: agent.id,
+      ownerId: agent.ownerId,
+      agentName: agent.name,
+      agentSlug: agent.slug,
+      day,
+      equityUsd: closing ? Number(closing.equityUsd) : null,
+      openingEquityUsd: opening ? Number(opening.equityUsd) : null,
+      failedRuns: failedRuns.length,
+    });
+  } catch (err) {
+    log(agent.id, `digest failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 /**
  * Executes one exit end to end. Returns a record either way — a throw here would take
  * the rest of the book down with it.
@@ -337,6 +398,7 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
     return { ...base, amountUsd, tradeId, status: "failed", error: message };
   };
 
+  const quotedAt = new Date();
   let quote;
   try {
     quote = await executor.quote(request);
@@ -375,6 +437,23 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
     { priceUsd: fill.priceUsd, now: filledAt },
   );
 
+  // An exit gets the same receipt as any other fill. A stop loss that filled 300 bps
+  // below its quote is the single most useful fact a live operator can be handed, and
+  // it is invisible without one.
+  const receipt = buildReceipt({
+    chain: decision.chain,
+    side: "sell",
+    symbol: decision.symbol,
+    tokenAddress: decision.address,
+    quote,
+    fill,
+    slippageToleranceBps: agent.config.risk.slippageBps,
+    score,
+    quotedAt,
+    filledAt,
+  });
+  await saveReceipt(tradeId, agent.id, receipt);
+
   // The feed post carries the rationale verbatim — it is the whole message on the card.
   await db.insert(posts).values({
     id: nanoid(),
@@ -386,12 +465,16 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
   });
 
   const href = `/agents/${agent.slug}`;
+  // One owner notification, not two. An exit already tells the owner which rule fired
+  // and why; the receipt line is appended to it rather than sent separately, because a
+  // second push for the same event is noise, and noise is what makes people mute the
+  // channel that carries their stop losses.
   await notify([
     {
       userId: agent.ownerId,
       kind: "exit",
       title: `${EXIT_TITLES[decision.reason]}: sold ${decision.symbol}`,
-      body: decision.rationale,
+      body: `${decision.rationale} · ${receiptSummary(receipt)}`,
       href,
     },
     ...ctx.followers
@@ -462,6 +545,10 @@ export async function runGuardian(input: RunGuardianInput): Promise<GuardianResu
     };
 
     const finish = async (): Promise<GuardianResult> => {
+      // Once a day, on whichever pass happens to be the first after midnight UTC.
+      // Not on `tick`: a run already writes its own summary, and two of these for the
+      // same day would be one too many if the dedupe ever regressed.
+      if (input.trigger !== "tick") await maybeSendDigest(agent, now);
       if (wantSnapshot) {
         try {
           // Re-read after exits so the snapshot reflects them.
