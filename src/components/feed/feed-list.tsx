@@ -9,14 +9,14 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CommentSheet } from "./comment-sheet";
 import { FeedCard } from "./feed-card";
 import { FeedSkeleton } from "./feed-skeleton";
-import { fetchFeedPage, likePost } from "./feed-actions";
-import type { FeedItem, Page } from "@/server/types";
+import { fetchFeedPage, likePost, type FeedPage } from "./feed-actions";
+import type { FeedItem } from "@/server/types";
 
 type Scope = "global" | "following";
 
 const PAGE_SIZE = 12;
 
-export function FeedList({ initialPage }: { initialPage: Page<FeedItem> }) {
+export function FeedList({ initialPage }: { initialPage: FeedPage }) {
   const [scope, setScope] = useState<Scope>("global");
   const [commentTarget, setCommentTarget] = useState<FeedItem | null>(null);
   const queryClient = useQueryClient();
@@ -26,7 +26,7 @@ export function FeedList({ initialPage }: { initialPage: Page<FeedItem> }) {
     queryKey: ["feed", scope],
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => fetchFeedPage({ scope, cursor: pageParam, limit: PAGE_SIZE }),
-    getNextPageParam: (last: Page<FeedItem>) => last.nextCursor,
+    getNextPageParam: (last: FeedPage) => last.nextCursor,
     initialData:
       scope === "global"
         ? { pages: [initialPage], pageParams: [null as string | null] }
@@ -57,7 +57,7 @@ export function FeedList({ initialPage }: { initialPage: Page<FeedItem> }) {
   const onLike = useCallback(
     async (postId: string, liked: boolean) => {
       const key = ["feed", scope];
-      queryClient.setQueryData(key, (old: InfiniteData<Page<FeedItem>> | undefined) => {
+      queryClient.setQueryData(key, (old: InfiniteData<FeedPage> | undefined) => {
         if (!old) return old;
         return {
           ...old,
@@ -83,6 +83,11 @@ export function FeedList({ initialPage }: { initialPage: Page<FeedItem> }) {
   );
 
   const items = query.data?.pages.flatMap((page) => page.items) ?? [];
+
+  // Receipts arrive alongside their page; flatten them into one lookup so a card
+  // does not have to know which page it came from.
+  const receipts = Object.assign({}, ...(query.data?.pages.map((page) => page.receipts) ?? [])) as
+    FeedPage["receipts"];
 
   return (
     <div className="px-4 sm:px-5">
@@ -144,6 +149,7 @@ export function FeedList({ initialPage }: { initialPage: Page<FeedItem> }) {
               <FeedCard
                 key={item.id}
                 item={item}
+                receipt={item.trade ? (receipts[item.trade.id] ?? null) : null}
                 onLike={(postId, liked) => void onLike(postId, liked)}
                 onOpenComments={setCommentTarget}
               />

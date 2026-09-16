@@ -10,16 +10,53 @@
 import { withMock } from "@/lib/data";
 import { commentsPage, feedPage, viewerSession } from "@/components/common/data-access";
 import { addComment, toggleFollow, toggleLike } from "@/server/actions/social";
+import { receiptsFor } from "@/server/queries/trading";
 import { mockComments } from "@/mocks/core";
+import type { TradeReceiptData } from "@/db/schema";
 import type { ActionResult, CommentRow, FeedItem, Page } from "@/server/types";
+
+/**
+ * A page of the feed, plus the execution receipts for the fills on it.
+ *
+ * `FeedItem` carries no receipt of its own — receipts are the trading
+ * workstream's table, keyed by trade id — so the join happens at this seam
+ * rather than widening the shared view model. A trade older than receipts simply
+ * has no entry, and `TradeReceiptRow` renders nothing for it.
+ */
+export interface FeedPage extends Page<FeedItem> {
+  receipts: Record<string, TradeReceiptData>;
+}
+
+/** Look up receipts for the fills on one page. Never fails the page. */
+async function withReceipts(page: Page<FeedItem>): Promise<FeedPage> {
+  const tradeIds = page.items
+    .map((item) => item.trade?.id)
+    .filter((id): id is string => Boolean(id));
+  if (tradeIds.length === 0) return { ...page, receipts: {} };
+  try {
+    return { ...page, receipts: Object.fromEntries(await receiptsFor(tradeIds)) };
+  } catch {
+    // A receipt is an enrichment on top of a fill. The feed still reads without one.
+    return { ...page, receipts: {} };
+  }
+}
 
 export async function fetchFeedPage(input: {
   scope: "global" | "following";
   cursor?: string | null;
   limit?: number;
-}): Promise<Page<FeedItem>> {
+}): Promise<FeedPage> {
   const session = await viewerSession();
-  return feedPage({ ...input, viewerId: session?.userId ?? null });
+  return withReceipts(await feedPage({ ...input, viewerId: session?.userId ?? null }));
+}
+
+/** The server-rendered first page for `/feed`. Same shape as the action returns. */
+export async function initialFeedPage(input: {
+  scope: "global" | "following";
+  limit?: number;
+  viewerId: string | null;
+}): Promise<FeedPage> {
+  return withReceipts(await feedPage(input));
 }
 
 export async function fetchComments(

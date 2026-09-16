@@ -13,7 +13,9 @@ import { RelativeTime } from "@/components/common/relative-time";
 import { TokenIcon } from "@/components/common/token-icon";
 import { formatTokenAmount, formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
+import { TradeReceiptRow } from "@/components/trading";
 import { cn } from "@/lib/utils";
+import type { TradeReceiptData } from "@/db/schema";
 import type { FeedItem, TradeRow } from "@/server/types";
 
 function explorerUrl(trade: TradeRow): string | null {
@@ -38,7 +40,7 @@ function SideChip({ side }: { side: "buy" | "sell" }) {
   );
 }
 
-function TradeBlock({ trade }: { trade: TradeRow }) {
+function TradeBlock({ trade, receipt }: { trade: TradeRow; receipt: TradeReceiptData | null }) {
   const url = explorerUrl(trade);
   const failed = trade.status === "failed" || trade.status === "rejected";
   const entryScore = trade.entryScore ?? trade.score?.total ?? null;
@@ -97,7 +99,15 @@ function TradeBlock({ trade }: { trade: TradeRow }) {
         <p className="mt-2 text-xs text-destructive">{trade.error}</p>
       ) : null}
 
-      {url ? (
+      {/*
+        The execution receipt owns this line when there is one: venue, quote → fill,
+        slippage against the tolerance the agent was configured with, fees, and the
+        explorer link — the numbers you screenshot when a fill looks wrong. A trade
+        that predates receipts falls back to the hash on its own.
+      */}
+      {receipt ? (
+        <TradeReceiptRow receipt={receipt} className="mt-2" />
+      ) : url ? (
         <a
           href={url}
           target="_blank"
@@ -124,10 +134,13 @@ const KIND_ICON = {
 
 export function FeedCard({
   item,
+  receipt = null,
   onLike,
   onOpenComments,
 }: {
   item: FeedItem;
+  /** The fill's execution receipt, when the trade has one. */
+  receipt?: TradeReceiptData | null;
   onLike: (postId: string, liked: boolean) => void;
   onOpenComments: (item: FeedItem) => void;
 }) {
@@ -194,7 +207,9 @@ export function FeedCard({
             ) : null}
           </div>
 
-          {item.kind === "trade" && item.trade ? <TradeBlock trade={item.trade} /> : null}
+          {item.kind === "trade" && item.trade ? (
+            <TradeBlock trade={item.trade} receipt={receipt} />
+          ) : null}
 
           {item.body ? (
             item.kind === "trade" ? (

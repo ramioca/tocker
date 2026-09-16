@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { FeedList } from "@/components/feed/feed-list";
-import { feedPage, viewerSession } from "@/components/common/data-access";
+import { initialFeedPage } from "@/components/feed/feed-actions";
+import { viewerSession } from "@/components/common/data-access";
 
 export const metadata: Metadata = {
   title: "Feed",
@@ -9,7 +10,7 @@ export const metadata: Metadata = {
 
 export default async function FeedPage() {
   const session = await viewerSession();
-  const initialPage = await feedPage({
+  const initialPage = await initialFeedPage({
     scope: "global",
     limit: 12,
     viewerId: session?.userId ?? null,
