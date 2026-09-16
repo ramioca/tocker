@@ -18,6 +18,10 @@ import { X402BudgetError, type RunBudget, type X402Context } from "@/lib/x402/ty
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
 import { applyFill } from "@/lib/trading/positions";
 import { getPriceUsd } from "@/lib/trading/prices";
+import { recentRangePct } from "@/lib/trading/range";
+import { checkQuoteSanity } from "@/lib/trading/sanity";
+import { buildReceipt, saveReceipt } from "@/lib/trading/receipt";
+import { notifyFill } from "@/lib/notifications";
 import {
   createProposal,
   expireAgentProposals,
@@ -512,6 +516,9 @@ export function buildTools(ctx: RunContext): ToolSet {
           tokenAddress: token.address,
           symbol: token.symbol,
           amountUsd: parsed.amountUsd,
+          // Only `volatility_scaled` sizing reads this, and only for buys; the lookup is
+          // one indexed read of score history, never a provider call.
+          rangePct: parsed.side === "buy" ? await recentRangePct(token.id) : null,
         };
 
         // Buys must be scored: no score means no buy, whatever the model believes.
@@ -620,6 +627,7 @@ export function buildTools(ctx: RunContext): ToolSet {
         });
         ctx.tradeIds.push(tradeId);
 
+        const quotedAt = new Date();
         let quote;
         try {
           quote = await executor.quote(request);
@@ -627,6 +635,21 @@ export function buildTools(ctx: RunContext): ToolSet {
           const message = err instanceof Error ? err.message : "quote failed";
           await db.update(trades).set({ status: "failed", error: message }).where(eq(trades.id, tradeId));
           return fail(`Could not quote ${token.symbol}: ${message}`);
+        }
+
+        // Last check before real money moves: does the venue's quote agree with an
+        // independently-sourced mark? Not a slippage guard — this catches the
+        // order-of-magnitude failures (wrong decimals, wrong token, empty pool). Buys
+        // only; an exit is never blocked. See @/lib/trading/sanity.
+        const sanity = checkQuoteSanity({
+          side: parsed.side,
+          symbol: token.symbol,
+          quotePriceUsd: quote.priceUsd,
+          referencePriceUsd: await getPriceUsd(parsed.chain, token.address),
+        });
+        if (!sanity.ok) {
+          await db.update(trades).set({ status: "failed", error: sanity.reason }).where(eq(trades.id, tradeId));
+          return fail(sanity.reason, { rejected: true, deviationBps: sanity.deviationBps });
         }
 
         await db.update(trades).set({ status: "submitted" }).where(eq(trades.id, tradeId));
@@ -640,6 +663,7 @@ export function buildTools(ctx: RunContext): ToolSet {
           return fail(`${token.symbol} ${parsed.side} failed: ${fill.error ?? "execution failed"}`);
         }
 
+        const filledAt = new Date();
         await db
           .update(trades)
           .set({
@@ -649,9 +673,26 @@ export function buildTools(ctx: RunContext): ToolSet {
             priceUsd: fill.priceUsd.toFixed(12),
             feeUsd: fill.feeUsd.toFixed(6),
             txHash: fill.txHash,
-            filledAt: new Date(),
+            filledAt,
           })
           .where(eq(trades.id, tradeId));
+
+        // The receipt: quoted against filled, the fee split, the venue and the explorer
+        // link. Written before the feed post, so anything that renders the trade can
+        // count on the document being there.
+        const receipt = buildReceipt({
+          chain: parsed.chain,
+          side: parsed.side,
+          symbol: token.symbol,
+          tokenAddress: token.address,
+          quote,
+          fill,
+          slippageToleranceBps: agent.config.risk.slippageBps,
+          score,
+          quotedAt,
+          filledAt,
+        });
+        await saveReceipt(tradeId, agent.id, receipt);
 
         await applyFill(
           agent.id,
@@ -685,6 +726,9 @@ export function buildTools(ctx: RunContext): ToolSet {
           `/agents/${agent.slug}`,
         );
 
+        // Followers get "what": the owner also gets "how well", from the receipt.
+        await notifyFill({ ownerId: agent.ownerId, agentName: agent.name, tradeId, receipt, origin: "agent" });
+
         return {
           ok: true,
           tradeId,
@@ -698,6 +742,9 @@ export function buildTools(ctx: RunContext): ToolSet {
           priceUsd: fill.priceUsd,
           feeUsd: fill.feeUsd,
           txHash: fill.txHash,
+          // Execution quality, so the model can see a route going bad across ticks.
+          quotedPriceUsd: receipt.quotedPriceUsd,
+          slippageBps: receipt.slippageBps,
           score: score === null ? null : { total: score.total, verdict: score.verdict, components: score.components },
         };
       }),

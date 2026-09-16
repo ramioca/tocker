@@ -551,3 +551,157 @@ export const commentsRelations = relations(comments, ({ one }) => ({
 
 // keep `sql` import used for future defaults
 void sql;
+
+// ---- W4: trading ----
+
+/**
+ * What one executed trade actually cost and where it went.
+ *
+ * `trades` is the ledger: side, size, price, status. It is deliberately thin, because
+ * every workstream reads it. A **receipt** is the document behind one row — the venue
+ * it routed through, the quoted price against the filled price, the slippage that
+ * opened up between them, network and venue fees in USD, the explorer link, and the
+ * score the token carried at entry with the reasons behind it.
+ *
+ * Why its own table rather than columns on `trades`:
+ *  - a receipt exists only for a trade that actually executed (`filled`), so half the
+ *    ledger would carry fifteen null columns;
+ *  - it is a *document*: read whole, rendered whole, never filtered on. The shape
+ *    belongs in one jsonb blob (`data`) with only the handful of fields anyone would
+ *    ever aggregate lifted out as real columns;
+ *  - `trades` is the shared contract; receipts are W4's and can evolve without a
+ *    migration landing in everyone's way.
+ *
+ * **Privacy.** A receipt is as public as the trade it documents, so it carries nothing
+ * from the strategy: no prompt, no universe thresholds, no data-source list, no
+ * transcript. The score total, verdict and component names are already public on the
+ * token page; the gates that produced them are not, and are not written here.
+ */
+export type TradeReceiptVenue = "jupiter" | "privy-base" | "paper";
+
+/** One reason a token scored the way it did, in plain words. Public by construction. */
+export interface ReceiptScoreReason {
+  /** Component key: safety | liquidity | organic | distribution | momentum | sentiment | smartMoney. */
+  key: string;
+  label: string;
+  value: number;
+}
+
+export interface TradeReceiptData {
+  chain: "solana" | "base";
+  side: "buy" | "sell";
+  venue: TradeReceiptVenue;
+  /** Human venue name: "Jupiter Ultra", "Privy swap (Base)", "Paper simulator". */
+  venueLabel: string;
+  /** True for a paper fill. The UI must then say "Simulated fill · no on-chain transaction". */
+  simulated: boolean;
+  /** Transaction hash, or the literal "simulated" for a paper fill. */
+  txHash: string;
+  /** Explorer link for a live fill; null when simulated. */
+  explorerUrl: string | null;
+  symbol: string;
+  tokenAddress: string;
+  /** Price per whole token the venue quoted before execution. */
+  quotedPriceUsd: number;
+  /** Price per whole token actually paid or received. */
+  filledPriceUsd: number;
+  /**
+   * Signed slippage in basis points, from the *trader's* point of view: positive means
+   * the fill was worse than the quote (paid more on a buy, received less on a sell).
+   */
+  slippageBps: number;
+  /** The agent's configured tolerance, for comparison. */
+  slippageToleranceBps: number;
+  amountToken: number;
+  /** Gross USD notional of the fill. */
+  amountUsd: number;
+  /** Chain fee (gas / priority) in USD. Null when the venue does not report one. */
+  networkFeeUsd: number | null;
+  /** Venue or route fee in USD, including the paper simulator's 0.3%. */
+  venueFeeUsd: number;
+  /** networkFeeUsd + venueFeeUsd. */
+  totalFeeUsd: number;
+  /** Composite score at entry, frozen. Null when the trade carried no score (legacy sells). */
+  scoreTotal: number | null;
+  scoreVerdict: "avoid" | "watch" | "candidate" | "strong" | null;
+  /** The two or three components that carried the score. Never the thresholds. */
+  scoreReasons: ReceiptScoreReason[];
+  /** ISO timestamps: when the quote was taken, and when the fill came back. */
+  quotedAt: string;
+  filledAt: string;
+  /** Milliseconds between the two, the honest measure of execution latency. */
+  latencyMs: number;
+}
+
+export const tradeReceipts = pgTable(
+  "trade_receipts",
+  {
+    tradeId: text("trade_id")
+      .primaryKey()
+      .references(() => trades.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
+    venue: text("venue").notNull(),
+    simulated: boolean("simulated").notNull(),
+    txHash: text("tx_hash"),
+    /** Lifted out of `data` because "how bad was our execution" is a real question. */
+    slippageBps: numeric("slippage_bps", { precision: 12, scale: 2 }).notNull(),
+    totalFeeUsd: numeric("total_fee_usd", { precision: 18, scale: 6 }).notNull(),
+    data: jsonb("data").$type<TradeReceiptData>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("trade_receipts_agent_idx").on(t.agentId, t.createdAt)],
+);
+
+export const tradeReceiptsRelations = relations(tradeReceipts, ({ one }) => ({
+  trade: one(trades, { fields: [tradeReceipts.tradeId], references: [trades.id] }),
+  agent: one(agents, { fields: [tradeReceipts.agentId], references: [agents.id] }),
+}));
+
+/**
+ * Position sizing. `fixed_usd` is what every agent did before this existed, and is
+ * still the default, so a config with no `sizing` block behaves exactly as it did.
+ *
+ * `maxTradeUsd` stays the hard ceiling over every mode — a percent-of-equity agent
+ * that 10×s does not quietly start writing $1,000 tickets.
+ *
+ * See `src/lib/trading/sizing.ts` for the pure functions and the one-sentence
+ * explanation of each mode.
+ */
+export type PositionSizingMode = "fixed_usd" | "percent_equity" | "volatility_scaled";
+
+export interface PositionSizingConfig {
+  mode: PositionSizingMode;
+  /** `percent_equity` and `volatility_scaled`: the share of equity a full-size clip is. */
+  percentOfEquity: number;
+  /**
+   * `volatility_scaled`: the recent range (high-to-low as a % of price) a *full*-size
+   * clip assumes. A token ranging wider than this is sized down proportionally; one
+   * ranging tighter is never sized *up* — the mode only ever shrinks.
+   */
+  referenceRangePct: number;
+  /** Never write a ticket smaller than this; below it, skip the trade instead. */
+  minTradeUsd: number;
+}
+
+/**
+ * `AgentConfig["risk"]` plus the additive W4 sizing block. The `risk` object in the
+ * database is the same object; this type is how code that cares reads the extra field
+ * without the shared `AgentConfig` contract changing shape for everyone else.
+ */
+export type AgentRiskWithSizing = AgentConfig["risk"] & { sizing?: PositionSizingConfig };
+export type AgentConfigWithSizing = Omit<AgentConfig, "risk"> & { risk: AgentRiskWithSizing };
+
+/**
+ * Notification kinds this workstream writes, on top of the ones in `notifications`
+ * above (`trade`, `exit`, `proposal`, `run_failed`, `follow`, `like`, `comment`):
+ *
+ *  - `fill`   — owner-only, one per executed trade, carrying the receipt summary. Its
+ *               href is `/tokens/<chain>/<address>?trade=<tradeId>`.
+ *  - `digest` — owner-only, at most one per agent per UTC day: trades, PnL and what the
+ *               exit engine did. Its href is `/agents/<slug>`.
+ *
+ * Still no `fork` kind. Forking does not exist.
+ */
+export const W4_NOTIFICATION_KINDS = ["fill", "digest"] as const;
+
+// ---- /W4 ----

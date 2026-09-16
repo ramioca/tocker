@@ -14,17 +14,26 @@
  * gates. Concretely, a buy is refused when the token is blocklisted, has no score at
  * all, carries any blocker, has verdict `avoid`, or totals below `minScore`.
  *
+ * ## Sizing
+ *
+ * `risk.sizing` (see `./sizing.ts`) decides how big a ticket may be: a fixed dollar
+ * amount, a share of equity, or a share of equity shrunk by how wildly the token has
+ * been ranging. `maxTradeUsd` is checked first and remains the hard ceiling over every
+ * mode, so a sizing mode can only ever tighten the allowance. An agent with no `sizing`
+ * block — which is every agent written before this existed — sizes exactly as it did.
+ *
  * **Exits are never blocked by entry rules.** The blocklist, the score gates,
- * `maxTradeUsd`, `maxDailyTrades` and the enabled-chain list all decide what an agent
+ * `maxTradeUsd`, the sizing ceiling, `maxDailyTrades` and the enabled-chain list all decide what an agent
  * may *enter*. None of them apply to sells: blocklisting a token you hold, a position
  * that grew past the trade cap, a busy day that used up the trade quota, or a chain
  * switched off after buying would otherwise trap the agent in exactly the tokens it
  * most needs to exit. A sell only has to be for a position that exists, can be
  * priced, and is no larger than what is held.
  */
-import type { AgentConfig } from "@/db/schema";
+import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { Chain, TokenScore } from "@/server/types";
 import { explainBlocker } from "@/lib/tokens/score";
+import { readSizing, sizeOrder, type SizedOrder } from "./sizing";
 
 export interface RiskAgent {
   id: string;
@@ -57,6 +66,12 @@ export interface OrderIntent {
   tokenAddress: string;
   symbol: string;
   amountUsd: number;
+  /**
+   * Recent high-to-low range as a percent of price, for `volatility_scaled` sizing.
+   * Optional: absent, the guard falls back to the 24h move on the score, and absent
+   * that too the mode degrades to percent-of-equity. See `./sizing.ts`.
+   */
+  rangePct?: number | null;
 }
 
 export type RiskVerdict = { ok: true } | { ok: false; reason: string };
@@ -114,6 +129,37 @@ export function universeGate(config: AgentConfig, order: OrderIntent, score: Tok
 }
 
 /**
+ * The size ceiling for one buy, under this agent's sizing mode.
+ *
+ * Split out so the tools, the manual sheet and the prompt can all show the *same*
+ * number before an order is written, rather than discovering it in a rejection.
+ *
+ * `rangePct` comes from the order when the caller measured one; otherwise the absolute
+ * 24h move on the score stands in for it. That substitute is a floor, not the true
+ * high-to-low range, so it is used only when nothing better was supplied — and it is
+ * still better than sizing a token that moved 80% today as though it were calm.
+ */
+export function sizeCeiling(
+  config: AgentConfig,
+  portfolio: Pick<RiskPortfolio, "cashUsd" | "equityUsd">,
+  order: Pick<OrderIntent, "rangePct">,
+  score: TokenScore | null = null,
+): SizedOrder {
+  const risk = config.risk as AgentRiskWithSizing;
+  const rangePct =
+    order.rangePct ??
+    (score !== null && typeof score.priceChange24hPct === "number" && Number.isFinite(score.priceChange24hPct)
+      ? Math.abs(score.priceChange24hPct)
+      : null);
+  return sizeOrder({
+    sizing: readSizing(risk),
+    maxTradeUsd: risk.maxTradeUsd,
+    equityUsd: portfolio.equityUsd > 0 ? portfolio.equityUsd : portfolio.cashUsd > 0 ? portfolio.cashUsd : null,
+    rangePct,
+  });
+}
+
+/**
  * The full guard.
  *
  * @param score the token's {@link TokenScore} at this instant. Required for buys;
@@ -154,6 +200,21 @@ export function riskGuard(
       return {
         ok: false,
         reason: `Trade size $${order.amountUsd.toFixed(2)} exceeds maxTradeUsd $${risk.maxTradeUsd.toFixed(2)}.`,
+      };
+    }
+
+    // Sizing mode. `maxTradeUsd` above is the hard ceiling and is checked first, so a
+    // mode can only ever make the allowance *smaller* — never larger. A `fixed_usd`
+    // agent (the default, and every config written before sizing existed) lands on
+    // exactly `maxTradeUsd` here and this check is a no-op for it.
+    const ceiling = sizeCeiling(agent.config, portfolio, order, score);
+    if (order.amountUsd > ceiling.amountUsd + 1e-9) {
+      return {
+        ok: false,
+        reason: `Trade size $${order.amountUsd.toFixed(2)} exceeds what this agent's ${ceiling.effectiveMode.replace(
+          /_/g,
+          " ",
+        )} sizing allows right now ($${ceiling.amountUsd.toFixed(2)}): ${ceiling.explanation}`,
       };
     }
 
