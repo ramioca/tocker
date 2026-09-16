@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Plus, Search } from "lucide-react";
 import { NotificationBell } from "@/components/spectrumui/notification-bell";
 import { cn } from "@/lib/utils";
+import { LiquidMetal } from "@/components/common/liquid-metal";
 import { AccountMenu } from "./account-menu";
 import { NAV_ITEMS, isActivePath } from "./nav-items";
 import { WalletChip } from "./wallet-chip";
@@ -32,7 +33,7 @@ export function TopBar({
   const pathname = usePathname();
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border/80 bg-background/85 px-4 backdrop-blur-md">
+    <header className="glass-bar sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border/60 px-4">
       <Link
         href="/feed"
         className="flex shrink-0 items-center gap-2 rounded-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
@@ -80,16 +81,36 @@ export function TopBar({
         </kbd>
       </button>
 
+      <LiquidMetal
+        preset="chromatic"
+        theme="dark"
+        strength={0.85}
+        className="hidden shrink-0 md:block"
+      >
+        <Link
+          href="/agents/new"
+          className={cn(
+            // Dark interior; the MetalFx chrome ring carries the shine.
+            "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-background/60 px-3 text-sm font-medium text-foreground",
+            "transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted/60 active:scale-[0.97]",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          )}
+        >
+          <Plus aria-hidden className="size-4" />
+          New agent
+        </Link>
+      </LiquidMetal>
+
       <Link
         href="/agents/new"
+        aria-label="New agent"
         className={cn(
-          "hidden h-8 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground md:inline-flex",
-          "transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.97]",
+          "inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/30 text-foreground md:hidden",
+          "transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted/60 active:scale-[0.97]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         )}
       >
-        <Plus aria-hidden className="size-4" />
-        New agent
+        <Plus aria-hidden className="size-4.5" />
       </Link>
 
       <WalletChip />

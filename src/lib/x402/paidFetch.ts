@@ -32,7 +32,26 @@ import {
 
 type WrappedFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-const clientCache = new Map<string, Promise<WrappedFetch>>();
+/**
+ * Paid fetches are serialized per run. The AI SDK can fire several tool calls
+ * from one step in parallel, and both the shared per-run budget and each
+ * payment's spend cap would otherwise race. Chaining them is also what makes the
+ * per-run data cap an actual ceiling rather than a best-effort check.
+ */
+const runChains = new Map<string, Promise<unknown>>();
+
+function withRunLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = runChains.get(key) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  runChains.set(
+    key,
+    next.then(
+      () => {},
+      () => {},
+    ),
+  );
+  return next;
+}
 
 /** Atomic-unit decimals per known payment asset. Everything else is assumed to be a 6-decimal stablecoin. */
 const ASSET_DECIMALS: Record<string, number> = {
@@ -137,34 +156,38 @@ function walletFor(ctx: X402Context, network: string): AgentWalletRef | null {
   return wallet;
 }
 
-/** Builds (and caches) a payment-enabled fetch for one agent wallet. */
-async function getPaidFetch(agentId: string, wallet: AgentWalletRef): Promise<WrappedFetch> {
-  const key = `${agentId}:${wallet.chain}:${wallet.walletId}`;
-  const cached = clientCache.get(key);
-  if (cached) return cached;
-  const created = (async (): Promise<WrappedFetch> => {
-    // Dynamic imports: these modules pull in `server-only` / native deps and must not
-    // be loaded in mock mode (or from unit tests and CLI scripts).
-    const [{ privy, authorizationContext }, { createX402Client }, { wrapFetchWithPayment }] = await Promise.all([
-      import("@/lib/privy"),
-      import("@privy-io/node/x402"),
-      import("@x402/fetch"),
-    ]);
-    const client = createX402Client(privy(), {
-      walletId: wallet.walletId,
-      address: wallet.address,
-      authorizationContext: authorizationContext(),
-    });
-    return wrapFetchWithPayment(fetch, client);
-  })();
-  clientCache.set(key, created);
-  created.catch(() => clientCache.delete(key));
-  return created;
+/**
+ * Builds a payment-enabled fetch for one wallet, with a hard per-payment USD cap.
+ *
+ * The cap is the whole point: `wrapFetchWithPayment` issues its own request and
+ * pays whatever *that* 402 demands, so a resource that quotes cheap on the probe
+ * and expensive on the paid retry (or an attacker-controlled URL reached through
+ * the Bazaar tool) would otherwise drain the wallet. `createPaymentPayload`
+ * enforces `maxAmountPerPayment` before signing, so anything above the quote is
+ * rejected. A fresh client per call keeps that cap from racing across runs.
+ */
+async function buildPaidFetch(wallet: AgentWalletRef, capUsd: number): Promise<WrappedFetch> {
+  // Dynamic imports: these modules pull in `server-only` / native deps and must not
+  // be loaded in mock mode (or from unit tests and CLI scripts).
+  const [{ privy, authorizationContext }, { createX402Client }, { wrapFetchWithPayment }] = await Promise.all([
+    import("@/lib/privy"),
+    import("@privy-io/node/x402"),
+    import("@x402/fetch"),
+  ]);
+  const client = createX402Client(privy(), {
+    walletId: wallet.walletId,
+    address: wallet.address,
+    authorizationContext: authorizationContext(),
+  });
+  (
+    client as unknown as { setSpendControls(controls: { maxAmountPerPayment: string }): unknown }
+  ).setSpendControls({ maxAmountPerPayment: `$${capUsd.toFixed(6)}` });
+  return wrapFetchWithPayment(fetch, client);
 }
 
-/** Test seam: drops every cached x402 client. */
+/** Test seam: drops the per-run serialization chains. */
 export function resetX402ClientCache(): void {
-  clientCache.clear();
+  runChains.clear();
 }
 
 async function recordPayment(input: {
@@ -220,10 +243,7 @@ function buildInit(req: PaidRequest, signal: AbortSignal): RequestInit {
  * Throws {@link X402BudgetError} when the call would blow the per-run data budget.
  */
 export async function paidFetch(ctx: X402Context, req: PaidRequest): Promise<PaidResponse> {
-  const wallet = walletFor(ctx, req.network);
-  const simulate = isMockMode() || wallet === null;
-
-  if (simulate) {
+  if (isMockMode()) {
     const price = req.priceUsd ?? 0;
     const remaining = ctx.budget.maxUsd - ctx.budget.spentUsd;
     if (price > remaining) throw new X402BudgetError(price, Math.max(0, remaining));
@@ -250,75 +270,83 @@ export async function paidFetch(ctx: X402Context, req: PaidRequest): Promise<Pai
     };
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), req.timeoutMs ?? 20_000);
-  try {
-    const probe = await fetch(req.url, buildInit(req, controller.signal));
-    if (probe.status !== 402) {
-      if (!probe.ok) {
-        throw new X402RequestError(`${req.sourceId} responded ${probe.status}`, probe.status);
+  // Live mode. Serialized per run so parallel tool calls cannot race the shared
+  // budget or the per-payment cap. A live agent with no wallet on the resource's
+  // network is refused at the pay step below — it never trades on fixture data.
+  return withRunLock(ctx.runId ?? ctx.agentId, async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), req.timeoutMs ?? 20_000);
+    try {
+      const probe = await fetch(req.url, buildInit(req, controller.signal));
+      if (probe.status !== 402) {
+        if (!probe.ok) {
+          throw new X402RequestError(`${req.sourceId} responded ${probe.status}`, probe.status);
+        }
+        return {
+          data: await readBody(probe),
+          amountUsd: 0,
+          network: req.network,
+          txHash: null,
+          settled: false,
+          simulated: false,
+          free: true,
+        };
       }
-      return {
-        data: await readBody(probe),
-        amountUsd: 0,
-        network: req.network,
-        txHash: null,
-        settled: false,
+
+      const options = await parsePaymentOptions(probe);
+      const option = selectPaymentOption(options, req.network, ctx.wallets);
+      if (!option) throw new X402RequestError(`${req.sourceId} returned a 402 we cannot parse or pay`, 402);
+
+      const remaining = ctx.budget.maxUsd - ctx.budget.spentUsd;
+      if (option.amountUsd > remaining) throw new X402BudgetError(option.amountUsd, Math.max(0, remaining));
+
+      const payWallet = walletFor(ctx, option.network);
+      if (!payWallet) throw new X402RequestError(`No agent wallet for network ${option.network}`, 402);
+
+      // Pay at most the quote (+5% slack for rounding). A resource that reprices
+      // upward on the paid retry is rejected by the client's spend control.
+      const capUsd = Math.max(option.amountUsd * 1.05, 0.000001);
+      const wrapped = await buildPaidFetch(payWallet, capUsd);
+      const res = await wrapped(req.url, buildInit(req, controller.signal));
+      if (!res.ok) throw new X402RequestError(`${req.sourceId} responded ${res.status} after payment`, res.status);
+
+      let txHash: string | null = null;
+      let settled = false;
+      const responseHeader = res.headers.get("payment-response") ?? res.headers.get("x-payment-response");
+      if (responseHeader) {
+        try {
+          const decoded = decodePaymentResponseHeader(responseHeader);
+          txHash = decoded.transaction || null;
+          settled = decoded.success;
+        } catch {
+          // keep the payment row, just without a tx hash
+        }
+      }
+
+      ctx.budget.spentUsd += option.amountUsd;
+      await recordPayment({
+        agentId: ctx.agentId,
+        runId: ctx.runId,
+        sourceId: req.sourceId,
+        url: req.url,
+        network: option.network,
+        amountUsd: option.amountUsd,
+        txHash,
+        settled,
         simulated: false,
-        free: true,
+      });
+
+      return {
+        data: await readBody(res),
+        amountUsd: option.amountUsd,
+        network: option.network,
+        txHash,
+        settled,
+        simulated: false,
+        free: false,
       };
+    } finally {
+      clearTimeout(timeout);
     }
-
-    const options = await parsePaymentOptions(probe);
-    const option = selectPaymentOption(options, req.network, ctx.wallets);
-    if (!option) throw new X402RequestError(`${req.sourceId} returned a 402 we cannot parse or pay`, 402);
-
-    const remaining = ctx.budget.maxUsd - ctx.budget.spentUsd;
-    if (option.amountUsd > remaining) throw new X402BudgetError(option.amountUsd, Math.max(0, remaining));
-
-    const payWallet = walletFor(ctx, option.network);
-    if (!payWallet) throw new X402RequestError(`No agent wallet for network ${option.network}`, 402);
-
-    const wrapped = await getPaidFetch(ctx.agentId, payWallet);
-    const res = await wrapped(req.url, buildInit(req, controller.signal));
-    if (!res.ok) throw new X402RequestError(`${req.sourceId} responded ${res.status} after payment`, res.status);
-
-    let txHash: string | null = null;
-    let settled = false;
-    const responseHeader = res.headers.get("payment-response") ?? res.headers.get("x-payment-response");
-    if (responseHeader) {
-      try {
-        const decoded = decodePaymentResponseHeader(responseHeader);
-        txHash = decoded.transaction || null;
-        settled = decoded.success;
-      } catch {
-        // keep the payment row, just without a tx hash
-      }
-    }
-
-    ctx.budget.spentUsd += option.amountUsd;
-    await recordPayment({
-      agentId: ctx.agentId,
-      runId: ctx.runId,
-      sourceId: req.sourceId,
-      url: req.url,
-      network: option.network,
-      amountUsd: option.amountUsd,
-      txHash,
-      settled,
-      simulated: false,
-    });
-
-    return {
-      data: await readBody(res),
-      amountUsd: option.amountUsd,
-      network: option.network,
-      txHash,
-      settled,
-      simulated: false,
-      free: false,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
+  });
 }

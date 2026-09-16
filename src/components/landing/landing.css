@@ -20,8 +20,9 @@
  *   .lp-shader-layer     the WebGPU canvas, screen-blended so it can only add light
  *   .lp-shader-scrim     the contrast guarantee under the headline
  *
- * The fallback is the preset's own ground and nothing else: the Pixel Ink look is
- * black until the ink moves, so a browser without WebGPU gets exactly that black.
+ * The fallback is a real composition, not a placeholder: Pixel Ink paints nothing until
+ * a pointer crosses it, which on a phone is never, so the CSS layer has to carry the
+ * hero on its own and the shader only ever adds to it.
  */
 
 .petri-landing .lp-shader-host {
@@ -42,17 +43,38 @@
   --lp-ink-3: color-mix(in oklch, #ff2d7e 28%, transparent);
 }
 
-/* The preset's ground, matching the shader's SolidColor exactly so the canvas
-   fade-in is invisible. No blooms, no texture: black is the design. */
+/*
+ * The ground under the shader, and the whole backdrop on any device without one.
+ * The preset's three hues as still pools of light, weighted to the right where the
+ * demo card sits, over the preset's own #050505 so the canvas fade-in stays invisible.
+ * A faint pixel grid fades out around the pools: the "pixel" half of Pixel Ink, drawn
+ * in CSS, so the idea reads before (and without) the ink. Static on purpose; the
+ * motion in this hero belongs to the shader and the demo card.
+ */
 .petri-landing .lp-shader-fallback {
   position: absolute;
   inset: 0;
-  background: #050505;
+  background-color: #050505;
+  background-image:
+    radial-gradient(52% 60% at 76% 42%, color-mix(in oklch, #4338ff 30%, transparent), transparent 72%),
+    radial-gradient(30% 38% at 97% 4%, color-mix(in oklch, #19e3ff 15%, transparent), transparent 72%),
+    radial-gradient(42% 46% at 12% 102%, color-mix(in oklch, #ff2d7e 13%, transparent), transparent 72%);
+}
+
+.petri-landing .lp-shader-fallback::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgb(255 255 255 / 0.12) 1px, transparent 1.5px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(60% 66% at 74% 46%, #000 8%, transparent 80%);
+  mask-image: radial-gradient(60% 66% at 74% 46%, #000 8%, transparent 80%);
 }
 
 /*
  * The shader canvas. `screen` is what makes this safe: the composition's ground is
- * #050505, so a dark or not-yet-drawn frame leaves the fallback exactly as it was.
+ * #050505, so a dark or not-yet-drawn frame leaves the fallback exactly as it was,
+ * and the ink can only ever add light to the pools underneath.
  */
 .petri-landing .lp-shader-layer {
   position: absolute;

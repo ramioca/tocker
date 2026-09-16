@@ -85,7 +85,9 @@ export async function addLlmKey(input: {
       last4: last4(key),
     });
   } catch (err) {
-    console.error("[addLlmKey]", err);
+    // Message only: the raw error can echo bound query params near the encrypted
+    // key blob into logs.
+    console.error("[addLlmKey]", err instanceof Error ? err.message : String(err));
     return fail("Could not save the key");
   }
 

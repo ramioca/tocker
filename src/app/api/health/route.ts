@@ -38,8 +38,11 @@ export async function GET() {
   const ok = database === "ok" && !(isProd && embedded);
 
   const mocks = {
+    // Match the runtime: `isMockMode()` in paidFetch treats X402_MOCK as mock only
+    // when it is exactly "1" (unset ⇒ real payments). Reporting `!== "0"` here would
+    // tell the operator payments are simulated while real USDC moves.
     llm: process.env.LLM_MOCK === "1",
-    x402: process.env.X402_MOCK !== "0",
+    x402: process.env.X402_MOCK === "1",
     tokens: process.env.TOKENS_MOCK === "1",
   };
 

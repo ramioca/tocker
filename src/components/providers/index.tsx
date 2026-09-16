@@ -37,7 +37,7 @@ export function Providers({ children }: { children: ReactNode }) {
               toastOptions={{
                 classNames: {
                   toast:
-                    "!bg-popover !text-popover-foreground !border-border !rounded-xl !shadow-lg",
+                    "!bg-popover/75 !backdrop-blur-xl !text-popover-foreground !border-border/60 !rounded-xl !shadow-lg",
                   description: "!text-muted-foreground",
                   actionButton: "!bg-primary !text-primary-foreground",
                 },

@@ -26,7 +26,13 @@ export function Field({
       </label>
       {children}
       {error ? (
-        <p className="text-xs text-destructive">{error}</p>
+        <p
+          id={htmlFor ? `${htmlFor}-error` : undefined}
+          role="alert"
+          className="text-xs text-destructive"
+        >
+          {error}
+        </p>
       ) : hint ? (
         <p className="text-xs text-muted-foreground">{hint}</p>
       ) : null}

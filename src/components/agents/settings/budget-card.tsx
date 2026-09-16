@@ -1,64 +1,108 @@
-import { ShieldCheck, SlidersHorizontal } from "lucide-react";
+"use client";
+
+import { useState } from "react";
+import { ShieldCheck } from "lucide-react";
+import { toast } from "sonner";
+import { Input } from "@/components/ui/input";
 import { formatUsd } from "@/components/common/format";
-import type { AgentConfig } from "@/db/schema";
-import { cn } from "@/lib/utils";
+import { setAgentWalletBudget } from "@/server/actions/wallets";
 
 /**
- * The caps, stated as money rather than as slider positions.
- *
- * The point of this card is the sentence at the bottom: these are enforced by
- * `riskGuard()` before any executor is reached, so they are a property of the
- * code path, not a request made of the model in a prompt. That distinction is the
- * whole reason the numbers can be trusted, and it is invisible from the sliders.
+ * The wallet-layer budget. This is not the risk config: those caps live in app
+ * code, this one lives in a Privy policy attached to the wallet itself. The
+ * wallet refuses to sign an over-cap USDC transfer no matter who asks — the
+ * model, a buggy run loop, or a compromised server route.
  */
 export function BudgetCard({
-  config,
-  className,
-  compact = false,
+  agentId,
+  initialPerTxUsd,
+  hasRealWallets,
 }: {
-  config: AgentConfig;
-  className?: string;
-  compact?: boolean;
+  agentId: string;
+  initialPerTxUsd: number | null;
+  hasRealWallets: boolean;
 }) {
-  const { risk } = config;
-  const dailyTurnover = risk.maxTradeUsd * risk.maxDailyTrades;
+  const [applied, setApplied] = useState(initialPerTxUsd);
+  const [amount, setAmount] = useState(initialPerTxUsd ? String(initialPerTxUsd) : "");
+  const [pending, setPending] = useState(false);
+
+  const parsed = Number(amount);
+  const valid = Number.isFinite(parsed) && parsed >= 1 && parsed <= 100_000;
+  const dirty = valid && parsed !== applied;
+
+  const save = async () => {
+    if (!dirty || pending) return;
+    setPending(true);
+    try {
+      const result = await setAgentWalletBudget({ agentId, perTxUsd: parsed });
+      if (result.ok) {
+        setApplied(result.data.perTxUsd);
+        toast.success("Wallet budget applied", {
+          description: `The wallet now refuses any USDC transfer above ${formatUsd(result.data.perTxUsd)}.`,
+        });
+      } else {
+        toast.error("Budget not applied", { description: result.error });
+      }
+    } finally {
+      setPending(false);
+    }
+  };
 
   return (
-    <section className={cn("glass rounded-xl border border-border/70 bg-card/30 p-4", className)}>
+    <section className="rounded-xl border border-border/70 bg-card/30 p-4">
       <div className="flex items-center gap-2">
-        <SlidersHorizontal aria-hidden className="size-4 text-muted-foreground" />
-        <h2 className="text-sm font-medium">Spend caps</h2>
+        <ShieldCheck aria-hidden className="size-4 text-primary" />
+        <h2 className="text-sm font-medium">Wallet budget</h2>
+        {applied ? (
+          <span className="ml-auto rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 font-mono text-[10px] text-primary">
+            enforced at the wallet
+          </span>
+        ) : null}
       </div>
 
-      <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
-        <Row label="Per trade" value={formatUsd(risk.maxTradeUsd)} />
-        <Row label="Trades per day" value={String(risk.maxDailyTrades)} />
-        <Row label="Most it can move in a day" value={formatUsd(dailyTurnover)} />
-        <Row label="One token, at most" value={`${Math.round(risk.maxPositionPct)}% of equity`} />
-        <Row label="Data spend per run" value={formatUsd(risk.maxDataSpendUsdPerRun)} />
-        <Row label="Slippage tolerance" value={`${(risk.slippageBps / 100).toFixed(2)}%`} />
-      </dl>
+      <p className="mt-2 text-xs leading-5 text-muted-foreground">
+        A hard cap enforced by the wallet itself, via a Privy policy: no single USDC
+        transfer above this amount gets signed — independent of the risk config, the
+        model, and this app&rsquo;s code. Key export is always denied.
+      </p>
 
-      {compact ? null : (
-        <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-muted-foreground">
-          <ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-          <span>
-            Enforced in code by the risk guard before a quote is ever requested — not asked of the model in a
-            prompt. A strategy that decides to buy {formatUsd(risk.maxTradeUsd * 10)} of something gets refused,
-            and the refusal is written into the run transcript. Changes take effect from the next tick and are
-            written to your audit log.
-          </span>
+      {hasRealWallets ? (
+        <div className="mt-3 flex items-end gap-2">
+          <div className="flex-1">
+            <label htmlFor="budget-per-tx" className="mb-1 block text-xs text-muted-foreground">
+              Max USDC per transaction
+            </label>
+            <Input
+              id="budget-per-tx"
+              value={amount}
+              inputMode="decimal"
+              placeholder="250"
+              onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))}
+              className="tnum font-mono"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={!dirty || pending}
+            className="h-9 shrink-0 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50"
+          >
+            {pending ? "Applying…" : applied ? "Update" : "Apply"}
+          </button>
+        </div>
+      ) : (
+        <p className="mt-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          This agent runs on paper wallets — there is nothing on-chain to cap yet. The
+          policy is applied automatically when real wallets exist.
         </p>
       )}
-    </section>
-  );
-}
 
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-border/40 pb-1.5 text-sm last:border-0">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="tnum font-mono text-xs">{value}</dd>
-    </div>
+      {applied ? (
+        <p className="tnum mt-2 text-[11px] text-muted-foreground">
+          Current cap: {formatUsd(applied)} per transaction, on every chain this agent
+          trades.
+        </p>
+      ) : null}
+    </section>
   );
 }
