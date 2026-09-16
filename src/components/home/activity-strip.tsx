@@ -46,20 +46,19 @@ function Row({ item }: { item: HomeActivityItem }) {
           <Icon className="size-3.5" />
         </span>
 
-        <span className="flex min-w-0 shrink-0 items-center gap-2">
+        <span className="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
           <AgentAvatar seed={agent.avatarSeed} name={agent.name} size="sm" />
           <span className="truncate text-sm font-medium">{agent.name}</span>
           <ModeBadge mode={agent.mode} size="xs" />
         </span>
 
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
-          <span className={cn("shrink-0 font-medium", meta.tone)}>{meta.label}</span>
-          <TokenIcon token={trade.token} size="xs" />
-          <span className="truncate font-medium">{trade.token.symbol}</span>
-          <span className="tnum shrink-0 text-muted-foreground">{formatUsd(usd)}</span>
-        </span>
-
-        <span className="tnum ml-auto shrink-0 text-[11px] text-muted-foreground">
+        {/*
+          Below `sm` the fill wraps onto its own line under the agent (`w-full`,
+          indented to the avatar), because five things — agent, verb, token, size
+          and time — do not fit across 390px without colliding. From `sm` up the
+          order flips back so it reads as one dense line.
+        */}
+        <span className="tnum ml-auto shrink-0 text-[11px] text-muted-foreground sm:order-3">
           {item.kind === "proposal" && item.expiresAt ? (
             <span className="text-primary">
               expires <RelativeTime iso={item.expiresAt} className="text-[11px]" />
@@ -67,6 +66,13 @@ function Row({ item }: { item: HomeActivityItem }) {
           ) : (
             <RelativeTime iso={item.at} className="text-[11px]" />
           )}
+        </span>
+
+        <span className="flex w-full min-w-0 items-center gap-1.5 pl-10 text-sm sm:order-2 sm:w-auto sm:flex-1 sm:pl-0">
+          <span className={cn("shrink-0 font-medium", meta.tone)}>{meta.label}</span>
+          <TokenIcon token={trade.token} size="xs" />
+          <span className="truncate font-medium">{trade.token.symbol}</span>
+          <span className="tnum shrink-0 text-muted-foreground">{formatUsd(usd)}</span>
         </span>
       </Link>
 
