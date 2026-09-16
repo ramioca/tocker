@@ -10,7 +10,9 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
     },
   },
-  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts", ".pglite/**", "drizzle/**", ".agents/**", ".worktrees/**"]),
+  globalIgnores([
+    // Agent worktrees live inside the repo and carry their own .next output.
+    ".claude/**",".next/**", "out/**", "build/**", "next-env.d.ts", ".pglite/**", "drizzle/**", ".agents/**", ".worktrees/**"]),
 ]);
 
 export default eslintConfig;

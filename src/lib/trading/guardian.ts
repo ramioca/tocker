@@ -42,7 +42,7 @@ import { parseAgentConfig } from "@/lib/agent/config";
 import { getAgentWallets, getPortfolio, snapshotEquity, toRiskPortfolio, type Portfolio } from "@/lib/agent/portfolio";
 import { toNumeric } from "@/lib/money";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
-import { sendDailyDigest, utcDay } from "@/lib/notifications";
+import { hasDigest, sendDailyDigest, utcDay } from "@/lib/notifications";
 import type { Chain, ExitReason, TokenScore } from "@/server/types";
 import { getExecutor, LiveWalletError, type ExecutorAgent, type TradeRequest } from "./executor";
 import {
@@ -245,6 +245,8 @@ interface ExitContext {
 async function maybeSendDigest(agent: AgentRecord, now: Date): Promise<void> {
   try {
     const day = utcDay(new Date(now.getTime() - 86_400_000));
+    // 287 of the day's 288 passes stop here; only the first after midnight goes on.
+    if (await hasDigest(agent.ownerId, agent.slug, day)) return;
     const from = new Date(`${day}T00:00:00.000Z`);
     const to = new Date(from.getTime() + 86_400_000);
     const db = await getDb();
