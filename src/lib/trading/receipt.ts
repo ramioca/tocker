@@ -30,11 +30,20 @@ import type { Fill, Quote } from "./executor";
 
 export type { TradeReceiptData, ReceiptScoreReason, TradeReceiptVenue };
 
-/** Exactly what a paper fill says, everywhere, forever. */
-export const SIMULATED_FILL_TEXT = "Simulated fill · no on-chain transaction";
-
-/** The literal written into `txHash` when there was no chain to write to. */
-export const SIMULATED_TX = "simulated";
+/**
+ * The display half lives in `./receipt-display`, which has no path to `@/db` — a
+ * client component that imports one of these from here would otherwise pull the
+ * `postgres` driver into its browser bundle. Re-exported so every existing import
+ * site is unchanged.
+ */
+export {
+  SIMULATED_FILL_TEXT,
+  SIMULATED_TX,
+  slippageText,
+  exceededTolerance,
+  receiptSummary,
+} from "./receipt-display";
+import { SIMULATED_FILL_TEXT, SIMULATED_TX, slippageText } from "./receipt-display";
 
 const VENUE_LABELS: Record<TradeReceiptVenue, string> = {
   jupiter: "Jupiter Ultra",
@@ -216,21 +225,3 @@ export async function getReceipts(tradeIds: readonly string[]): Promise<Map<stri
   return out;
 }
 
-/** "+19 bps" / "-4 bps" / "at the quote" — the slippage, in a phrase. */
-export function slippageText(bps: number): string {
-  if (!Number.isFinite(bps) || Math.abs(bps) < 0.5) return "at the quote";
-  const rounded = Math.round(bps);
-  return `${rounded > 0 ? "+" : "−"}${Math.abs(rounded)} bps`;
-}
-
-/** True when the fill drifted further from the quote than the agent said it would accept. */
-export function exceededTolerance(receipt: Pick<TradeReceiptData, "slippageBps" | "slippageToleranceBps">): boolean {
-  return receipt.slippageBps > receipt.slippageToleranceBps;
-}
-
-/** One line for a notification body: what filled, where, and how well. */
-export function receiptSummary(receipt: TradeReceiptData): string {
-  const fee = receipt.totalFeeUsd > 0 ? `, $${receipt.totalFeeUsd.toFixed(2)} fees` : "";
-  const where = receipt.simulated ? SIMULATED_FILL_TEXT : receipt.venueLabel;
-  return `${where} · ${slippageText(receipt.slippageBps)} vs quote${fee}`;
-}
