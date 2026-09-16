@@ -211,9 +211,13 @@ export const getSession = cache(async (): Promise<Session | null> => {
   }
 });
 
-/** Redirects to `/` (landing) when logged out. */
-export async function requireSession(): Promise<Session> {
+/**
+ * For owner-only pages: the session, or a redirect to `/login` that returns the
+ * visitor to `next` once Privy has signed them in. The public record (feed,
+ * discover, an agent's public page, profiles, tokens) never calls this.
+ */
+export async function requireSession(next = "/home"): Promise<Session> {
   const session = await getSession();
-  if (!session) redirect("/");
+  if (!session) redirect(`/login?next=${encodeURIComponent(next)}`);
   return session;
 }

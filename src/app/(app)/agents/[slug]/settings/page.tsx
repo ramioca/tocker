@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import {notFound, redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { AgentSettingsForm } from "@/components/agents/settings/agent-settings-form";
 import { DangerZone } from "@/components/agents/settings/danger-zone";
@@ -19,6 +19,7 @@ export const metadata: Metadata = { title: "Agent settings" };
 export default async function AgentSettingsPage({ params }: Params) {
   const { slug } = await params;
   const session = await viewerSession();
+  if (!session) redirect(`/login?next=${encodeURIComponent(`/agents/${slug}/settings`)}`);
   const agent = await agentBySlug(slug, session?.userId ?? null);
   if (!agent) notFound();
 

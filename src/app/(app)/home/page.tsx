@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { getHomeActivity, getHomeOverview } from "@/server/queries/home";
-import { SignedOut } from "@/components/settings/signed-out";
 import { PortfolioHero } from "@/components/home/portfolio-hero";
 import { AgentsOverview } from "@/components/home/agents-overview";
 import { ActivityStrip } from "@/components/home/activity-strip";
@@ -25,14 +25,7 @@ export const metadata: Metadata = {
  */
 export default async function HomePage() {
   const session = await getSession();
-  if (!session) {
-    return (
-      <SignedOut
-        title="Sign in to see your portfolio"
-        body="Cash, capital at work, every agent's PnL and anything waiting on your approval."
-      />
-    );
-  }
+  if (!session) redirect(`/login?next=${encodeURIComponent("/home")}`);
 
   const [overview, activity] = await Promise.all([
     getHomeOverview(session.userId),

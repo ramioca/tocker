@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { getMyLlmKeys, getUserProfile } from "@/server/queries/users";
 import { withMock } from "@/lib/data";
@@ -11,16 +12,15 @@ import { CreatePlatformWallets } from "@/components/settings/create-platform-wal
 import { PlatformCard } from "@/components/settings/platform-card";
 import { listPlatformWallets } from "@/lib/platform/wallets";
 import { DangerZone } from "@/components/settings/danger-zone";
-import { SignedOut } from "@/components/settings/signed-out";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 
 export const metadata: Metadata = { title: "Settings · Tocker" };
 
 export default async function SettingsPage() {
   const session = await withMock(getSession, mockSession);
+  if (!session) redirect(`/login?next=${encodeURIComponent("/settings")}`);
   // Whether the operator card should offer to create the platform wallets or to verify them.
   const platformHasWallets = (await listPlatformWallets().catch(() => [])).length > 0;
-  if (!session) return <SignedOut />;
 
   const [keys, profile] = await Promise.all([
     withMock(

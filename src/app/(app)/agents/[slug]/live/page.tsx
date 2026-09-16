@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import {notFound, redirect } from "next/navigation";
 import { EmptyState } from "@/components/common/empty-state";
 import { LiveWizard } from "@/components/live/live-wizard";
 import { agentBySlug, agentWalletBudget, viewerSession } from "@/components/common/data-access";
@@ -19,6 +19,7 @@ export const metadata: Metadata = { title: "First live trade" };
 export default async function LiveWizardPage({ params }: Params) {
   const { slug } = await params;
   const session = await viewerSession();
+  if (!session) redirect(`/login?next=${encodeURIComponent(`/agents/${slug}/live`)}`);
   const agent = await agentBySlug(slug, session?.userId ?? null);
   if (!agent) notFound();
 

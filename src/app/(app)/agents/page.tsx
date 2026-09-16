@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Bot, Plus } from "lucide-react";
 import { AgentCard } from "@/components/agents/agent-card";
@@ -12,6 +13,7 @@ export const metadata: Metadata = {
 
 export default async function MyAgentsPage() {
   const session = await viewerSession();
+  if (!session) redirect(`/login?next=${encodeURIComponent("/agents")}`);
   const agents = await myAgents(session?.userId ?? null);
 
   const live = agents.filter((agent) => agent.mode === "live").length;

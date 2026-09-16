@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { getNotifications } from "@/server/queries/users";
 import { listMyProposals } from "@/server/queries/proposals";
 import { withMock } from "@/lib/data";
 import { NOW, mockNotifications, mockSession } from "@/mocks/social";
 import { referenceNow } from "@/components/social-common/format";
-import { SignedOut } from "@/components/settings/signed-out";
 import { NotificationList } from "@/components/notifications/notification-list";
 import { MarkAllRead } from "@/components/notifications/mark-all-read";
 
@@ -13,14 +13,7 @@ export const metadata: Metadata = { title: "Notifications · Tocker" };
 
 export default async function NotificationsPage() {
   const session = await withMock(getSession, mockSession);
-  if (!session) {
-    return (
-      <SignedOut
-        title="Sign in for your notifications"
-        body="Fills, follows, comments and failed runs — all in one list."
-      />
-    );
-  }
+  if (!session) redirect(`/login?next=${encodeURIComponent("/notifications")}`);
 
   const page = await withMock(
     () => getNotifications(session.userId),
