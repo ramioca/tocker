@@ -41,7 +41,7 @@ Set these in Vercel → Project → Settings → Environment Variables, for Prod
 | `ENCRYPTION_KEY` | `openssl rand -base64 32` — **generate once and never rotate**, it decrypts stored LLM keys |
 | `CRON_SECRET` | `openssl rand -hex 32` |
 | `NEXT_PUBLIC_APP_URL` | `https://your-app.vercel.app` |
-| `X402_MOCK` | `0` for real data payments, `1` to run on fixtures |
+| `X402_MOCK` | `1` runs on fixtures. Anything else — including unset — means **real** payments; `isMockMode()` tests for exactly `"1"`. |
 | `CRON_MAX_AGENTS` | Agents per cron invocation. Default 5; use 2 on Hobby. |
 | `NEXT_PUBLIC_SHADER` | `off` disables the WebGPU landing hero and uses the static fallback |
 | `LLM_MOCK` | unset (or `0`) |
@@ -87,7 +87,15 @@ tested. It deliberately allows `auth.privy.io` and `*.privy.io` in `frame-src`/`
 (Privy renders login and wallet UIs in an iframe — remove these and login silently does
 nothing), `wasm-unsafe-eval` + `worker-src blob:` for the WebGPU shader, `https:` in
 `img-src` because token logos and social avatars are arbitrary third-party URLs, and
-`'unsafe-inline'` in `style-src` because `motion` writes inline style attributes. Setting a
+`'unsafe-inline'` in `style-src` because `motion` writes inline style attributes.
+
+The policy was **verified in a browser, not reasoned about**: loading it on the landing page,
+the feed, agent settings and the live wizard turned up fifteen real violations on the settings
+page alone — Base UI's slider emits its own inline `<script>` during SSR. The fix is upstream
+of the CSP: the root layout reads the proxy's `x-nonce` request header and `Providers` wraps
+the tree in Base UI's `CSPProvider`, so those tags are nonced too. Re-checked afterwards:
+zero violations on any of those routes. If a future component starts emitting un-nonced inline
+script, it will show up the same way — open the page and read the console. Setting a
 per-request nonce opts routes into dynamic rendering; every route here already reads cookies
 for the session, so nothing is lost.
 
@@ -131,13 +139,14 @@ an action result, a run transcript or the browser. Only the last four characters
 rendered. Rotation keeps the key's id so agents pointed at it never lose a tick, and
 overwrites the old ciphertext in place.
 
-**Spend caps** — `maxTradeUsd`, `maxDailyTrades`, `maxPositionPct` and
-`maxDataSpendUsdPerRun` are enforced by `riskGuard()` before any executor is reached, not
-requested of the model in a prompt. **Not yet done:** an equivalent *Privy wallet policy*
-attached to the agent's server wallets, which would cap spending below Tocker itself. The
-SDK supports it (`privy.policies()`, `policy_ids` on a wallet), but a wrong policy bricks
-trading, so it is left as the next hardening step rather than written blind. The live wizard
-reports the caps it can prove and says which layer they live in.
+**Spend caps, in two layers** — the app layer is `riskGuard()`, which enforces
+`maxTradeUsd`, `maxDailyTrades`, `maxPositionPct` and `maxDataSpendUsdPerRun` before any
+executor is reached, not by asking the model in a prompt. Underneath it, the *wallet* layer
+is a Privy policy attached to the agent's server wallets (`agents.walletBudget`, applied from
+the Wallet budget card in agent settings): the wallet refuses to sign an over-cap USDC
+transfer whatever this app asks for, so a bug in the run loop or a compromised route here
+still has a floor under it. The live wizard requires **both** to sit at or under the per-trade
+cap the operator typed, and a missing wallet policy is a hard fail for a first live trade.
 
 ## 2c. The first live trade
 
@@ -146,8 +155,8 @@ server, every time it is opened or re-checked: database reachable and not PGlite
 configured with an authorization key, second factor enrolled, real (not `paper_`) wallets on
 every chain it trades, USDC above the $5 minimum plus native for gas, spend caps within the
 cap the operator typed, a first-trade-shaped risk config (one chain, ≤ $2 a trade, one trade
-a day, at least one exit rule), `X402_MOCK=0` with every configured source still in the
-registry, and the kill switch off. A "first-trade preset" button clamps the agent into that
+a day, at least one exit rule), real x402 payments (`X402_MOCK` not `1`) with every configured source still in
+the registry, and the kill switch off. A "first-trade preset" button clamps the agent into that
 shape in one click.
 
 A step is green only when it was checked and passed; "could not tell" is red. Going live is a
