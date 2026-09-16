@@ -1,9 +1,10 @@
 "use server";
 import { revalidatePath } from "next/cache";
-import { and, eq, isNull, ne } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { agents, getDb, llmKeys, notifications, users } from "@/db";
 import { getSession } from "@/lib/auth";
 import { encryptSecret, last4 } from "@/lib/crypto";
+import { recordAudit } from "@/lib/security/audit";
 import { newId } from "@/server/queries/_shared";
 import type { ActionResult } from "@/server/types";
 
@@ -90,7 +91,17 @@ export async function addLlmKey(input: {
     return fail("Could not save the key");
   }
 
+  // Audited because a key added to this account can spend money on the owner's
+  // provider bill. The audit row carries the last four characters, never more.
+  await recordAudit({
+    userId: session.userId,
+    kind: "llm_key_added",
+    summary: `Added a ${input.provider} API key ending ${last4(key)}${input.label?.trim() ? ` (${input.label.trim()})` : ""}.`,
+    metadata: { provider: input.provider, last4: last4(key) },
+  });
+
   revalidatePath("/settings");
+  revalidatePath("/settings/security");
   return { ok: true, data: { id, last4: last4(key) } };
 }
 
@@ -100,18 +111,86 @@ export async function removeLlmKey(id: string): Promise<ActionResult> {
 
   const db = await getDb();
   const [key] = await db
-    .select({ id: llmKeys.id })
+    .select({ id: llmKeys.id, provider: llmKeys.provider, last4: llmKeys.last4, label: llmKeys.label })
     .from(llmKeys)
     .where(and(eq(llmKeys.id, id), eq(llmKeys.userId, session.userId)))
     .limit(1);
   if (!key) return fail("Key not found");
 
   // agents keep running without a key only in paper mode — detach first
-  await db.update(agents).set({ llmKeyId: null }).where(eq(agents.llmKeyId, id));
+  const detached = await db
+    .update(agents)
+    .set({ llmKeyId: null })
+    .where(eq(agents.llmKeyId, id))
+    .returning({ id: agents.id });
   await db.delete(llmKeys).where(eq(llmKeys.id, id));
 
+  await recordAudit({
+    userId: session.userId,
+    kind: "llm_key_removed",
+    summary: `Revoked the ${key.provider} key ending ${key.last4}. ${
+      detached.length === 0
+        ? "No agent was using it."
+        : `${detached.length} agent${detached.length === 1 ? "" : "s"} lost its brain and cannot run until another key is attached.`
+    }`,
+    metadata: { provider: key.provider, last4: key.last4, detachedAgents: detached.length },
+  });
+
   revalidatePath("/settings");
+  revalidatePath("/settings/security");
   return { ok: true, data: undefined };
+}
+
+/**
+ * Replace the secret behind an existing key, keeping its id.
+ *
+ * Rotation rather than remove-and-re-add on purpose: every agent pointed at this
+ * key keeps working across the swap, so rotating a leaked key costs nothing and
+ * there is no window where a live agent has no brain. The old ciphertext is
+ * overwritten in place — we never keep a previous secret "just in case".
+ */
+export async function rotateLlmKey(input: { id: string; key: string }): Promise<ActionResult<{ last4: string }>> {
+  const session = await getSession();
+  if (!session) return fail("Sign in first");
+
+  const key = input.key?.trim();
+  if (!key || key.length < 16) return fail("That does not look like an API key");
+
+  const db = await getDb();
+  const [existing] = await db
+    .select({ id: llmKeys.id, provider: llmKeys.provider, last4: llmKeys.last4 })
+    .from(llmKeys)
+    .where(and(eq(llmKeys.id, input.id), eq(llmKeys.userId, session.userId)))
+    .limit(1);
+  if (!existing) return fail("Key not found");
+
+  const [{ n: agentCount }] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(agents)
+    .where(eq(agents.llmKeyId, input.id));
+
+  try {
+    await db
+      .update(llmKeys)
+      .set({ encryptedKey: encryptSecret(key), last4: last4(key) })
+      .where(eq(llmKeys.id, input.id));
+  } catch (err) {
+    console.error("[rotateLlmKey]", err);
+    return fail("Could not rotate the key");
+  }
+
+  await recordAudit({
+    userId: session.userId,
+    kind: "llm_key_rotated",
+    summary: `Rotated the ${existing.provider} key: ${existing.last4} → ${last4(key)}. ${Number(agentCount)} agent${
+      Number(agentCount) === 1 ? "" : "s"
+    } kept running.`,
+    metadata: { provider: existing.provider, from: existing.last4, to: last4(key), agents: Number(agentCount) },
+  });
+
+  revalidatePath("/settings");
+  revalidatePath("/settings/security");
+  return { ok: true, data: { last4: last4(key) } };
 }
 
 export async function markNotificationsRead(): Promise<ActionResult> {
