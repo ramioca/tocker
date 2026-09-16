@@ -1,6 +1,7 @@
 import "server-only";
 import { and, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { agents, getDb, userSecurity } from "@/db";
+import type { KillSwitchState } from "./types";
 
 /**
  * The kill switch: one per-user flag that stops every agent that user owns from
@@ -31,10 +32,7 @@ export async function isTradingPaused(userId: string): Promise<boolean> {
   return row?.paused ?? false;
 }
 
-export interface KillSwitchState {
-  paused: boolean;
-  pausedAt: string | null;
-}
+export type { KillSwitchState } from "./types";
 
 export async function getKillSwitch(userId: string): Promise<KillSwitchState> {
   const db = await getDb();

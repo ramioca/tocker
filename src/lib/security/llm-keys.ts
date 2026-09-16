@@ -1,6 +1,7 @@
 import "server-only";
 import { desc, eq, sql } from "drizzle-orm";
 import { agentRuns, agents, getDb, llmKeys } from "@/db";
+import type { LlmKeyDetail } from "./types";
 
 /**
  * The owner's view of their own LLM keys.
@@ -23,16 +24,7 @@ import { agentRuns, agents, getDb, llmKeys } from "@/db";
  * and it costs no extra column and no write on the hot path.
  */
 
-export interface LlmKeyDetail {
-  id: string;
-  provider: "anthropic" | "openai" | "openrouter";
-  label: string | null;
-  /** Last four characters only. Never more, on any surface. */
-  last4: string;
-  createdAt: string;
-  lastUsedAt: string | null;
-  agentCount: number;
-}
+export type { LlmKeyDetail } from "./types";
 
 export async function getLlmKeyDetails(userId: string): Promise<LlmKeyDetail[]> {
   const db = await getDb();

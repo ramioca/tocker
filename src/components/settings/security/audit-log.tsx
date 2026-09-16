@@ -13,8 +13,7 @@ import {
 } from "lucide-react";
 import { EmptyState } from "@/components/common/empty-state";
 import { RelativeTime } from "@/components/common/relative-time";
-import type { AuditRow } from "@/lib/security/audit";
-import type { AuditKind } from "@/lib/security/audit";
+import type { AuditKind, AuditRow } from "@/lib/security/types";
 import { cn } from "@/lib/utils";
 
 const ICONS: Record<AuditKind, React.ComponentType<{ className?: string }>> = {

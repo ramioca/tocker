@@ -2,6 +2,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { getDb, userSecurity } from "@/db";
 import { isPrivyConfigured, privy } from "@/lib/privy";
+import type { MfaMethod, MfaStatus } from "./types";
 
 /**
  * Second-factor gate for the two irreversible money actions: switching an agent
@@ -27,22 +28,7 @@ import { isPrivyConfigured, privy } from "@/lib/privy";
  * The UI says all of this in one sentence rather than implying more than is true.
  */
 
-export type MfaMethod = "sms" | "totp" | "passkey" | "email";
-
-export interface MfaStatus {
-  /** Whether we could reach Privy at all. */
-  available: boolean;
-  /** MFA methods the Privy app has turned on in the dashboard. */
-  appMethods: MfaMethod[];
-  /** Methods this user has actually enrolled. */
-  userMethods: MfaMethod[];
-  enrolled: boolean;
-  /**
-   * Set when enrolment is impossible or unverifiable. The UI prints this verbatim
-   * rather than showing a dead "Enrol" button.
-   */
-  blockedReason: string | null;
-}
+export type { MfaMethod, MfaStatus } from "./types";
 
 const OFFLINE: MfaStatus = {
   available: false,

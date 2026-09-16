@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Check, CircleAlert, X } from "lucide-react";
-import type { ReadinessStep } from "@/lib/security/live-readiness";
+import type { ReadinessStep } from "@/lib/security/types";
 import { cn } from "@/lib/utils";
 
 /**

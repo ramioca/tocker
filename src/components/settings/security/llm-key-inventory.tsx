@@ -10,7 +10,7 @@ import { MorphButton } from "@/components/spectrumui/morph-button";
 import { RelativeTime } from "@/components/common/relative-time";
 import { EmptyState } from "@/components/common/empty-state";
 import { removeLlmKey, rotateLlmKey } from "@/server/actions/users";
-import type { LlmKeyDetail } from "@/lib/security/llm-keys";
+import type { LlmKeyDetail } from "@/lib/security/types";
 import { cn } from "@/lib/utils";
 
 const PROVIDER_LABEL: Record<LlmKeyDetail["provider"], string> = {

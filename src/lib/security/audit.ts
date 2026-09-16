@@ -3,8 +3,20 @@ import { desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { auditEvents, getDb } from "@/db";
 import { newId } from "@/server/queries/_shared";
+import type { AuditKind, AuditRow } from "./types";
 
-export type AuditKind = (typeof auditEvents.kind.enumValues)[number];
+export type { AuditKind, AuditRow } from "./types";
+
+/**
+ * The enum and the hand-written union must not drift. This is a compile-time
+ * assertion, not a runtime check: if a kind is added to the schema and not to
+ * `./types`, or vice versa, `pnpm typecheck` fails here.
+ */
+type SchemaKind = (typeof auditEvents.kind.enumValues)[number];
+type Extra = Exclude<SchemaKind, AuditKind> | Exclude<AuditKind, SchemaKind>;
+type AuditKindsAgree = [Extra] extends [never] ? true : ["audit kinds drifted", Extra];
+const _auditKindsAgree: AuditKindsAgree = true;
+void _auditKindsAgree;
 
 export interface AuditInput {
   userId: string;
@@ -17,17 +29,7 @@ export interface AuditInput {
   metadata?: Record<string, unknown> | null;
 }
 
-export interface AuditRow {
-  id: string;
-  kind: AuditKind;
-  summary: string;
-  agentId: string | null;
-  agentName: string | null;
-  metadata: Record<string, unknown> | null;
-  ip: string | null;
-  userAgent: string | null;
-  createdAt: string;
-}
+
 
 /** Keep a user agent readable in a table cell without truncating the useful part. */
 const UA_MAX = 180;

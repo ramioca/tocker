@@ -6,7 +6,7 @@ import { KeyRound, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
 import { toast } from "sonner";
 import { useMfaEnrollment, usePrivy } from "@privy-io/react-auth";
 import { noteMfaChangeAction, refreshMfaStatusAction } from "@/server/actions/security";
-import type { MfaStatus } from "@/lib/security/mfa";
+import type { MfaStatus } from "@/lib/security/types";
 import { cn } from "@/lib/utils";
 
 const METHOD_LABEL: Record<string, string> = {

@@ -17,7 +17,7 @@ import {
   pauseAgentAction,
   tradeReceiptAction,
 } from "@/server/actions/security";
-import type { LiveReadiness } from "@/lib/security/live-readiness";
+import type { LiveReadiness } from "@/lib/security/types";
 import type { TradeReceiptData } from "@/db/schema";
 import type { AgentDetail, RunDetail } from "@/server/types";
 import { Checklist } from "./checklist";
