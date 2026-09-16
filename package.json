@@ -16,8 +16,9 @@
     "db:seed": "tsx src/db/seed.ts",
     "tick": "tsx --env-file-if-exists=.env scripts/tick.ts",
     "demo": "tsx --env-file-if-exists=.env scripts/demo-run.ts",
-    "preflight": "tsx --env-file-if-exists=.env scripts/live-preflight.ts",
-    "vercel-build": "tsx scripts/migrate.ts && next build"
+    "preflight": "NODE_OPTIONS=--conditions=react-server tsx --env-file-if-exists=.env scripts/live-preflight.ts",
+    "vercel-build": "tsx scripts/migrate.ts && next build",
+    "platform:wallets": "NODE_OPTIONS=--conditions=react-server tsx --env-file-if-exists=.env scripts/platform-wallets.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.52",
@@ -63,6 +64,7 @@
     "react-dom": "19.2.8",
     "react-use-measure": "^2.1.7",
     "recharts": "^3.10.1",
+    "server-only": "^0.0.1",
     "shadcn": "^4.21.0",
     "shaders": "^3.2.470",
     "sonner": "^2.0.8",

@@ -164,9 +164,10 @@ async function main() {
   // operator cannot fund an address that does not exist yet, and "fund the platform data
   // wallet on Base" is the last setup step before a first live run. One per chain,
   // guarded by a unique index, so running preflight twice creates nothing twice.
-  if (!dbUrl || dbUrl.startsWith("pglite://")) {
-    warn("skipped the platform wallets: they live in the database, and DATABASE_URL is missing or embedded PGlite");
+  if (!dbUrl) {
+    warn("skipped the platform wallets: they live in the database, and DATABASE_URL is missing");
   } else {
+    if (dbUrl.startsWith("pglite://")) warn("platform wallet rows live in embedded PGlite — fine for a local test, not for a deployment");
     try {
       const { ensurePlatformWallet, readPlatformBalances } = await import("../src/lib/platform/wallets");
       for (const chain of ["base", "solana"] as const) {

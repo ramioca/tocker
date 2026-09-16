@@ -7,7 +7,9 @@ import { SettingsSection } from "@/components/settings/settings-section";
 import { ProfileForm } from "@/components/settings/profile-form";
 import { LlmKeysSection } from "@/components/settings/llm-keys-section";
 import { NotificationPrefs } from "@/components/settings/notification-prefs";
+import { CreatePlatformWallets } from "@/components/settings/create-platform-wallets";
 import { PlatformCard } from "@/components/settings/platform-card";
+import { listPlatformWallets } from "@/lib/platform/wallets";
 import { DangerZone } from "@/components/settings/danger-zone";
 import { SignedOut } from "@/components/settings/signed-out";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
@@ -16,6 +18,8 @@ export const metadata: Metadata = { title: "Settings · Tocker" };
 
 export default async function SettingsPage() {
   const session = await withMock(getSession, mockSession);
+  // Whether the operator card should offer to create the platform wallets or to verify them.
+  const platformHasWallets = (await listPlatformWallets().catch(() => [])).length > 0;
   if (!session) return <SignedOut />;
 
   const [keys, profile] = await Promise.all([
@@ -75,6 +79,7 @@ export default async function SettingsPage() {
           description="The app's own wallets: what pays for your agents' data, and where the per-fill fee lands."
         >
           <PlatformCard />
+          <CreatePlatformWallets hasWallets={platformHasWallets} />
         </SettingsSection>
 
         <SettingsSection id="danger" tone="danger" title="Danger zone">
