@@ -37,8 +37,10 @@ export const config = {
 function limitFor(pathname: string): { rule: (typeof RATE_LIMITS)[keyof typeof RATE_LIMITS]; prefix: string } | null {
   if (pathname.startsWith("/api/cron/")) return { rule: RATE_LIMITS.cron, prefix: `cron${pathname}` };
   if (pathname.startsWith("/api/me")) return { rule: RATE_LIMITS.me, prefix: "me" };
-  // Starting a run spends the owner's LLM key and can place a trade.
-  if (pathname.includes("/run")) return { rule: RATE_LIMITS.sensitive, prefix: "run" };
+  // Starting a run spends the owner's LLM key and can place a trade. Match the route
+  // exactly: `includes("/run")` also caught `/agents/[slug]/runs/[runId]` — pages people
+  // browse, plus Next's link prefetches — and ten of those a minute is a normal visit.
+  if (/^\/api\/agents\/[^/]+\/run$/.test(pathname)) return { rule: RATE_LIMITS.sensitive, prefix: "run" };
   return null;
 }
 
