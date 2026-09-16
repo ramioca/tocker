@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { POST_LOGIN_HOME, useSession } from "@/hooks/use-session";
@@ -12,6 +12,15 @@ import { POST_LOGIN_HOME, useSession } from "@/hooks/use-session";
  * simply forwarded.
  */
 export default function LoginPage() {
+  // `useSearchParams` needs a Suspense boundary on a prerendered page, or the build fails.
+  return (
+    <Suspense fallback={null}>
+      <LoginFlow />
+    </Suspense>
+  );
+}
+
+function LoginFlow() {
   const router = useRouter();
   const params = useSearchParams();
   const { ready, session, login } = useSession();
