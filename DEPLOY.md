@@ -47,6 +47,8 @@ Set these in Vercel → Project → Settings → Environment Variables, for Prod
 | `SOLANA_RPC_URL` | Solana RPC, server-only. Use Helius or another provider — the public RPC is rate-limited. The browser never sees it; `/api/solana/blockhash` proxies the one call it needs. |
 | `BASE_RPC_URL` | Any Base RPC |
 | `JUPITER_API_KEY` | Optional, raises Jupiter rate limits |
+| `PLATFORM_FEE_USD` | What each executed fill is charged. Default `0.10`; `0` switches the fee off entirely. A malformed value falls back to the default rather than going free. |
+| `PLATFORM_FEE_SETTLE_MIN_USD` | How much an agent must owe before the guardian sweeps its fees on-chain. Default `1.00`. Lower means more transfers for the same money. |
 
 Every one of these is checked by `pnpm preflight` and reported (as booleans only) under
 `live` in `/api/health`. `TOKENS_MOCK` must also be unset or `0`.
@@ -147,6 +149,37 @@ transfer whatever this app asks for, so a bug in the run loop or a compromised r
 still has a floor under it. The live wizard requires **both** to sit at or under the per-trade
 cap the operator typed, and a missing wallet policy is a hard fail for a first live trade.
 
+## 2b-2. Fund the platform data wallet on Base
+
+The platform pays for data, not the agent. Every x402 micropayment is signed by an
+app-owned Privy server wallet — one per chain, created on first use and owned by
+`PRIVY_AUTHORIZATION_PRIVATE_KEY`, exactly like an agent's. In practice the one that
+matters is **Base**: that is where SentimentAlpha, CoinMarketCap, Nansen, Plexa,
+gate402, DripMetrics and Otto price their 402s.
+
+```bash
+pnpm preflight   # creates both platform wallets and prints their addresses + USDC
+```
+
+Send USDC on Base to the address it prints for `base`. Until you do, every paid data
+call fails with an error that names the wallet ("top up the platform data wallet at
+0x…") rather than a bare 402, and `/agents/<slug>/live` refuses to let an agent go live
+with `X402_MOCK` off. You can see the same addresses and balances any time under
+**Settings → Platform**, along with the month's data spend and what the per-fill fee has
+collected.
+
+How much: a run costs whatever the agent's `maxDataSpendUsdPerRun` allows — cents. $20
+of USDC covers a long while for a handful of agents; the Platform card is where you watch
+it come down. The Solana wallet only needs funding if you enable a Solana-priced source
+(`solenrich-launches`, `token-intel-sol`); it collects fees regardless, which does not
+require a balance.
+
+The other side of the ledger is the fee: `PLATFORM_FEE_USD` (default $0.10) on every
+executed fill, accrued at fill time and swept from the agent's wallet into these same
+platform wallets once the agent owes `PLATFORM_FEE_SETTLE_MIN_USD` (default $1.00). The
+sweep runs in the guardian's five-minute pass, never on the trade path, and a failed
+sweep simply retries — it can never delay or block an exit.
+
 ## 2c. The first live trade
 
 `pnpm preflight` checks the deployment. `/agents/<slug>/live` checks the *agent*, on the
@@ -156,7 +189,9 @@ every chain it trades, USDC above the $5 minimum plus native for gas, spend caps
 cap the operator typed, a first-trade-shaped risk config (one chain, ≤ $2 a trade, one trade
 a day, at least one exit rule), real x402 payments (`X402_MOCK` not `1`) with every configured source still in
 the registry, and the kill switch off. A "first-trade preset" button clamps the agent into that
-shape in one click.
+shape in one click. The data step also checks the **platform** data wallet: with
+`X402_MOCK` off it must exist and hold USDC, because that is the wallet the paid calls
+come out of — see 2b-2.
 
 A step is green only when it was checked and passed; "could not tell" is red. Going live is a
 hold-to-confirm, and `goLiveAction` re-runs every check server-side before it agrees, so a

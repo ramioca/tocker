@@ -121,7 +121,10 @@ describe("runAgent with the scripted mock model", () => {
       .from(schema.equitySnapshots)
       .where(eq(schema.equitySnapshots.agentId, agentId));
     expect(snapshots).toHaveLength(1);
-    expect(Number(snapshots[0]?.cashUsd)).toBeCloseTo(10_000 - 50 - 0.15, 4);
+    // $50 ticket, 0.3% paper venue fee, and the flat $0.10 platform fee (W5). The last
+    // term is the point: a paper agent pays the Tocker fee too, so paper cash and paper
+    // PnL feel exactly what the same strategy would feel live.
+    expect(Number(snapshots[0]?.cashUsd)).toBeCloseTo(10_000 - 50 - 0.15 - 0.1, 4);
 
     // Schedule advanced.
     const agents = await db.select().from(schema.agents).where(eq(schema.agents.id, agentId));

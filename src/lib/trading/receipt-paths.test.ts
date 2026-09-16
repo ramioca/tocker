@@ -9,17 +9,35 @@
  *
  * Hermetic: in-memory PGlite, `LLM_MOCK=1`, stubbed `fetch`.
  */
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { runAgent } from "@/lib/agent/run";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
+import { platformFeeUsd } from "@/lib/platform/fee";
 import { seedKnownTokens, tokenId } from "@/lib/trading/tokens";
 import { toNumeric } from "@/lib/money";
+import type { Session } from "@/server/types";
 import { runGuardian } from "./guardian";
 import { decideProposal } from "./proposals";
 import { SIMULATED_TX, getReceipt } from "./receipt";
+
+/**
+ * The fourth path is a server action, so it needs a session and `next/cache`. Nothing
+ * else in this file touches either, and everything below the action — scoring, the risk
+ * guard, the executor, the fee ledger — is the real code against in-memory PGlite.
+ */
+let session: Session | null = null;
+vi.mock("next/cache", () => ({ revalidatePath: () => undefined, revalidateTag: () => undefined }));
+vi.mock("@/lib/auth", () => ({
+  getSession: async () => session,
+  requireSession: async () => session,
+}));
+const { placeManualTrade } = await import("@/server/actions/trading");
+
+/** Read from the same place the runtime reads it, so a changed default cannot lie here. */
+const PLATFORM_FEE = platformFeeUsd();
 
 let db: Db;
 
@@ -61,6 +79,7 @@ function stubPricing(pricePerToken = 0.0000027): void {
 
 beforeEach(() => {
   stubPricing();
+  session = null;
 });
 
 describe("receipts are written on every execution path", () => {
@@ -89,6 +108,16 @@ describe("receipts are written on every execution path", () => {
     expect(receipt!.slippageBps).toBe(0);
     expect(receipt!.slippageToleranceBps).toBe(100);
     expect(receipt!.venueFeeUsd).toBeGreaterThan(0);
+    // The platform's cut is on the document, and inside the total.
+    expect(receipt!.platformFeeUsd).toBeCloseTo(PLATFORM_FEE, 6);
+    expect(receipt!.totalFeeUsd).toBeCloseTo(receipt!.venueFeeUsd + PLATFORM_FEE, 6);
+
+    // One ledger row per fill, for a paper agent settled on the spot.
+    const fees = await db.select().from(schema.platformFees).where(eq(schema.platformFees.tradeId, trade!.id));
+    expect(fees).toHaveLength(1);
+    expect(Number(fees[0]?.amountUsd)).toBeCloseTo(PLATFORM_FEE, 6);
+    expect(fees[0]?.status).toBe("settled");
+    expect(fees[0]?.txHash).toBe("simulated");
 
     // The row carries the queryable columns too, not just the blob.
     const [row] = await db.select().from(schema.tradeReceipts).where(eq(schema.tradeReceipts.tradeId, trade!.id));
@@ -132,6 +161,7 @@ describe("receipts are written on every execution path", () => {
     expect(receipt!.side).toBe("buy");
     expect(receipt!.symbol).toBe("BONK");
     expect(receipt!.filledPriceUsd).toBeGreaterThan(0);
+    expect(receipt!.platformFeeUsd).toBeCloseTo(PLATFORM_FEE, 6);
     expect(new Date(receipt!.filledAt).getTime()).toBeGreaterThanOrEqual(new Date(receipt!.quotedAt).getTime());
   });
 
@@ -164,6 +194,8 @@ describe("receipts are written on every execution path", () => {
     expect(receipt!.side).toBe("sell");
     expect(receipt!.venue).toBe("paper");
     expect(receipt!.amountUsd).toBeGreaterThan(0);
+    // A guardian exit pays the fee like any other fill — selling is not free either.
+    expect(receipt!.platformFeeUsd).toBeCloseTo(PLATFORM_FEE, 6);
 
     // One owner notification, carrying both the rule and the execution line.
     const owner = await db
@@ -173,6 +205,34 @@ describe("receipts are written on every execution path", () => {
     expect(owner).toHaveLength(1);
     expect(owner[0]?.title).toContain("Stop loss hit");
     expect(owner[0]?.body).toContain("Simulated fill");
+  });
+
+  it("a manual trade gets one, and the owner's own hands pay the same fee", async () => {
+    const { agentId, userId } = await seedAgent(db, { config: { chains: ["solana"] } });
+    session = { userId, handle: "owner", displayName: null, avatarUrl: null, email: null };
+
+    const result = await placeManualTrade({
+      agentId,
+      chain: "solana",
+      side: "buy",
+      tokenAddress: BONK,
+      amountUsd: 30,
+      note: "Taking this one myself.",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const receipt = await getReceipt(result.data.tradeId);
+    expect(receipt).not.toBeNull();
+    expect(receipt!.side).toBe("buy");
+    expect(receipt!.platformFeeUsd).toBeCloseTo(PLATFORM_FEE, 6);
+    expect(receipt!.totalFeeUsd).toBeCloseTo(receipt!.venueFeeUsd + PLATFORM_FEE, 6);
+    // The receipt the sheet renders is the one that was stored, fee included.
+    expect(result.data.receipt.platformFeeUsd).toBeCloseTo(PLATFORM_FEE, 6);
+
+    const fees = await db.select().from(schema.platformFees).where(eq(schema.platformFees.agentId, agentId));
+    expect(fees).toHaveLength(1);
+    expect(fees[0]?.tradeId).toBe(result.data.tradeId);
   });
 
   it("never carries anything from the strategy onto a public document", async () => {
@@ -203,6 +263,10 @@ describe("receipts are written on every execution path", () => {
       "slippageToleranceBps", "amountToken", "amountUsd", "networkFeeUsd", "venueFeeUsd",
       "totalFeeUsd", "scoreTotal", "scoreVerdict", "scoreReasons", "quotedAt", "filledAt",
       "latencyMs",
+      // W5: the flat Tocker fee charged on this fill. Added deliberately — it is a fact
+      // about what the platform took from this trade, which is exactly as public as the
+      // venue's fee and says nothing about the strategy that placed it.
+      "platformFeeUsd",
     ]);
     for (const row of rows) {
       for (const key of Object.keys(row.data)) expect(ALLOWED.has(key)).toBe(true);

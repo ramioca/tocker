@@ -11,6 +11,8 @@ import { agents, equitySnapshots, getDb, positions, tokens, trades, wallets } fr
 import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { Position, TokenRef } from "@/server/types";
 import type { AgentWalletRef } from "@/lib/x402/types";
+import { netLiveCashUsd } from "@/lib/platform/fee";
+import { accruedFeesUsd } from "@/lib/platform/fees";
 import { getMarks } from "@/lib/trading/prices";
 import { getPaperCash } from "@/lib/trading/paper";
 import { loadCachedScores } from "@/lib/trading/score-cache";
@@ -125,8 +127,16 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
     realizedPnlUsd += Number(h.position.realizedPnlUsd);
   }
 
+  // Live cash is the wallet balance *minus what the agent already owes the platform*.
+  // The fees for every fill since the last sweep are still sitting in the wallet, but
+  // they are spoken for; showing the raw balance would let the agent size a trade with
+  // money it cannot keep, and the shortfall would surface as a failed settlement —
+  // the worst possible place to find out. Paper cash nets its fees the same way, in
+  // `computePaperCash`.
   const cashUsd =
-    agent.mode === "paper" ? await getPaperCash(agentId) : await getLiveCash(await getAgentWallets(agentId));
+    agent.mode === "paper"
+      ? await getPaperCash(agentId)
+      : netLiveCashUsd(await getLiveCash(await getAgentWallets(agentId)), await accruedFeesUsd(agentId));
 
   const todayRows = await db
     .select({ id: trades.id })

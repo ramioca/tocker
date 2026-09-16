@@ -112,6 +112,12 @@ export interface BuildReceiptInput {
   score?: Pick<TokenScore, "total" | "verdict" | "components"> | TradeScore | null;
   /** Network / gas cost in USD when the venue reports one. */
   networkFeeUsd?: number | null;
+  /**
+   * The flat Tocker fee charged on this fill (W5). Defaults to 0, so a caller that has
+   * not been taught about the fee produces a receipt that says it charged nothing —
+   * which is true of it, rather than quietly true of everyone.
+   */
+  platformFeeUsd?: number | null;
   quotedAt: Date;
   filledAt: Date;
 }
@@ -132,6 +138,7 @@ export function buildReceipt(input: BuildReceiptInput): TradeReceiptData {
   const filledPriceUsd = positive(input.fill.priceUsd) || quotedPriceUsd;
   const venueFeeUsd = positive(input.fill.feeUsd);
   const networkFeeUsd = input.networkFeeUsd === undefined ? null : input.networkFeeUsd;
+  const platformFeeUsd = positive(input.platformFeeUsd);
   const txHash = simulated ? SIMULATED_TX : (input.fill.txHash ?? "");
   const quotedAt = input.quotedAt.getTime();
   const filledAt = input.filledAt.getTime();
@@ -154,7 +161,9 @@ export function buildReceipt(input: BuildReceiptInput): TradeReceiptData {
     amountUsd: positive(input.fill.amountUsd),
     networkFeeUsd,
     venueFeeUsd,
-    totalFeeUsd: Math.round((venueFeeUsd + positive(networkFeeUsd)) * 1e6) / 1e6,
+    platformFeeUsd,
+    // Every cost of the fill, in one number: the venue's cut, the chain's, and ours.
+    totalFeeUsd: Math.round((venueFeeUsd + positive(networkFeeUsd) + platformFeeUsd) * 1e6) / 1e6,
     scoreTotal: typeof input.score?.total === "number" ? input.score.total : null,
     scoreVerdict: input.score?.verdict ?? null,
     scoreReasons: scoreReasons(input.score?.components),

@@ -21,6 +21,7 @@ import { getPriceUsd } from "@/lib/trading/prices";
 import { recentRangePct } from "@/lib/trading/range";
 import { checkQuoteSanity } from "@/lib/trading/sanity";
 import { buildReceipt, saveReceipt } from "@/lib/trading/receipt";
+import { chargePlatformFee } from "@/lib/platform/fees";
 import { notifyFill } from "@/lib/notifications";
 import {
   createProposal,
@@ -677,6 +678,18 @@ export function buildTools(ctx: RunContext): ToolSet {
           })
           .where(eq(trades.id, tradeId));
 
+        // The platform's flat fee, charged the moment the fill is real and before the
+        // position and the receipt are written, so both account for it. Never throws:
+        // a fee that cannot be recorded costs the platform ten cents, not the operator
+        // their trade.
+        const platformFeeUsd = await chargePlatformFee({
+          agentId: agent.id,
+          tradeId,
+          chain: parsed.chain,
+          isPaper: executor.isPaper,
+          now: filledAt,
+        });
+
         // The receipt: quoted against filled, the fee split, the venue and the explorer
         // link. Written before the feed post, so anything that renders the trade can
         // count on the document being there.
@@ -689,6 +702,7 @@ export function buildTools(ctx: RunContext): ToolSet {
           fill,
           slippageToleranceBps: agent.config.risk.slippageBps,
           score,
+          platformFeeUsd,
           quotedAt,
           filledAt,
         });
@@ -701,7 +715,9 @@ export function buildTools(ctx: RunContext): ToolSet {
             side: parsed.side,
             amountToken: fill.amountToken,
             amountUsd: fill.amountUsd,
-            feeUsd: fill.feeUsd,
+            // Both fees. PnL is net of what the trade actually cost, and the platform
+            // fee is as real a cost as the venue's.
+            feeUsd: fill.feeUsd + platformFeeUsd,
           },
           // Entry bookkeeping for the exit engine: opens `openedAt`/`peakPriceUsd` on a
           // buy from flat and freezes the entry score + pooled liquidity from `score`.
@@ -741,6 +757,9 @@ export function buildTools(ctx: RunContext): ToolSet {
           amountUsd: fill.amountUsd,
           priceUsd: fill.priceUsd,
           feeUsd: fill.feeUsd,
+          // The model should see what the platform took, so its own arithmetic about
+          // what a small ticket is worth matches the book's.
+          platformFeeUsd,
           txHash: fill.txHash,
           // Execution quality, so the model can see a route going bad across ticks.
           quotedPriceUsd: receipt.quotedPriceUsd,

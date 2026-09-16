@@ -158,6 +158,39 @@ async function main() {
     bad(`x402 client failed: ${(e as Error).message}`); failures++;
   }
 
+  // 9. the platform's own wallets — the ones that pay for data and collect the fee.
+  //
+  // Created here on purpose: they are created lazily on first use in the app, but an
+  // operator cannot fund an address that does not exist yet, and "fund the platform data
+  // wallet on Base" is the last setup step before a first live run. One per chain,
+  // guarded by a unique index, so running preflight twice creates nothing twice.
+  if (!dbUrl || dbUrl.startsWith("pglite://")) {
+    warn("skipped the platform wallets: they live in the database, and DATABASE_URL is missing or embedded PGlite");
+  } else {
+    try {
+      const { ensurePlatformWallet, readPlatformBalances } = await import("../src/lib/platform/wallets");
+      for (const chain of ["base", "solana"] as const) {
+        const wallet = await ensurePlatformWallet(chain);
+        const balances = await readPlatformBalances(wallet);
+        const usdc = balances.balances
+          .filter((b) => b.asset.toLowerCase() === "usdc")
+          .reduce((sum, b) => sum + b.amount, 0);
+        ok(`platform ${chain} wallet ${wallet.address} — ${usdc.toFixed(2)} USDC`);
+        if (chain === "base" && !(usdc > 0)) {
+          warn(
+            `the platform data wallet on base holds no USDC. Every x402 data call is paid from it, so fund it before any agent uses a paid source: send USDC to ${wallet.address}`,
+          );
+        }
+      }
+      console.log(
+        `      The per-fill fee (PLATFORM_FEE_USD, default $0.10) is swept into these wallets in batches once an agent owes PLATFORM_FEE_SETTLE_MIN_USD (default $1.00).`,
+      );
+    } catch (e) {
+      bad(`platform wallets unavailable: ${(e as Error).message}`);
+      failures++;
+    }
+  }
+
   console.log(`\nThrowaway wallet: ${address} (you can ignore it, or send it dust to test funding).`);
   return finish(failures);
 }
