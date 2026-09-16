@@ -153,8 +153,8 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
               aria-label={`Open the ${score.symbol} token page`}
               className={cn(
                 "absolute top-2 right-10 inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/80 px-1.5 py-0.5",
-                "text-[10px] text-muted-foreground opacity-0 transition-opacity duration-150",
-                "group-hover/row:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "text-[10px] text-muted-foreground opacity-70 transition-opacity duration-150",
+                "hover:opacity-100 group-hover/row:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               )}
             >
               Token page

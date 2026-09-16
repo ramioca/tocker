@@ -44,7 +44,6 @@ next-env.d.ts
 .env.local
 *.local
 .agents/skills/*/node_modules
-drizzle/meta
 .pglite/
 .worktrees/
 .gstack/

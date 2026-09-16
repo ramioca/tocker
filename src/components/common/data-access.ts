@@ -21,6 +21,8 @@ import {
 import { getComments, getFeed } from "@/server/queries/feed";
 import { getMyLlmKeys, getUnreadNotificationCount } from "@/server/queries/users";
 import { getAgentWalletBalances } from "@/server/actions/wallets";
+import { eq } from "drizzle-orm";
+import { agents, getDb, type WalletBudget } from "@/db";
 import {
   MOCK_VIEWER_ID,
   POPULAR_TOKENS,
@@ -143,6 +145,17 @@ export function feedPage(opts: {
 
 export function commentsPage(postId: string, cursor?: string | null): Promise<Page<CommentRow>> {
   return withMock(() => getComments(postId, cursor), () => mockComments(postId, cursor));
+}
+
+/** The agent's wallet-layer budget, straight from the db. Owner pages only. */
+export async function agentWalletBudget(agentId: string): Promise<WalletBudget | null> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ walletBudget: agents.walletBudget })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .limit(1);
+  return row?.walletBudget ?? null;
 }
 
 export async function walletBalances(agentId: string): Promise<WalletBalance[]> {

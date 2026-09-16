@@ -31,17 +31,21 @@ export interface StepProps {
   update: (patch: Partial<BuilderDraft>) => void;
   updateConfig: (patch: Partial<BuilderDraft["config"]>) => void;
   errors: Record<string, string>;
+  /** The one-page builder renders its own section headers; steps drop theirs. */
+  hideHeading?: boolean;
 }
 
 // ------------------------------------------------------------------ identity
 
-export function IdentityStep({ draft, update, errors }: StepProps) {
+export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) {
   return (
     <div className="space-y-5">
-      <StepHeading
+      {hideHeading ? null : (
+        <StepHeading
         title="Give it a name"
         blurb="This is what shows up in the feed above every trade it makes, so make it something you would follow."
-      />
+        />
+      )}
 
       <Field label="Name" htmlFor="agent-name" error={errors.name}>
         <Input
@@ -215,6 +219,7 @@ export function BrainStep({
   errors,
   llmKeys,
   onKeyAdded,
+  hideHeading,
 }: StepProps & { llmKeys: LlmKeyRow[]; onKeyAdded: (key: LlmKeyRow) => void }) {
   const provider = draft.config.llm.provider;
   const models = DEFAULT_MODELS[provider];
@@ -222,10 +227,12 @@ export function BrainStep({
 
   return (
     <div className="space-y-5">
-      <StepHeading
+      {hideHeading ? null : (
+        <StepHeading
         title="Pick its brain"
         blurb="You bring the API key; the agent burns your tokens, not ours. Pick a model that can hold a thesis over a dozen tool calls."
-      />
+        />
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Provider" htmlFor="llm-provider">
@@ -288,7 +295,16 @@ export function BrainStep({
         </div>
       </Field>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      {/* Tuning is advanced by definition: the defaults are right for nearly
+          everyone, so the sliders live one level down (the values still show). */}
+      <details className="group rounded-xl border border-border/60 bg-card/20 px-3.5 py-2.5">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground [&::-webkit-details-marker]:hidden">
+          <span>Model tuning</span>
+          <span className="tnum font-mono text-xs">
+            temp {draft.config.llm.temperature.toFixed(1)} · {Math.round(draft.config.llm.maxSteps)} steps
+          </span>
+        </summary>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <RiskSlider
           id="llm-temperature"
           label="Temperature"
@@ -318,7 +334,8 @@ export function BrainStep({
             updateConfig({ llm: { ...draft.config.llm, maxSteps: Math.round(maxSteps) } })
           }
         />
-      </div>
+        </div>
+      </details>
 
       <Field
         label="Strategy"
@@ -368,6 +385,7 @@ export function DataStep({
   draft,
   updateConfig,
   sources,
+  hideHeading,
 }: StepProps & { sources: DataSourceInfo[] }) {
   const selected = new Set(draft.config.dataSources);
   const estimate = useMemo(
@@ -394,10 +412,12 @@ export function DataStep({
 
   return (
     <div className="space-y-5">
-      <StepHeading
+      {hideHeading ? null : (
+        <StepHeading
         title="What it gets to see"
         blurb="Each source is a paid API the agent calls over x402, from its own wallet. It pays per request, so every source you add is a recurring cost."
-      />
+        />
+      )}
 
       <div className="grid gap-2 sm:grid-cols-2">
         {sources.map((source) => {
@@ -463,15 +483,17 @@ export function DataStep({
 
 // ------------------------------------------------------------------ universe
 
-export function UniverseStep({ draft, updateConfig, errors }: StepProps) {
+export function UniverseStep({ draft, updateConfig, errors, hideHeading }: StepProps) {
   const universe = draft.config.universe;
 
   return (
     <div className="space-y-6">
-      <StepHeading
+      {hideHeading ? null : (
+        <StepHeading
         title="Its hunting ground, and its bar"
         blurb="There is no allowlist. The agent can reach any token on the chains you pick — including one minted a minute ago — so what keeps it honest is where it looks and how high it sets the bar."
-      />
+        />
+      )}
 
       <UniverseControls
         chains={draft.config.chains}
@@ -486,16 +508,18 @@ export function UniverseStep({ draft, updateConfig, errors }: StepProps) {
 
 // ---------------------------------------------------------------------- risk
 
-export function RiskStep({ draft, updateConfig }: StepProps) {
+export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
   const risk = draft.config.risk;
   const patch = (next: Partial<typeof risk>) => updateConfig({ risk: { ...risk, ...next } });
 
   return (
     <div className="space-y-4">
-      <StepHeading
+      {hideHeading ? null : (
+        <StepHeading
         title="The rules it cannot break"
         blurb="These are enforced in code before any trade reaches a chain. The model does not get a vote."
-      />
+        />
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <RiskSlider
@@ -574,13 +598,15 @@ export function RiskStep({ draft, updateConfig }: StepProps) {
 
 // ----------------------------------------------------------- schedule & mode
 
-export function ScheduleStep({ draft, update, updateConfig }: StepProps) {
+export function ScheduleStep({ draft, update, updateConfig, hideHeading }: StepProps) {
   return (
     <div className="space-y-5">
-      <StepHeading
+      {hideHeading ? null : (
+        <StepHeading
         title="How often it wakes up"
         blurb="Every tick costs LLM tokens and data credits whether it trades or not. Slower is usually smarter."
-      />
+        />
+      )}
 
       <Field label="Interval">
         <div className="grid gap-2 sm:grid-cols-3">

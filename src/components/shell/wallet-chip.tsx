@@ -63,15 +63,15 @@ export function WalletChip() {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger
-          className="hidden h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-2.5 text-sm transition-colors duration-150 hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:flex"
-          aria-label="Cash balance menu"
+          className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-2.5 text-sm transition-colors duration-150 hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:h-8"
+          aria-label="Cash balance — deposit or withdraw"
         >
           {data ? (
             <span className="tnum font-medium">{formatUsd(data.cashUsd)}</span>
           ) : (
             <span className="h-3.5 w-10 animate-pulse rounded bg-muted/60" aria-hidden />
           )}
-          <span className="text-xs text-muted-foreground">cash</span>
+          <span className="hidden text-xs text-muted-foreground sm:inline">cash</span>
           <ChevronDown aria-hidden className="size-3.5 text-muted-foreground" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-44">

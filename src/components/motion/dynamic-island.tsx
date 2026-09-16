@@ -168,7 +168,7 @@ export function DynamicIsland({
         // island in its parent (like under a notch) to complete the effect.
         className={cn(
           "relative inline-flex items-start justify-center overflow-hidden",
-          "bg-foreground text-background shadow-2xl",
+          "glass-heavy text-foreground shadow-2xl",
           className,
         )}
       >

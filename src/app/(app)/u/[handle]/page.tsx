@@ -36,7 +36,14 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
   const profile = await loadProfile(handle);
   if (!profile) notFound();
 
-  const activity = mockTradeActivity(profile.handle);
+  // No real query for daily trade activity yet. In mock mode show the sample
+  // heatmap; in production return nothing so ActivityPanel renders its honest
+  // empty state rather than fabricating a track record. Replace the real branch
+  // with getUserTradeActivity(handle) once it lands.
+  const activity = await withMock(
+    async () => [] as Array<{ t: number; value: number }>,
+    () => mockTradeActivity(profile.handle),
+  );
 
   return (
     <div className="mx-auto w-full max-w-5xl px-5 py-8 sm:py-10">

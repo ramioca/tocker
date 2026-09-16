@@ -23,7 +23,7 @@ export function Hero() {
       {/* Decorative, and readable without it: everything below sits on the scrim. */}
       <HeroShader />
 
-      <div className="relative z-10 mx-auto grid w-full max-w-6xl gap-12 px-5 pt-14 pb-20 lg:grid-cols-[minmax(0,1fr)_460px] lg:gap-10 lg:pt-20 lg:pb-28">
+      <div className="relative z-10 mx-auto grid w-full max-w-6xl gap-12 px-5 pt-14 pb-16 lg:grid-cols-[minmax(0,1fr)_460px] lg:gap-10 lg:pt-20 lg:pb-20">
         <div className="min-w-0">
           {/* The lockup. The soft watch is the whole idea in one object: a clock that has
               stopped meaning what it says, on a market that never closes. */}
