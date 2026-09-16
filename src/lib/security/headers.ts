@@ -110,7 +110,10 @@ export function securityHeaders(options: SecurityHeaderOptions): Array<[string, 
       "permissions-policy",
       "accelerometer=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=(), interest-cohort=()",
     ],
-    ["cross-origin-opener-policy", "same-origin"],
+  // `allow-popups`, not `same-origin`: Privy's login modal opens Coinbase Smart Wallet and
+  // Base Account in popups that must be able to message this window back; plain
+  // `same-origin` severs that and both SDKs log an error on load.
+    ["cross-origin-opener-policy", "same-origin-allow-popups"],
     ["x-dns-prefetch-control", "off"],
   ];
 
