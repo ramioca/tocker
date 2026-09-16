@@ -4,6 +4,7 @@ import {
   MIN_FUND_USD,
   cashOn,
   defaultSplit,
+  depositTargets,
   gasAllowanceNative,
   nativePriceFor,
   planFunding,
@@ -290,6 +291,39 @@ describe("transfersFor", () => {
       split: { base: 10, solana: 0 },
     });
     expect(transfersFor(plan)).toEqual([{ chain: "base", asset: "usdc", amount: 10 }]);
+  });
+});
+
+describe("depositTargets", () => {
+  it("collapses two blockers that point at the same deposit into one", () => {
+    // No Solana wallet at all: the plan raises both "over available" and
+    // "no wallet", and both are fixed by the same deposit.
+    const cash = unifiedCash([]);
+    const plan = planFunding({ mode: "fund", amountUsd: 25, gasUsd: 0, chains: ["solana"], cash });
+    expect(plan.blockers.length).toBeGreaterThan(1);
+    expect(depositTargets(plan)).toEqual([{ chain: "solana", asset: "usdc" }]);
+  });
+
+  it("keeps USDC and gas apart — they are different deposits", () => {
+    const cash = unifiedCash([wallet("solana", 0, 0)]);
+    const plan = planFunding({
+      mode: "fund",
+      amountUsd: 25,
+      gasUsd: DEFAULT_GAS_USD,
+      chains: ["solana"],
+      cash,
+    });
+    expect(depositTargets(plan)).toEqual([
+      { chain: "solana", asset: "usdc" },
+      { chain: "solana", asset: "native" },
+    ]);
+  });
+
+  it("is empty for a plan with nothing blocking it", () => {
+    const cash = unifiedCash([wallet("base", 100, 1, 3_000)]);
+    const plan = planFunding({ mode: "fund", amountUsd: 25, gasUsd: 0, chains: ["base"], cash });
+    expect(plan.ready).toBe(true);
+    expect(depositTargets(plan)).toEqual([]);
   });
 });
 

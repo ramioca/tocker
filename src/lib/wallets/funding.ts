@@ -388,6 +388,27 @@ export function planFunding(request: FundingRequest): FundingPlan {
   };
 }
 
+/**
+ * The distinct deposits that would unblock a plan, in the order the blockers
+ * raised them.
+ *
+ * Several blockers commonly point at the same deposit — "you have $0 of USDC on
+ * Solana" and "you have no Solana wallet yet" both end at "put USDC on Solana".
+ * Every reason is still worth printing; two identical buttons are not.
+ */
+export function depositTargets(plan: FundingPlan): Array<{ chain: Chain; asset: "usdc" | "native" }> {
+  const seen = new Set<string>();
+  const out: Array<{ chain: Chain; asset: "usdc" | "native" }> = [];
+  for (const blocker of plan.blockers) {
+    if (!blocker.deposit) continue;
+    const key = `${blocker.deposit.chain}:${blocker.deposit.asset}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(blocker.deposit);
+  }
+  return out;
+}
+
 /** The transfers a plan implies, flattened in the order they should be signed. */
 export interface Transfer {
   chain: Chain;

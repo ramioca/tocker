@@ -24,6 +24,7 @@ import {
   NATIVE_SYMBOL,
   cashOn,
   chainLabelFor,
+  depositTargets,
   round,
   transferLabel,
   transfersFor,
@@ -988,27 +989,33 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
                 <AlertTriangle aria-hidden className="size-4 text-destructive" />
                 Not ready to fund
               </p>
-              <ul className="space-y-2">
+              <ul className="space-y-1">
                 {plan.blockers.map((blocker, index) => (
-                  <li key={`${blocker.kind}-${blocker.chain ?? "all"}-${index}`} className="space-y-1.5">
-                    <p className="text-xs leading-relaxed text-muted-foreground">{blocker.message}</p>
-                    {blocker.deposit ? (
-                      <button
-                        type="button"
-                        onClick={() => setDepositFor(blocker.deposit)}
-                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium transition-colors duration-150 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        <Plus aria-hidden className="size-3.5" />
-                        Deposit{" "}
-                        {blocker.deposit.asset === "usdc"
-                          ? "USDC"
-                          : NATIVE_SYMBOL[blocker.deposit.chain]}{" "}
-                        on {chainLabelFor(blocker.deposit.chain)}
-                      </button>
-                    ) : null}
+                  <li
+                    key={`${blocker.kind}-${blocker.chain ?? "all"}-${index}`}
+                    className="text-xs leading-relaxed text-muted-foreground"
+                  >
+                    {blocker.message}
                   </li>
                 ))}
               </ul>
+
+              {/* Every reason is listed, but two reasons that lead to the same
+                  deposit get one button — one action per thing to do. */}
+              <div className="flex flex-wrap gap-2 pt-0.5">
+                {depositTargets(plan).map((target) => (
+                  <button
+                    key={`${target.chain}-${target.asset}`}
+                    type="button"
+                    onClick={() => setDepositFor(target)}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium transition-colors duration-150 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <Plus aria-hidden className="size-3.5" />
+                    Deposit {target.asset === "usdc" ? "USDC" : NATIVE_SYMBOL[target.chain]} on{" "}
+                    {chainLabelFor(target.chain)}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : null}
 
