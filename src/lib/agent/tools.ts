@@ -18,6 +18,9 @@ import { X402BudgetError, type RunBudget, type X402Context } from "@/lib/x402/ty
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
 import { applyFill } from "@/lib/trading/positions";
 import { getPriceUsd } from "@/lib/trading/prices";
+import { recentRangePct } from "@/lib/trading/range";
+import { buildReceipt, saveReceipt } from "@/lib/trading/receipt";
+import { notifyFill } from "@/lib/notifications";
 import {
   createProposal,
   expireAgentProposals,
@@ -512,6 +515,9 @@ export function buildTools(ctx: RunContext): ToolSet {
           tokenAddress: token.address,
           symbol: token.symbol,
           amountUsd: parsed.amountUsd,
+          // Only `volatility_scaled` sizing reads this, and only for buys; the lookup is
+          // one indexed read of score history, never a provider call.
+          rangePct: parsed.side === "buy" ? await recentRangePct(token.id) : null,
         };
 
         // Buys must be scored: no score means no buy, whatever the model believes.
@@ -620,6 +626,7 @@ export function buildTools(ctx: RunContext): ToolSet {
         });
         ctx.tradeIds.push(tradeId);
 
+        const quotedAt = new Date();
         let quote;
         try {
           quote = await executor.quote(request);
@@ -640,6 +647,7 @@ export function buildTools(ctx: RunContext): ToolSet {
           return fail(`${token.symbol} ${parsed.side} failed: ${fill.error ?? "execution failed"}`);
         }
 
+        const filledAt = new Date();
         await db
           .update(trades)
           .set({
@@ -649,9 +657,26 @@ export function buildTools(ctx: RunContext): ToolSet {
             priceUsd: fill.priceUsd.toFixed(12),
             feeUsd: fill.feeUsd.toFixed(6),
             txHash: fill.txHash,
-            filledAt: new Date(),
+            filledAt,
           })
           .where(eq(trades.id, tradeId));
+
+        // The receipt: quoted against filled, the fee split, the venue and the explorer
+        // link. Written before the feed post, so anything that renders the trade can
+        // count on the document being there.
+        const receipt = buildReceipt({
+          chain: parsed.chain,
+          side: parsed.side,
+          symbol: token.symbol,
+          tokenAddress: token.address,
+          quote,
+          fill,
+          slippageToleranceBps: agent.config.risk.slippageBps,
+          score,
+          quotedAt,
+          filledAt,
+        });
+        await saveReceipt(tradeId, agent.id, receipt);
 
         await applyFill(
           agent.id,
@@ -685,6 +710,9 @@ export function buildTools(ctx: RunContext): ToolSet {
           `/agents/${agent.slug}`,
         );
 
+        // Followers get "what": the owner also gets "how well", from the receipt.
+        await notifyFill({ ownerId: agent.ownerId, agentName: agent.name, tradeId, receipt, origin: "agent" });
+
         return {
           ok: true,
           tradeId,
@@ -698,6 +726,9 @@ export function buildTools(ctx: RunContext): ToolSet {
           priceUsd: fill.priceUsd,
           feeUsd: fill.feeUsd,
           txHash: fill.txHash,
+          // Execution quality, so the model can see a route going bad across ticks.
+          quotedPriceUsd: receipt.quotedPriceUsd,
+          slippageBps: receipt.slippageBps,
           score: score === null ? null : { total: score.total, verdict: score.verdict, components: score.components },
         };
       }),

@@ -20,6 +20,9 @@ import { getAgentWallets, getPortfolio, toRiskPortfolio } from "@/lib/agent/port
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
 import { applyFill } from "@/lib/trading/positions";
+import { recentRangePct } from "@/lib/trading/range";
+import { buildReceipt, saveReceipt, type TradeReceiptData } from "@/lib/trading/receipt";
+import { notifyFill } from "@/lib/notifications";
 import {
   decideProposal,
   indicativePrice,
@@ -128,6 +131,9 @@ export async function previewTrade(input: PreviewTradeInput): Promise<ActionResu
     tokenAddress: token.address,
     symbol: token.symbol,
     amountUsd,
+    // The preview must be sized by the same rule the real order will be, or it will
+    // say "allowed" for a ticket the guard is about to refuse.
+    rangePct: input.side === "buy" ? await recentRangePct(token.id) : null,
   };
   const verdict = riskGuard({ id: agent.id, mode: agent.mode, config }, toRiskPortfolio(portfolio), order, score);
 
@@ -193,6 +199,8 @@ export interface ManualTradeResult {
   amountToken: number;
   priceUsd: number;
   isPaper: boolean;
+  /** The document behind the fill, so the sheet can show it without a round trip. */
+  receipt: TradeReceiptData;
 }
 
 export async function placeManualTrade(
@@ -234,6 +242,7 @@ export async function placeManualTrade(
     tokenAddress: token.address,
     symbol: token.symbol,
     amountUsd,
+    rangePct: input.side === "buy" ? await recentRangePct(token.id) : null,
   };
   const verdict = riskGuard({ id: agent.id, mode: agent.mode, config }, toRiskPortfolio(portfolio), order, score);
   if (!verdict.ok) return fail(manualRejection(verdict.reason, token.symbol, score, config));
@@ -286,6 +295,7 @@ export async function placeManualTrade(
     decidedBy: "owner",
   });
 
+  const quotedAt = new Date();
   let quote;
   try {
     quote = await executor.quote(request);
@@ -303,6 +313,7 @@ export async function placeManualTrade(
     return fail(`${token.symbol} ${input.side} failed: ${message}`);
   }
 
+  const filledAt = new Date();
   await db
     .update(trades)
     .set({
@@ -312,16 +323,37 @@ export async function placeManualTrade(
       priceUsd: fill.priceUsd.toFixed(12),
       feeUsd: fill.feeUsd.toFixed(6),
       txHash: fill.txHash,
-      filledAt: new Date(),
+      filledAt,
     })
     .where(eq(trades.id, tradeId));
 
-  await applyFill(agent.id, token.id, {
+  await applyFill(
+    agent.id,
+    token.id,
+    {
+      side: input.side,
+      amountToken: fill.amountToken,
+      amountUsd: fill.amountUsd,
+      feeUsd: fill.feeUsd,
+    },
+    // A manual buy opens a position like any other, so the exit engine needs the same
+    // entry facts frozen onto it — otherwise the stop loss has nothing to measure from.
+    { priceUsd: fill.priceUsd, score, now: filledAt },
+  );
+
+  const receipt = buildReceipt({
+    chain: input.chain,
     side: input.side,
-    amountToken: fill.amountToken,
-    amountUsd: fill.amountUsd,
-    feeUsd: fill.feeUsd,
+    symbol: token.symbol,
+    tokenAddress: token.address,
+    quote,
+    fill,
+    slippageToleranceBps: config.risk.slippageBps,
+    score,
+    quotedAt,
+    filledAt,
   });
+  await saveReceipt(tradeId, agent.id, receipt);
 
   // A manual fill is as public as an automatic one: the record is the product.
   await db.insert(posts).values({
@@ -340,6 +372,14 @@ export async function placeManualTrade(
     `/agents/${agent.slug}`,
   );
 
+  await notifyFill({
+    ownerId: agent.ownerId,
+    agentName: agent.name,
+    tradeId,
+    receipt,
+    origin: "manual",
+  });
+
   revalidatePath(`/agents/${agent.slug}`);
   revalidatePath("/feed");
 
@@ -353,6 +393,7 @@ export async function placeManualTrade(
       amountToken: fill.amountToken,
       priceUsd: fill.priceUsd,
       isPaper: executor.isPaper,
+      receipt,
     },
   };
 }

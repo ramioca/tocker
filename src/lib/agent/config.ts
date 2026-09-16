@@ -3,9 +3,22 @@
  * Used by the builder form (client), server actions (validation) and the run loop.
  */
 import { z } from "zod";
-import type { AgentConfig } from "@/db/schema";
+import type { AgentConfig, AgentConfigWithSizing } from "@/db/schema";
+import { DEFAULT_SIZING } from "@/lib/trading/sizing";
 
 export const chainSchema = z.enum(["solana", "base"]);
+
+/**
+ * How big a ticket is. Optional, because every config written before sizing existed
+ * has no such block and must keep behaving exactly as it did — `readSizing()` in
+ * `src/lib/trading/sizing.ts` turns an absent block into plain `fixed_usd`.
+ */
+export const positionSizingSchema = z.object({
+  mode: z.enum(["fixed_usd", "percent_equity", "volatility_scaled"]),
+  percentOfEquity: z.number().min(0.1).max(100),
+  referenceRangePct: z.number().min(1).max(500),
+  minTradeUsd: z.number().min(0).max(1_000_000),
+});
 export const llmProviderSchema = z.enum(["anthropic", "openai", "openrouter"]);
 
 export const DEFAULT_MODELS: Record<z.infer<typeof llmProviderSchema>, { id: string; label: string }[]> = {
@@ -60,6 +73,7 @@ export const agentConfigSchema = z.object({
     maxHoldHours: z.number().min(0.25).max(24 * 365).nullable(),
     exitScoreBelow: z.number().min(0).max(100).nullable(),
     exitOnLiquidityDropPct: z.number().min(1).max(99).nullable(),
+    sizing: positionSizingSchema.optional(),
   }),
   execution: z.object({
     mode: z.enum(["auto", "approve"]),
@@ -72,11 +86,11 @@ export const agentConfigSchema = z.object({
     temperature: z.number().min(0).max(2),
     maxSteps: z.number().int().min(2).max(40),
   }),
-}) satisfies z.ZodType<AgentConfig>;
+}) satisfies z.ZodType<AgentConfigWithSizing>;
 
 export type AgentConfigInput = z.input<typeof agentConfigSchema>;
 
-export const DEFAULT_AGENT_CONFIG: AgentConfig = {
+export const DEFAULT_AGENT_CONFIG: AgentConfigWithSizing = {
   strategyPrompt:
     "You hunt fresh Solana launches. Each tick, pull the new-launch and trending feeds, score every candidate, and buy the best one that clears your score floor and still has room to run. Prefer tokens under $2M market cap with real holder growth over tokens that already went vertical. Cut anything that loses its liquidity or stalls for two ticks.",
   dataSources: ["sentimentalpha", "cmc-quotes", "token-intel-sol"],
@@ -110,12 +124,15 @@ export const DEFAULT_AGENT_CONFIG: AgentConfig = {
     maxHoldHours: null,
     exitScoreBelow: 40, // a held token that falls to "avoid" is sold
     exitOnLiquidityDropPct: 50, // half the pool gone = the exit door is closing
+    // Fixed USD by default: it is the mode an operator can reason about on day one,
+    // and the only one that behaves identically whether or not equity has been marked.
+    sizing: { ...DEFAULT_SIZING },
   },
   execution: { mode: "auto", proposalTtlMinutes: 60 },
   schedule: { intervalMinutes: 15 },
   llm: { provider: "anthropic", model: "claude-sonnet-5", temperature: 0.4, maxSteps: 12 },
 };
 
-export function parseAgentConfig(input: unknown): AgentConfig {
+export function parseAgentConfig(input: unknown): AgentConfigWithSizing {
   return agentConfigSchema.parse(input);
 }
