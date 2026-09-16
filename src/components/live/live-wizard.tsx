@@ -15,11 +15,13 @@ import {
   goLiveAction,
   noteManualRunAction,
   pauseAgentAction,
+  tradeReceiptAction,
 } from "@/server/actions/security";
 import type { LiveReadiness } from "@/lib/security/live-readiness";
+import type { TradeReceiptData } from "@/db/schema";
 import type { AgentDetail, RunDetail } from "@/server/types";
 import { Checklist } from "./checklist";
-import { TradeReceipt } from "./trade-receipt";
+import { FirstFillPanel } from "./trade-receipt";
 import { cn } from "@/lib/utils";
 
 /** How often to poll the run while it is in flight. */
@@ -59,6 +61,7 @@ export function LiveWizard({
   const [runError, setRunError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [paused, setPaused] = useState(agent.status === "paused");
+  const [receipt, setReceipt] = useState<TradeReceiptData | null>(null);
 
   const cap = readiness.caps.maxTradeUsd;
 
@@ -106,6 +109,9 @@ export function LiveWizard({
     setStarting(true);
     setRunError(null);
     setRun(null);
+    // Cleared here rather than in the fetch effect: the previous run's receipt must
+    // not be on screen next to a new run's steps for even one frame.
+    setReceipt(null);
     try {
       const res = await fetch(`/api/agents/${agent.id}/run`, { method: "POST" });
       const body = (await res.json()) as { ok?: boolean; runId?: string; error?: string };
@@ -160,6 +166,21 @@ export function LiveWizard({
 
   const fill = run?.trades.find((t) => !t.isPaper) ?? run?.trades[0] ?? null;
   const live = mode === "live";
+
+  // The execution receipt is written by the executor as the fill settles, so it can
+  // trail the trade row by a moment. Fetch it once the trade id appears and leave it
+  // null if there is none — the panel says so rather than inventing one.
+  const fillId = fill?.id ?? null;
+  useEffect(() => {
+    if (!fillId) return;
+    let cancelled = false;
+    void tradeReceiptAction(agent.id, fillId).then((result) => {
+      if (!cancelled && result.ok) setReceipt(result.data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.id, fillId]);
 
   return (
     <div className="space-y-6">
@@ -332,7 +353,7 @@ export function LiveWizard({
             ) : null}
 
             {fill ? (
-              <TradeReceipt trade={fill}>
+              <FirstFillPanel trade={fill} receipt={receipt}>
                 <HoldToConfirmButton
                   size="sm"
                   duration={1_200}
@@ -348,7 +369,7 @@ export function LiveWizard({
                 >
                   See it on the agent page
                 </Link>
-              </TradeReceipt>
+              </FirstFillPanel>
             ) : null}
           </>
         )}

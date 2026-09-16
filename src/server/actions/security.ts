@@ -28,7 +28,7 @@ import {
   type LiveReadiness,
 } from "@/lib/security/live-readiness";
 import type { ActionResult, Chain } from "@/server/types";
-import type { AgentConfig } from "@/db/schema";
+import type { AgentConfig, TradeReceiptData } from "@/db/schema";
 
 function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
@@ -402,6 +402,26 @@ export async function noteBudgetChangeAction(input: {
   });
 
   return { ok: true, data: undefined };
+}
+
+/**
+ * The execution receipt for one of the caller's own trades, for the wizard's final
+ * step. Ownership is checked against the agent before the receipt is read, so this
+ * is not a second path onto someone else's fill detail.
+ */
+export async function tradeReceiptAction(
+  agentId: string,
+  tradeId: string,
+): Promise<ActionResult<TradeReceiptData | null>> {
+  const session = await getSession();
+  if (!session) return fail("Sign in first");
+
+  const { error, agent } = await ownedAgent(agentId, session.userId);
+  if (error || !agent) return fail(error ?? "Agent not found");
+
+  const { receiptsFor } = await import("@/server/queries/trading");
+  const receipts = await receiptsFor([tradeId]);
+  return { ok: true, data: receipts.get(tradeId) ?? null };
 }
 
 /** The manual "run one tick now" from the wizard, on the record like everything else. */

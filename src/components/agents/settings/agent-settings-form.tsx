@@ -17,6 +17,9 @@ import { ExitRulesFields } from "@/components/agents/exit-rules";
 import { INTERVAL_PRESETS } from "@/components/agents/builder/types";
 import { EmptyState } from "@/components/common/empty-state";
 import { setAgentStatusAction, updateAgentAction } from "@/components/agents/agent-actions";
+import { SizingControls } from "@/components/trading";
+import { readSizing } from "@/lib/trading/sizing";
+import { setPositionSizing } from "@/server/actions/trading";
 import { noteBudgetChangeAction } from "@/server/actions/security";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { cn } from "@/lib/utils";
@@ -319,6 +322,26 @@ function SettingsForm({
             format={(value) => formatUsd(value)}
             meaning={`x402 calls are refused past ${formatUsd(config.risk.maxDataSpendUsdPerRun)} in a single run.`}
             onChange={(maxDataSpendUsdPerRun) => patchRisk({ maxDataSpendUsdPerRun })}
+          />
+        </div>
+
+        {/*
+          Sizing decides how big a ticket is *within* the cap above; the cap is the
+          ceiling it can never cross. It saves through its own action rather than the
+          form's Save, so the ceiling and the ticket size can never be half-applied
+          against each other.
+        */}
+        <div className="border-t border-border/50 pt-4">
+          <SizingControls
+            value={readSizing(config.risk)}
+            maxTradeUsd={config.risk.maxTradeUsd}
+            equityUsd={agent.equityUsd}
+            onSave={async (next) => {
+              const result = await setPositionSizing(agent.id, next);
+              if (!result.ok) return result.error;
+              router.refresh();
+              return null;
+            }}
           />
         </div>
       </section>
