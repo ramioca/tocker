@@ -9,7 +9,7 @@ import { formatCount, formatUsd } from "@/components/social-common/format";
 
 export function AgentGridCard({ agent }: { agent: AgentCardType }) {
   return (
-    <article className="glass glass-hover group relative flex flex-col rounded-2xl p-4">
+    <article className="glass-card glass-hover group relative flex flex-col rounded-2xl p-4">
       <div className="flex items-start gap-3">
         <AgentAvatar seed={agent.avatarSeed ?? agent.slug} label={agent.name} />
         <div className="min-w-0 flex-1">

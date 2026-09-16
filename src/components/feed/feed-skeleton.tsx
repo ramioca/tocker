@@ -16,7 +16,7 @@ function Bar({ className }: { className?: string }) {
  */
 export function FeedCardSkeleton() {
   return (
-    <article className="glass rounded-2xl px-4 py-4 sm:px-5">
+    <article className="glass-card rounded-2xl px-4 py-4 sm:px-5">
       <div className="flex gap-3">
         <Bar className="size-9 shrink-0 rounded-lg" />
         <div className="min-w-0 flex-1 space-y-2.5">

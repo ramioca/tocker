@@ -42,7 +42,7 @@ export function Leaderboard({ data }: { data: Record<LeaderboardWindow, Leaderbo
         <div
           role="tablist"
           aria-label="Leaderboard window"
-          className="glass relative inline-flex rounded-lg p-0.5"
+          className="glass-card relative inline-flex rounded-lg p-0.5"
         >
           <span
             aria-hidden

@@ -24,7 +24,7 @@ export function AgentCard({
       href={`/agents/${agent.slug}`}
       style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
       className={cn(
-        "glass glass-hover focus-ring animate-rise group flex h-full flex-col gap-3 rounded-xl p-4",
+        "glass-card glass-hover focus-ring animate-rise group flex h-full flex-col gap-3 rounded-xl p-4",
         className,
       )}
     >

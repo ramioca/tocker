@@ -34,8 +34,11 @@ export async function GET() {
       env: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "unknown",
       commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
       mocks: {
+        // Match the runtime: paidFetch treats X402_MOCK as mock only when it is
+        // exactly "1" (unset ⇒ real payments). Reporting `!== "0"` here would tell
+        // the operator payments are simulated while real USDC moves.
         llm: process.env.LLM_MOCK === "1",
-        x402: process.env.X402_MOCK !== "0",
+        x402: process.env.X402_MOCK === "1",
         tokens: process.env.TOKENS_MOCK === "1",
       },
       privyConfigured: Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID && process.env.PRIVY_APP_SECRET),

@@ -95,7 +95,7 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
         <div
           role="group"
           aria-label="Sort the scoreboard"
-          className="glass flex flex-wrap gap-1 rounded-lg p-1"
+          className="glass-card flex flex-wrap gap-1 rounded-lg p-1"
         >
           {SORTS.map((option) => {
             const active = sort === option.key;
@@ -157,8 +157,10 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
               aria-label={`Open the ${score.symbol} token page`}
               className={cn(
                 "glass-inset absolute top-2 right-10 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
-                "text-[10px] text-muted-foreground opacity-0 transition-opacity duration-150",
-                "group-hover/row:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                // main made this permanently visible at 70% rather than hover-only:
+                // a link nobody can see is a link nobody uses. Keep that.
+                "text-[10px] text-muted-foreground opacity-70 transition-opacity duration-150",
+                "focus-ring hover:opacity-100 group-hover/row:opacity-100 focus-visible:opacity-100",
               )}
             >
               Token page

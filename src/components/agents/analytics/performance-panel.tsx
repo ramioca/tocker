@@ -43,7 +43,7 @@ export function PerformancePanel({
         <div
           role="group"
           aria-label="Analytics window"
-          className="glass flex gap-1 rounded-lg p-1"
+          className="glass-card flex gap-1 rounded-lg p-1"
         >
           {WINDOWS.map((option) => {
             const active = window === option.value;

@@ -93,7 +93,7 @@ export function PositionsTable({
   }
 
   return (
-    <div className="glass overflow-x-auto rounded-xl">
+    <div className="glass-card overflow-x-auto rounded-xl">
       <Table>
         <TableHeader>
           <TableRow>

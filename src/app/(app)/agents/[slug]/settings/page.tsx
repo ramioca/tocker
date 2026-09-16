@@ -9,7 +9,8 @@ import { WalletsCard } from "@/components/agents/settings/wallets-card";
 import { WithdrawForm } from "@/components/agents/settings/withdraw-form";
 import { AgentAvatar } from "@/components/common/agent-avatar";
 import { EmptyState } from "@/components/common/empty-state";
-import { agentBySlug, viewerSession, walletBalances } from "@/components/common/data-access";
+import { agentBySlug, agentWalletBudget, viewerSession, walletBalances } from "@/components/common/data-access";
+import { BudgetCard } from "@/components/agents/settings/budget-card";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -46,6 +47,8 @@ export default async function AgentSettingsPage({ params }: Params) {
   if (!agent.config) notFound();
 
   const balances = await walletBalances(agent.id);
+  const walletBudget = await agentWalletBudget(agent.id);
+  const hasRealWallets = balances.some((wallet) => !wallet.walletId.startsWith("paper_"));
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6">
@@ -70,9 +73,14 @@ export default async function AgentSettingsPage({ params }: Params) {
       <div className="mt-6 space-y-6">
         <AgentSettingsForm agent={agent} config={agent.config} />
         <WalletsCard agentId={agent.id} agentName={agent.name} initialBalances={balances} />
+        <BudgetCard
+          agentId={agent.id}
+          initialPerTxUsd={walletBudget?.perTxUsd ?? null}
+          hasRealWallets={hasRealWallets}
+        />
         <GoLiveCard agent={agent} />
-        <WithdrawForm agent={agent} />
-        <DangerZone agent={agent} />
+        <WithdrawForm agent={agent} balances={balances} />
+        <DangerZone agent={agent} balances={balances} />
       </div>
     </div>
   );

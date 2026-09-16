@@ -2,27 +2,26 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import { useReducedMotion } from "motion/react";
+import { BorderBeam } from "border-beam";
+import { ThinkingOrb, type OrbState } from "thinking-orbs";
 import { Check, Gavel, TriangleAlert } from "lucide-react";
 import { DynamicIsland, DynamicIslandView } from "@/components/motion/dynamic-island";
 import { useRunStatus } from "@/components/providers/run-status";
 import { useNow } from "@/hooks/use-now";
 import { AgentAvatar } from "@/components/common/agent-avatar";
-import { cn } from "@/lib/utils";
 
 /**
- * The heaviest material in the app, and the only one that floats free of a page.
- *
- * `DynamicIsland` paints its own opaque shell, so the tokens are handed to it as
- * utilities rather than as `.glass-heavy` — same recipe, same weight. It is a
- * blurred surface, so it counts against the per-viewport budget: it is on screen
- * for at most a minute or two, and nothing else blurs while it is.
+ * Which thought-orb animation plays for each run tool. The orb is the island's
+ * status vocabulary: what the agent is doing, without reading the text.
  */
-const ISLAND_MATERIAL = cn(
-  "border border-[var(--glass-hairline)]",
-  "bg-[var(--glass-overlay)] text-foreground",
-  "backdrop-blur-[var(--glass-blur-heavy)] backdrop-saturate-[1.7]",
-  "shadow-[var(--glass-overlay-shadow)]",
-);
+const TOOL_ORB: Record<string, OrbState> = {
+  get_portfolio: "working",
+  discover_tokens: "searching",
+  score_token: "solving",
+  place_trade: "connecting",
+  finish: "composing",
+};
 
 /**
  * The island exists because a run is the one thing in this app that takes
@@ -31,6 +30,7 @@ const ISLAND_MATERIAL = cn(
  */
 export function RunIsland() {
   const { watched, detail, isRunning, clearRun, pendingProposals } = useRunStatus();
+  const reducedMotion = useReducedMotion();
   const now = useNow();
   const elapsed = watched ? Math.max(0, Math.round((now - watched.startedAt) / 1000)) : 0;
 
@@ -59,31 +59,46 @@ export function RunIsland() {
       .find((step) => step.toolName)?.toolName ?? null;
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-2 z-50 flex justify-center px-4">
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4 md:bottom-auto md:top-2">
       <div className="pointer-events-auto">
-        <DynamicIsland view={view} className={ISLAND_MATERIAL}>
+        {/* The beam rides the border only while the run is live — it IS the
+            running indicator, and `active` freezes it the moment the run settles. */}
+        <BorderBeam
+          size="md"
+          colorVariant="ocean"
+          theme="dark"
+          strength={0.7}
+          active={isRunning && !reducedMotion}
+        >
+          <DynamicIsland view={view} className="border border-white/10">
           <DynamicIslandView id="running" className="!px-4 !py-2.5">
             <Link
               href={`/agents/${watched.agentSlug}/runs/${watched.runId}`}
-              className="focus-ring flex items-center gap-3 rounded-lg"
+              className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               <AgentAvatar seed={watched.avatarSeed} name={watched.agentName} size="sm" />
               <span className="flex flex-col leading-tight">
                 <span className="text-[13px] font-medium">{watched.agentName}</span>
-                <span className="text-[11px] text-muted-foreground">
+                {/* Per-tick churn: kept out of the polite live region so a run
+                    doesn't read "1s… 2s… 3s…" over the meaningful announcements. */}
+                <span className="text-[11px] opacity-70" aria-hidden>
                   {lastTool ? `${lastTool}…` : "thinking…"}
                   {stepCount > 0 ? ` · ${stepCount} steps` : null}
                 </span>
               </span>
-              <span className="tnum glass-inset ml-2 rounded-full px-2 py-0.5 font-mono text-[11px]">
-                {elapsed}s
-              </span>
               <span
                 aria-hidden
-                className={cn(
-                  "size-2 rounded-full bg-primary",
-                  isRunning && "motion-safe:animate-pulse",
-                )}
+                className="tnum ml-2 rounded-full bg-white/10 px-2 py-0.5 font-mono text-[11px]"
+              >
+                {elapsed}s
+              </span>
+              {/* The orb narrates the current tool without words — the island
+                  is on a dark pill, so ink is pinned light. */}
+              <ThinkingOrb
+                state={lastTool ? (TOOL_ORB[lastTool] ?? "working") : "breathing"}
+                size={20}
+                theme="dark"
+                aria-hidden
               />
             </Link>
           </DynamicIslandView>
@@ -91,29 +106,30 @@ export function RunIsland() {
           <DynamicIslandView id="settled" className="!px-4 !py-2.5">
             <Link
               href={`/agents/${watched.agentSlug}/runs/${watched.runId}`}
-              className="focus-ring flex items-center gap-3 rounded-lg"
+              className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               {status === "failed" ? (
                 <TriangleAlert aria-hidden className="size-4 text-negative" />
               ) : (
-                <Check aria-hidden className="size-4 text-positive" />
+                <Check aria-hidden className="size-4" />
               )}
               <span className="flex flex-col leading-tight">
                 <span className="text-[13px] font-medium">
                   {status === "failed" ? "Run failed" : "Run finished"}
                 </span>
-                <span className="max-w-[16rem] truncate text-[11px] text-muted-foreground">
+                <span className="max-w-[16rem] truncate text-[11px] opacity-70">
                   {detail?.error ?? detail?.summary ?? watched.agentName}
                 </span>
               </span>
               {detail?.tradeCount ? (
-                <span className="tnum glass-inset rounded-full px-2 py-0.5 font-mono text-[11px]">
+                <span className="tnum rounded-full bg-white/10 px-2 py-0.5 font-mono text-[11px]">
                   {detail.tradeCount} {detail.tradeCount === 1 ? "trade" : "trades"}
                 </span>
               ) : null}
             </Link>
           </DynamicIslandView>
-        </DynamicIsland>
+          </DynamicIsland>
+        </BorderBeam>
       </div>
     </div>
   );
@@ -135,26 +151,26 @@ function ApprovalsIsland({
   const href = latest ? `/agents/${latest.agentSlug}?proposal=${latest.tradeId}` : "/notifications";
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-2 z-50 flex justify-center px-4">
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4 md:bottom-auto md:top-2">
       <div className="pointer-events-auto">
-        <DynamicIsland view="proposals" className={ISLAND_MATERIAL}>
+        <DynamicIsland view="proposals" className="border border-white/10">
           <DynamicIslandView id="proposals" className="!px-4 !py-2.5">
             <Link
               href={href}
-              className="focus-ring flex items-center gap-3 rounded-lg"
+              className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
-              <Gavel aria-hidden className="size-4 text-primary" />
+              <Gavel aria-hidden className="size-4" />
               <span className="flex flex-col leading-tight">
                 <span className="text-[13px] font-medium">
                   {count === 1 ? "1 trade awaiting approval" : `${count} trades awaiting approval`}
                 </span>
                 {latest ? (
-                  <span className="max-w-[18rem] truncate text-[11px] text-muted-foreground">
+                  <span className="max-w-[18rem] truncate text-[11px] opacity-70">
                     {latest.agentName} wants to {latest.side} ${Math.round(latest.requestedUsd)} of {latest.symbol}
                   </span>
                 ) : null}
               </span>
-              <span className="tnum glass-inset ml-2 rounded-full px-2 py-0.5 font-mono text-[11px] text-primary">
+              <span className="tnum ml-2 rounded-full bg-white/10 px-2 py-0.5 font-mono text-[11px]">
                 Review
               </span>
             </Link>

@@ -34,7 +34,7 @@ export function BeamSearchInput({
       <label htmlFor={id} className="sr-only">
         {label}
       </label>
-      <div className="relative overflow-hidden glass transition-colors duration-150 focus-within:border-ring rounded-xl">
+      <div className="relative overflow-hidden glass-card transition-colors duration-150 focus-within:border-ring rounded-xl">
         <Search
           className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
           aria-hidden

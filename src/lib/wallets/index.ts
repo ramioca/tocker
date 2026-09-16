@@ -199,3 +199,127 @@ export async function withdrawFromAgent(input: WithdrawInput): Promise<{ txHash:
     action.steps?.map((s) => (s as { transaction_hash?: string | null }).transaction_hash).find(Boolean) ?? action.id;
   return { txHash: String(hash) };
 }
+
+// ---------- wallet-layer budget (Privy policies) ----------
+
+import type { WalletBudget } from "@/db/schema";
+import type { PolicyCreateParams } from "@privy-io/node/resources";
+
+/** The ERC20 `transfer` ABI entry the Base budget rule decodes calldata with. */
+const ERC20_TRANSFER_ABI_SCHEMA = [
+  {
+    name: "transfer",
+    type: "function" as const,
+    stateMutability: "nonpayable" as const,
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+];
+
+/**
+ * The budget rules for one chain. Order matters — first match wins:
+ * over-cap USDC transfers and key exports are denied, everything else
+ * (swaps, approvals, x402 payments under the cap) passes through.
+ */
+function budgetRules(chain: Chain, capBaseUnits: string): PolicyCreateParams["rules"] {
+  const noExports: PolicyCreateParams["rules"] = [
+    { name: "No private key export", method: "exportPrivateKey", action: "DENY", conditions: [] },
+    { name: "No seed export", method: "exportSeedPhrase", action: "DENY", conditions: [] },
+  ];
+  const allowRest: PolicyCreateParams["rules"] = [
+    { name: "Allow everything else", method: "*", action: "ALLOW", conditions: [] },
+  ];
+
+  if (chain === "base") {
+    return [
+      {
+        name: "Cap USDC per transaction",
+        method: "eth_sendTransaction",
+        action: "DENY",
+        conditions: [
+          {
+            field_source: "ethereum_calldata",
+            abi: ERC20_TRANSFER_ABI_SCHEMA,
+            field: "amount",
+            operator: "gt",
+            value: capBaseUnits,
+          },
+        ],
+      },
+      ...noExports,
+      ...allowRest,
+    ];
+  }
+
+  // Solana: a transfer can be signed via either method and encoded as either
+  // instruction, so all four combinations get the cap.
+  const solanaMethods = ["signTransaction", "signAndSendTransaction"] as const;
+  const amountFields = ["Transfer.amount", "TransferChecked.amount"] as const;
+  return [
+    ...solanaMethods.flatMap((method) =>
+      amountFields.map(
+        (field): PolicyCreateParams["rules"][number] => ({
+          name: `Cap ${field.split(".")[0]} per ${method}`,
+          method,
+          action: "DENY",
+          conditions: [
+            { field_source: "solana_token_program_instruction", field, operator: "gt", value: capBaseUnits },
+          ],
+        }),
+      ),
+    ),
+    ...noExports,
+    ...allowRest,
+  ];
+}
+
+/**
+ * Create or update the per-chain Privy policies that enforce an agent's wallet
+ * budget, and attach them to the agent's server wallets. Paper wallets and
+ * unconfigured Privy resolve to null — the budget is then app-level only.
+ */
+export async function applyAgentBudgetPolicy(input: {
+  agentId: string;
+  agentName: string;
+  perTxUsd: number;
+  existing?: WalletBudget | null;
+}): Promise<WalletBudget | null> {
+  if (!isPrivyConfigured()) return null;
+  const rows = (await getAgentWallets(input.agentId)).filter((w) => !isPaperWallet(w.id));
+  if (rows.length === 0) return null;
+
+  // USDC has 6 decimals on both chains.
+  const capBaseUnits = String(Math.round(input.perTxUsd * 1_000_000));
+  const policyIds: WalletBudget["policyIds"] = { ...(input.existing?.policyIds ?? {}) };
+
+  for (const wallet of rows) {
+    const rules = budgetRules(wallet.chain, capBaseUnits);
+    const name = `tocker budget · ${input.agentName} · ${wallet.chain}`.slice(0, 64);
+    const existingId = policyIds[wallet.chain];
+
+    if (existingId) {
+      await privy()
+        .policies()
+        .update(existingId, { rules, name, authorization_context: authorizationContext() });
+    } else {
+      const created = await privy()
+        .policies()
+        .create({
+          chain_type: CHAIN_TYPE[wallet.chain],
+          name,
+          rules,
+          version: "1.0",
+          owner: { public_key: authorizationPublicKey() },
+        });
+      policyIds[wallet.chain] = created.id;
+      await privy()
+        .wallets()
+        .update(wallet.id, { policy_ids: [created.id], authorization_context: authorizationContext() });
+    }
+  }
+
+  return { perTxUsd: input.perTxUsd, policyIds };
+}

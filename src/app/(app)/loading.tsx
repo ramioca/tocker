@@ -28,7 +28,7 @@ export default function AppLoading() {
         {Array.from({ length: 5 }, (_, i) => (
           <span
             key={i}
-            className="glass block h-16 rounded-xl motion-safe:animate-pulse"
+            className="glass-card block h-16 rounded-xl motion-safe:animate-pulse"
             aria-hidden
           />
         ))}

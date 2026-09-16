@@ -27,7 +27,7 @@ export default function MyAgentsLoading() {
 
       <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {Array.from({ length: 6 }, (_, i) => (
-          <span key={i} aria-hidden className="glass block h-[218px] rounded-xl motion-safe:animate-pulse" />
+          <span key={i} aria-hidden className="glass-card block h-[218px] rounded-xl motion-safe:animate-pulse" />
         ))}
       </div>
 

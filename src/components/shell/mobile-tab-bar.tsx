@@ -23,7 +23,7 @@ export function MobileTabBar({ unreadCount }: { unreadCount: number }) {
   return (
     <nav
       aria-label="Primary"
-      className="glass-bar fixed inset-x-0 bottom-0 z-40 flex border-t border-t-[var(--glass-hairline)] pb-[env(safe-area-inset-bottom)] md:hidden"
+      className="glass-bar fixed inset-x-0 bottom-0 z-40 flex border-t border-border/60 pb-[env(safe-area-inset-bottom)] md:hidden"
     >
       {items.map((item) => {
         const active = isActivePath(pathname, item.href);
@@ -56,6 +56,8 @@ export function MobileTabBar({ unreadCount }: { unreadCount: number }) {
                 </span>
               ) : null}
             </span>
+            {/* Five tabs on a 390px screen: "My agents" is the only label that
+                does not fit, and "Agents" says the same thing. */}
             {item.label === "My agents" ? "Agents" : item.label}
           </Link>
         );

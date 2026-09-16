@@ -89,7 +89,7 @@ export function TradesTable({
         />
       ) : (
         <div className="space-y-3">
-          <div className="glass overflow-x-auto rounded-xl">
+          <div className="glass-card overflow-x-auto rounded-xl">
             <Table>
               <TableHeader>
                 <TableRow>

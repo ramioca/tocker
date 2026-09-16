@@ -165,7 +165,7 @@ export function RunsTimeline({
 
   return (
     <div className="space-y-3">
-      <ul className="glass divide-y divide-[var(--glass-hairline)] overflow-hidden rounded-xl">
+      <ul className="glass-card divide-y divide-[var(--glass-hairline)] overflow-hidden rounded-xl">
         {runs.map((run) => (
           <RunRow key={run.id} run={run} agentId={agentId} agentSlug={agentSlug} />
         ))}

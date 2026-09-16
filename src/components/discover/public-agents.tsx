@@ -166,7 +166,7 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
           {loading
             ? Array.from({ length: 3 }, (_, i) => (
                 <li key={`skeleton-${i}`} aria-hidden>
-                  <div className="glass h-56 rounded-2xl motion-safe:animate-pulse" />
+                  <div className="glass-card h-56 rounded-2xl motion-safe:animate-pulse" />
                 </li>
               ))
             : null}

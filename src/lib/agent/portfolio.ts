@@ -8,14 +8,15 @@ import { nanoid } from "nanoid";
 import { exitDistances } from "@/lib/pnl";
 import { and, eq, gte } from "drizzle-orm";
 import { agents, equitySnapshots, getDb, positions, tokens, trades, wallets } from "@/db";
-import type { AgentConfig } from "@/db/schema";
+import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { Position, TokenRef } from "@/server/types";
 import type { AgentWalletRef } from "@/lib/x402/types";
 import { getMarks } from "@/lib/trading/prices";
 import { getPaperCash } from "@/lib/trading/paper";
 import { loadCachedScores } from "@/lib/trading/score-cache";
 import { toTokenRef } from "@/lib/trading/tokens";
-import type { RiskPortfolio } from "@/lib/trading/risk";
+import { sizeCeiling, type RiskPortfolio } from "@/lib/trading/risk";
+import { readSizing } from "@/lib/trading/sizing";
 
 export interface Portfolio {
   agentId: string;
@@ -175,10 +176,18 @@ export async function snapshotEquity(portfolio: Portfolio): Promise<void> {
 
 /** Compact, model-friendly rendering used by both the tick prompt and `get_portfolio`. */
 export function describePortfolio(portfolio: Portfolio, config: AgentConfig): string {
+  // The sizing ceiling belongs in the book, not in a rejection. A model that is told
+  // "$250 is your clip right now, and here is why" writes one good order; a model that
+  // has to discover the number by being refused burns a step and a tool call to learn it.
+  const ceiling = sizeCeiling(config, portfolio, {});
   const lines = [
     `Cash: $${portfolio.cashUsd.toFixed(2)} · Equity: $${portfolio.equityUsd.toFixed(2)} · Mode: ${portfolio.mode}`,
     `Realized PnL $${portfolio.realizedPnlUsd.toFixed(2)} · Unrealized PnL $${portfolio.unrealizedPnlUsd.toFixed(2)}`,
     `Trades today: ${portfolio.tradesToday}/${config.risk.maxDailyTrades}`,
+    `Max ticket right now: $${ceiling.amountUsd.toFixed(2)} (${ceiling.effectiveMode.replace(/_/g, " ")} sizing — ${ceiling.explanation})` +
+      (ceiling.effectiveMode === "volatility_scaled" || readSizing(config.risk as AgentRiskWithSizing).mode === "volatility_scaled"
+        ? " A token that has been ranging widely gets a smaller ticket than this; size down when you see one."
+        : ""),
   ];
   if (portfolio.positions.length === 0) {
     lines.push("Positions: none.");

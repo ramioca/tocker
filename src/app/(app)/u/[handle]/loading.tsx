@@ -37,7 +37,7 @@ export default function ProfileLoading() {
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {Array.from({ length: 3 }, (_, i) => (
-          <span key={i} aria-hidden className="glass block h-64 rounded-2xl motion-safe:animate-pulse" />
+          <span key={i} aria-hidden className="glass-card block h-64 rounded-2xl motion-safe:animate-pulse" />
         ))}
       </div>
 

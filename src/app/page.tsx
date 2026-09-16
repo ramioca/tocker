@@ -1,12 +1,10 @@
-import { Suspense } from "react";
 import type { Metadata } from "next";
 import "@/components/landing/landing.css";
 import { LandingHeader } from "@/components/landing/landing-header";
 import { Hero } from "@/components/landing/hero";
 import { HowItWorks } from "@/components/landing/how-it-works";
 import { FeatureBento } from "@/components/landing/feature-bento";
-import { LeaderboardStrip } from "@/components/landing/leaderboard-strip";
-import { LeaderboardStripSkeleton } from "@/components/landing/leaderboard-strip-skeleton";
+import { PublicRecord } from "@/components/landing/public-record";
 import { DataSourcesRow } from "@/components/landing/data-sources-row";
 import { LandingFaq } from "@/components/landing/landing-faq";
 import { FinalCta } from "@/components/landing/final-cta";
@@ -36,9 +34,7 @@ export default function LandingPage() {
         <HowItWorks />
         <hr className="lp-hr mx-auto max-w-6xl" />
         <FeatureBento />
-        <Suspense fallback={<LeaderboardStripSkeleton />}>
-          <LeaderboardStrip />
-        </Suspense>
+        <PublicRecord />
         <hr className="lp-hr mx-auto max-w-6xl" />
         <LandingFaq />
         <FinalCta />

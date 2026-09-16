@@ -151,7 +151,7 @@ export function FeedCard({
   return (
     <article
       id={item.id}
-      className="glass glass-hover scroll-mt-24 rounded-2xl px-4 py-4 sm:px-5"
+      className="glass-card glass-hover scroll-mt-24 rounded-2xl px-4 py-4 sm:px-5"
     >
       <div className="flex gap-3">
         {agent ? (
