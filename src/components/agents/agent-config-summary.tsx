@@ -74,7 +74,7 @@ export function AgentConfigSummary({
   return (
     <div className={cn("space-y-5", className)}>
       <Section title="Strategy">
-        <p className="mt-2 rounded-xl border border-border/70 bg-card/40 p-3 text-sm leading-relaxed whitespace-pre-wrap text-foreground/85">
+        <p className="mt-2 glass-inset rounded-xl p-3 text-sm leading-relaxed whitespace-pre-wrap text-foreground/85">
           {config.strategyPrompt}
         </p>
       </Section>
@@ -90,7 +90,7 @@ export function AgentConfigSummary({
           {feeds.map((feed) => (
             <li
               key={feed.id}
-              className="rounded-lg border border-border/70 bg-card/30 px-2.5 py-1.5"
+              className="glass-inset rounded-lg px-2.5 py-1.5"
             >
               <p className="text-xs font-medium">{feed.label}</p>
               <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
@@ -108,7 +108,7 @@ export function AgentConfigSummary({
 
       {/* ---------------------------------------------------------- the bar */}
       <Section title="The bar">
-        <div className="mt-2 flex items-center gap-2.5 rounded-xl border border-border/70 bg-card/30 px-3 py-2.5">
+        <div className="mt-2 flex items-center gap-2.5 glass-inset rounded-xl px-3 py-2.5">
           <ScoreBadge total={universe.minScore} verdict={verdict} size="md" />
           <p className="text-xs leading-relaxed text-muted-foreground">
             Nothing below {Math.round(universe.minScore)} is eligible —{" "}

@@ -161,6 +161,232 @@
   --sidebar-ring: oklch(0.72 0.19 300 / 60%);
 }
 
+/* ===========================================================================
+ * GLASS — the material system
+ * ===========================================================================
+ *
+ * Four weights, and the weight IS the depth cue. Heavier material sits closer
+ * to the viewer: more blur, more opacity, a brighter top edge.
+ *
+ *   .glass-bar     chrome that floats over the page (top bar, tab bar, sticky
+ *                  filter strips). Lightest tint, moderate blur — you should be
+ *                  able to tell that content is moving underneath it.
+ *   .glass-panel   a page module: one section of a page, the thing a heading
+ *                  names. Blurred. BUDGET: at most ~4 per viewport.
+ *   .glass         a repeating surface — a feed card, a grid card, a list row.
+ *                  Deliberately NOT blurred: a page of thirty blurred cards is
+ *                  not premium, it is a dropped frame. It carries the same tint
+ *                  and the same top edge, so it reads as the same material.
+ *   .glass-heavy   modals, popovers, the command palette, the run island. The
+ *                  heaviest blur in the app, and the most opaque: whatever is
+ *                  behind it is meant to be out of play.
+ *
+ * Rules, all of them load-bearing:
+ *
+ *   1. Never nest a backdrop-filter inside another backdrop-filter. This is
+ *      structural here, not a convention: only `-bar`, `-panel` and `-heavy`
+ *      blur, and those are never placed inside one another. `.glass` and
+ *      `.glass-inset` are the surfaces you are allowed to nest.
+ *   2. Cap the blurred surfaces per viewport. One bar, one overlay, a handful
+ *      of panels. Lists get `.glass`.
+ *   3. `prefers-reduced-transparency: reduce` turns the whole system into solid
+ *      surfaces — no blur, no translucency, borders intact.
+ *   4. Text contrast stays >= 4.5:1 on every weight. That is what sets the
+ *      alpha floors below: a material thin enough to be pretty but too thin to
+ *      read on is a bug.
+ *
+ * Modifiers: `.glass-hover` (interactive lift), `.glass-grain` (a whisper of
+ * noise, for large empty surfaces only), `.glass-inset` (a recessed sub-surface
+ * inside a glass card, e.g. a trade receipt).
+ */
+:root {
+  /* What the material is made of. Two tints: chrome is cut from the page
+     ground, content surfaces from the card token. */
+  --glass-chrome-tint: var(--background);
+  --glass-tint: var(--card);
+
+  /* Alpha floors, set by the contrast requirement, not by taste. */
+  --glass-bar-alpha: 78%;
+  --glass-panel-alpha: 72%;
+  --glass-card-alpha: 62%;
+  --glass-heavy-alpha: 88%;
+  --glass-inset-alpha: 45%;
+
+  --glass-blur-bar: 14px;
+  --glass-blur-panel: 10px;
+  --glass-blur-heavy: 28px;
+  /* Saturation is what keeps a blurred backdrop from going grey and dead. */
+  --glass-saturate: 1.7;
+
+  /* The 1px light along the top edge. Light theme: a white sheen. */
+  --glass-edge: oklch(1 0 0 / 0.75);
+  --glass-hairline: oklch(0.72 0.006 285 / 0.28);
+  --glass-shadow: 0 1px 2px oklch(0.2 0.01 285 / 0.05), 0 8px 24px -12px oklch(0.2 0.01 285 / 0.12);
+  --glass-shadow-heavy: 0 24px 64px -24px oklch(0.2 0.01 285 / 0.35);
+  --glass-grain-opacity: 0.035;
+
+  /* Pre-mixed values, for the handful of third-party components (the Spectrum
+     command palette) that own their own `background`/`box-shadow` utilities and
+     can only be steered by handing them a colour. Same recipe as `.glass-heavy`. */
+  --glass-overlay: color-mix(in oklab, var(--popover) var(--glass-heavy-alpha), transparent);
+  --glass-overlay-shadow: inset 0 1px 0 0 var(--glass-edge), var(--glass-shadow-heavy);
+}
+
+.dark {
+  /* On near-black the same alphas read heavier, so the material thins a little
+     and the edge becomes a sliver of light rather than a sheen. */
+  --glass-bar-alpha: 72%;
+  --glass-panel-alpha: 66%;
+  --glass-card-alpha: 55%;
+  --glass-heavy-alpha: 86%;
+  --glass-inset-alpha: 40%;
+
+  --glass-edge: oklch(1 0 0 / 0.1);
+  --glass-hairline: oklch(1 0 0 / 0.09);
+  --glass-shadow: 0 1px 2px oklch(0 0 0 / 0.3), 0 10px 30px -14px oklch(0 0 0 / 0.55);
+  --glass-shadow-heavy: 0 28px 70px -24px oklch(0 0 0 / 0.7);
+  --glass-grain-opacity: 0.05;
+}
+
+@layer components {
+  /* Shared anatomy: tint, hairline, top-edge light. No blur here — the blur is
+     what separates the weights, so each class declares its own. */
+  .glass,
+  .glass-bar,
+  .glass-panel,
+  .glass-heavy {
+    border: 1px solid var(--glass-hairline);
+    box-shadow: inset 0 1px 0 0 var(--glass-edge);
+  }
+
+  /* --- chrome ------------------------------------------------------------ */
+  .glass-bar {
+    background-color: color-mix(in oklab, var(--glass-chrome-tint) var(--glass-bar-alpha), transparent);
+    backdrop-filter: blur(var(--glass-blur-bar)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur-bar)) saturate(var(--glass-saturate));
+    border-width: 0;
+  }
+
+  /* --- page module -------------------------------------------------------- */
+  .glass-panel {
+    background-color: color-mix(in oklab, var(--glass-tint) var(--glass-panel-alpha), transparent);
+    backdrop-filter: blur(var(--glass-blur-panel)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur-panel)) saturate(var(--glass-saturate));
+    box-shadow:
+      inset 0 1px 0 0 var(--glass-edge),
+      var(--glass-shadow);
+  }
+
+  /* --- repeating surface (no blur, by design) ----------------------------- */
+  .glass {
+    background-color: color-mix(in oklab, var(--glass-tint) var(--glass-card-alpha), transparent);
+  }
+
+  /* --- overlay ------------------------------------------------------------ */
+  .glass-heavy {
+    background-color: color-mix(in oklab, var(--popover) var(--glass-heavy-alpha), transparent);
+    backdrop-filter: blur(var(--glass-blur-heavy)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur-heavy)) saturate(var(--glass-saturate));
+    box-shadow:
+      inset 0 1px 0 0 var(--glass-edge),
+      var(--glass-shadow-heavy);
+  }
+
+  /* --- modifiers ---------------------------------------------------------- */
+
+  /* A recessed sub-surface: the trade receipt inside a feed card, a stat well
+     inside a panel. Flat and dark, so the card above it reads as the lit face. */
+  .glass-inset {
+    background-color: color-mix(in oklab, var(--glass-tint) var(--glass-inset-alpha), transparent);
+    border: 1px solid var(--glass-hairline);
+  }
+
+  /* Interactive cards. Colour + a 1px rise, 140ms — fast enough that a mouse
+     sweeping a grid never looks like it is dragging the cards with it. */
+  .glass-hover {
+    transition:
+      background-color 140ms var(--ease-out-strong),
+      border-color 140ms var(--ease-out-strong),
+      transform 140ms var(--ease-out-strong);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .glass-hover:hover {
+      background-color: color-mix(
+        in oklab,
+        var(--glass-tint) calc(var(--glass-card-alpha) + 16%),
+        transparent
+      );
+      border-color: color-mix(in oklab, var(--glass-hairline) 100%, var(--foreground) 8%);
+      transform: translateY(-1px);
+    }
+  }
+
+  .glass-hover:active {
+    transform: translateY(0) scale(0.997);
+  }
+
+  /* Grain. Only worth it on a large, mostly empty surface — it gives the
+     material a tooth so a big flat pane does not read as a colour swatch. */
+  .glass-grain {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .glass-grain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    border-radius: inherit;
+    opacity: var(--glass-grain-opacity);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)'/%3E%3C/svg%3E");
+    background-size: 140px 140px;
+  }
+}
+
+/* Rule 3. Transparency off → the material becomes paint. Nothing moves, nothing
+   reflows: only the blur and the alpha go away. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass-bar,
+  .glass-panel,
+  .glass,
+  .glass-heavy,
+  .glass-inset {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .glass-bar {
+    background-color: var(--background);
+  }
+  .glass-panel,
+  .glass,
+  .glass-inset {
+    background-color: var(--card);
+  }
+  .glass-heavy {
+    background-color: var(--popover);
+  }
+  .glass-grain::after {
+    display: none;
+  }
+}
+
+/* Safari/Firefox without backdrop-filter get an opaque surface rather than a
+   washed-out one — legibility first, the effect second. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-bar {
+    background-color: var(--background);
+  }
+  .glass-panel {
+    background-color: var(--card);
+  }
+  .glass-heavy {
+    background-color: var(--popover);
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -199,6 +425,18 @@
   .scrollbar-thin {
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
+  }
+
+  /* One focus treatment for the whole app. `outline` rather than a ring shadow
+     so it composes with the glass classes, which already own `box-shadow`. */
+  .focus-ring:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  .focus-ring-inset:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
   }
 }
 

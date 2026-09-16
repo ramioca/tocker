@@ -55,7 +55,7 @@ export function AgentHeader({ agent }: { agent: AgentDetail }) {
   };
 
   return (
-    <header className="border-b border-border/70 px-4 py-5 sm:px-6">
+    <header className="glass-panel glass-grain rounded-2xl px-4 py-5 sm:px-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
         <AgentAvatar seed={agent.avatarSeed} name={agent.name} size="xl" className="rounded-2xl" />
 
@@ -74,7 +74,7 @@ export function AgentHeader({ agent }: { agent: AgentDetail }) {
           <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
             <Link
               href={`/u/${agent.owner.handle}`}
-              className="rounded hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded hover:text-foreground hover:underline focus-ring"
             >
               @{agent.owner.handle}
             </Link>
@@ -131,7 +131,7 @@ export function AgentHeader({ agent }: { agent: AgentDetail }) {
                     "inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium",
                     "transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]",
                     "hover:bg-muted active:scale-[0.97]",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    "focus-ring",
                   )}
                 >
                   <Settings2 aria-hidden className="size-3.5" />

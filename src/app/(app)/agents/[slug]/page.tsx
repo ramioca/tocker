@@ -44,10 +44,10 @@ export default async function AgentPage({ params }: Params) {
   ]);
 
   return (
-    <div className="mx-auto w-full max-w-5xl">
+    <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <AgentHeader agent={agent} />
 
-      <div className="space-y-6 px-4 py-6 sm:px-6">
+      <div className="mt-6 space-y-6">
         {/* Above the tabs on purpose: a proposal has a clock on it. */}
         {proposals.length > 0 ? (
           <Suspense fallback={null}>
@@ -60,7 +60,7 @@ export default async function AgentPage({ params }: Params) {
         <AgentTabs
           overview={
             <div className="space-y-6">
-              <section className="rounded-xl border border-border/70 bg-card/30 p-3 sm:p-4">
+              <section className="glass-panel rounded-2xl p-3 sm:p-4">
                 <EquityChart
                   points={equity.length > 1 ? equity : agent.equity}
                   startingUsd={agent.paperStartingUsd}

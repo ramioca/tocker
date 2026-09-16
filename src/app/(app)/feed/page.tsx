@@ -17,6 +17,9 @@ export default async function FeedPage() {
 
   return (
     <div className="mx-auto w-full max-w-2xl">
+      {/* The scope tabs are the visible heading; this keeps the landmark honest
+          for a screen reader without putting a redundant title on the stream. */}
+      <h1 className="sr-only">Feed</h1>
       <FeedList initialPage={initialPage} />
     </div>
   );

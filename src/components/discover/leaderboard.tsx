@@ -10,6 +10,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ArrowUpRight, Trophy } from "lucide-react";
+import { EmptyState } from "@/components/common/empty-state";
 import type { LeaderboardRow, LeaderboardWindow } from "@/server/types";
 import { NumberTicker } from "@/components/spectrumui/number-ticker";
 import { AgentAvatar } from "@/components/social-common/agent-avatar";
@@ -41,7 +42,7 @@ export function Leaderboard({ data }: { data: Record<LeaderboardWindow, Leaderbo
         <div
           role="tablist"
           aria-label="Leaderboard window"
-          className="relative inline-flex rounded-lg border border-border/80 bg-card p-0.5"
+          className="glass relative inline-flex rounded-lg p-0.5"
         >
           <span
             aria-hidden
@@ -55,7 +56,7 @@ export function Leaderboard({ data }: { data: Record<LeaderboardWindow, Leaderbo
               role="tab"
               aria-selected={active === w.id}
               onClick={() => setActive(w.id)}
-              className={`relative z-10 h-7 rounded-[7px] px-3 text-xs font-medium transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
+              className={`relative z-10 h-7 rounded-[7px] px-3 text-xs font-medium transition-colors duration-150 focus-ring ${
                 active === w.id ? "text-foreground" : "text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -66,11 +67,22 @@ export function Leaderboard({ data }: { data: Record<LeaderboardWindow, Leaderbo
       </div>
 
       {rows.length === 0 ? (
-        <p className="mt-6 rounded-2xl border border-dashed border-border py-14 text-center text-sm text-muted-foreground">
-          No agents have a full {active === "all" ? "history" : active} of snapshots yet.
-        </p>
+        <EmptyState
+          className="mt-6"
+          icon={<Trophy />}
+          title={`No ranking for ${active === "all" ? "all time" : `the last ${active}`} yet`}
+          description="A place on the board needs two equity snapshots inside the window. Run an agent — or give one a schedule — and it appears on the next pass."
+          action={
+            <Link
+              href="/agents/new"
+              className="focus-ring rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]"
+            >
+              Create an agent
+            </Link>
+          }
+        />
       ) : (
-        <ol className="mt-5 divide-y divide-border/70 overflow-hidden rounded-2xl border border-border/80 bg-card/50">
+        <ol className="glass-panel mt-5 divide-y divide-[var(--glass-hairline)] overflow-hidden rounded-2xl">
           {rows.map((row) => (
             <Row key={row.agent.id} row={row} window={active} />
           ))}
@@ -85,7 +97,7 @@ function Row({ row, window: win }: { row: LeaderboardRow; window: LeaderboardWin
   const positive = row.pnlPct >= 0;
 
   return (
-    <li className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5 transition-colors duration-150 hover:bg-muted/40 sm:flex-nowrap sm:px-5">
+    <li className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5 transition-colors duration-150 hover:bg-foreground/[0.04] sm:flex-nowrap sm:px-5">
       <span
         className={`w-6 shrink-0 text-center font-mono text-sm tabular-nums ${
           row.rank <= 3 ? "font-semibold text-primary" : "text-muted-foreground"
@@ -99,13 +111,13 @@ function Row({ row, window: win }: { row: LeaderboardRow; window: LeaderboardWin
       <div className="min-w-0 flex-1 basis-40">
         <Link
           href={`/agents/${agent.slug}`}
-          className="block truncate rounded text-sm font-medium hover:text-primary focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className="block truncate rounded text-sm font-medium hover:text-primary focus-ring"
         >
           {agent.name}
         </Link>
         <Link
           href={`/u/${agent.owner.handle}`}
-          className="block truncate rounded text-xs text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className="block truncate rounded text-xs text-muted-foreground hover:text-foreground focus-ring"
         >
           @{agent.owner.handle}
         </Link>
@@ -152,7 +164,7 @@ function Row({ row, window: win }: { row: LeaderboardRow; window: LeaderboardWin
         <FollowToggle targetType="agent" targetId={agent.id} defaultFollowing={false} size="sm" />
         <Link
           href={`/agents/${agent.slug}`}
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97] focus-ring"
         >
           <ArrowUpRight className="size-3.5" aria-hidden />
           Record

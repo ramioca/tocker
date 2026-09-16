@@ -10,6 +10,21 @@ import { AgentAvatar } from "@/components/common/agent-avatar";
 import { cn } from "@/lib/utils";
 
 /**
+ * The heaviest material in the app, and the only one that floats free of a page.
+ *
+ * `DynamicIsland` paints its own opaque shell, so the tokens are handed to it as
+ * utilities rather than as `.glass-heavy` — same recipe, same weight. It is a
+ * blurred surface, so it counts against the per-viewport budget: it is on screen
+ * for at most a minute or two, and nothing else blurs while it is.
+ */
+const ISLAND_MATERIAL = cn(
+  "border border-[var(--glass-hairline)]",
+  "bg-[var(--glass-overlay)] text-foreground",
+  "backdrop-blur-[var(--glass-blur-heavy)] backdrop-saturate-[1.7]",
+  "shadow-[var(--glass-overlay-shadow)]",
+);
+
+/**
  * The island exists because a run is the one thing in this app that takes
  * minutes and happens off-screen. It is rare (a user triggers a handful a day),
  * so it earns real motion — and it dismisses itself once the run settles.
@@ -46,27 +61,27 @@ export function RunIsland() {
   return (
     <div className="pointer-events-none fixed inset-x-0 top-2 z-50 flex justify-center px-4">
       <div className="pointer-events-auto">
-        <DynamicIsland view={view} className="border border-white/10">
+        <DynamicIsland view={view} className={ISLAND_MATERIAL}>
           <DynamicIslandView id="running" className="!px-4 !py-2.5">
             <Link
               href={`/agents/${watched.agentSlug}/runs/${watched.runId}`}
-              className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="focus-ring flex items-center gap-3 rounded-lg"
             >
               <AgentAvatar seed={watched.avatarSeed} name={watched.agentName} size="sm" />
               <span className="flex flex-col leading-tight">
                 <span className="text-[13px] font-medium">{watched.agentName}</span>
-                <span className="text-[11px] opacity-70">
+                <span className="text-[11px] text-muted-foreground">
                   {lastTool ? `${lastTool}…` : "thinking…"}
                   {stepCount > 0 ? ` · ${stepCount} steps` : null}
                 </span>
               </span>
-              <span className="tnum ml-2 rounded-full bg-background/15 px-2 py-0.5 font-mono text-[11px]">
+              <span className="tnum glass-inset ml-2 rounded-full px-2 py-0.5 font-mono text-[11px]">
                 {elapsed}s
               </span>
               <span
                 aria-hidden
                 className={cn(
-                  "size-2 rounded-full bg-background",
+                  "size-2 rounded-full bg-primary",
                   isRunning && "motion-safe:animate-pulse",
                 )}
               />
@@ -76,23 +91,23 @@ export function RunIsland() {
           <DynamicIslandView id="settled" className="!px-4 !py-2.5">
             <Link
               href={`/agents/${watched.agentSlug}/runs/${watched.runId}`}
-              className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="focus-ring flex items-center gap-3 rounded-lg"
             >
               {status === "failed" ? (
                 <TriangleAlert aria-hidden className="size-4 text-negative" />
               ) : (
-                <Check aria-hidden className="size-4" />
+                <Check aria-hidden className="size-4 text-positive" />
               )}
               <span className="flex flex-col leading-tight">
                 <span className="text-[13px] font-medium">
                   {status === "failed" ? "Run failed" : "Run finished"}
                 </span>
-                <span className="max-w-[16rem] truncate text-[11px] opacity-70">
+                <span className="max-w-[16rem] truncate text-[11px] text-muted-foreground">
                   {detail?.error ?? detail?.summary ?? watched.agentName}
                 </span>
               </span>
               {detail?.tradeCount ? (
-                <span className="tnum rounded-full bg-background/15 px-2 py-0.5 font-mono text-[11px]">
+                <span className="tnum glass-inset rounded-full px-2 py-0.5 font-mono text-[11px]">
                   {detail.tradeCount} {detail.tradeCount === 1 ? "trade" : "trades"}
                 </span>
               ) : null}
@@ -122,24 +137,24 @@ function ApprovalsIsland({
   return (
     <div className="pointer-events-none fixed inset-x-0 top-2 z-50 flex justify-center px-4">
       <div className="pointer-events-auto">
-        <DynamicIsland view="proposals" className="border border-white/10">
+        <DynamicIsland view="proposals" className={ISLAND_MATERIAL}>
           <DynamicIslandView id="proposals" className="!px-4 !py-2.5">
             <Link
               href={href}
-              className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="focus-ring flex items-center gap-3 rounded-lg"
             >
-              <Gavel aria-hidden className="size-4" />
+              <Gavel aria-hidden className="size-4 text-primary" />
               <span className="flex flex-col leading-tight">
                 <span className="text-[13px] font-medium">
                   {count === 1 ? "1 trade awaiting approval" : `${count} trades awaiting approval`}
                 </span>
                 {latest ? (
-                  <span className="max-w-[18rem] truncate text-[11px] opacity-70">
+                  <span className="max-w-[18rem] truncate text-[11px] text-muted-foreground">
                     {latest.agentName} wants to {latest.side} ${Math.round(latest.requestedUsd)} of {latest.symbol}
                   </span>
                 ) : null}
               </span>
-              <span className="tnum ml-2 rounded-full bg-background/15 px-2 py-0.5 font-mono text-[11px]">
+              <span className="tnum glass-inset ml-2 rounded-full px-2 py-0.5 font-mono text-[11px] text-primary">
                 Review
               </span>
             </Link>

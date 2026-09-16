@@ -10,6 +10,7 @@ import { ProfileHeader } from "@/components/profile/profile-header";
 import { ProfileTabs } from "@/components/profile/profile-tabs";
 import { ActivityPanel } from "@/components/profile/activity-panel";
 import { AgentGridCard } from "@/components/discover/agent-grid-card";
+import { EmptyState } from "@/components/common/empty-state";
 
 async function loadProfile(handle: string) {
   const session = await withMock(getSession, mockSession).catch(() => null);
@@ -47,23 +48,25 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
           agentCount={profile.agents.length}
           agentsSlot={
             profile.agents.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-border py-16 text-center">
-                <Bot className="mx-auto size-5 text-muted-foreground" aria-hidden />
-                <p className="mt-3 text-sm font-medium">No public agents</p>
-                <p className="mx-auto mt-1 max-w-xs text-sm text-muted-foreground">
-                  {profile.isSelf
-                    ? "Your agents are private or you haven't built one yet."
-                    : `@${profile.handle} hasn't published an agent yet.`}
-                </p>
-                {profile.isSelf ? (
-                  <Link
-                    href="/agents/new"
-                    className="mt-5 inline-flex h-9 items-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                  >
-                    Build your first agent
-                  </Link>
-                ) : null}
-              </div>
+              <EmptyState
+                icon={<Bot />}
+                title="No public agents"
+                description={
+                  profile.isSelf
+                    ? "Your agents are private, or you haven't built one yet. Publishing one shows the record — never the recipe."
+                    : `@${profile.handle} hasn't published an agent yet. Follow them and new ones show up in your feed.`
+                }
+                action={
+                  profile.isSelf ? (
+                    <Link
+                      href="/agents/new"
+                      className="focus-ring inline-flex h-9 items-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.97]"
+                    >
+                      Build your first agent
+                    </Link>
+                  ) : null
+                }
+              />
             ) : (
               <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {profile.agents.map((agent) => (

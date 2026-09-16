@@ -51,7 +51,7 @@ export function AnalyticsStats({ analytics }: { analytics: AgentAnalytics }) {
   return (
     <dl className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
       {cards.map((card) => (
-        <div key={card.label} className="rounded-xl border border-border/70 bg-card/40 px-3 py-2.5">
+        <div key={card.label} className="glass-inset rounded-xl px-3 py-2.5">
           <dt className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
             {card.label}
           </dt>

@@ -24,10 +24,7 @@ export function AgentCard({
       href={`/agents/${agent.slug}`}
       style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
       className={cn(
-        "animate-rise group flex flex-col gap-3 rounded-xl border border-border/70 bg-card/40 p-4",
-        "transition-[border-color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]",
-        "hover:border-border hover:bg-card/70 active:scale-[0.995]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "glass glass-hover focus-ring animate-rise group flex flex-col gap-3 rounded-xl p-4",
         className,
       )}
     >
@@ -65,7 +62,7 @@ export function AgentCard({
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-1.5 border-t border-[var(--glass-hairline)] pt-3">
         {agent.chains.map((chain) => (
           <ChainBadge key={chain} chain={chain} />
         ))}

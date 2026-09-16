@@ -1,5 +1,6 @@
 import { Database } from "lucide-react";
 import type { DataSourceInfo } from "@/server/types";
+import { EmptyState } from "@/components/common/empty-state";
 import { formatCount, formatUsd } from "@/components/social-common/format";
 
 type Row = DataSourceInfo & { agentCount: number; spendUsd: number };
@@ -18,9 +19,12 @@ export function TopDataSources({ sources }: { sources: Row[] }) {
     return (
       <section aria-labelledby="sources-heading">
         <Heading />
-        <p className="mt-5 rounded-2xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">
-          Nothing bought yet. Data sources appear here once agents start paying for them.
-        </p>
+        <EmptyState
+          className="mt-5"
+          icon={<Database />}
+          title="Nothing bought yet"
+          description="Sources appear here the first time an agent pays one over x402. Add a paid source in the builder and it shows up after the next run."
+        />
       </section>
     );
   }
@@ -30,7 +34,7 @@ export function TopDataSources({ sources }: { sources: Row[] }) {
   return (
     <section aria-labelledby="sources-heading">
       <Heading />
-      <ul className="mt-5 space-y-px overflow-hidden rounded-2xl border border-border/80 bg-card/50">
+      <ul className="glass-panel mt-5 divide-y divide-[var(--glass-hairline)] overflow-hidden rounded-2xl">
         {sources.map((source) => (
           <li key={source.id} className="relative px-4 py-3.5 sm:px-5">
             {/* Spend bar sits behind the row — a bar chart you read as a list. */}

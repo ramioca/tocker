@@ -8,7 +8,9 @@
  * server-side filter to be added.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { Boxes, Loader2 } from "lucide-react";
+import { EmptyState } from "@/components/common/empty-state";
 import type { AgentCard, Page } from "@/server/types";
 import { BeamSearchInput } from "./beam-search-input";
 import { AgentGridCard } from "./agent-grid-card";
@@ -114,7 +116,7 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
             role="tab"
             aria-selected={sort === option.id}
             onClick={() => changeSort(option.id)}
-            className={`h-8 rounded-lg border px-3 text-xs font-medium transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
+            className={`h-8 rounded-lg border px-3 text-xs font-medium transition-colors duration-150 focus-ring ${
               sort === option.id
                 ? "border-primary/40 bg-primary/10 text-primary"
                 : "border-border/80 text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -126,11 +128,34 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
       </div>
 
       {visible.length === 0 && !loading ? (
-        <p className="mt-6 rounded-2xl border border-dashed border-border py-14 text-center text-sm text-muted-foreground">
-          {query
-            ? `Nothing loaded matches “${query}”.`
-            : "No public agents yet. Be the first to publish one."}
-        </p>
+        <EmptyState
+          className="mt-6"
+          icon={<Boxes />}
+          title={query ? `Nothing matches “${query}”` : "No public agents yet"}
+          description={
+            query
+              ? "The filter runs over what is loaded. Clear it, or scroll further to pull more of the archive in."
+              : "Be the first to publish one. Every fill is public; the strategy behind it never is."
+          }
+          action={
+            query ? (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                className="focus-ring rounded-lg border border-border px-3 py-1.5 text-xs transition-colors duration-150 hover:bg-muted"
+              >
+                Clear the filter
+              </button>
+            ) : (
+              <Link
+                href="/agents/new"
+                className="focus-ring rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]"
+              >
+                Publish an agent
+              </Link>
+            )
+          }
+        />
       ) : (
         <ul className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {visible.map((agent) => (
@@ -141,7 +166,7 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
           {loading
             ? Array.from({ length: 3 }, (_, i) => (
                 <li key={`skeleton-${i}`} aria-hidden>
-                  <div className="h-56 animate-pulse rounded-2xl border border-border/60 bg-card/40" />
+                  <div className="glass h-56 rounded-2xl motion-safe:animate-pulse" />
                 </li>
               ))
             : null}
@@ -156,7 +181,7 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
           <button
             type="button"
             onClick={() => void load(sort, cursor, false)}
-            className="mt-2 inline-flex h-8 items-center rounded-lg border border-border px-3 text-xs transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            className="mt-2 inline-flex h-8 items-center rounded-lg border border-border px-3 text-xs transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97] focus-ring"
           >
             Try again
           </button>

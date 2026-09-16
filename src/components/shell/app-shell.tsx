@@ -32,8 +32,21 @@ export function AppShell({
 
   return (
     <div className="flex min-h-dvh w-full flex-col">
+      {/*
+        The first thing a keyboard reaches on every page. Hidden until focused,
+        then it lands in the glass so it reads as chrome rather than an artefact.
+      */}
+      <a
+        href="#main"
+        className="glass-heavy focus-ring sr-only rounded-lg px-3 py-2 text-sm font-medium focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-[60]"
+      >
+        Skip to content
+      </a>
+
       <TopBar unreadCount={unreadCount} onOpenSearch={() => setPaletteOpen(true)} />
-      <main className="min-w-0 flex-1 pb-20 md:pb-0">{children}</main>
+      <main id="main" tabIndex={-1} className="min-w-0 flex-1 pb-24 outline-none md:pb-0">
+        {children}
+      </main>
 
       <MobileTabBar unreadCount={unreadCount} />
       <RunIsland />

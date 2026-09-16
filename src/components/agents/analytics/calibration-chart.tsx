@@ -35,7 +35,7 @@ export function CalibrationChart({ bands }: { bands: ScoreBandStat[] }) {
   const sentence = calibrationSentence(bands);
 
   return (
-    <section aria-labelledby="calibration-heading" className="rounded-xl border border-border/70 bg-card/30 p-3 sm:p-4">
+    <section aria-labelledby="calibration-heading" className="glass-panel rounded-2xl p-3 sm:p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 id="calibration-heading" className="text-sm font-medium tracking-tight">
           Did the score predict the outcome?

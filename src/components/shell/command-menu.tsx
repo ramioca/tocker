@@ -2,8 +2,22 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, Bot, Coins, Compass, Home, Plus, Settings, User } from "lucide-react";
+import {
+  Bell,
+  Bot,
+  Coins,
+  Compass,
+  Gavel,
+  LayoutGrid,
+  Plus,
+  Radio,
+  Settings,
+  Trophy,
+  User,
+  Wallet,
+} from "lucide-react";
 import { CommandPalette, type CommandItem } from "@/components/spectrumui/command-palette";
+import { cn } from "@/lib/utils";
 import type { CommandIndex } from "./command-index";
 
 type TokenHit = CommandIndex["tokens"][number];
@@ -62,18 +76,29 @@ export function CommandMenu({
         action: go("/agents/new"),
       },
       {
+        id: "nav-home",
+        title: "Home",
+        description: "Cash, capital at work, equity and PnL across every agent",
+        category: "Go to",
+        shortcut: ["G", "H"],
+        icon: <LayoutGrid className="h-4 w-4" />,
+        action: go("/home"),
+      },
+      {
         id: "nav-feed",
         title: "Feed",
         description: "What every agent just did and why",
-        category: "Actions",
-        icon: <Home className="h-4 w-4" />,
+        category: "Go to",
+        shortcut: ["G", "F"],
+        icon: <Radio className="h-4 w-4" />,
         action: go("/feed"),
       },
       {
         id: "nav-discover",
         title: "Discover",
         description: "Leaderboard, trending tokens, top data sources",
-        category: "Actions",
+        category: "Go to",
+        shortcut: ["G", "D"],
         icon: <Compass className="h-4 w-4" />,
         action: go("/discover"),
       },
@@ -81,15 +106,40 @@ export function CommandMenu({
         id: "nav-agents",
         title: "My agents",
         description: "Everything you have deployed",
-        category: "Actions",
+        category: "Go to",
+        shortcut: ["G", "A"],
         icon: <Bot className="h-4 w-4" />,
         action: go("/agents"),
+      },
+      {
+        id: "nav-leaderboard",
+        title: "Leaderboard",
+        description: "Who is winning over 7 days, 30 days and all time",
+        category: "Go to",
+        icon: <Trophy className="h-4 w-4" />,
+        action: go("/discover#leaderboard-heading"),
+      },
+      {
+        id: "nav-approvals",
+        title: "Trades awaiting approval",
+        description: "Proposals your agents are holding for a decision",
+        category: "Go to",
+        icon: <Gavel className="h-4 w-4" />,
+        action: go("/home#activity"),
+      },
+      {
+        id: "nav-wallet",
+        title: "Wallet & capital",
+        description: "Unified USDC cash and what each agent is holding",
+        category: "Go to",
+        icon: <Wallet className="h-4 w-4" />,
+        action: go("/home"),
       },
       {
         id: "nav-notifications",
         title: "Notifications",
         description: "Fills, failures, follows and comments",
-        category: "Actions",
+        category: "Go to",
         icon: <Bell className="h-4 w-4" />,
         action: go("/notifications"),
       },
@@ -97,7 +147,7 @@ export function CommandMenu({
         id: "nav-settings",
         title: "Settings",
         description: "LLM keys, profile, notifications",
-        category: "Actions",
+        category: "Go to",
         icon: <Settings className="h-4 w-4" />,
         action: go("/settings"),
       },
@@ -146,6 +196,18 @@ export function CommandMenu({
       commands={commands}
       placeholder="Search agents, tokens, people…"
       footerLabel="Tocker"
+      /*
+       * The registry component paints its own neutral glass, and `cn` merges
+       * last-wins, so these four utilities re-point it at our material tokens —
+       * the same recipe `.glass-heavy` uses. The palette is the app's single
+       * heaviest surface: whatever is behind it is out of play.
+       */
+      className={cn(
+        "bg-[var(--glass-overlay)] dark:bg-[var(--glass-overlay)]",
+        "border-[var(--glass-hairline)] dark:border-[var(--glass-hairline)]",
+        "backdrop-blur-[var(--glass-blur-heavy)] backdrop-saturate-[1.7]",
+        "shadow-[var(--glass-overlay-shadow)]",
+      )}
     />
   );
 }

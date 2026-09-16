@@ -167,7 +167,7 @@ export function RunSteps({
       ) : null}
 
       {payments.length > 0 ? (
-        <section className="rounded-xl border border-border/70 bg-card/40 p-3">
+        <section className="glass-inset rounded-xl p-3">
           <h4 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             <Coins aria-hidden className="size-3.5" />
             x402 payments

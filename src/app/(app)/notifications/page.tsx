@@ -50,7 +50,12 @@ export default async function NotificationsPage() {
         <MarkAllRead unreadCount={unread} />
       </header>
 
-      <div className="mt-8">
+      {/*
+        One page module, one blurred surface. The list's own rows are the
+        repeating content inside it, so they never carry a backdrop-filter of
+        their own — see the material notes at the top of globals.css.
+      */}
+      <div className="glass-panel mt-8 overflow-hidden rounded-2xl">
         <NotificationList items={page.items} now={now} proposals={proposals} />
       </div>
     </div>

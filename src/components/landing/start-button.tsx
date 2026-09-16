@@ -16,7 +16,7 @@ export function StartButton({
   className,
   label = "Build an agent",
   signedInLabel = "Open the app",
-  signedInHref = "/feed",
+  signedInHref = "/home",
 }: {
   className?: string;
   label?: string;

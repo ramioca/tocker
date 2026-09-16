@@ -52,7 +52,7 @@ export function LandingHeader() {
               right default, and a pulsing placeholder in the header reads as broken. */}
           {session ? (
             <Link
-              href="/feed"
+              href="/home"
               className="lp-press inline-flex h-11 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:h-8 sm:px-3"
             >
               Open app
