@@ -3,7 +3,7 @@ import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { seedKnownTokens } from "@/lib/trading/tokens";
-import { runAgent, startRun } from "./run";
+import { ABANDONED_RUN_ERROR, reapStaleRuns, runAgent, startRun } from "./run";
 import { seedAgent, setupTestDb } from "./test-support";
 import { DEFAULT_AGENT_CONFIG } from "./config";
 
@@ -238,5 +238,123 @@ describe("startRun", () => {
     }
     const finished = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, runId));
     expect(finished[0]?.status).toBe("succeeded");
+  });
+});
+
+/**
+ * W7 B3. On Vercel the invocation is frozen the moment the response is flushed, so a run
+ * continued on a detached promise dies mid-tick and leaves its row `running`. Nothing
+ * read that row back, and `claimRun`'s `NOT EXISTS` then cancelled every future run for
+ * that agent — permanently. These are the tests that would have caught it.
+ */
+describe("stale run reaping", () => {
+  const staleDate = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000);
+
+  it("marks a running row older than ten minutes as failed", async () => {
+    const { agentId } = await seedAgent(db);
+    await db.insert(schema.agentRuns).values({
+      id: `dead-${agentId}`,
+      agentId,
+      trigger: "schedule",
+      status: "running",
+      startedAt: staleDate(11),
+    });
+
+    expect(await reapStaleRuns(agentId)).toBe(1);
+
+    const [row] = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, `dead-${agentId}`));
+    expect(row?.status).toBe("failed");
+    expect(row?.error).toBe(ABANDONED_RUN_ERROR);
+    expect(row?.finishedAt).not.toBeNull();
+  });
+
+  it("reaps a queued row that never started, dated from createdAt", async () => {
+    const { agentId } = await seedAgent(db);
+    await db.insert(schema.agentRuns).values({
+      id: `queued-${agentId}`,
+      agentId,
+      trigger: "schedule",
+      status: "queued",
+      startedAt: null,
+      createdAt: staleDate(30),
+    });
+
+    expect(await reapStaleRuns(agentId)).toBe(1);
+    const [row] = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, `queued-${agentId}`));
+    expect(row?.status).toBe("failed");
+  });
+
+  it("leaves a run that is still inside the window alone", async () => {
+    const { agentId } = await seedAgent(db);
+    await db.insert(schema.agentRuns).values({
+      id: `live-${agentId}`,
+      agentId,
+      trigger: "schedule",
+      status: "running",
+      startedAt: staleDate(9),
+    });
+
+    expect(await reapStaleRuns(agentId)).toBe(0);
+    const [row] = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, `live-${agentId}`));
+    expect(row?.status).toBe("running");
+  });
+
+  it("never touches a finished row", async () => {
+    const { agentId } = await seedAgent(db);
+    await db.insert(schema.agentRuns).values({
+      id: `done-${agentId}`,
+      agentId,
+      trigger: "schedule",
+      status: "succeeded",
+      startedAt: staleDate(600),
+      finishedAt: staleDate(599),
+    });
+
+    expect(await reapStaleRuns(agentId)).toBe(0);
+    const [row] = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, `done-${agentId}`));
+    expect(row?.status).toBe("succeeded");
+  });
+
+  it("only reaps the agent it was asked about", async () => {
+    const a = await seedAgent(db);
+    const b = await seedAgent(db);
+    for (const { agentId } of [a, b]) {
+      await db.insert(schema.agentRuns).values({
+        id: `stale-${agentId}`,
+        agentId,
+        trigger: "schedule",
+        status: "running",
+        startedAt: staleDate(20),
+      });
+    }
+
+    expect(await reapStaleRuns(a.agentId)).toBe(1);
+    const [other] = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, `stale-${b.agentId}`));
+    expect(other?.status).toBe("running");
+    // No agent filter: the cron sweep takes whatever is left.
+    expect(await reapStaleRuns()).toBe(1);
+  });
+
+  it("lets a new run claim the agent once the abandoned one is reaped", async () => {
+    const { agentId } = await seedAgent(db, { config: { dataSources: ["sentimentalpha"], chains: ["solana"] } });
+    await db.insert(schema.agentRuns).values({
+      id: `abandoned-${agentId}`,
+      agentId,
+      trigger: "manual",
+      status: "running",
+      startedAt: staleDate(12),
+    });
+
+    // Before B3 this returned `skipped` — "Another run is already in progress" — and
+    // went on doing so for the rest of the agent's life.
+    const result = await runAgent({ agentId, trigger: "manual" });
+    expect(result.status).toBe("succeeded");
+
+    const [abandoned] = await db
+      .select()
+      .from(schema.agentRuns)
+      .where(eq(schema.agentRuns.id, `abandoned-${agentId}`));
+    expect(abandoned?.status).toBe("failed");
+    expect(abandoned?.error).toBe(ABANDONED_RUN_ERROR);
   });
 });
