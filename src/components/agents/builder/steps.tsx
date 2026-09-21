@@ -385,6 +385,12 @@ export function BrainStep({
                     strategyPrompt: preset.prompt,
                     chains: preset.chains,
                     dataSources: preset.dataSources,
+                    // A preset that is a whole way of trading also sets what it needs;
+                    // one that only carries a prompt leaves the other steps as they are.
+                    ...(preset.universe ? { universe: { ...draft.config.universe, ...preset.universe } } : {}),
+                    ...(preset.risk ? { risk: { ...draft.config.risk, ...preset.risk } } : {}),
+                    ...(preset.execution ? { execution: preset.execution } : {}),
+                    ...(preset.schedule ? { schedule: preset.schedule } : {}),
                   })
                 }
                 title={preset.blurb}

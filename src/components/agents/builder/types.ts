@@ -96,6 +96,15 @@ export interface StrategyPreset {
   prompt: string;
   chains: Array<"solana" | "base">;
   dataSources: string[];
+  /**
+   * Optional: a preset that is a whole way of trading, not just a prompt, also sets the
+   * universe, risk, execution and cadence it needs. Each merges over the draft, so a
+   * preset that says nothing about a field leaves the operator's value alone.
+   */
+  universe?: Partial<Omit<UniverseConfig, "blocklist">>;
+  risk?: Partial<AgentConfig["risk"]>;
+  execution?: AgentConfig["execution"];
+  schedule?: AgentConfig["schedule"];
 }
 
 /** Three ways to start. Each one is a complete, defensible thesis, not filler. */
@@ -117,6 +126,40 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     dataSources: ["x-search", "cmc-quotes", "deepnets-token-safety"],
     prompt:
       "You fade consensus. When sentiment for a token is above 0.8 while narrative velocity is flat or falling, treat it as distribution and sell or refuse to enter. When sentiment is below -0.6 on a token that still scores above your bar — clean authorities, distribution component above 60, liquidity holding — accumulate in three equal tranches. Size down hard when every token you look at is pointing the same way; a one-directional market is where contrarians die.",
+  },
+  {
+    id: "first-fifteen",
+    label: "First fifteen minutes",
+    blurb: "Solana launches under fifteen minutes old, proposed the same tick, $2 clips, you approve. Sets everything.",
+    chains: ["solana"],
+    dataSources: ["deepnets-token-safety", "solenrich-launches", "x-search"],
+    prompt:
+      "You hunt Solana launches in their first fifteen minutes and propose them to your owner in the same tick you find them. Your edge is filtering speed, not prediction: most launches die within the hour, and the survivors are sorted by unique buyers, not price.\n\nEach tick, take the launch tier of discovery first and score every candidate under fifteen minutes old. Do not wait for a GT Score or holder count; they do not exist yet. Only two setups qualify:\n\n1. Ignition (2–8 minutes old): at least 15 unique buyers in the last five minutes and rising, sells under 40% of trades, reserve above $3k and growing, price up less than 300% from the first candle.\n2. Second wave (8–15 minutes old): first spike done, price 20–40% below it for at least three minutes, buyers-per-minute still positive, reserve not shrinking.\n\nBoth require: mint and freeze authority revoked, a Deepnets read with no bundling and no critical risks, top-10 holders under 30%, dev under 5%. Hard no's: fewer than 10 unique buyers, sells above buys in the last five minutes, reserve shrinking two ticks running, a token proposed in the last hour, a name copying this week's pump.\n\nPropose up to three a tick, best first, each with a two-sentence rationale: which setup, what buyers-per-minute and reserve are doing, and what would prove you wrong. Never propose the same token twice in one tick. If nothing qualifies, say so in one line and finish — never fill the gap with older tokens.\n\nClips are fixed and small; conviction shows in the order you propose, not the size. Sell when buyers-per-minute turn down two ticks in a row, into the first parabolic move, or the moment liquidity starts leaving; the guardian owns the stop, take profit and time limit. Cash between launches is the plan.",
+    universe: {
+      discovery: ["gecko_launches", "paid_launches", "new_launches"],
+      minScore: 45,
+      minLiquidityUsd: 2_000,
+      minHolderCount: 10,
+      minAgeMinutes: 0,
+      maxAgeHours: 0.25,
+      maxTop10HolderPct: 30,
+      requireMintRevoked: true,
+      requireFreezeRevoked: true,
+    },
+    risk: {
+      maxTradeUsd: 2,
+      maxDailyTrades: 40,
+      maxPositionPct: 25,
+      maxDataSpendUsdPerRun: 1,
+      stopLossPct: 40,
+      takeProfitPct: 100,
+      trailingStopPct: 30,
+      maxHoldHours: 0.5,
+      exitOnLiquidityDropPct: 30,
+      slippageBps: 1_000,
+    },
+    execution: { mode: "approve", proposalTtlMinutes: 5 },
+    schedule: { intervalMinutes: 5 },
   },
   {
     id: "fresh-launch",
