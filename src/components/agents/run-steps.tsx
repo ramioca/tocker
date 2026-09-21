@@ -65,7 +65,13 @@ export function RunSteps({
     const calls: ToolCall[] = [];
     const reasoning: ReasoningStep[] = [];
     const payments: X402Payment[] = [];
-    const openByTool = new Map<string, ToolCall>();
+    const openByTool = new Map<string, ToolCall[]>();
+    const takeOpen = (toolName: string | null | undefined): ToolCall | undefined => {
+      const queue = openByTool.get(toolName ?? "tool");
+      const call = queue?.shift();
+      if (queue && queue.length === 0) openByTool.delete(toolName ?? "tool");
+      return call;
+    };
 
     for (const step of steps) {
       const at = new Date(step.createdAt).getTime();
@@ -79,14 +85,23 @@ export function RunSteps({
       }
 
       if (step.kind === "error") {
-        calls.push({
-          id: step.id,
-          name: step.toolName ?? "error",
-          status: "error",
-          result: summarise(step.payload),
-          startedAt: at,
-          completedAt: at + (step.durationMs ?? 0),
-        });
+        // A tool that threw: close its own call as failed, rather than leaving the call
+        // "running" forever next to a detached error row.
+        const open = takeOpen(step.toolName);
+        if (open) {
+          open.status = "error";
+          open.result = summarise(step.payload);
+          open.completedAt = at + (step.durationMs ?? 0);
+        } else {
+          calls.push({
+            id: step.id,
+            name: step.toolName ?? "error",
+            status: "error",
+            result: summarise(step.payload),
+            startedAt: at,
+            completedAt: at + (step.durationMs ?? 0),
+          });
+        }
         continue;
       }
 
@@ -99,13 +114,18 @@ export function RunSteps({
           startedAt: at,
         };
         calls.push(call);
-        openByTool.set(call.name, call);
+        // A queue per name, not a slot: the model calls score_token three times in one
+        // step and the results land in order, so the *oldest* open call is the one each
+        // result belongs to. A single slot lost two of the three and left one "running".
+        const queue = openByTool.get(call.name);
+        if (queue) queue.push(call);
+        else openByTool.set(call.name, [call]);
         continue;
       }
 
-      // tool_result — attach to the most recent open call with the same name.
+      // tool_result — attach to the oldest open call with the same name.
       const name = step.toolName ?? "tool";
-      const open = openByTool.get(name);
+      const open = takeOpen(name);
       const payment = readX402(step.payload);
       if (payment) payments.push(payment);
 
@@ -113,7 +133,6 @@ export function RunSteps({
         open.status = "success";
         open.result = summarise(step.payload);
         open.completedAt = at + (step.durationMs ?? 0);
-        openByTool.delete(name);
       } else {
         calls.push({
           id: step.id,
@@ -127,8 +146,8 @@ export function RunSteps({
     }
 
     if (status !== "running" && status !== "queued") {
-      for (const call of openByTool.values()) {
-        call.status = status === "failed" ? "error" : "cancelled";
+      for (const queue of openByTool.values()) {
+        for (const call of queue) call.status = status === "failed" ? "error" : "cancelled";
       }
     }
 
