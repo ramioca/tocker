@@ -18,7 +18,10 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          curl -fsS --max-time 300 -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/marks" | head -c 400
+          resp=$(curl -sS --max-time 300 -w "\n%{http_code}" -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/marks")
+          code=${resp##*$'\n'}; body=${resp%$'\n'*}
+          echo "marks HTTP $code: ${body:0:1200}"
+          [ "$code" -lt 300 ]
       # Always: the two loops are independent, and a marks pass that 500s or times out
       # must not also stop every agent from thinking. The reverse ordering is deliberate
       # (exits before new positions), not a dependency.
@@ -28,4 +31,7 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          curl -fsS --max-time 300 -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/tick" | head -c 400
+          resp=$(curl -sS --max-time 300 -w "\n%{http_code}" -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/tick")
+          code=${resp##*$'\n'}; body=${resp%$'\n'*}
+          echo "tick HTTP $code: ${body:0:1200}"
+          [ "$code" -lt 300 ]
