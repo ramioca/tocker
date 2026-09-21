@@ -19,7 +19,6 @@ import { DepositSheet } from "@/components/wallets/deposit-sheet";
 import { useFundingPlan } from "@/components/wallets/use-funding-plan";
 import {
   FUND_PRESETS,
-  MAX_GAS_USD,
   MIN_FUND_USD,
   NATIVE_SYMBOL,
   cashOn,
