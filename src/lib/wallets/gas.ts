@@ -67,11 +67,16 @@ export interface GasDripPlan {
  */
 export function gasDripPlan(input: {
   balanceSol: number;
+  /** The three fee fields added up, when the caller already has the total. */
+  requiredLamports?: number;
   signatureFeeLamports?: number | null;
   prioritizationFeeLamports?: number | null;
   rentFeeLamports?: number | null;
 }): GasDripPlan {
-  const shortfallSol = gasShortfallSol(input);
+  const shortfallSol =
+    input.requiredLamports === undefined
+      ? gasShortfallSol(input)
+      : gasShortfallSol({ balanceSol: input.balanceSol, signatureFeeLamports: input.requiredLamports });
   if (shortfallSol <= 0) return { drip: false, amountSol: 0, shortfallSol: 0 };
   const wanted = Math.max(GAS_DRIP_SOL, shortfallSol + MIN_AGENT_SOL);
   const amountSol = Math.ceil(wanted * LAMPORTS_PER_SOL) / LAMPORTS_PER_SOL;
@@ -126,7 +131,7 @@ export async function ensureAgentGas(input: EnsureGasInput): Promise<EnsureGasRe
     return { dripped: false, signature: null, balanceSol: 0 };
   }
 
-  const plan = gasDripPlan({ balanceSol, signatureFeeLamports: input.requiredLamports });
+  const plan = gasDripPlan({ balanceSol, requiredLamports: input.requiredLamports });
   if (!plan.drip) return { dripped: false, signature: null, balanceSol };
 
   const platform = await ensurePlatformWallet("solana");

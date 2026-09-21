@@ -137,6 +137,9 @@ export class BaseSwapExecutor implements TradeExecutor {
       amountToken,
       amountUsd,
       feeUsd: 0,
+      // Privy's swap takes the number we give it, so here the agent's setting really is
+      // the tolerance applied — unlike Ultra, which picks its own.
+      appliedSlippageBps: legs.slippage_bps,
       handle: legs,
     };
   }

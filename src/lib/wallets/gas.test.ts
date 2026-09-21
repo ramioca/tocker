@@ -65,4 +65,15 @@ describe("gasDripPlan", () => {
   it("leaves a gasless order alone: nothing required means nothing sent", () => {
     expect(gasDripPlan({ balanceSol: 0, signatureFeeLamports: 0, rentFeeLamports: 0 }).drip).toBe(false);
   });
+
+  it("accepts a pre-summed requiredLamports, as ensureAgentGas passes it", () => {
+    const split = gasDripPlan({
+      balanceSol: 0,
+      signatureFeeLamports: 5000,
+      prioritizationFeeLamports: 2047,
+      rentFeeLamports: 2_039_280,
+    });
+    const summed = gasDripPlan({ balanceSol: 0, requiredLamports: 5000 + 2047 + 2_039_280 });
+    expect(summed).toEqual(split);
+  });
 });

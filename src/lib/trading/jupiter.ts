@@ -256,14 +256,29 @@ export class JupiterExecutor implements TradeExecutor {
     this.agentId = agentId ?? null;
   }
 
-  /** USDC base units the agent's token account holds, or null when unreadable. */
+  /**
+   * Base units of `mint` the agent's wallet holds, or `null` when it could not be read.
+   *
+   * Both token programs are tried: a Token-2022 mint's associated account is derived
+   * from a different program id, and deriving it from the legacy one produces an
+   * address that does not exist — which would read as "holds nothing" on exactly the
+   * kind of freshly minted token this product trades.
+   */
   private async heldBaseUnits(mint: string): Promise<bigint | null> {
     try {
       const { PublicKey } = await import("@solana/web3.js");
-      const { associatedTokenAddress } = await import("@/lib/wallets/solana-transfer");
+      const { associatedTokenAddress, TOKEN_2022_PROGRAM_ID } = await import(
+        "@/lib/wallets/solana-transfer"
+      );
       const { getTokenAccountBalance } = await import("@/lib/wallets/solana-rpc");
-      const ata = associatedTokenAddress(new PublicKey(this.wallet.address), new PublicKey(mint));
-      return await getTokenAccountBalance(ata.toBase58());
+      const owner = new PublicKey(this.wallet.address);
+      const mintKey = new PublicKey(mint);
+
+      const legacy = await getTokenAccountBalance(associatedTokenAddress(owner, mintKey).toBase58());
+      if (legacy !== null) return legacy;
+      return await getTokenAccountBalance(
+        associatedTokenAddress(owner, mintKey, TOKEN_2022_PROGRAM_ID).toBase58(),
+      );
     } catch (err) {
       console.warn(
         `[jupiter] could not read the ${mint} balance of ${this.wallet.address}:`,
@@ -342,7 +357,7 @@ export class JupiterExecutor implements TradeExecutor {
     const applied = order.slippageBps;
     if (applied !== undefined && req.slippageBps > 0 && applied > req.slippageBps) {
       throw new JupiterError(
-        `Jupiter priced ${req.symbol} with ${applied} bps of slippage, above this agent's ${req.slippageBps} bps ceiling. Not signed.`,
+        `Jupiter priced ${req.symbol} with ${applied} bps of slippage and this agent's ceiling is ${req.slippageBps} bps, so nothing was signed. ${req.symbol} is thinner than the agent's risk settings allow — raise Slippage tolerance in Risk, or leave this one alone.`,
       );
     }
 
@@ -358,6 +373,7 @@ export class JupiterExecutor implements TradeExecutor {
       amountToken,
       amountUsd,
       feeUsd: venueFeeUsd(order.feeBps, amountUsd),
+      appliedSlippageBps: applied,
       handle: order,
     };
   }

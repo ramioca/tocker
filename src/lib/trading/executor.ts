@@ -36,6 +36,15 @@ export interface Quote {
   /** USD notional actually routed. */
   amountUsd: number;
   feeUsd: number;
+  /**
+   * The slippage tolerance the venue actually applied to this route, in basis points
+   * (W7). On Jupiter Ultra this is Jupiter's own dynamic number, not the agent's — we
+   * stopped sending `slippageBps` because doing so forfeits both dynamic slippage and
+   * Ultra's gasless mode. The agent's configured number is the *ceiling* this is
+   * checked against, and the receipt should print this one as the tolerance used.
+   * Absent when the venue does not report one (the paper simulator).
+   */
+  appliedSlippageBps?: number;
   /** Venue-specific handle needed by `execute` (Jupiter requestId + tx, Privy quote, …). */
   handle: unknown;
 }
