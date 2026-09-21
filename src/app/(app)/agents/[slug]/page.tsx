@@ -88,7 +88,12 @@ export default async function AgentPage({ params }: Params) {
                 <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                   Positions
                 </h2>
-                <PositionsTable positions={agent.positions} cashUsd={agent.cashUsd} />
+                <PositionsTable
+                  positions={agent.positions}
+                  cashUsd={agent.cashUsd}
+                  agentId={agent.id}
+                  canTrade={agent.isOwner && agent.status !== "draft"}
+                />
               </section>
             </div>
           }

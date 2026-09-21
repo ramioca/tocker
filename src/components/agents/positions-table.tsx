@@ -13,7 +13,7 @@ import { EmptyState } from "@/components/common/empty-state";
 import { PnlText } from "@/components/common/pnl-text";
 import { TokenIcon } from "@/components/common/token-icon";
 import { formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
-import { HeldFor } from "@/components/agents/held-for";
+import { SellPositionButton } from "@/components/agents/sell-position";
 import { cn } from "@/lib/utils";
 import type { Position } from "@/server/types";
 
@@ -75,10 +75,16 @@ function ScoreDrift({ position }: { position: Position }) {
 export function PositionsTable({
   positions,
   cashUsd,
+  agentId,
+  canTrade = false,
 }: {
   positions: Position[];
   cashUsd: number | null;
+  /** With `canTrade`, each row gets a Sell control that trades on this agent's book. */
+  agentId?: string;
+  canTrade?: boolean;
 }) {
+  const sellable = canTrade && agentId !== undefined;
   if (positions.length === 0) {
     return (
       <EmptyState
@@ -100,15 +106,14 @@ export function PositionsTable({
           <TableRow>
             <TableHead>Token</TableHead>
             <TableHead className="text-right">Amount</TableHead>
-            <TableHead className="hidden text-right md:table-cell">Held</TableHead>
             <TableHead className="text-right">Avg cost</TableHead>
             <TableHead className="text-right">Mark</TableHead>
-            <TableHead className="hidden text-right lg:table-cell">Peak</TableHead>
             <TableHead className="hidden text-right lg:table-cell" title="Score at entry → latest score">
               Score
             </TableHead>
             <TableHead className="text-right">Value</TableHead>
             <TableHead className="text-right">Unrealised</TableHead>
+            {sellable ? <TableHead className="w-0" /> : null}
             <TableHead className="text-right" title="Percentage points to the stop loss / to the take-profit">
               Stop / TP
             </TableHead>
@@ -128,19 +133,10 @@ export function PositionsTable({
               <TableCell className="tnum text-right text-muted-foreground">
                 {formatTokenAmount(position.amountToken)}
               </TableCell>
-              <TableCell className="hidden text-right md:table-cell">
-                <HeldFor openedAt={position.openedAt} />
-              </TableCell>
               <TableCell className="tnum text-right text-muted-foreground">
                 {formatPriceUsd(position.avgCostUsd)}
               </TableCell>
               <TableCell className="tnum text-right">{formatPriceUsd(position.markPriceUsd)}</TableCell>
-              <TableCell
-                className="tnum hidden text-right text-muted-foreground lg:table-cell"
-                title="Highest mark since entry — the trailing stop's reference"
-              >
-                {formatUsd(position.peakPriceUsd)}
-              </TableCell>
               <TableCell className="hidden text-right lg:table-cell">
                 <ScoreDrift position={position} />
               </TableCell>
@@ -154,6 +150,11 @@ export function PositionsTable({
                   size="xs"
                 />
               </TableCell>
+              {sellable ? (
+                <TableCell className="text-right">
+                  <SellPositionButton agentId={agentId} position={position} />
+                </TableCell>
+              ) : null}
               <TableCell className="text-right">
                 <ExitDistance position={position} />
               </TableCell>
@@ -163,13 +164,12 @@ export function PositionsTable({
             <TableRow className="bg-muted/20">
               <TableCell className="font-medium text-muted-foreground">Cash (USDC)</TableCell>
               <TableCell />
-              <TableCell className="hidden md:table-cell" />
               <TableCell />
               <TableCell />
-              <TableCell className="hidden lg:table-cell" />
               <TableCell className="hidden lg:table-cell" />
               <TableCell className="tnum text-right font-medium">{formatUsd(cashUsd)}</TableCell>
               <TableCell />
+              {sellable ? <TableCell /> : null}
               <TableCell />
             </TableRow>
           ) : null}
