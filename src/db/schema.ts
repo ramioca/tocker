@@ -344,6 +344,15 @@ export const equitySnapshots = pgTable(
     equityUsd: numeric("equity_usd", { precision: 18, scale: 6 }).notNull(),
     cashUsd: numeric("cash_usd", { precision: 18, scale: 6 }).notNull(),
     at: timestamp("at", { withTimezone: true }).defaultNow().notNull(),
+    /**
+     * W7: the agent's mode when the point was taken. A paper book starts at
+     * `paperStartingUsd` (10,000 by default) and a live book at whatever was deposited,
+     * so a series that mixes the two reads as a −99.9% crash the moment an agent goes
+     * live. Writers stamp the current mode; readers (equity curve, leaderboard windows,
+     * home) only use points whose mode matches the agent's current mode. Null on rows
+     * written before this column existed — treated as the agent's current mode.
+     */
+    mode: agentModeEnum("mode"),
   },
   (t) => [index("equity_snapshots_agent_idx").on(t.agentId, t.at)],
 );

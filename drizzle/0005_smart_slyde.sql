@@ -1,0 +1,1 @@
+ALTER TABLE "equity_snapshots" ADD COLUMN "mode" "agent_mode";

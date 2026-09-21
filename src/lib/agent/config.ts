@@ -93,7 +93,9 @@ export type AgentConfigInput = z.input<typeof agentConfigSchema>;
 export const DEFAULT_AGENT_CONFIG: AgentConfigWithSizing = {
   strategyPrompt:
     "You hunt fresh Solana launches. Each tick, pull the new-launch and trending feeds, score every candidate, and buy the best one that clears your score floor and still has room to run. Prefer tokens under $2M market cap with real holder growth over tokens that already went vertical. Cut anything that loses its liquidity or stalls for two ticks.",
-  dataSources: ["sentimentalpha", "cmc-quotes", "token-intel-sol"],
+  // W7: only sources whose upstream answered a real 402 on 2026-09-21. token-intel-sol
+  // (503, suspended) and sentimentalpha (malformed EIP-712 domain) are not defaults.
+  dataSources: ["x-search", "cmc-quotes", "deepnets-token-safety"],
   chains: ["solana"],
   universe: {
     discovery: ["new_launches", "trending", "top_organic"],

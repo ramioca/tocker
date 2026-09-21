@@ -15,6 +15,14 @@ export interface TradeRequest {
   decimals: number;
   /** USD notional. Buys spend this much USDC; sells liquidate this much of the position. */
   amountUsd: number;
+  /**
+   * Sells only (W7): the exact token amount to send, in whole units, when the caller
+   * knows it — a full exit passes the held balance so the venue never has to derive a
+   * token amount from a price that has already moved. Executors MUST prefer this over
+   * `amountUsd / price` when it is present, and clamp to what the wallet actually holds.
+   * Ignored for buys.
+   */
+  amountToken?: number;
   slippageBps: number;
 }
 

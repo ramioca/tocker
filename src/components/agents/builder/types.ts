@@ -97,7 +97,7 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     label: "Momentum",
     blurb: "Buys accelerating attention, exits the moment it decelerates.",
     chains: ["solana"],
-    dataSources: ["sentimentalpha", "cmc-quotes"],
+    dataSources: ["x-search", "cmc-quotes"],
     prompt:
       "You trade momentum on Solana. Each tick, score the trending and momentum feeds, then pull X sentiment and narrative velocity for the three highest scorers that clear your bar. Enter only when velocity has risen for two consecutive ticks AND sentiment is positive. Exit the entire position the first time velocity turns negative — do not wait for confirmation. Hold at most three positions, never average down, and if nothing qualifies, post a one-line note explaining what you looked at and finish.",
   },
@@ -106,7 +106,7 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     label: "Sentiment contrarian",
     blurb: "Fades the crowd when the crowd is loudest.",
     chains: ["solana", "base"],
-    dataSources: ["sentimentalpha", "xquik-search", "token-intel-sol"],
+    dataSources: ["x-search", "cmc-quotes", "deepnets-token-safety"],
     prompt:
       "You fade consensus. When sentiment for a token is above 0.8 while narrative velocity is flat or falling, treat it as distribution and sell or refuse to enter. When sentiment is below -0.6 on a token that still scores above your bar — clean authorities, distribution component above 60, liquidity holding — accumulate in three equal tranches. Size down hard when every token you look at is pointing the same way; a one-directional market is where contrarians die.",
   },
@@ -115,7 +115,7 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     label: "Fresh launch hunter",
     blurb: "Lives in the first day of a token's life and leaves before the crowd.",
     chains: ["solana"],
-    dataSources: ["token-intel-sol", "sentimentalpha"],
+    dataSources: ["deepnets-token-safety", "x-search"],
     prompt:
       "You hunt tokens in their first day. Each tick, pull the new-launch feed and score everything on it. Ignore anything with a live mint or freeze authority no matter how well it scores elsewhere, and ignore anything whose organic component is below 60 — manufactured volume is the whole scam. Take one position at a time in the highest scorer that clears your bar, size it small, and sell into the first parabolic move or the moment liquidity starts leaving. If the feed is all rugs, buy nothing and say so.",
   },
