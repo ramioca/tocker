@@ -42,7 +42,7 @@ export async function fetchSolanaPrices(mints: string[]): Promise<Map<string, nu
     for (const [mint, entry] of Object.entries(body as Record<string, unknown>)) {
       if (!entry || typeof entry !== "object") continue;
       const price = (entry as Record<string, unknown>).usdPrice;
-      if (typeof price === "number" && Number.isFinite(price)) out.set(mint, price);
+      if (typeof price === "number" && Number.isFinite(price) && price > 0) out.set(mint, price);
     }
   } catch {
     // fall through to stored / constant prices
@@ -73,15 +73,7 @@ export async function fetchDexScreenerPrices(chain: Chain, addresses: string[]):
     });
     if (!res.ok) return out;
     const body: unknown = await res.json();
-    for (const row of Array.isArray(body) ? body : []) {
-      if (!row || typeof row !== "object") continue;
-      const r = row as Record<string, unknown>;
-      const base = r.baseToken;
-      if (!base || typeof base !== "object") continue;
-      const addr = (base as Record<string, unknown>).address;
-      const price = Number(r.priceUsd);
-      if (typeof addr !== "string" || !Number.isFinite(price)) continue;
-      // DexScreener returns one row per pair; keep the first (highest-liquidity) hit.
+    for (const [addr, price] of pickDexScreenerPrices(Array.isArray(body) ? body : [])) {
       // Exact first (base58 is case-sensitive), then case-insensitive for EVM addresses.
       const match = erc20.find((a) => a === addr) ?? erc20.find((a) => a.toLowerCase() === addr.toLowerCase());
       if (match && !out.has(match)) out.set(match, price);
@@ -90,6 +82,35 @@ export async function fetchDexScreenerPrices(chain: Chain, addresses: string[]):
     // fall through
   }
   return out;
+}
+
+/** A pool DexScreener may price a token from. Thinner than this and the price is noise. */
+export const MIN_POOL_LIQUIDITY_USD = 1_000;
+
+/**
+ * Pure: one price per token from DexScreener's pair rows — the deepest pool's, and only
+ * a pool with real liquidity. DexScreener keeps a token's dead pump.fun bonding curve
+ * listed after it migrates, with `liquidity` missing and a price frozen where the curve
+ * stopped: CLIP read $0.0000485 there against $0.00123 on Jupiter (2026-09-21), and that
+ * number marked a live position at −89% and drove the equity chart into a 41% drawdown
+ * that never happened. A row with no liquidity figure is that dead curve.
+ */
+export function pickDexScreenerPrices(rows: unknown[]): Map<string, number> {
+  const best = new Map<string, { price: number; liquidity: number }>();
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const base = r.baseToken;
+    if (!base || typeof base !== "object") continue;
+    const addr = (base as Record<string, unknown>).address;
+    const price = Number(r.priceUsd);
+    const liquidity = Number((r.liquidity as Record<string, unknown> | undefined)?.usd);
+    if (typeof addr !== "string" || !Number.isFinite(price) || price <= 0) continue;
+    if (!Number.isFinite(liquidity) || liquidity < MIN_POOL_LIQUIDITY_USD) continue;
+    const current = best.get(addr);
+    if (!current || liquidity > current.liquidity) best.set(addr, { price, liquidity });
+  }
+  return new Map([...best].map(([addr, v]) => [addr, v.price]));
 }
 
 interface TokenKey {
