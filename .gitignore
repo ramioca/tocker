@@ -45,6 +45,8 @@ next-env.d.ts
 *.local
 .agents/skills/*/node_modules
 .pglite/
+.pglite-*/
+.pglite-*.lock
 .worktrees/
 .gstack/
 .pglite.lock
