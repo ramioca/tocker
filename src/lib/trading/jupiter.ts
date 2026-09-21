@@ -166,6 +166,8 @@ export function manualSlippageFor(orderSlippageBps: number | undefined, ceilingB
  * new token (probed live 2026-09-21) while a funded wallet was quoted at once.
  */
 const PRE_QUOTE_SOL_LAMPORTS = 6_000_000;
+/** The loosest tolerance Tocker signs when Jupiter refuses the operator's ceiling: 15%. */
+const MAX_ACCEPTED_SLIPPAGE_BPS = 1_500;
 /** Rent on a new token account, for the error message only (the real constant lives in gas.ts). */
 const ATA_RENT_HINT_LAMPORTS = 2_039_280;
 
@@ -412,6 +414,9 @@ export class JupiterExecutor implements TradeExecutor {
     // Jupiter chose looser than the operator allows: ask again with the ceiling as the
     // instruction. The second order is built so the fill cannot be worse than that.
     const manual = manualSlippageFor(order.slippageBps, req.slippageBps);
+    // Jupiter's own pick, taken when it will not build the order at the operator's
+    // number. Null when the order we sign honours the ceiling.
+    let acceptedJupiterBps: number | null = null;
     if (manual !== null && (order.errorCode === null || order.errorCode === undefined)) {
       params.slippageBps = String(manual);
       const ultraOrder = order;
@@ -419,18 +424,29 @@ export class JupiterExecutor implements TradeExecutor {
         order = await fetchOrder(params);
       } catch (err) {
         // Reproduced live 2026-09-21 with the agent's own wallet as taker: the same
-        // token quotes in ultra mode (Jupiter fronting 0.0015 SOL of rent for the new
-        // token account) and answers 400 "Failed to get quotes" in manual mode, where the
-        // wallet must pay that rent itself and held 0.0037 SOL. Say so, with the numbers.
-        if (err instanceof JupiterError && err.httpStatus === 400 && (ultraOrder.rentFeeLamports ?? 0) > 0) {
-          throw new JupiterError(
-            `${err.message} Jupiter priced ${req.symbol} at ${ultraOrder.slippageBps} bps, above this agent's ${req.slippageBps} bps ceiling, so Tocker asked for a manual-slippage order — and that route makes the wallet pay the ${(
-              (ultraOrder.rentFeeLamports ?? 0) / 1e9
-            ).toFixed(4)} SOL rent on a first-time token account, which Jupiter refuses to build when the wallet's SOL is thin. Tocker tops the wallet up before quoting; if this persists, send 0.01 SOL to ${this.wallet.address} or raise the ceiling to ${ultraOrder.slippageBps} bps.`,
-            { httpStatus: 400 },
-          );
+        // token quotes in ultra mode and answers 400 "Failed to get quotes" in manual
+        // mode (first-time token account, thin SOL, a route only ultra has — Jupiter
+        // does not say). The operator's call that day: take the fill at Jupiter's own
+        // tolerance rather than miss it, within a hard cap. Ultra's number is its live
+        // estimate of what the route needs, recorded on the receipt as the tolerance used.
+        if (err instanceof JupiterError && err.httpStatus === 400) {
+          const jupiterBps = ultraOrder.slippageBps ?? null;
+          if (jupiterBps !== null && jupiterBps <= MAX_ACCEPTED_SLIPPAGE_BPS) {
+            delete params.slippageBps;
+            order = ultraOrder;
+            acceptedJupiterBps = jupiterBps;
+            console.warn(
+              `[jupiter] ${req.symbol}: manual ${manual} bps refused (400); taking Jupiter's ${jupiterBps} bps for ${this.wallet.address}`,
+            );
+          } else {
+            throw new JupiterError(
+              `${err.message} Jupiter priced ${req.symbol} at ${jupiterBps ?? "?"} bps and refused to build an order at this agent's ${req.slippageBps} bps ceiling; ${jupiterBps ?? "?"} bps is past the ${MAX_ACCEPTED_SLIPPAGE_BPS} bps Tocker will accept on its own, so nothing was signed.`,
+              { httpStatus: 400 },
+            );
+          }
+        } else {
+          throw err;
         }
-        throw err;
       }
     }
 
@@ -468,9 +484,10 @@ export class JupiterExecutor implements TradeExecutor {
       );
     }
 
-    // Belt and braces: even asked for the ceiling, an order looser than it is not signed.
+    // Belt and braces: even asked for the ceiling, an order looser than it is not signed —
+    // unless Jupiter refused the ceiling outright and its own number was accepted above.
     const applied = order.slippageBps;
-    if (applied !== undefined && req.slippageBps > 0 && applied > req.slippageBps) {
+    if (applied !== undefined && req.slippageBps > 0 && applied > req.slippageBps && acceptedJupiterBps === null) {
       throw new JupiterError(
         `Jupiter would only fill ${req.symbol} with ${applied} bps of slippage and this agent's ceiling is ${req.slippageBps} bps, so nothing was signed. ${req.symbol} is thinner than the agent's risk settings allow — raise Slippage tolerance in Risk, or leave this one alone.`,
       );
