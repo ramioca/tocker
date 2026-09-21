@@ -20,7 +20,7 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb, platformFees, x402Payments } from "@/db";
 import { toNum } from "@/lib/money";
 import { platformFeeUsd, settleMinUsd } from "@/lib/platform/fee";
-import { listPlatformWallets, readPlatformBalances } from "@/lib/platform/wallets";
+import { listPlatformWallets, platformWalletPurpose, readPlatformBalance } from "@/lib/platform/wallets";
 import { isMockMode } from "@/lib/x402/paidFetch";
 import { chainForNetwork } from "@/lib/x402/types";
 import type { Chain } from "@/server/types";
@@ -31,6 +31,20 @@ export interface PlatformWalletView {
   address: string;
   /** USDC held, or null when Privy could not be read (the card says so rather than lying). */
   usdcBalance: number | null;
+  /**
+   * ETH on Base / SOL on Solana, or null when Privy could not be read.
+   *
+   * x402 itself needs none of it — every Solana 402 probed for W7 carries an
+   * `extra.feePayer`, so the facilitator pays the network fee. It matters because the
+   * Solana wallet is also the one that drips gas to agent wallets and opens their token
+   * accounts (`src/lib/wallets/gas.ts`), and an operator who only ever sees a USDC
+   * column has no way to notice it has run dry.
+   */
+  nativeBalance: number | null;
+  /** What this wallet pays for, in one sentence. */
+  purpose: string;
+  /** Why the balance could not be read, when it could not. */
+  balanceError: string | null;
   /** Real (non-simulated) x402 spend on this chain since the 1st of the month, UTC. */
   dataSpendThisMonthUsd: number;
   /** Fees charged on this chain and not yet swept in. */
@@ -107,15 +121,20 @@ export async function getPlatformOverview(now: Date = new Date()): Promise<Platf
   const since = startOfUtcMonth(now);
   const [rows, spend, fees] = await Promise.all([listPlatformWallets(), dataSpendByChain(since), feesByChain()]);
 
-  const balances = await Promise.all(rows.map((row) => readPlatformBalances(row)));
+  const balances = await Promise.all(rows.map((row) => readPlatformBalance(row)));
 
   const wallets: PlatformWalletView[] = rows.map((row, i) => {
-    const usdc = balances[i]?.balances.filter((b) => b.asset.toLowerCase() === "usdc") ?? [];
+    const reading = balances[i];
     return {
       chain: row.chain,
       walletId: row.walletId,
       address: row.address,
-      usdcBalance: usdc.length === 0 ? null : usdc.reduce((sum, b) => sum + b.amount, 0),
+      // `null` here means Privy could not be read, never "the wallet is empty" — see
+      // `readPlatformBalance`, which stopped conflating the two in W7.
+      usdcBalance: reading?.usdc ?? null,
+      nativeBalance: reading?.native ?? null,
+      purpose: platformWalletPurpose(row.chain),
+      balanceError: reading?.error ?? null,
       dataSpendThisMonthUsd: spend.get(row.chain) ?? 0,
       feesAccruedUsd: fees.get(`${row.chain}:accrued`) ?? 0,
       feesCollectedUsd: fees.get(`${row.chain}:settled`) ?? 0,

@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { FIRST_TRADE_PRESET, evaluateFirstTradeRisk, withFirstTradePreset } from "./live-readiness";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FIRST_TRADE_PRESET, evaluateFirstTradeRisk, simulateFirstTrade, withFirstTradePreset } from "./live-readiness";
+import { dataChainsFor } from "@/lib/data-sources/registry";
+import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import type { AgentConfig } from "@/db/schema";
 
 function config(overrides: Partial<AgentConfig["risk"]> = {}, chains: AgentConfig["chains"] = ["base"]): AgentConfig {
@@ -97,8 +99,17 @@ describe("withFirstTradePreset", () => {
     expect(after.chains).toEqual(["solana"]);
     expect(after.risk.maxTradeUsd).toBe(FIRST_TRADE_PRESET.maxTradeUsd);
     expect(after.risk.maxDailyTrades).toBe(FIRST_TRADE_PRESET.maxDailyTrades);
-    expect(after.risk.maxPositionPct).toBe(FIRST_TRADE_PRESET.maxPositionPct);
     expect(evaluateFirstTradeRisk(after, FIRST_TRADE_PRESET.maxTradeUsd).ok).toBe(true);
+  });
+
+  /**
+   * The preset used to clamp this to 10, which made every buy fail at the size it
+   * recommends: $2 of a $10 wallet is 20%. It is the operator's call and it is not a
+   * first-trade question; `simulateFirstTrade` is what catches an unworkable pair now.
+   */
+  it("leaves position sizing to the operator", () => {
+    expect(withFirstTradePreset(config({ maxPositionPct: 80 })).risk.maxPositionPct).toBe(80);
+    expect(withFirstTradePreset(config({ maxPositionPct: 25 })).risk.maxPositionPct).toBe(25);
   });
 
   it("never loosens a config that is already tighter than the preset", () => {
@@ -120,5 +131,79 @@ describe("withFirstTradePreset", () => {
     expect(after.strategyPrompt).toBe(before.strategyPrompt);
     expect(after.universe).toEqual(before.universe);
     expect(after.llm).toEqual(before.llm);
+  });
+});
+
+/**
+ * The check that replaced the `maxPositionPct` clamp. Every case here is a config the
+ * old checklist called green while `place_trade` was going to refuse it.
+ */
+describe("simulateFirstTrade", () => {
+  beforeEach(() => {
+    // The fee is capitalised into the buy, so it decides whether a ticket the exact size
+    // of the balance clears. Pin it rather than inheriting whatever the environment says.
+    vi.stubEnv("PLATFORM_FEE_USD", "0.10");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  /** The operator's exact scenario: $10 deposited, the $2 preset, the default 25% cap. */
+  it("passes the $2 preset against the $10 the wizard tells you to deposit", async () => {
+    const preset = withFirstTradePreset(config({ maxTradeUsd: 100, maxPositionPct: 25 }, ["solana"]));
+    expect(await simulateFirstTrade(preset, 10)).toBeNull();
+  });
+
+  /** The bug this exists to catch: 2/10 = 20%, above a 10% cap. Rejected, silently, forever. */
+  it("catches a position cap the funded balance cannot satisfy, in the guard's own words", async () => {
+    const refusal = await simulateFirstTrade(config({ maxTradeUsd: 2, maxPositionPct: 10 }, ["solana"]), 10);
+    expect(refusal).toMatch(/20\.0% of equity, above maxPositionPct 10%/);
+    // And it says what it simulated, so the number is arguable rather than mysterious.
+    expect(refusal).toMatch(/\$2\.00 buy against the \$10\.00/);
+  });
+
+  it("is happy with the same cap once the wallet is big enough for it", async () => {
+    expect(await simulateFirstTrade(config({ maxTradeUsd: 2, maxPositionPct: 10 }, ["solana"]), 25)).toBeNull();
+  });
+
+  /** The platform fee is capitalised into the buy, so cash has to cover both. */
+  it("catches a ticket that leaves nothing for the platform fee", async () => {
+    const refusal = await simulateFirstTrade(config({ maxTradeUsd: 2, maxPositionPct: 100 }, ["solana"]), 2);
+    expect(refusal).toMatch(/Insufficient cash/);
+    expect(refusal).toMatch(/Tocker fee/);
+  });
+
+  it("names the chain the agent actually trades, not a default", async () => {
+    // A guard refusal for a chain the agent has enabled can never be a chain mismatch.
+    expect(await simulateFirstTrade(config({ maxPositionPct: 100 }, ["base"]), 10)).toBeNull();
+    expect(await simulateFirstTrade(config({ maxPositionPct: 100 }, ["solana"]), 10)).toBeNull();
+  });
+});
+
+/**
+ * Which platform wallets a source list spends from. The readiness checklist and the
+ * Platform card both hang off this, and it is the thing that was hard-coded to Base.
+ */
+describe("dataChainsFor", () => {
+  it("returns Solana for a Solana-priced source", () => {
+    expect(dataChainsFor(["deepnets-token-safety"])).toEqual(["solana"]);
+    expect(dataChainsFor(["solenrich-launches"])).toEqual(["solana"]);
+  });
+
+  it("returns Base for a Base-priced source", () => {
+    expect(dataChainsFor(["x-search"])).toEqual(["base"]);
+    expect(dataChainsFor(["cmc-quotes", "nansen-smart-money"])).toEqual(["base"]);
+  });
+
+  /** The default list: this is the pair the operator has to fund, and it is not just Base. */
+  it("returns both for the default source list", () => {
+    expect(dataChainsFor(DEFAULT_AGENT_CONFIG.dataSources)).toEqual(["base", "solana"]);
+  });
+
+  it("drops ids that are not in the registry any more", () => {
+    expect(dataChainsFor(["token-intel-sol", "rugmunch", "xquik-search"])).toEqual([]);
+    expect(dataChainsFor(["x-search", "token-intel-sol"])).toEqual(["base"]);
+  });
+
+  it("is empty for an agent that buys no data", () => {
+    expect(dataChainsFor([])).toEqual([]);
   });
 });

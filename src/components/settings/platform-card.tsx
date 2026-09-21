@@ -2,6 +2,10 @@ import { Address } from "@/components/common/address";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { formatUsd } from "@/components/common/format";
 import { getPlatformOverview } from "@/server/queries/platform";
+import { DATA_SOURCES } from "@/lib/data-sources/registry";
+import { chainForNetwork } from "@/lib/x402/types";
+import { MIN_PLATFORM_SOL } from "@/lib/wallets/gas";
+import type { Chain } from "@/server/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -11,15 +15,26 @@ import { cn } from "@/lib/utils";
  * number on it is a fact from the database or from Privy and none of it benefits from
  * a client round trip.
  *
- * It answers, in one place: which wallets the app owns, what they hold, what data cost
- * this month, and how much of the per-fill fee has actually landed versus is still
- * sitting in agents' wallets waiting for the next sweep.
+ * It answers, in one place: which wallets the app owns, what they hold, **which sources
+ * each one pays for**, what data cost this month, and how much of the per-fill fee has
+ * actually landed versus is still sitting in agents' wallets waiting for the next sweep.
  *
- * **Who can see it.** Any signed-in user. Tocker is single-operator today — one person
- * owns this deployment, its Privy app and its authorization key — so there is no role to
- * check yet and a half-enforced one would be worse than none. This becomes a real
- * permission check the day a second operator exists.
+ * That third question is new, and it is the one the card used to get wrong: it labelled
+ * Base "Data + fees" and Solana "Fees", which read as "Solana needs no USDC". It does —
+ * `deepnets-token-safety` is in the default source list and prices on Solana. The chains
+ * are derived from the registry here rather than written into the copy, so a source
+ * moving network changes this card without anyone remembering to.
+ *
+ * **Who can see it.** Admins only, since W6: it lives inside `/settings/admin`, behind
+ * `requireAdmin()`. The card itself does not re-check — a component that 404s on its own
+ * would be a second, weaker gate next to a real one — so it must not be mounted anywhere
+ * that is not already admin-gated.
  */
+
+/** Registry sources priced on a chain, for "what does this wallet actually pay for". */
+function sourcesPricedOn(chain: Chain): string[] {
+  return DATA_SOURCES.filter((s) => chainForNetwork(s.network) === chain && s.priceUsd !== null).map((s) => s.name);
+}
 
 function Stat({
   label,
@@ -63,7 +78,9 @@ export async function PlatformCard() {
     <div className="space-y-5">
       <p className="max-w-prose text-sm leading-6 text-muted-foreground">
         These wallets are the platform&apos;s, not any agent&apos;s. They pay for every x402 data call your agents
-        make — an operator funds an agent to trade, and sentiment and safety data is on us — and they receive the{" "}
+        make — an operator funds an agent to trade, and sentiment and safety data is on us. Which wallet pays is
+        decided by the <em>resource&apos;s</em> network, not the agent&apos;s chain, so both need USDC: fund one and
+        every source priced on the other still 402s. They also receive the{" "}
         {feeOff ? (
           <span className="text-foreground">per-fill fee, which is currently switched off</span>
         ) : (
@@ -86,36 +103,91 @@ export async function PlatformCard() {
 
       {overview.wallets.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border/70 px-3 py-4 text-sm text-muted-foreground">
-          No platform wallet yet. One is created per chain the first time it is needed — a paid data call, a fee
-          settlement, or <span className="font-mono text-foreground">pnpm preflight</span>, which prints the address to
-          fund.
+          No platform wallet yet. Create both with the button below — one per chain, and both are needed: Base pays
+          every 402 priced on <span className="font-mono text-foreground">eip155:8453</span>, Solana pays every 402
+          priced on Solana. An agent cannot go live against a wallet that does not exist.
         </p>
       ) : (
         <ul className="space-y-3">
-          {overview.wallets.map((wallet) => (
-            <li key={wallet.chain} className="rounded-xl border border-border/70 bg-card/40 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <ChainBadge chain={wallet.chain} />
-                  <span className="text-sm font-medium">
-                    {wallet.chain === "base" ? "Data + fees" : "Fees"}
-                  </span>
+          {overview.wallets.map((wallet) => {
+            const pays = sourcesPricedOn(wallet.chain);
+            const nativeSymbol = wallet.chain === "base" ? "ETH" : "SOL";
+            // Only the Solana wallet spends native: it drips gas to agent wallets and
+            // opens their token accounts. x402 needs none — every Solana 402 probed for
+            // W7 carries an `extra.feePayer`, so the facilitator pays the network fee.
+            const nativeLow = wallet.chain === "solana" && wallet.nativeBalance !== null && wallet.nativeBalance < MIN_PLATFORM_SOL;
+            return (
+              <li key={wallet.chain} className="rounded-xl border border-border/70 bg-card/40 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <ChainBadge chain={wallet.chain} />
+                    <span className="text-sm font-medium">Data + fees</span>
+                  </div>
+                  <Address
+                    address={wallet.address}
+                    label={`platform ${wallet.chain} wallet address`}
+                    lead={6}
+                    tail={6}
+                  />
                 </div>
-                <Address address={wallet.address} label={`platform ${wallet.chain} wallet address`} lead={6} tail={6} />
-              </div>
 
-              <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
-                <Stat
-                  label="USDC"
-                  value={wallet.usdcBalance === null ? "unreadable" : formatUsd(wallet.usdcBalance)}
-                  muted={wallet.usdcBalance === null}
-                />
-                <Stat label={`Data · ${overview.monthLabel}`} value={formatUsd(wallet.dataSpendThisMonthUsd)} />
-                <Stat label="Fees accrued" value={formatUsd(wallet.feesAccruedUsd)} hint="not yet swept" />
-                <Stat label="Fees collected" value={formatUsd(wallet.feesCollectedUsd)} />
-              </dl>
-            </li>
-          ))}
+                <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-5">
+                  <Stat
+                    label="USDC"
+                    value={wallet.usdcBalance === null ? "unreadable" : formatUsd(wallet.usdcBalance)}
+                    muted={wallet.usdcBalance === null}
+                  />
+                  <Stat
+                    label={nativeSymbol}
+                    value={wallet.nativeBalance === null ? "unreadable" : wallet.nativeBalance.toFixed(4)}
+                    hint={wallet.chain === "solana" ? "gas + rent" : undefined}
+                    muted={wallet.nativeBalance === null || wallet.chain === "base"}
+                  />
+                  <Stat label={`Data · ${overview.monthLabel}`} value={formatUsd(wallet.dataSpendThisMonthUsd)} />
+                  <Stat label="Fees accrued" value={formatUsd(wallet.feesAccruedUsd)} hint="not yet swept" />
+                  <Stat label="Fees collected" value={formatUsd(wallet.feesCollectedUsd)} />
+                </dl>
+
+                <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                  {pays.length > 0 ? (
+                    <>
+                      Pays for <span className="text-foreground">{pays.join(", ")}</span> — every source priced on{" "}
+                      {wallet.chain} — and receives {wallet.chain} fee sweeps.
+                    </>
+                  ) : (
+                    <>Receives {wallet.chain} fee sweeps. No registered source prices on {wallet.chain} today.</>
+                  )}
+                  {wallet.chain === "solana" ? (
+                    <>
+                      {" "}
+                      It is also the wallet that drips gas to agent wallets and opens their USDC token accounts, which
+                      is the only reason it needs SOL — x402 itself does not, because every Solana 402 names a fee
+                      payer.
+                    </>
+                  ) : null}
+                </p>
+
+                {wallet.balanceError ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Balances could not be read: {wallet.balanceError}. That is not the same as empty — this card is not
+                    guessing either way.
+                  </p>
+                ) : null}
+                {wallet.usdcBalance === 0 ? (
+                  <p className="mt-2 text-xs text-destructive">
+                    Holds no USDC. Every source priced on {wallet.chain} would answer 402. Send USDC to the address
+                    above.
+                  </p>
+                ) : null}
+                {nativeLow ? (
+                  <p className="mt-2 text-xs text-destructive">
+                    Under {MIN_PLATFORM_SOL} SOL, so it cannot top up an agent wallet or open a token account for one.
+                    Send it ~0.05 SOL.
+                  </p>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       )}
 
