@@ -55,6 +55,77 @@
   background: linear-gradient(to top, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.3) 50%, transparent);
 }
 
+/* The shader canvas fades in over the static art once the renderer is ready,
+   so a capable desktop goes mark → shader rather than mark → black → shader. */
+.iso-hero[data-shader="loading"] .iso-shaderwrap {
+  opacity: 0;
+}
+.iso-hero[data-shader="on"] .iso-shaderwrap {
+  opacity: 1;
+  transition: opacity 0.6s ease-out;
+}
+
+/* Static hero art: the Ticker Knot as a lit object on the same near-black
+   ground. What phones, iOS before 26, Firefox and reduced-motion visitors see,
+   and what a capable desktop sees for the second before the shader is ready. */
+.iso-static {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: hidden;
+  background: radial-gradient(110% 70% at 50% 28%, #0d0b26 0%, #06051a 38%, #040407 75%);
+}
+.iso-static-glow {
+  position: absolute;
+  top: 8%;
+  left: 50%;
+  width: min(120vw, 900px);
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(113, 85, 217, 0.22), rgba(113, 85, 217, 0.06) 45%, transparent 70%);
+}
+.iso-static-mark {
+  position: relative;
+  width: min(64vw, 420px);
+  height: auto;
+  margin-top: clamp(96px, 16vh, 160px);
+  filter: drop-shadow(0 28px 48px rgba(113, 85, 217, 0.35));
+}
+@media (min-width: 640px) {
+  .iso-static {
+    align-items: center;
+  }
+  .iso-static-mark {
+    margin-top: -12vh;
+  }
+}
+/* On a phone the copy sits under the mark, not at the bottom of a 100dvh void.
+   (Two-class selectors: the base rules come later in this file.) */
+@media (max-width: 639px) {
+  .iso-hero {
+    min-height: 0;
+  }
+  .iso-hero .iso-static {
+    position: relative;
+    inset: auto;
+    height: clamp(280px, 40dvh, 400px);
+    margin-top: -8px;
+  }
+  .iso-hero .iso-static-mark {
+    margin-top: 0;
+    align-self: center;
+  }
+  .iso-hero .iso-copy {
+    margin-top: 0;
+    padding-top: 8px;
+    padding-bottom: 56px;
+  }
+}
+
 .iso-header {
   position: relative;
   z-index: 10;
@@ -163,9 +234,11 @@
   letter-spacing: -0.045em;
   color: #fff;
 }
-/* ≥640px the shader carries the headline; keep <h1> for a11y/SEO only. */
+/* ≥640px the shader carries the headline — but only once it is actually
+   drawing (`data-shader="on"`). Until then, and wherever the shader cannot
+   run, the DOM <h1> is the headline. */
 @media (min-width: 640px) {
-  .iso-h1 {
+  .iso-hero[data-shader="on"] .iso-h1 {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -249,8 +322,22 @@
   flex-direction: column;
   min-height: 100dvh;
   overflow: hidden;
-  background: #070708;
+  /* The same diagonal the shader draws, so the section reads the same
+     wherever the shader cannot run. */
+  background: linear-gradient(45deg, #1e1e1f 0%, #070708 100%);
   color: #fff;
+}
+.ctc[data-shader="loading"] .ctc-shaderwrap {
+  opacity: 0;
+}
+.ctc[data-shader="on"] .ctc-shaderwrap {
+  opacity: 1;
+  transition: opacity 0.6s ease-out;
+}
+@media (max-width: 639px) {
+  .ctc {
+    min-height: 70dvh;
+  }
 }
 .ctc-shaderwrap {
   position: absolute;
@@ -810,6 +897,94 @@ button.cta-primary {
 }
 
 /* ============================ reduced motion ============================ */
+/* The lagging custom cursor only exists for a mouse; never hide the system
+   cursor on touch or hybrid devices. */
+@media (hover: hover) and (pointer: fine) {
+  .liquid-main {
+    cursor: none;
+  }
+}
+
+/* Signals under 768px: a native horizontal snap row in normal flow instead of
+   the 460vh scroll-driven track (which showed ~1.3 cards per screen with dead
+   space around them). The two-class selectors outrank the Tailwind utilities. */
+@media (min-width: 768px) {
+  .sig-section {
+    height: 460vh;
+  }
+}
+@media (max-width: 767px) {
+  .sig-section .sig-stage {
+    position: static;
+    height: auto;
+    overflow: visible;
+    padding: 72px 0 56px;
+  }
+  .sig-section .sig-label {
+    position: static;
+    margin: 0 20px 20px;
+  }
+  .sig-section .sig-word {
+    display: none;
+  }
+  .sig-section .sig-rail {
+    position: static;
+    /* Tailwind v4's -translate-y-1/2 is `translate: var(--tw-translate-x) var(--tw-translate-y)`,
+       and the CSS compiler folds a `translate: none` next to `transform` into a
+       transform, so zero the variables Tailwind reads instead. */
+    --tw-translate-x: 0px;
+    --tw-translate-y: 0px;
+  }
+  .sig-section .sig-track {
+    display: flex;
+    align-items: stretch;
+    gap: 14px;
+    padding: 0 20px 12px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: 20px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    will-change: auto;
+    transform: none !important;
+  }
+  .sig-section .sig-track::-webkit-scrollbar {
+    display: none;
+  }
+  .sig-section .sig-intro {
+    width: 100%;
+    max-width: none;
+    flex: 0 0 100%;
+    padding: 0;
+    margin-bottom: 20px;
+  }
+  .sig-section .sig-intro p {
+    max-width: 34em;
+  }
+  .sig-section .sig-track .sig-card {
+    width: min(78vw, 320px);
+    aspect-ratio: auto;
+    min-height: 380px;
+    scroll-snap-align: start;
+  }
+  .sig-section .sig-rule {
+    position: static;
+    margin-top: 32px;
+  }
+}
+/* The intro is the row's first slide, the same width as a card. */
+@media (max-width: 767px) {
+  .sig-section .sig-intro {
+    flex: 0 0 min(78vw, 320px);
+    width: min(78vw, 320px);
+    margin-bottom: 0;
+    padding-right: 8px;
+    scroll-snap-align: start;
+    align-self: center;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .reveal {
     opacity: 1;

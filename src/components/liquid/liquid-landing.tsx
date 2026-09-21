@@ -1,23 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import dynamic from "next/dynamic";
 import { ReactLenis } from "lenis/react";
+import { CursorTrailContact } from "./cursor-trail-contact";
+import { IsotopeHero } from "./isotope-hero";
 import { WaitlistProvider } from "./waitlist";
 
 /**
  * Tocker waitlist landing. The hero and contact sections are Paper-Shaders /
  * WebGPU pieces (Isotope Hero + Cursor-Trail Contact); the middle two sections
  * (Signals gallery, Mechanics grid) are DOM. Two type registers, 99% monochrome,
- * Lenis smooth scroll, a lagging custom cursor, and a universal film grain. The
- * shader sections are client-only dynamic imports (WebGPU cannot SSR).
+ * Lenis smooth scroll, a lagging custom cursor, and a universal film grain.
+ *
+ * The hero and contact copy are server-rendered; only their `<Shader>` subtrees
+ * are client-only chunks, and those mount solely on devices that can draw them
+ * (see use-shader-gate.ts). Phones get the same page with static art.
  */
-
-const IsotopeHero = dynamic(() => import("./isotope-hero").then((m) => m.IsotopeHero), { ssr: false });
-const CursorTrailContact = dynamic(
-  () => import("./cursor-trail-contact").then((m) => m.CursorTrailContact),
-  { ssr: false },
-);
 
 const OFF = "#f4f4f1";
 
@@ -130,7 +128,7 @@ export function LiquidLanding() {
     <ReactLenis root options={{ lerp: 0.085, duration: 1.1 }}>
       <WaitlistProvider>
         <Cursor />
-        <main className="relative w-full bg-[#040407] text-[#f4f4f1]" style={{ cursor: "none" }}>
+        <main className="liquid-main relative w-full bg-[#040407] text-[#f4f4f1]">
           <IsotopeHero />
           <Signals />
           <Mechanics />
@@ -150,12 +148,20 @@ function Signals() {
 
   useEffect(() => {
     let raf = 0;
+    // Under 768px the gallery is a native horizontal snap row (see .sig-section
+    // in isotope.css); the scroll-driven transform must not touch it.
+    const narrow = window.matchMedia("(max-width: 767px)");
     const onScroll = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         const sec = outer.current;
         const tr = track.current;
         if (!sec || !tr) return;
+        if (narrow.matches) {
+          tr.style.transform = "";
+          if (word.current) word.current.style.transform = "";
+          return;
+        }
         const vh = window.innerHeight;
         const total = sec.offsetHeight - vh;
         const scrolled = Math.min(Math.max(-sec.getBoundingClientRect().top, 0), total);
@@ -176,21 +182,21 @@ function Signals() {
   }, []);
 
   return (
-    <section id="signals" ref={outer} className="relative w-full bg-[#050506]" style={{ height: "460vh" }}>
-      <div className="sticky top-0 h-svh w-full overflow-hidden">
-        <p className="absolute left-[clamp(20px,4vw,64px)] top-8 z-20 font-mono text-[11px] tracking-[0.16em] text-[rgba(244,244,241,0.45)] uppercase">
+    <section id="signals" ref={outer} className="sig-section relative w-full bg-[#050506]">
+      <div className="sig-stage sticky top-0 h-svh w-full overflow-hidden">
+        <p className="sig-label absolute left-[clamp(20px,4vw,64px)] top-8 z-20 font-mono text-[11px] tracking-[0.16em] text-[rgba(244,244,241,0.45)] uppercase">
           02 — Endpoints / 16,000+ live services in the x402 Bazaar
         </p>
         <div
           ref={word}
-          className="pointer-events-none absolute top-1/2 left-0 z-0 -translate-y-1/2 whitespace-nowrap font-semibold uppercase"
+          className="sig-word pointer-events-none absolute top-1/2 left-0 z-0 -translate-y-1/2 whitespace-nowrap font-semibold uppercase"
           style={{ fontSize: "26vw", lineHeight: 0.8, letterSpacing: "-0.04em", color: "rgba(244,244,241,0.07)" }}
         >
           Signals
         </div>
-        <div className="absolute top-1/2 left-0 z-10 -translate-y-1/2">
-          <div ref={track} className="flex items-center gap-7 pl-[clamp(20px,4vw,64px)] pr-[30vw] will-change-transform">
-            <div className="w-[26vw] max-w-[380px] shrink-0 pr-8">
+        <div className="sig-rail absolute top-1/2 left-0 z-10 -translate-y-1/2">
+          <div ref={track} className="sig-track flex items-center gap-7 pl-[clamp(20px,4vw,64px)] pr-[30vw] will-change-transform">
+            <div className="sig-intro w-[26vw] max-w-[380px] shrink-0 pr-8">
               <p className="font-mono text-[11px] leading-[1.6] tracking-[0.08em] text-[rgba(244,244,241,0.55)] uppercase">
                 Your agent discovers and pays any of 16,000+ live services in the open x402 Bazaar
                 — prices, signals, pre-trade checks, routing. Cents per call, settled on Base.
@@ -201,7 +207,7 @@ function Signals() {
             ))}
           </div>
         </div>
-        <div className="absolute bottom-6 left-0 h-px w-full bg-[rgba(244,244,241,0.08)]" />
+        <div className="sig-rule absolute bottom-6 left-0 h-px w-full bg-[rgba(244,244,241,0.08)]" />
       </div>
     </section>
   );

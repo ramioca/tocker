@@ -1,44 +1,33 @@
 "use client";
 
 import { type CSSProperties } from "react";
-import {
-  ChromaFlow,
-  CursorRipples,
-  DotGrid,
-  FilmGrain,
-  LinearGradient,
-  Shader,
-} from "shaders/react";
+import dynamic from "next/dynamic";
+import { useShaderGate } from "./use-shader-gate";
 import { useWaitlist } from "./waitlist";
 import "./isotope.css";
 
 /**
- * Cursor-Trail Contact (Paper Shaders / WebGPU). The background IS the piece: a
- * near-black gradient until the cursor moves, then a twinkling halftone dot trail
- * (DotGrid masks a white LinearGradient, its dots sized by ChromaFlow's cursor
- * field) with chromatic ripple fringes and film grain. Both invisible driver
- * components must stay in the tree; the id linkages are load-bearing.
+ * Cursor-Trail Contact. The invite and footer are server-rendered DOM; the
+ * Paper Shaders background (cursor-trail-shader.tsx) mounts only on a device
+ * that can draw it, and the section keeps the same near-black diagonal
+ * gradient as a plain CSS background everywhere else, so a phone never sees a
+ * flat black half-screen with a hint about a cursor it does not have.
  */
+const CursorTrailShader = dynamic(
+  () => import("./cursor-trail-shader").then((m) => m.CursorTrailShader),
+  { ssr: false },
+);
+
 export function CursorTrailContact() {
+  const shader = useShaderGate();
   const { open: openWaitlist } = useWaitlist();
+  const mountShader = shader.state === "loading" || shader.state === "on";
+
   return (
-    <section id="contact" className="ctc">
-      <div className="ctc-shaderwrap" aria-hidden>
-        <Shader style={{ width: "100%", height: "100%", display: "block" }}>
-          <DotGrid
-            id="trailDots"
-            density={40}
-            dotSize={{ type: "map", source: "trailFlow", channel: "alpha", inputMax: 1, inputMin: 0, outputMax: 1, outputMin: 0 }}
-            twinkle={0.9}
-            visible={false}
-          />
-          <ChromaFlow id="trailFlow" intensity={1.4} radius={2.9} visible={false} />
-          <LinearGradient colorA="#1e1e1f" colorB="#070708" colorSpace="hsl" end={{ x: 1, y: 0 }} start={{ x: 0, y: 1 }} />
-          <LinearGradient colorA="#000000" colorB="#ffffff" colorSpace="hsl" end={{ x: 1, y: 0 }} maskSource="trailDots" start={{ x: 0, y: 1 }} />
-          <CursorRipples />
-          <FilmGrain strength={0.1} />
-        </Shader>
-      </div>
+    <section id="contact" className="ctc" data-shader={shader.state}>
+      {mountShader ? (
+        <CursorTrailShader onReady={shader.ready} onUnavailable={shader.unavailable} />
+      ) : null}
 
       <div className="ctc-invite">
         <h2 className="reveal ctc-kicker" style={{ "--reveal-delay": "0.1s" } as CSSProperties}>
@@ -56,7 +45,7 @@ export function CursorTrailContact() {
           <a href="#" data-cursor="magnetic">Docs</a>
           <a href="#" data-cursor="magnetic">GitHub</a>
         </div>
-        <p className="ctc-hint">( move your cursor )</p>
+        {shader.state === "on" ? <p className="ctc-hint">( move your cursor )</p> : null}
       </footer>
     </section>
   );
