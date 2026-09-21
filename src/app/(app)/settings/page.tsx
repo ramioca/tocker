@@ -12,7 +12,7 @@ import { DangerZone } from "@/components/settings/danger-zone";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { isAdminEmail } from "@/lib/admin";
 
-export const metadata: Metadata = { title: "Settings · Tocker" };
+export const metadata: Metadata = { title: "Settings" }; // the root layout appends " · Tocker"
 
 export default async function SettingsPage() {
   const session = await withMock(getSession, mockSession);

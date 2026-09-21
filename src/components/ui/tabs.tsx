@@ -23,7 +23,12 @@ function Tabs({
 }
 
 const tabsListVariants = cva(
-  "group/tabs-list inline-flex w-fit items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-8 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
+  // `max-w-full overflow-x-auto` is what keeps a five-tab strip from widening the
+  // document at 390px. Without it the list is `w-fit` and wider than the viewport, so
+  // the *page* scrolls sideways — every other surface drifts with it and the strip
+  // still cannot reach its last tab. `overscroll-x-contain` stops that scroll from
+  // chaining out to the page once the strip hits its end.
+  "group/tabs-list inline-flex w-fit max-w-full items-center justify-center overflow-x-auto overscroll-x-contain rounded-lg p-[3px] text-muted-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden group-data-horizontal/tabs:h-8 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col group-data-vertical/tabs:overflow-x-visible data-[variant=line]:rounded-none",
   {
     variants: {
       variant: {

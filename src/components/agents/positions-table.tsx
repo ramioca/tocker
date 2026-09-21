@@ -11,7 +11,7 @@ import { ChainBadge } from "@/components/common/chain-badge";
 import { EmptyState } from "@/components/common/empty-state";
 import { PnlText } from "@/components/common/pnl-text";
 import { TokenIcon } from "@/components/common/token-icon";
-import { formatTokenAmount, formatUsd } from "@/components/common/format";
+import { formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { HeldFor } from "@/components/agents/held-for";
 import { cn } from "@/lib/utils";
 import type { Position } from "@/server/types";
@@ -130,9 +130,9 @@ export function PositionsTable({
                 <HeldFor openedAt={position.openedAt} />
               </TableCell>
               <TableCell className="tnum text-right text-muted-foreground">
-                {formatUsd(position.avgCostUsd)}
+                {formatPriceUsd(position.avgCostUsd)}
               </TableCell>
-              <TableCell className="tnum text-right">{formatUsd(position.markPriceUsd)}</TableCell>
+              <TableCell className="tnum text-right">{formatPriceUsd(position.markPriceUsd)}</TableCell>
               <TableCell
                 className="tnum hidden text-right text-muted-foreground lg:table-cell"
                 title="Highest mark since entry — the trailing stop's reference"

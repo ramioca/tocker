@@ -12,12 +12,52 @@ const compactFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
+/**
+ * Sub-cent digits, never exponential.
+ *
+ * `toPrecision(2)` on 0.00000045 returns the string `"4.5e-7"`, so the feed, the
+ * positions table and the receipt all rendered memecoin prices as `$4.5e-7` — which is
+ * not a price anyone reads, and which sorts and copies wrong. Three significant digits
+ * written out is what a token page shows and what the exit messages say
+ * (`priceText` in src/lib/trading/exits.ts), so this matches it.
+ *
+ * Capped at 18 decimals: that is the most a token can have, and past it the value is
+ * noise from a float anyway.
+ */
+function subCentText(value: number): string {
+  const abs = Math.abs(value);
+  const digits = Math.min(18, Math.ceil(-Math.log10(abs)) + 2);
+  const fixed = value.toFixed(digits);
+  return fixed.includes(".") ? fixed.replace(/0+$/, "").replace(/\.$/, "") : fixed;
+}
+
 export function formatUsd(value: number | null | undefined, opts?: { compact?: boolean }): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  if (!Number.isFinite(value)) return "—";
   if (opts?.compact && Math.abs(value) >= 10_000) return `$${compactFormatter.format(value)}`;
   if (Math.abs(value) > 0 && Math.abs(value) < 0.01) {
-    return `$${value.toPrecision(2)}`;
+    return `$${subCentText(value)}`;
   }
+  return usdFormatter.format(value);
+}
+
+/**
+ * A token *price*, as opposed to a dollar amount.
+ *
+ * The distinction matters because prices on this platform routinely live eight decimal
+ * places below a cent, and everything that shows one — the feed line, the positions
+ * table's cost and mark, the receipt's quoted→filled pair — has to agree, both with
+ * each other and with the server-rendered exit messages. One helper, used everywhere a
+ * price is printed, is how they stay in agreement.
+ *
+ * Zero is `$0.00` and not `$0`: a mark of exactly zero is a real state (an unpriced
+ * token) and it should look like a price, not like a missing one, which is what `—` is
+ * reserved for.
+ */
+export function formatPriceUsd(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value) || !Number.isFinite(value)) return "—";
+  if (value === 0) return "$0.00";
+  if (Math.abs(value) < 0.01) return `$${subCentText(value)}`;
   return usdFormatter.format(value);
 }
 

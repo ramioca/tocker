@@ -14,7 +14,7 @@ import { KillSwitchCard } from "@/components/settings/security/kill-switch-card"
 import { LlmKeyInventory } from "@/components/settings/security/llm-key-inventory";
 import { AuditLog } from "@/components/settings/security/audit-log";
 
-export const metadata: Metadata = { title: "Security · Tocker" };
+export const metadata: Metadata = { title: "Security" }; // the root layout appends " · Tocker"
 
 /**
  * Everything that decides whether money can move, on one page, in the order

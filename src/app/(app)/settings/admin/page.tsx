@@ -25,7 +25,7 @@ import {
   type AdminBalancesSnapshot,
 } from "@/server/queries/admin";
 
-export const metadata: Metadata = { title: "Admin · Tocker" };
+export const metadata: Metadata = { title: "Admin" }; // the root layout appends " · Tocker"
 
 /**
  * The admin dashboard: the whole platform in one page, for the people in `ADMIN_EMAILS`.

@@ -145,32 +145,36 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
 
       <div className="glass-panel mt-3 divide-y divide-[var(--glass-hairline)] overflow-hidden rounded-2xl">
         {rows.map((score) => (
-          <div key={score.tokenId} className="group/row relative">
-            <TokenScoreRow score={score} showTopBlocker />
-            {/*
-              The row itself is a disclosure — expanding the breakdown in place is the
-              cheaper action and stays the primary one. The page link sits beside it as
-              an explicit affordance rather than stealing the click.
-            */}
+          /*
+            The row is a disclosure — expanding the breakdown in place is the cheaper
+            action and stays the primary one. The page link sits *beside* it.
+
+            It used to be absolutely positioned over the row (`top-2 right-10`), which
+            put it straight through the score badge on any row tall enough to matter —
+            the highest-scoring five, where the badge is the thing you are reading. An
+            overlay on a row whose internals this file does not own can only ever guess
+            at where the gaps are, and the gaps move with the content. So: a real column
+            in a flex row. The link cannot collide with anything because the row is
+            sized around it.
+          */
+          <div key={score.tokenId} className="group/row flex items-start">
+            <TokenScoreRow score={score} showTopBlocker className="min-w-0 flex-1" />
             <Link
               href={`/tokens/${score.chain}/${score.address}`}
               aria-label={`Open the ${score.symbol} token page`}
+              title="Token page"
               className={cn(
-                // Overlaid on a row this workstream does not own, so it can only sit
-                // where that row leaves a gap. On a phone the row has no gap — it is
-                // two dense lines — and every position tried landed on top of either
-                // the score badge or the age/liquidity line. So it is desktop-only:
-                // on a phone the row's own chevron opens the breakdown, which is the
-                // thing you actually want on that screen.
-                "glass-inset absolute top-2 right-10 hidden items-center gap-1 rounded-md px-1.5 py-0.5 sm:inline-flex",
-                // main made this permanently visible at 70% rather than hover-only:
-                // a link nobody can see is a link nobody uses. Keep that.
+                // Hidden on a phone, where the row is two dense lines and the chevron —
+                // opening the breakdown — is the thing you actually want on that screen.
+                "mt-2 mr-2 hidden shrink-0 items-center gap-1 rounded-md px-1.5 py-1 sm:inline-flex",
+                // Permanently visible at 70% rather than hover-only: a link nobody can
+                // see is a link nobody uses.
                 "text-[10px] text-muted-foreground opacity-70 transition-opacity duration-150",
-                "focus-ring hover:opacity-100 group-hover/row:opacity-100 focus-visible:opacity-100",
+                "focus-ring hover:bg-muted hover:opacity-100 group-hover/row:opacity-100 focus-visible:opacity-100",
               )}
             >
-              Token page
-              <ArrowUpRight aria-hidden className="size-3" />
+              <span className="hidden lg:inline">Token page</span>
+              <ArrowUpRight aria-hidden className="size-3.5" />
             </Link>
           </div>
         ))}

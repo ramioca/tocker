@@ -9,7 +9,7 @@ import { referenceNow } from "@/components/social-common/format";
 import { NotificationList } from "@/components/notifications/notification-list";
 import { MarkAllRead } from "@/components/notifications/mark-all-read";
 
-export const metadata: Metadata = { title: "Notifications · Tocker" };
+export const metadata: Metadata = { title: "Notifications" }; // the root layout appends " · Tocker"
 
 export default async function NotificationsPage() {
   const session = await withMock(getSession, mockSession);

@@ -11,7 +11,7 @@ import { ModeBadge } from "@/components/common/mode-badge";
 import { PnlText } from "@/components/common/pnl-text";
 import { RelativeTime } from "@/components/common/relative-time";
 import { TokenIcon } from "@/components/common/token-icon";
-import { formatTokenAmount, formatUsd } from "@/components/common/format";
+import { formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
 import { TradeReceiptRow } from "@/components/trading";
 import { cn } from "@/lib/utils";
@@ -70,7 +70,7 @@ function TradeBlock({ trade, receipt }: { trade: TradeRow; receipt: TradeReceipt
         </span>
         <span className="text-muted-foreground/50">·</span>
         <span className="tnum text-sm font-medium">{formatUsd(trade.amountUsd)}</span>
-        <span className="tnum text-xs text-muted-foreground">@ {formatUsd(trade.priceUsd)}</span>
+        <span className="tnum text-xs text-muted-foreground">@ {formatPriceUsd(trade.priceUsd)}</span>
         <div className="ml-auto flex items-center gap-1.5">
           <ChainBadge chain={trade.chain} />
           <ModeBadge mode={trade.isPaper ? "paper" : "live"} size="xs" />
