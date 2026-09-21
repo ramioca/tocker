@@ -10,11 +10,57 @@
  * `asset_address: 'native'` means ETH.
  */
 import type { AgentWalletRef } from "@/lib/x402/types";
-import { fromBaseUnits, toBaseUnits, type Fill, type Quote, type TradeExecutor, type TradeRequest } from "./executor";
+import {
+  clampToHeld,
+  floorBaseUnits,
+  fromBaseUnits,
+  toBaseUnits,
+  type Fill,
+  type Quote,
+  type TradeExecutor,
+  type TradeRequest,
+} from "./executor";
 import { CAIP2_BASE, USDC_BASE } from "./tokens";
 import { getPriceUsd } from "./prices";
 
 const USDC_DECIMALS = 6;
+
+/** Minimal ERC-20 read ABI: the balance behind a sell. */
+const ERC20_BALANCE_OF = [
+  {
+    name: "balanceOf",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
+
+function baseRpcUrl(): string {
+  return process.env.BASE_RPC_URL?.trim() || "https://mainnet.base.org";
+}
+
+/**
+ * The agent's on-chain balance of one Base token, in base units. `null` when the read
+ * failed — a clamp we cannot compute must not silently become a zero-size sell.
+ */
+export async function readBaseTokenBalance(token: string, owner: string): Promise<bigint | null> {
+  try {
+    const { createPublicClient, http } = await import("viem");
+    const { base } = await import("viem/chains");
+    const client = createPublicClient({ chain: base, transport: http(baseRpcUrl()) });
+    const value = await client.readContract({
+      address: token as `0x${string}`,
+      abi: ERC20_BALANCE_OF,
+      functionName: "balanceOf",
+      args: [owner as `0x${string}`],
+    });
+    return typeof value === "bigint" ? value : null;
+  } catch (err) {
+    console.warn(`[base] could not read ${token} for ${owner}:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
 
 interface SwapLegs {
   source: { caip2: string; asset_address: string };
@@ -44,12 +90,27 @@ export class BaseSwapExecutor implements TradeExecutor {
         slippage_bps: req.slippageBps,
       };
     }
-    const price = await getPriceUsd("base", req.tokenAddress);
-    if (price === null || price <= 0) throw new Error(`No price for ${req.symbol} on Base — cannot size the sell.`);
+    // W7 H1: a sell is sized by the token amount the caller holds, not by a price that
+    // has already moved. The price is only the fallback for a caller that gave none.
+    let requested: string;
+    if (req.amountToken !== undefined && req.amountToken > 0) {
+      requested = floorBaseUnits(req.amountToken, req.decimals);
+    } else {
+      const price = await getPriceUsd("base", req.tokenAddress);
+      if (price === null || price <= 0) throw new Error(`No price for ${req.symbol} on Base — cannot size the sell.`);
+      requested = floorBaseUnits(req.amountUsd / price, req.decimals);
+    }
+
+    const held = await readBaseTokenBalance(req.tokenAddress, this.wallet.address);
+    const base_amount = clampToHeld(requested, held);
+    if (base_amount === "0") {
+      throw new Error(`${req.symbol} position is already empty on chain — nothing left to sell.`);
+    }
+
     return {
       source: { caip2: CAIP2_BASE, asset_address: req.tokenAddress },
       destination: { caip2: CAIP2_BASE, asset_address: USDC_BASE },
-      base_amount: toBaseUnits(req.amountUsd / price, req.decimals),
+      base_amount,
       amount_type: "exact_input",
       slippage_bps: req.slippageBps,
     };

@@ -196,3 +196,28 @@ export async function buildSolanaTransfer(input: {
 
   return new VersionedTransaction(message).serialize();
 }
+
+/**
+ * A transaction that creates `owner`'s USDC associated token account, paid for by
+ * `payer`. Built for the *platform* wallet to sign: the rent (~0.00204 SOL) is the
+ * platform's cost of making an agent fundable, never the user's.
+ *
+ * Idempotent on chain, so it is safe to send even if the account appeared between the
+ * check and the send.
+ */
+export async function buildCreateUsdcAtaTransaction(input: {
+  payer: string;
+  owner: string;
+  rpcUrl?: string;
+}): Promise<Uint8Array> {
+  const payer = new PublicKey(input.payer);
+  const owner = new PublicKey(input.owner);
+  const blockhash = await latestBlockhash(input.rpcUrl);
+  const message = new TransactionMessage({
+    payerKey: payer,
+    recentBlockhash: blockhash,
+    instructions: [createAtaIdempotentInstruction({ payer, owner, mint: SOLANA_USDC_MINT })],
+  }).compileToV0Message();
+
+  return new VersionedTransaction(message).serialize();
+}
