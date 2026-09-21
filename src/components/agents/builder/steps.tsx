@@ -526,6 +526,11 @@ export function UniverseStep({ draft, updateConfig, errors, hideHeading }: StepP
 export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
   const risk = draft.config.risk;
   const patch = (next: Partial<typeof risk>) => updateConfig({ risk: { ...risk, ...next } });
+  // What the book will actually be worth on day one, so the caps can be checked
+  // against it here rather than discovered as a refusal on the first tick.
+  const fundedUsd = draft.funding.mode === "fund" ? draft.funding.amountUsd : draft.paperStartingUsd;
+  const ticketSharePct = fundedUsd > 0 ? Math.ceil((risk.maxTradeUsd / fundedUsd) * 100) : 0;
+  const positionCapTooLow = ticketSharePct > 0 && ticketSharePct > risk.maxPositionPct;
 
   return (
     <div className="space-y-4">
@@ -541,11 +546,15 @@ export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
           id="risk-max-trade"
           label="Max per trade"
           value={risk.maxTradeUsd}
-          min={10}
+          min={1}
           max={5_000}
-          step={10}
+          step={1}
           format={(value) => formatUsd(value)}
-          meaning={`A single trade can never move more than ${formatUsd(risk.maxTradeUsd)}, whatever the model asks for.`}
+          meaning={
+            fundedUsd > 0 && risk.maxTradeUsd > fundedUsd
+              ? `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)} — but that is more than the ${formatUsd(fundedUsd)} you are funding, so every trade would be refused for lack of cash. Type an exact number in the box.`
+              : `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)}, whatever the model asks for. Click the number to type an exact amount.`
+          }
           onChange={(maxTradeUsd) => patch({ maxTradeUsd })}
         />
 
@@ -568,9 +577,11 @@ export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
           max={100}
           format={(value) => `${Math.round(value)}%`}
           meaning={
-            risk.maxPositionPct >= 50
-              ? "Concentrated. One bad token can take most of the book with it."
-              : `No single token may exceed ${Math.round(risk.maxPositionPct)}% of equity, so it must hold at least ${Math.ceil(100 / risk.maxPositionPct)} names when fully invested.`
+            positionCapTooLow
+              ? `A ${formatUsd(risk.maxTradeUsd)} trade on the ${formatUsd(fundedUsd)} it starts with is ${ticketSharePct}% of equity, above this cap — the risk guard would refuse every buy. Set this to at least ${Math.min(100, ticketSharePct)}%, or lower the max per trade.`
+              : risk.maxPositionPct >= 50
+                ? "Concentrated. One bad token can take most of the book with it."
+                : `No single token may exceed ${Math.round(risk.maxPositionPct)}% of equity, so it must hold at least ${Math.ceil(100 / risk.maxPositionPct)} names when fully invested.`
           }
           onChange={(maxPositionPct) => patch({ maxPositionPct: Math.round(maxPositionPct) })}
         />
@@ -695,9 +706,9 @@ export function ScheduleStep({ draft, update, updateConfig, hideHeading }: StepP
           <ModeBadge mode="paper" />
         </p>
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-          Every agent starts on paper. Going live needs a funded wallet and a deliberate
-          hold-to-confirm, so you will do it from settings once the agent has a track record worth
-          risking money on.
+          {draft.funding.mode === "fund" && draft.goLive
+            ? "It is created on paper and funded in the same step; you then land on the live checklist, where a hold-to-confirm switches it to real money. No paper phase unless you want one."
+            : "It starts on paper. Going live is a checklist plus a hold-to-confirm on its settings page — fund it there whenever you are ready, or turn on \"Go live after creating\" under Funding to skip straight to it."}
         </p>
       </div>
 
@@ -837,6 +848,14 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
         </div>
       ) : (
         <>
+          <Toggle
+            id="go-live-after"
+            label="Go live after creating"
+            description="Once the transfer confirms you land on the live checklist — the same server-side checks and hold-to-confirm as always, just without a paper detour. Off means it waits on paper until you open its settings."
+            checked={draft.goLive}
+            onChange={(goLive) => update({ goLive })}
+          />
+
           <div className="glass rounded-2xl border border-border/60 px-4 py-3.5">
             <p className="text-[11px] text-muted-foreground">Your cash</p>
             <CashTotal cash={cash} size="lg" className="mt-0.5 block" />

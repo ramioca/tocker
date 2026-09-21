@@ -30,6 +30,13 @@ export interface BuilderDraft {
   llmKeyId: string | null;
   paperStartingUsd: number;
   activate: boolean;
+  /**
+   * After a funded create, land on the live checklist instead of the agent page. The
+   * checklist still gates the switch behind its server-side checks and a hold; this
+   * only decides whether the operator is walked there or left on paper until they
+   * find Settings. Ignored for paper-only creates.
+   */
+  goLive: boolean;
   funding: BuilderFunding;
   config: AgentConfigInput;
 }
@@ -59,6 +66,7 @@ export function emptyDraft(): BuilderDraft {
     llmKeyId: null,
     paperStartingUsd: 10_000,
     activate: true,
+    goLive: true,
     funding: {
       mode: "paper",
       amountUsd: DEFAULT_FUND_USD,

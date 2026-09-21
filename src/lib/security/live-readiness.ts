@@ -68,7 +68,15 @@ export const FIRST_TRADE_PRESET = {
 
 export interface RiskVerdict {
   ok: boolean;
+  /** What blocks going live. */
   problems: string[];
+  /**
+   * What the operator should know but is allowed to do (W7): a ticket above the $2
+   * preset, more than one trade a day, more than one chain. The preset is advice, the
+   * caps the operator typed are the rule — a person funding $10 and asking for $5 a
+   * trade is making a decision, not a mistake.
+   */
+  cautions: string[];
 }
 
 /**
@@ -78,11 +86,14 @@ export interface RiskVerdict {
  */
 export function evaluateFirstTradeRisk(config: AgentConfig, capUsd: number): RiskVerdict {
   const problems: string[] = [];
+  const cautions: string[] = [];
   const { risk, chains } = config;
 
-  if (chains.length !== 1) {
-    problems.push(
-      `it trades ${chains.length === 0 ? "no chains" : `${chains.length} chains`}; a first live trade should be on one chain so there is one thing to debug`,
+  if (chains.length === 0) {
+    problems.push("it trades no chains");
+  } else if (chains.length > 1) {
+    cautions.push(
+      `it trades ${chains.length} chains; a first live trade is easier to debug on one, but that is your call`,
     );
   }
   if (!(capUsd > 0)) {
@@ -91,16 +102,18 @@ export function evaluateFirstTradeRisk(config: AgentConfig, capUsd: number): Ris
     problems.push(`its max per trade is $${risk.maxTradeUsd} but you asked for a cap of $${capUsd}`);
   }
   if (risk.maxTradeUsd > FIRST_TRADE_PRESET.maxTradeUsd) {
-    problems.push(`its max per trade is $${risk.maxTradeUsd}; keep the first one at $${FIRST_TRADE_PRESET.maxTradeUsd} or less`);
+    cautions.push(
+      `its max per trade is $${risk.maxTradeUsd}, above the $${FIRST_TRADE_PRESET.maxTradeUsd} preset — allowed; the preset button shrinks it if you would rather prove the pipeline with less`,
+    );
   }
   if (risk.maxDailyTrades > FIRST_TRADE_PRESET.maxDailyTrades) {
-    problems.push(`it may make ${risk.maxDailyTrades} trades a day; allow one until you have seen a fill`);
+    cautions.push(`it may make ${risk.maxDailyTrades} trades a day; the preset allows one until you have seen a fill`);
   }
   if (risk.stopLossPct === null && risk.takeProfitPct === null && risk.trailingStopPct === null) {
     problems.push("it has no stop loss, take profit or trailing stop — the exit engine has nothing to enforce");
   }
 
-  return { ok: problems.length === 0, problems };
+  return { ok: problems.length === 0, problems, cautions };
 }
 
 /**
@@ -685,6 +698,16 @@ async function checkRisk(
       title: "Risk config sane for a first trade",
       state: "fail",
       detail: `${refusal}. ${mode}`,
+      fix: { label: "Agent settings → Risk", href: `${settings}#risk` },
+    };
+  }
+
+  if (verdict.cautions.length > 0) {
+    return {
+      id: "risk",
+      title: "Risk config sane for a first trade",
+      state: "warn",
+      detail: `${shape} Simulated against the $${usdc.toFixed(2)} it holds, a $${config.risk.maxTradeUsd.toFixed(2)} buy clears the risk guard. ${mode} Worth knowing: ${verdict.cautions.join("; ")}.`,
       fix: { label: "Agent settings → Risk", href: `${settings}#risk` },
     };
   }

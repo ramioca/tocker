@@ -44,13 +44,17 @@ function config(overrides: Partial<AgentConfig["risk"]> = {}, chains: AgentConfi
 
 describe("evaluateFirstTradeRisk", () => {
   it("passes the intended first-trade shape", () => {
-    expect(evaluateFirstTradeRisk(config(), 2)).toEqual({ ok: true, problems: [] });
+    expect(evaluateFirstTradeRisk(config(), 2)).toEqual({ ok: true, problems: [], cautions: [] });
   });
 
-  it("refuses more than one chain", () => {
+  it("allows more than one chain, with a caution", () => {
     const verdict = evaluateFirstTradeRisk(config({}, ["base", "solana"]), 2);
-    expect(verdict.ok).toBe(false);
-    expect(verdict.problems.join(" ")).toMatch(/one chain/);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.cautions.join(" ")).toMatch(/2 chains/);
+  });
+
+  it("refuses no chain at all", () => {
+    expect(evaluateFirstTradeRisk(config({}, []), 2).ok).toBe(false);
   });
 
   /** The cap the operator typed is the ceiling, even when it is below the preset. */
@@ -60,13 +64,17 @@ describe("evaluateFirstTradeRisk", () => {
     expect(verdict.problems.join(" ")).toMatch(/cap of \$1/);
   });
 
-  it("refuses a per-trade size above the first-trade ceiling", () => {
-    expect(evaluateFirstTradeRisk(config({ maxTradeUsd: 50 }), 100).ok).toBe(false);
+  /** The $2 preset is advice; the cap the operator typed is the rule. */
+  it("allows a per-trade size above the preset when it is within the operator's cap, with a caution", () => {
+    const verdict = evaluateFirstTradeRisk(config({ maxTradeUsd: 50 }), 100);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.cautions.join(" ")).toMatch(/\$50/);
   });
 
-  it("refuses more than one trade a day", () => {
+  it("allows more than one trade a day, with a caution", () => {
     const verdict = evaluateFirstTradeRisk(config({ maxDailyTrades: 5 }), 2);
-    expect(verdict.problems.join(" ")).toMatch(/trades a day/);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.cautions.join(" ")).toMatch(/trades a day/);
   });
 
   /** Without any exit rule the exit engine has nothing to enforce. */

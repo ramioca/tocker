@@ -338,7 +338,9 @@ export function AgentBuilder({
       });
     } else if (funding && funding.sent > 0) {
       toast.success(`${draft.name.trim()} is funded`, {
-        description: `${transfersFor(fundingPlan!).map(transferLabel).join(", ")} on the way. Balances update once they confirm.`,
+        description: draft.goLive
+          ? `${transfersFor(fundingPlan!).map(transferLabel).join(", ")} on the way. Next: the live checklist — hold to switch it to real money once every check is green.`
+          : `${transfersFor(fundingPlan!).map(transferLabel).join(", ")} on the way. Balances update once they confirm.`,
       });
     } else {
       toast.success(`${draft.name.trim()} is live on paper`, {
@@ -348,7 +350,10 @@ export function AgentBuilder({
       });
     }
 
-    router.push(`/agents/${result.data.slug}`);
+    // A funded agent whose owner asked for live goes straight to the checklist; the
+    // switch itself still happens there, behind the server's checks and a hold.
+    const fundedAndWantsLive = draft.goLive && funding !== null && funding.sent > 0 && !funding.firstError;
+    router.push(fundedAndWantsLive ? `/agents/${result.data.slug}/live` : `/agents/${result.data.slug}`);
   };
 
   return (

@@ -1,8 +1,81 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
+
+/** Snap a typed number onto the slider's grid and inside its range. */
+export function clampToStep(value: number, min: number, max: number, step: number): number {
+  if (!Number.isFinite(value)) return min;
+  const clamped = Math.min(max, Math.max(min, value));
+  const snapped = Math.round((clamped - min) / step) * step + min;
+  // Avoid 4.999999 from float arithmetic: keep the precision the step implies.
+  const decimals = Math.max(0, (step.toString().split(".")[1] ?? "").length);
+  return Number(Math.min(max, Math.max(min, snapped)).toFixed(decimals));
+}
+
+/**
+ * The slider's readout, and the way to set an exact number. A slider from $1 to
+ * $5,000 cannot be dragged to $5 with any confidence, so the number is an input:
+ * click it, type, press Enter or tab away, and the slider follows. It shows the
+ * formatted value until it is focused.
+ */
+function EditableValue({
+  id,
+  value,
+  min,
+  max,
+  step,
+  format,
+  onChange,
+}: {
+  id: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  format: (value: number) => string;
+  onChange: (value: number) => void;
+}) {
+  const [text, setText] = useState<string | null>(null);
+
+  const commit = () => {
+    if (text === null) return;
+    const parsed = Number(text.replace(/[^0-9.-]/g, ""));
+    if (text.trim() !== "" && Number.isFinite(parsed)) onChange(clampToStep(parsed, min, max, step));
+    setText(null);
+  };
+
+  return (
+    <input
+      id={`${id}-value`}
+      aria-label="Exact value"
+      type="text"
+      inputMode="decimal"
+      value={text ?? format(value)}
+      onFocus={(event) => {
+        setText(String(value));
+        // Select on focus so typing replaces the number rather than appending to it.
+        requestAnimationFrame(() => event.target.select());
+      }}
+      onChange={(event) => setText(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.currentTarget.blur();
+        } else if (event.key === "Escape") {
+          setText(null);
+          event.currentTarget.blur();
+        }
+      }}
+      className={cn(
+        "tnum w-[8.5ch] rounded-md border border-transparent bg-transparent px-1 text-right font-mono text-sm",
+        "transition-colors duration-150 hover:border-border/70 focus:border-border focus:bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      )}
+    />
+  );
+}
 
 export function Field({
   label,
@@ -80,9 +153,7 @@ export function RiskSlider({
         <label htmlFor={id} className="text-sm font-medium">
           {label}
         </label>
-        <output htmlFor={id} className="tnum font-mono text-sm">
-          {format(value)}
-        </output>
+        <EditableValue id={id} value={value} min={min} max={max} step={step} format={format} onChange={onChange} />
       </div>
       <Slider
         id={id}
