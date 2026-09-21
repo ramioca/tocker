@@ -1,0 +1,22 @@
+{
+  "name": "Tocker",
+  "mark": "Ticker Knot",
+  "colors": {
+    "ink": "#17151D",
+    "night": "#070708",
+    "paper": "#F4F4F1",
+    "violet": "#A78BFA",
+    "violetDeep": "#7155D9"
+  },
+  "typography": {
+    "wordmarkSource": "Geist",
+    "wordmarkWeight": 650,
+    "productFallback": "Geist, Inter, ui-sans-serif, system-ui, sans-serif"
+  },
+  "minimumSizes": {
+    "flatMarkPx": 16,
+    "dimensionalMarkPx": 40,
+    "horizontalLockupPx": 120
+  },
+  "clearSpace": "At least one ribbon-width on every side"
+}
