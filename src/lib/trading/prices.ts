@@ -50,12 +50,25 @@ export async function fetchSolanaPrices(mints: string[]): Promise<Map<string, nu
   return out;
 }
 
-export async function fetchBasePrices(addresses: string[]): Promise<Map<string, number>> {
+export function fetchBasePrices(addresses: string[]): Promise<Map<string, number>> {
+  return fetchDexScreenerPrices(
+    "base",
+    addresses.filter((a) => a.startsWith("0x")),
+  );
+}
+
+/**
+ * DexScreener prices for one chain. The primary source on Base; on Solana the fallback
+ * for whatever Jupiter's keyless price tier refused (it 429s under shared egress), so a
+ * mark goes stale only when *both* public sources fail — the "Tocker lags the market"
+ * feel was Jupiter refusing and the last stored mark standing in.
+ */
+export async function fetchDexScreenerPrices(chain: Chain, addresses: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
-  const erc20 = addresses.filter((a) => a.startsWith("0x"));
+  const erc20 = Array.from(new Set(addresses));
   if (erc20.length === 0) return out;
   try {
-    const res = await fetch(`https://api.dexscreener.com/tokens/v1/base/${erc20.slice(0, 30).join(",")}`, {
+    const res = await fetch(`https://api.dexscreener.com/tokens/v1/${chain}/${erc20.slice(0, 30).join(",")}`, {
       signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) return out;
@@ -69,7 +82,8 @@ export async function fetchBasePrices(addresses: string[]): Promise<Map<string, 
       const price = Number(r.priceUsd);
       if (typeof addr !== "string" || !Number.isFinite(price)) continue;
       // DexScreener returns one row per pair; keep the first (highest-liquidity) hit.
-      const match = erc20.find((a) => a.toLowerCase() === addr.toLowerCase());
+      // Exact first (base58 is case-sensitive), then case-insensitive for EVM addresses.
+      const match = erc20.find((a) => a === addr) ?? erc20.find((a) => a.toLowerCase() === addr.toLowerCase());
       if (match && !out.has(match)) out.set(match, price);
     }
   } catch {
@@ -114,10 +128,13 @@ export async function getMarks(ids: readonly string[]): Promise<Map<string, numb
     if (!keys.some((k) => k.id === id)) out.set(id, null);
   }
 
-  const [solana, base] = await Promise.all([
-    fetchSolanaPrices(keys.filter((k) => k.chain === "solana").map((k) => k.address)),
+  const solanaMints = keys.filter((k) => k.chain === "solana").map((k) => k.address);
+  const [jupiter, base] = await Promise.all([
+    fetchSolanaPrices(solanaMints),
     fetchBasePrices(keys.filter((k) => k.chain === "base").map((k) => k.address)),
   ]);
+  const unpriced = solanaMints.filter((mint) => !jupiter.has(mint));
+  const solana = unpriced.length === 0 ? jupiter : new Map([...(await fetchDexScreenerPrices("solana", unpriced)), ...jupiter]);
 
   const updates: Array<{ id: string; price: number }> = [];
   for (const key of keys) {

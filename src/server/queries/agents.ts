@@ -1,4 +1,5 @@
 import "server-only";
+import type { Portfolio } from "@/lib/agent/portfolio";
 import { and, asc, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import {
   agentRunSteps,
@@ -46,16 +47,19 @@ import {
 import { loadCachedScores } from "@/lib/trading/score-cache";
 import { isAgentOwner, toPublicProfile, visibleConfig, visibleError, visibleSteps } from "./visibility";
 
-/** The USDC a live agent's wallets hold right now, or null when it cannot be read. */
-async function liveCashUsd(agentId: string): Promise<number | null> {
+/**
+ * A live agent's book as it stands now — wallet cash and positions at live marks — or
+ * null when it cannot be read. No real wallet yet (placeholders only) is "cannot read",
+ * not "$0": the snapshot series is the better answer for such an agent, and $0 would
+ * read as a wipe-out.
+ */
+async function livePortfolio(agentId: string): Promise<Portfolio | null> {
   try {
     const { getAgentWallets, getPortfolio } = await import("@/lib/agent/portfolio");
-    // No real wallet yet (placeholders only) is "cannot read", not "$0": the snapshot
-    // series is the better answer for such an agent, and $0 would read as a wipe-out.
     const walletRows = await getAgentWallets(agentId);
     if (!walletRows.some((w) => !w.walletId.startsWith("paper_"))) return null;
     const portfolio = await getPortfolio(agentId);
-    return portfolio.cashReadFailed ? null : portfolio.cashUsd;
+    return portfolio.cashReadFailed ? null : portfolio;
   } catch {
     return null;
   }
@@ -123,7 +127,13 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
   // now". Display only — a buy still scores through getTokenScore (see score-cache.ts).
   const cachedScores = await loadCachedScores(positionRows.map((r) => r.token.id));
 
-  const livePositions: Position[] = positionRows
+  // Live and readable: the book from the wallet, positions at live marks — the same
+  // numbers the positions table prints, so the header can never disagree with it.
+  // Otherwise the stored rows at their last mark.
+  const live = agent.mode === "live" ? await livePortfolio(agent.id) : null;
+  const livePositions: Position[] = live
+    ? live.positions
+    : positionRows
     .filter((r) => toNum(r.position.amountToken) !== 0)
     .map((r) => {
       const token = toTokenRef(r.token);
@@ -176,7 +186,7 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
   // has moved cash into a position, and the last snapshot (marks run every five
   // minutes) still shows the pre-fill book — "$15 cash, $4.77 position, $15 equity".
   // Read the wallet, and fall back to the snapshot only when the read fails.
-  const liveCash = agent.mode === "live" ? await liveCashUsd(agent.id) : null;
+  const liveCash = live?.cashUsd ?? null;
   const cashUsd = liveCash ?? agg?.cashUsd ?? (agent.mode === "paper" ? toNum(agent.paperStartingUsd) : null);
   const equitySnapshot = computeEquity({
     cash: cashUsd ?? 0,
@@ -194,7 +204,7 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
   return {
     ...card,
     // Live and readable: cash now plus positions at their marks. Otherwise the series.
-    equityUsd: liveCash !== null ? equitySnapshot.equityUsd : (equity.at(-1)?.equityUsd ?? equitySnapshot.equityUsd),
+    equityUsd: live ? live.equityUsd : (equity.at(-1)?.equityUsd ?? equitySnapshot.equityUsd),
     // THE GATE. The strategy prompt, universe rules, thresholds and data-source list
     // never leave the server for anyone but the owner. Everyone else gets the shape of
     // the agent (chains, model, cadence, how many sources it buys) and nothing more.

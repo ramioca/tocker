@@ -15,6 +15,22 @@ import { EquityChart } from "@/components/charts/equity-chart";
 import { agentBySlug, equitySeries, viewerSession } from "@/components/common/data-access";
 import { listProposals } from "@/server/queries/proposals";
 import { getAgentAnalyticsWindows } from "@/server/queries/analytics";
+import type { AgentDetail, EquityPoint } from "@/server/types";
+
+/**
+ * The chart's last point is the newest snapshot, which the marks cron writes every five
+ * minutes; the positions table under it is live. Append "now" so the headline is the
+ * same number as the table, and the line reaches the present.
+ */
+function withLivePoint(points: EquityPoint[], agent: AgentDetail): EquityPoint[] {
+  if (agent.equityUsd === null || agent.equityUsd === undefined) return points;
+  const last = points.at(-1);
+  if (last && Math.abs(last.equityUsd - agent.equityUsd) < 0.005) return points;
+  return [
+    ...points,
+    { at: new Date().toISOString(), equityUsd: agent.equityUsd, cashUsd: agent.cashUsd ?? last?.cashUsd ?? 0 },
+  ];
+}
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -62,7 +78,7 @@ export default async function AgentPage({ params }: Params) {
             <div className="space-y-6">
               <section className="glass-panel rounded-2xl p-3 sm:p-4">
                 <EquityChart
-                  points={equity.length > 1 ? equity : agent.equity}
+                  points={withLivePoint(equity.length > 1 ? equity : agent.equity, agent)}
                   startingUsd={agent.paperStartingUsd}
                   label={agent.name}
                 />
