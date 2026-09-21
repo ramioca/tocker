@@ -1,14 +1,17 @@
 /**
- * X / Twitter search over x402.
+ * X / Twitter search over x402 (`x402Atlas`).
  *
- * Two entries live here:
+ * REAL, re-probed live 2026-09-21: `GET https://twitter.use.x402atlas.com/search?query=`
+ * answers 402 with an x402 **v2** `PAYMENT-REQUIRED` header offering Base
+ * (`eip155:8453`) USDC `amount: "6000"` = **$0.006** — the registry said $0.005 until
+ * W7; the vendor raised it. It also offers Polygon and Arbitrum, which the platform
+ * holds no wallet on, so `selectPaymentOption` keeps Base. `extra.name` is
+ * `"USD Coin"`, which matches Base USDC's on-chain EIP-712 domain, so this one signs
+ * and settles without the correction `paidFetch` has to apply to SentimentAlpha.
  *
- * - `x-search` — REAL. Found through Bazaar discovery
- *   (`https://twitter.use.x402atlas.com/search`); verified live, x402 v2, USDC on
- *   Base, `amount: "5000"` = $0.005. Returns up to 20 normalized tweets.
- * - `xquik-search` — EXPERIMENTAL. `https://xquik.com` was reachable at build time but
- *   exposes no `/.well-known/x402` and no 402 on any probed API path, so it ships with
- *   a fixture and `experimental: true`. Swap the URL in once the vendor documents it.
+ * `xquik-search` used to live here. `https://xquik.com/api/x402/search` answers a plain
+ * Next.js **404** (re-probed 2026-09-21) — it never had an x402 endpoint — so it is gone
+ * rather than shipped as a fixture that pretends to be a data source.
  */
 import { z } from "zod";
 import { paidFetch } from "@/lib/x402/paidFetch";
@@ -26,7 +29,9 @@ import {
 } from "./normalize";
 
 const ATLAS_URL = "https://twitter.use.x402atlas.com/search";
-const XQUIK_URL = "https://xquik.com/api/x402/search";
+
+/** Probed live 2026-09-21: `amount: "6000"` against Base USDC (6 decimals). */
+const PRICE_USD = 0.006;
 
 const inputSchema = z.object({
   query: z.string().min(2).max(200).describe("X/Twitter search query, e.g. '$BONK' or 'from:solana bonk'"),
@@ -100,10 +105,10 @@ export const xSearch = defineSource({
   id: "x-search",
   name: "X/Twitter search (x402Atlas)",
   description:
-    "Search X/Twitter and get up to 20 normalized tweets with text, author, follower count and engagement, plus a weighted sentiment read.",
+    "Search X/Twitter and get up to 20 normalized tweets with text, author, follower count and engagement, plus a weighted sentiment read. Paid on Base at $0.006 a call.",
   category: "social",
   network: "eip155:8453",
-  priceUsd: 0.005,
+  priceUsd: PRICE_USD,
   url: ATLAS_URL,
   experimental: false,
   inputSchema,
@@ -113,31 +118,7 @@ export const xSearch = defineSource({
       sourceId: "x-search",
       url,
       network: "eip155:8453",
-      priceUsd: 0.005,
-      fixture,
-    });
-    return normalize(input.query, res.data);
-  },
-});
-
-export const xquikSearch = defineSource({
-  id: "xquik-search",
-  name: "Xquik tweet search",
-  description:
-    "Xquik X/Twitter search. EXPERIMENTAL: the vendor exposes no public x402 endpoint yet, so this returns a fixture until the path is documented.",
-  category: "social",
-  network: "eip155:8453",
-  priceUsd: 0.005,
-  url: XQUIK_URL,
-  experimental: true,
-  inputSchema,
-  async query(ctx, input): Promise<NormalizedResult> {
-    const url = `${XQUIK_URL}?q=${encodeURIComponent(input.query)}`;
-    const res = await paidFetch(ctx, {
-      sourceId: "xquik-search",
-      url,
-      network: "eip155:8453",
-      priceUsd: 0.005,
+      priceUsd: PRICE_USD,
       fixture,
     });
     return normalize(input.query, res.data);

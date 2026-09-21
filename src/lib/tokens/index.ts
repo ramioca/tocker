@@ -47,8 +47,17 @@ export type * from "./types";
 /** How long a persisted score may be reused. */
 export const SCORE_TTL_MS = 600_000;
 
-/** Data sources whose `signals.sentiment` we will fold into a deep score. */
-const SENTIMENT_SOURCE_IDS = ["sentimentalpha", "xquik-search", "x-search"] as const;
+/**
+ * Data sources whose `signals.sentiment` we will fold into a deep score, tried in this
+ * order until one answers with a usable signal.
+ *
+ * `x-search` leads because it is the one that has been proven to pay: its 402 advertises
+ * the Base USDC EIP-712 domain correctly. `sentimentalpha` advertises the wrong domain
+ * name; `paidFetch` corrects it before signing, but no payment to it has settled yet, so
+ * it is the fallback rather than the first call. `xquik-search` was dropped in W7 — the
+ * endpoint 404s (see `src/lib/data-sources/registry.ts`).
+ */
+const SENTIMENT_SOURCE_IDS = ["x-search", "sentimentalpha"] as const;
 
 /** Data sources whose `signals.smartMoneyNetflowUsd` feeds the `smartMoney` component. */
 const SMART_MONEY_SOURCE_IDS: readonly string[] = ["nansen-smart-money"];
