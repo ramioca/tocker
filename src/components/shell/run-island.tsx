@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useReducedMotion } from "motion/react";
 import { BorderBeam } from "border-beam";
 import { ThinkingOrb, type OrbState } from "thinking-orbs";
-import { Check, Gavel, TriangleAlert } from "lucide-react";
+import { Bell, Check, Gavel, TriangleAlert } from "lucide-react";
 import { DynamicIsland, DynamicIslandView } from "@/components/motion/dynamic-island";
 import { useRunStatus } from "@/components/providers/run-status";
 import { useNow } from "@/hooks/use-now";
@@ -135,6 +135,71 @@ export function RunIsland() {
   );
 }
 
+type AlertPermission = NotificationPermission | "unsupported";
+
+/** Every read guarded: no Notification on the server, none in some mobile browsers. */
+function readPermission(): AlertPermission {
+  if (typeof window === "undefined" || !("Notification" in window)) return "unsupported";
+  try {
+    return Notification.permission;
+  } catch {
+    return "unsupported";
+  }
+}
+
+const serverPermission = (): AlertPermission => "unsupported";
+
+const permissionListeners = new Set<() => void>();
+
+function subscribePermission(onChange: () => void): () => void {
+  permissionListeners.add(onChange);
+  return () => {
+    permissionListeners.delete(onChange);
+  };
+}
+
+/** The browser does not fire an event we can rely on, so the asker tells us. */
+function notifyPermissionChanged(): void {
+  for (const listener of permissionListeners) listener();
+}
+
+/**
+ * The one place the browser-alert permission is asked for, and only while there is
+ * actually something waiting: a permission prompt makes sense next to "1 trade
+ * awaiting approval" and nowhere else. It disappears for good once granted — and
+ * never renders at all if the browser cannot do notifications, or if the user already
+ * said no (the browser will not re-ask, so offering again would be a dead button).
+ *
+ * Deliberately no service worker and no push server: alerts arrive while a tab is
+ * open, which is the whole promise.
+ */
+function EnableAlertsButton() {
+  // `Notification.permission` is browser state, not React state, so it is read through
+  // useSyncExternalStore: the server snapshot is "unsupported" (there is no
+  // Notification object there), which renders nothing and cannot mismatch on hydration.
+  const permission = useSyncExternalStore(subscribePermission, readPermission, serverPermission);
+
+  if (permission !== "default") return null;
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        try {
+          // Both arms notify: the answer is whatever the browser now reports.
+          void Notification.requestPermission().then(notifyPermissionChanged, notifyPermissionChanged);
+        } catch {
+          notifyPermissionChanged();
+        }
+      }}
+      className="ml-2 flex shrink-0 items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-white/20 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    >
+      <Bell aria-hidden className="size-3" />
+      Enable alerts
+    </button>
+  );
+}
+
 /**
  * "1 trade awaiting approval", anywhere in the app.
  *
@@ -174,6 +239,7 @@ function ApprovalsIsland({
                 Review
               </span>
             </Link>
+            <EnableAlertsButton />
           </DynamicIslandView>
         </DynamicIsland>
       </div>

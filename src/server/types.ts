@@ -308,6 +308,13 @@ export interface TokenCandidate {
   priceChange24hPct: number | null;
   /** Cheap pre-rank from the discovery payload alone; null until scored. */
   quickScore: number | null;
+  /**
+   * Distinct buying wallets in the last five minutes, when the feed knows. The only
+   * "is anyone here" number that means anything for a launch minutes old — every
+   * hourly counter is the same figure copied forward. Absent for feeds that do not
+   * report it.
+   */
+  buyers5m?: number | null;
 }
 
 export interface Page<T> {

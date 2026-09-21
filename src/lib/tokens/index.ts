@@ -14,13 +14,19 @@
  * Scoring is free by design: Jupiter, RugCheck, DexScreener and GoPlus all cost
  * nothing, so an agent can sweep hundreds of tokens on a $0.25 data budget. x402
  * money is spent only when the caller explicitly asks for `deep: true`.
+ *
+ * One asymmetry worth knowing: on Solana `gather` makes a *second*, conditional round
+ * trip (DexScreener + the token's GeckoTerminal pools) whenever Jupiter has no price
+ * or no liquidity for the mint. That is the normal answer for a launch minutes old,
+ * and without the fallback such a token scores with `liquidity_unknown` and
+ * `age_unknown` blockers — a refusal about our data, not about the token.
  */
 import { eq } from "drizzle-orm";
 import { getDb, tokenScores } from "@/db";
 import type { Chain, TokenScore, TradeScore } from "@/server/types";
 import type { X402Context } from "@/lib/x402/types";
 import { getDexScreenerToken } from "./providers/dexscreener";
-import { getGeckoTokenInfo } from "./providers/geckoterminal";
+import { deepestGeckoPool, getGeckoTokenInfo, getGeckoTokenPools } from "./providers/geckoterminal";
 import { getGoPlusSecurity } from "./providers/goplus";
 import { getJupiterToken } from "./providers/jupiter";
 import { getRugcheckSummary } from "./providers/rugcheck";
@@ -351,6 +357,27 @@ async function gather(input: GetTokenScoreInput): Promise<ScoreInput> {
       getRugcheckSummary(address),
       getGeckoTokenInfo("solana", address),
     ]);
+    // A mint minutes old is exactly the one Jupiter's token API has not indexed yet, so
+    // the first pass comes back with no price, no liquidity and no age — and the hard
+    // gates then refuse the buy on `liquidity_unknown` / `age_unknown` rather than on
+    // anything about the token (2026-09-22). Both endpoints below *do* answer for it, so
+    // a second, conditional round-trip buys the difference between a real score and a
+    // blind refusal. Only when Jupiter fell short: an indexed token costs nothing extra.
+    if (jupiter === null || jupiter.usdPrice === null || jupiter.liquidity === null) {
+      const [dexscreener, pools] = await Promise.all([
+        getDexScreenerToken(address, "solana"),
+        getGeckoTokenPools("solana", address),
+      ]);
+      return {
+        ...base,
+        jupiter,
+        rugcheck,
+        dexscreener,
+        goplus: null,
+        gecko,
+        geckoPool: deepestGeckoPool(pools, address),
+      };
+    }
     return { ...base, jupiter, rugcheck, dexscreener: null, goplus: null, gecko };
   }
   // Native ETH has no contract; DexScreener, GoPlus and GeckoTerminal know it as WETH.

@@ -61,6 +61,8 @@ function pool(overrides: Partial<GeckoPool> = {}): GeckoPool {
     sellsH1: 10,
     buyersH1: 30,
     sellersH1: 8,
+    buysM5: 12,
+    buyersM5: 9,
     dexId: "raydium",
     token: { address: "MintT", name: "Token T", symbol: "T", decimals: 6, imageUrl: null },
     ...overrides,

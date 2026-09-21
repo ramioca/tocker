@@ -2,9 +2,14 @@
  * DexScreener — the market-data backbone on Base (and the new-launch feed).
  *
  * Verified live, no key:
- *   GET /token-pairs/v1/base/<addr>        every pair for one token
+ *   GET /token-pairs/v1/<chain>/<addr>     every pair for one token
  *   GET /token-profiles/latest/v1          recent profiles across chains
  *   GET /token-boosts/top/v1               boosted tokens across chains
+ *
+ * The per-token lookup is chain-aware because Solana needs it: DexScreener indexes a
+ * pump.fun pair within a minute of its first swap (verified 2026-09-22 on a mint
+ * ninety seconds old), which is well before Jupiter's token API has a record of the
+ * mint at all. Base callers pass nothing and are unchanged.
  *
  * A token usually trades in several pools. We sum liquidity and volume across them
  * and take price / price-change from the deepest pair, because the deepest pool is
@@ -12,6 +17,7 @@
  * `pairCreatedAt` we can see: a token is as old as its first market, and some pairs
  * (Aerodrome, in practice) omit the field entirely.
  */
+import type { Chain } from "@/server/types";
 import fixture from "../fixtures/dexscreener.json";
 import type { DexScreenerProfile, DexScreenerToken, DexTxnCounts } from "../types";
 import { asArray, asRecord, getJson, isTokensMock, mapLimit, MAX_CONCURRENCY, num, str, TtlCache } from "./http";
@@ -54,7 +60,8 @@ function addTxns(a: DexTxnCounts | null, b: DexTxnCounts | null): DexTxnCounts |
 /** Collapses every pair for one token into a single view. `null` when there is none. */
 export function collapsePairs(address: string, rawPairs: readonly unknown[]): DexScreenerToken | null {
   interface Row {
-    liquidityUsd: number;
+    /** `null` when the pair carries no `liquidity` block at all — see below. */
+    liquidityUsd: number | null;
     priceUsd: number | null;
     priceChange: Record<string, unknown>;
     volume: Record<string, unknown>;
@@ -78,7 +85,7 @@ export function collapsePairs(address: string, rawPairs: readonly unknown[]): De
     // DexScreener also returns pairs where our token is the *quote* asset; skip those.
     if (baseAddress === null || baseAddress.toLowerCase() !== address.toLowerCase()) continue;
     rows.push({
-      liquidityUsd: num(asRecord(p.liquidity)?.usd) ?? 0,
+      liquidityUsd: num(asRecord(p.liquidity)?.usd),
       priceUsd: num(p.priceUsd),
       priceChange: asRecord(p.priceChange) ?? {},
       volume: asRecord(p.volume) ?? {},
@@ -94,7 +101,10 @@ export function collapsePairs(address: string, rawPairs: readonly unknown[]): De
   }
   if (rows.length === 0) return null;
 
-  const deepest = rows.reduce((best, r) => (r.liquidityUsd > best.liquidityUsd ? r : best), rows[0] as Row);
+  const deepest = rows.reduce(
+    (best, r) => ((r.liquidityUsd ?? -1) > (best.liquidityUsd ?? -1) ? r : best),
+    rows[0] as Row,
+  );
   const sum = (key: string, from: (r: Row) => Record<string, unknown>): number | null => {
     let total: number | null = null;
     for (const r of rows) {
@@ -111,7 +121,14 @@ export function collapsePairs(address: string, rawPairs: readonly unknown[]): De
     name: deepest.name,
     imageUrl: rows.find((r) => r.imageUrl !== null)?.imageUrl ?? null,
     priceUsd: deepest.priceUsd,
-    liquidityUsd: rows.reduce((total, r) => total + r.liquidityUsd, 0),
+    // Summed across every pair that *reported* one — and `null`, not 0, when none did.
+    // DexScreener omits the `liquidity` block entirely for a pump.fun pair in its first
+    // minutes (verified 2026-09-22), and calling that "$0 of liquidity" turns a gap in
+    // the data into a fact about the token: the gates would answer `liquidity_below_floor`
+    // instead of deferring to a provider that does know. `0` still means a reported zero.
+    liquidityUsd: rows.some((r) => r.liquidityUsd !== null)
+      ? rows.reduce((total, r) => total + (r.liquidityUsd ?? 0), 0)
+      : null,
     volume24hUsd: sum("h24", (r) => r.volume),
     volume6hUsd: sum("h6", (r) => r.volume),
     volume1hUsd: sum("h1", (r) => r.volume),
@@ -131,24 +148,30 @@ export function collapsePairs(address: string, rawPairs: readonly unknown[]): De
   };
 }
 
-/** Every pair for one Base token, collapsed. `null` when unlisted or DexScreener is down. */
-export async function getDexScreenerToken(address: string): Promise<DexScreenerToken | null> {
-  const key = address.toLowerCase();
+/** Every pair for one token, collapsed. `null` when unlisted or DexScreener is down. */
+export async function getDexScreenerToken(address: string, chain: Chain = "base"): Promise<DexScreenerToken | null> {
+  // Addresses are unique across chains, but the cache key carries the chain anyway so
+  // a future chain sharing an address space cannot inherit the other's answer.
+  const key = `${chain}:${address.toLowerCase()}`;
   const cached = tokenCache.get(key);
   if (cached.hit) return cached.value;
 
   const raw = isTokensMock()
-    ? (FIXTURE.pairs[key] ?? null)
-    : await getJson(`${BASE}/token-pairs/v1/base/${encodeURIComponent(address)}`);
+    ? (FIXTURE.pairs[address.toLowerCase()] ?? null)
+    : await getJson(`${BASE}/token-pairs/v1/${chain}/${encodeURIComponent(address)}`);
   const parsed = raw === null ? null : collapsePairs(address, asArray(raw));
   tokenCache.set(key, parsed);
   return parsed;
 }
 
 /** Batched lookup, capped at {@link MAX_CONCURRENCY} in-flight requests. */
-export async function getDexScreenerTokens(addresses: readonly string[]): Promise<Map<string, DexScreenerToken>> {
-  const unique = Array.from(new Set(addresses.map((a) => a.toLowerCase())));
-  const results = await mapLimit(unique, MAX_CONCURRENCY, (address) => getDexScreenerToken(address));
+export async function getDexScreenerTokens(
+  addresses: readonly string[],
+  chain: Chain = "base",
+): Promise<Map<string, DexScreenerToken>> {
+  // EVM addresses are compared lowercased; a base58 mint must keep its case.
+  const unique = Array.from(new Set(chain === "base" ? addresses.map((a) => a.toLowerCase()) : addresses));
+  const results = await mapLimit(unique, MAX_CONCURRENCY, (address) => getDexScreenerToken(address, chain));
   const out = new Map<string, DexScreenerToken>();
   results.forEach((token, i) => {
     if (token) out.set(unique[i] as string, token);

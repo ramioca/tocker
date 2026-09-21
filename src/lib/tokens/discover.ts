@@ -18,6 +18,11 @@
  * | `momentum`     | derived from `stats1h`/`stats24h`       | derived from `priceChange` + `volume`   |
  * | `gecko_launches` | GeckoTerminal `new_pools` p1-2 + `trending_pools` p1, kept only when GeckoTerminal's own GT Score rates the token ≥ 50 — same two endpoints on both chains |
  *
+ * `gecko_launches` has a second mode. When the sweep's `maxAgeHours` is 15 minutes or
+ * less it reads `new_pools` p1-3, filters on the five-minute buyer counts, requires a
+ * known reserve, and drops the GT Score requirement entirely — see
+ * {@link isSuperFresh}. Nothing outside that window changes.
+ *
  * And one feed that is **not** free, off by default, and only runs when the agent
  * turned it on *and* the caller passed an x402 context:
  *
@@ -35,6 +40,7 @@ import {
   getGeckoPools,
   getGeckoPoolTokens,
   getGeckoTokenInfo,
+  type GeckoFeed,
   type GeckoPool,
   type GeckoTokenInfo,
 } from "./providers/geckoterminal";
@@ -114,6 +120,8 @@ function candidateFrom(
   volume24hUsd: number | null,
   /** Pre-rank override for feeds that know something `quickScore` cannot read. */
   preRank?: number,
+  /** Distinct five-minute buyers, for the feeds whose payload carries them. */
+  buyers5m?: number | null,
 ): TokenCandidate {
   return {
     token: tokenRefFor(facts),
@@ -122,10 +130,21 @@ function candidateFrom(
     volume24hUsd: volume24hUsd ?? facts.volume24hUsd,
     marketCapUsd: facts.marketCapUsd,
     holderCount: facts.holderCount,
-    ageHours: facts.ageHours === null ? null : Math.round(facts.ageHours * 100) / 100,
+    ageHours: facts.ageHours === null ? null : roundAge(facts.ageHours),
     priceChange24hPct: facts.priceChange24hPct,
     quickScore: preRank ?? quickScore(facts, organicScore),
+    ...(buyers5m === undefined ? {} : { buyers5m }),
   };
+}
+
+/**
+ * Age is rounded finely under an hour and coarsely above it. Two decimals of an hour
+ * is 36 seconds, which is the difference between "just minted" and "three minutes in"
+ * — the whole distinction a super-fresh sweep exists to make.
+ */
+function roundAge(ageHours: number): number {
+  const places = ageHours < 1 ? 10_000 : 100;
+  return Math.round(ageHours * places) / places;
 }
 
 function fromJupiter(token: JupiterToken, origin: DiscoveryFeed, ctx: DiscoveryContext): TokenCandidate {
@@ -297,9 +316,32 @@ async function sweepPaidLaunches(
  * The lookup budget is per *sweep*, not per chain, because the rate limit is per
  * process: 3 pages × 2 chains + 15 lookups = 21 requests, inside the free tier's
  * ~30/min even before the provider's caches and limiter get involved.
+ *
+ * **Super-fresh mode inverts the last paragraph.** Inside a 15-minute window there is
+ * no GT Score to read — GeckoTerminal rates a two-minute-old mint in the twenties, and
+ * will not have looked properly until long after the trade was worth making — so the
+ * lookup still happens (for the holder count, when the budget allows) but decides
+ * nothing, and the pool page's own numbers are the entire free filter. The safety read
+ * moves where it belongs: `score_token`, where RugCheck answers instantly and Deepnets
+ * is bought automatically. Request count is unchanged.
  */
 /** Distinct buying wallets in the last hour a pool needs before it is worth a lookup. */
 export const GECKO_MIN_BUYERS_H1 = 5;
+/**
+ * At or below this `maxAgeHours` the feed switches to **super-fresh** mode (15
+ * minutes): `new_pools` pages 1-3 instead of two pages plus trending, the `m5`
+ * transaction counters instead of the `h1` ones, a required `reserve_in_usd`, and no
+ * GT Score requirement at all — GeckoTerminal has not rated a two-minute-old mint and
+ * never will in time, so demanding a score is the same as returning nothing.
+ */
+export const GECKO_SUPER_FRESH_MAX_AGE_HOURS = 0.25;
+/** Distinct buying wallets in the last *five minutes* a super-fresh pool needs. */
+export const GECKO_MIN_BUYERS_M5 = 3;
+
+/** Whether this sweep's age ceiling puts the feed in super-fresh mode. */
+export function isSuperFresh(maxAgeHours: number | null): boolean {
+  return maxAgeHours !== null && maxAgeHours > 0 && maxAgeHours <= GECKO_SUPER_FRESH_MAX_AGE_HOURS;
+}
 /** GT Score a token needs to be emitted as a candidate. */
 export const GECKO_MIN_GT_SCORE = 50;
 /** Hard ceiling on `/info` lookups for one sweep, across every chain. */
@@ -317,8 +359,11 @@ export interface GeckoPoolFilter {
  * ties, and the reserve only gets a log's worth of influence so a $40k pool with two
  * wallets in it never outranks a $5k pool with forty.
  */
-export function geckoPoolRank(pool: GeckoPool): number {
-  const buyers = Math.max(0, pool.buyersH1 ?? 0);
+export function geckoPoolRank(pool: GeckoPool, superFresh = false): number {
+  // In a 15-minute window `buyersH1` is just `buyersM5` copied forward for every pool
+  // on the page, which flattens the ranking; the five-minute counter is the only one
+  // that distinguishes a launch forty wallets found from one two wallets found.
+  const buyers = Math.max(0, (superFresh ? pool.buyersM5 : pool.buyersH1) ?? 0);
   const reserve = Math.max(0, pool.reserveUsd ?? 0);
   return Math.log10(1 + buyers) * 2 + Math.log10(1 + reserve);
 }
@@ -334,11 +379,20 @@ export function geckoPoolRank(pool: GeckoPool): number {
  */
 export function filterGeckoPools(input: GeckoPoolFilter): GeckoPool[] {
   const best = new Map<string, GeckoPool>();
+  const superFresh = isSuperFresh(input.maxAgeHours);
 
   for (const pool of input.pools) {
-    const buyers = pool.buyersH1;
-    if (buyers === null || buyers < GECKO_MIN_BUYERS_H1) continue;
+    // Super-fresh reads the five-minute counters. A pool three minutes old with three
+    // distinct buyers in it is a real launch; the same pool's `buyersH1` says nothing
+    // the `m5` block did not already say.
+    const buyers = superFresh ? pool.buyersM5 : pool.buyersH1;
+    const floor = superFresh ? GECKO_MIN_BUYERS_M5 : GECKO_MIN_BUYERS_H1;
+    if (buyers === null || buyers < floor) continue;
 
+    // An unknown reserve is always rejected in this mode, floor or no floor: in the
+    // first minute `reserve_in_usd` is simply null, and a pool we cannot size is one
+    // the risk guard would refuse anyway.
+    if (pool.reserveUsd === null && superFresh) continue;
     if (input.minLiquidityUsd > 0) {
       if (pool.reserveUsd === null || pool.reserveUsd < input.minLiquidityUsd) continue;
     }
@@ -350,11 +404,13 @@ export function filterGeckoPools(input: GeckoPoolFilter): GeckoPool[] {
     }
 
     const existing = best.get(pool.token.address);
-    if (!existing || geckoPoolRank(pool) > geckoPoolRank(existing)) best.set(pool.token.address, pool);
+    if (!existing || geckoPoolRank(pool, superFresh) > geckoPoolRank(existing, superFresh)) {
+      best.set(pool.token.address, pool);
+    }
   }
 
   return Array.from(best.values()).sort((a, b) => {
-    const delta = geckoPoolRank(b) - geckoPoolRank(a);
+    const delta = geckoPoolRank(b, superFresh) - geckoPoolRank(a, superFresh);
     return delta !== 0 ? delta : (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0);
   });
 }
@@ -450,6 +506,7 @@ export function geckoCandidate(
     info?.gtScore ?? null,
     pool.volume24hUsd,
     geckoQuickScore(facts, info?.gtScore ?? null),
+    pool.buyersM5,
   );
 }
 
@@ -459,15 +516,25 @@ export function geckoCandidate(
  * contributes nothing, and a token whose lookup failed is simply not a candidate.
  */
 async function sweepGeckoLaunches(chains: readonly Chain[], ctx: DiscoveryContext): Promise<TokenCandidate[]> {
+  const superFresh = isSuperFresh(ctx.universe.maxAgeHours);
+  // Same three requests a chain either way, spent differently: inside a 15-minute
+  // window `trending_pools` is led by names hours or years old and page 3 of
+  // `new_pools` is still inside the window, so the third slot moves.
+  const wanted: ReadonlyArray<readonly [GeckoFeed, number]> = superFresh
+    ? ([
+        ["new_pools", 1],
+        ["new_pools", 2],
+        ["new_pools", 3],
+      ] as const)
+    : ([
+        ["new_pools", 1],
+        ["new_pools", 2],
+        ["trending_pools", 1],
+      ] as const);
+
   const pages = await Promise.allSettled(
     chains.flatMap((chain) =>
-      (
-        [
-          [chain, "new_pools", 1],
-          [chain, "new_pools", 2],
-          [chain, "trending_pools", 1],
-        ] as const
-      ).map(([net, feed, page]) => getGeckoPools(net, feed, page).then((pools) => ({ chain: net, pools }))),
+      wanted.map(([feed, page]) => getGeckoPools(chain, feed, page).then((pools) => ({ chain, pools }))),
     ),
   );
 
@@ -496,7 +563,7 @@ async function sweepGeckoLaunches(chains: readonly Chain[], ctx: DiscoveryContex
       survivors.push({ chain, pool });
     }
   }
-  survivors.sort((a, b) => geckoPoolRank(b.pool) - geckoPoolRank(a.pool));
+  survivors.sort((a, b) => geckoPoolRank(b.pool, superFresh) - geckoPoolRank(a.pool, superFresh));
 
   // The provider's own limiter owns the rate, so a *small* fan-out is safe and turns
   // a ~30s sweep into a ~10s one; the request count is identical either way.
@@ -505,6 +572,13 @@ async function sweepGeckoLaunches(chains: readonly Chain[], ctx: DiscoveryContex
     pool,
     info: await getGeckoTokenInfo(chain, pool.token.address),
   }));
+
+  // In super-fresh mode the lookup is for the holder count and nothing else: a mint
+  // three minutes old has no GT Score to clear, so requiring one empties the window
+  // every tick. The pool page's own filter (buyers, reserve, age) is the whole gate,
+  // and the real safety read is `score_token`'s — RugCheck answers immediately, and
+  // Deepnets is bought for every candidate the free pass did not already refuse.
+  if (superFresh) return looked.map(({ chain, pool, info }) => geckoCandidate(pool, info, chain, ctx.now));
 
   return looked
     .filter(({ info }) => passesGeckoInfo(info, geckoFloorFor(ctx.universe.maxAgeHours)))
@@ -701,9 +775,25 @@ export function renderCandidates(candidates: readonly TokenCandidate[]): string 
   }
   const money = (n: number | null): string =>
     n === null ? "—" : n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `$${(n / 1_000).toFixed(0)}k` : `$${n.toFixed(0)}`;
-  const age = (h: number | null): string => (h === null ? "—" : h < 48 ? `${h.toFixed(1)}h` : `${(h / 24).toFixed(0)}d`);
+  // Minutes under the hour: "0.1h" is unreadable for the thing this whole feed is
+  // about, and a 4-minute-old launch and a 40-minute-old one are different trades.
+  const age = (h: number | null): string =>
+    h === null
+      ? "—"
+      : h < 1
+        ? h * 60 < 1
+          ? "<1m"
+          : `${Math.round(h * 60)}m`
+        : h < 48
+          ? `${h.toFixed(1)}h`
+          : `${(h / 24).toFixed(0)}d`;
 
-  const header = "  #  SYMBOL      CHAIN   QUICK  LIQUIDITY  VOL24H     MCAP       HOLDERS  AGE     24H%    FEED";
+  // The five-minute buyer count only appears when a feed actually reported one, so an
+  // ordinary sweep's table is unchanged.
+  const showBuyers = candidates.some((c) => (c.buyers5m ?? null) !== null);
+  const header = `  #  SYMBOL      CHAIN   QUICK  LIQUIDITY  VOL24H     MCAP       HOLDERS  AGE     24H%   ${
+    showBuyers ? " BUY5M" : ""
+  }  FEED`;
   const rows = candidates.map((c, i) => {
     const cells = [
       String(i + 1).padStart(3),
@@ -716,6 +806,7 @@ export function renderCandidates(candidates: readonly TokenCandidate[]): string 
       (c.holderCount === null ? "—" : c.holderCount.toLocaleString("en-US")).padStart(8),
       age(c.ageHours).padStart(6),
       (c.priceChange24hPct === null ? "—" : `${c.priceChange24hPct > 0 ? "+" : ""}${c.priceChange24hPct.toFixed(1)}`).padStart(7),
+      ...(showBuyers ? [(c.buyers5m === null || c.buyers5m === undefined ? "—" : String(c.buyers5m)).padStart(5)] : []),
       `  ${c.origin}`,
     ];
     return cells.join(" ");

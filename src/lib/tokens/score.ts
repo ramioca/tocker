@@ -187,8 +187,12 @@ export function toFacts(input: ScoreInput): TokenFacts {
   const dex = input.dexscreener ?? null;
   const gp = input.goplus ?? null;
   const gecko = input.gecko ?? null;
+  // Last in every chain below. A token Jupiter and DexScreener have both missed still
+  // has a GeckoTerminal pool, and real numbers from it beat an `_unknown` blocker.
+  const pool = input.geckoPool ?? null;
 
-  const bornMs = jup?.firstPoolCreatedAtMs ?? jup?.createdAtMs ?? dex?.pairCreatedAtMs ?? null;
+  const bornMs =
+    jup?.firstPoolCreatedAtMs ?? jup?.createdAtMs ?? dex?.pairCreatedAtMs ?? pool?.createdAtMs ?? null;
   const ageHours = bornMs === null ? null : Math.max(0, (now - bornMs) / 3_600_000);
 
   const stats1h = jup?.stats1h ?? null;
@@ -198,23 +202,26 @@ export function toFacts(input: ScoreInput): TokenFacts {
   return {
     chain: input.chain,
     address: input.address,
-    symbol: jup?.symbol ?? dex?.symbol ?? gp?.symbol ?? gecko?.symbol ?? input.symbol,
-    name: input.name ?? jup?.name ?? dex?.name ?? gp?.name ?? gecko?.name ?? null,
-    decimals: jup?.decimals ?? gecko?.decimals ?? (input.chain === "base" ? 18 : null),
-    logoUrl: jup?.icon ?? dex?.imageUrl ?? gecko?.imageUrl ?? null,
-    priceUsd: jup?.usdPrice ?? dex?.priceUsd ?? null,
-    liquidityUsd: jup?.liquidity ?? dex?.liquidityUsd ?? null,
+    symbol: jup?.symbol ?? dex?.symbol ?? gp?.symbol ?? gecko?.symbol ?? pool?.token.symbol ?? input.symbol,
+    name: input.name ?? jup?.name ?? dex?.name ?? gp?.name ?? gecko?.name ?? pool?.token.name ?? null,
+    decimals: jup?.decimals ?? gecko?.decimals ?? pool?.token.decimals ?? (input.chain === "base" ? 18 : null),
+    logoUrl: jup?.icon ?? dex?.imageUrl ?? gecko?.imageUrl ?? pool?.token.imageUrl ?? null,
+    priceUsd: jup?.usdPrice ?? dex?.priceUsd ?? pool?.priceUsd ?? null,
+    liquidityUsd: jup?.liquidity ?? dex?.liquidityUsd ?? pool?.reserveUsd ?? null,
     volume24hUsd:
       dex?.volume24hUsd ??
       (stats24h && (stats24h.buyVolume !== null || stats24h.sellVolume !== null)
         ? (stats24h.buyVolume ?? 0) + (stats24h.sellVolume ?? 0)
-        : null),
-    marketCapUsd: jup?.mcap ?? dex?.marketCap ?? jup?.fdv ?? dex?.fdv ?? null,
+        : null) ??
+      pool?.volume24hUsd ??
+      null,
+    marketCapUsd:
+      jup?.mcap ?? dex?.marketCap ?? jup?.fdv ?? dex?.fdv ?? pool?.marketCapUsd ?? pool?.fdvUsd ?? null,
     holderCount: jup?.holderCount ?? gp?.holderCount ?? gecko?.holderCount ?? null,
     ageHours,
-    priceChange1hPct: stats1h?.priceChange ?? dex?.priceChange1hPct ?? null,
-    priceChange6hPct: stats6h?.priceChange ?? dex?.priceChange6hPct ?? null,
-    priceChange24hPct: stats24h?.priceChange ?? dex?.priceChange24hPct ?? null,
+    priceChange1hPct: stats1h?.priceChange ?? dex?.priceChange1hPct ?? pool?.priceChange1hPct ?? null,
+    priceChange6hPct: stats6h?.priceChange ?? dex?.priceChange6hPct ?? pool?.priceChange6hPct ?? null,
+    priceChange24hPct: stats24h?.priceChange ?? dex?.priceChange24hPct ?? pool?.priceChange24hPct ?? null,
     // Solana authorities come from Jupiter's audit; the EVM equivalent of a live mint
     // authority is GoPlus's `is_mintable`, and EVM has no freeze authority at all.
     mintAuthorityDisabled: jup?.audit?.mintAuthorityDisabled ?? evmMintDisabled(gp),
@@ -792,7 +799,9 @@ function sourcesOf(input: ScoreInput): string[] {
   if (input.rugcheck) sources.push("rugcheck");
   if (input.dexscreener) sources.push("dexscreener");
   if (input.goplus) sources.push("goplus");
-  if (input.gecko) sources.push("geckoterminal");
+  // One entry whichever GeckoTerminal endpoint answered: the `/info` read, the pool
+  // page a fresh mint falls back to, or both.
+  if (input.gecko || input.geckoPool) sources.push("geckoterminal");
   if (input.sentiment) sources.push(input.sentiment.source);
   if (input.smartMoney) sources.push(input.smartMoney.source);
   if (input.sellCheck) sources.push(input.sellCheck.source);

@@ -139,7 +139,9 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
       discovery: ["gecko_launches", "paid_launches", "new_launches"],
       minScore: 45,
       minLiquidityUsd: 2_000,
-      minHolderCount: 10,
+      // A two-minute-old mint has one to three holders (measured live 2026-09-22); a
+      // floor here blocks the whole window. Distribution is judged by Deepnets instead.
+      minHolderCount: 0,
       minAgeMinutes: 0,
       maxAgeHours: 0.25,
       maxTop10HolderPct: 30,

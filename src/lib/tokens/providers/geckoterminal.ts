@@ -12,6 +12,11 @@
  *       base token's `{ address, name, symbol, decimals, image_url }`.
  *   GET /api/v2/networks/<net>/trending_pools?include=base_token&page=N
  *       same shape, ranked by what the network is trading now.
+ *   GET /api/v2/networks/<net>/tokens/<address>/pools?page=1
+ *       every pool of *one* token, same `attributes` shape but with no `included[]`,
+ *       so the base token is identified from the relationship id alone. This is the
+ *       only free endpoint that prices a mint Jupiter has not indexed yet — verified
+ *       2026-09-22 against a pump.fun mint ninety seconds old.
  *   GET /api/v2/networks/<net>/tokens/<address>/info
  *       `data.attributes.gt_score` (0-100) plus `gt_score_details`
  *       `{ pool, transaction, creation, info, holders }`, `holders.count` and
@@ -41,6 +46,7 @@ import type { Chain } from "@/server/types";
 import baseFixture from "../fixtures/geckoterminal.json";
 import newPoolsFixture from "../fixtures/geckoterminal-new-pools.json";
 import tokenInfoFixture from "../fixtures/geckoterminal-token-info.json";
+import tokenPoolsFixture from "../fixtures/geckoterminal-token-pools.json";
 import { asArray, asRecord, getJson, isoMs, isTokensMock, num, str, TtlCache } from "./http";
 
 const API_URL = "https://api.geckoterminal.com/api/v2";
@@ -91,6 +97,13 @@ export interface GeckoPool {
   /** Distinct buying wallets in the last hour — the cheapest "is anyone here" signal. */
   buyersH1: number | null;
   sellersH1: number | null;
+  /**
+   * The last five minutes. For a pool ninety seconds old the `hN` windows are just the
+   * `m5` numbers copied forward, but in a 15-minute hunt these are the only counters
+   * that mean what they say — so the super-fresh filter reads them instead.
+   */
+  buysM5: number | null;
+  buyersM5: number | null;
   dexId: string | null;
   token: GeckoPoolToken;
 }
@@ -128,10 +141,13 @@ export interface GeckoTokenInfo {
 
 const feedCache = new TtlCache<GeckoPool[]>(FEED_TTL_MS);
 const infoCache = new TtlCache<GeckoTokenInfo>(INFO_TTL_MS);
+/** One token's own pools. Same minute-long TTL as the feeds: it is market data. */
+const tokenPoolsCache = new TtlCache<GeckoPool[]>(FEED_TTL_MS);
 
 export function resetGeckoTerminalCache(): void {
   feedCache.clear();
   infoCache.clear();
+  tokenPoolsCache.clear();
   stamps.length = 0;
   gate = Promise.resolve();
 }
@@ -265,7 +281,9 @@ export function parseGeckoPools(body: unknown, network: Chain): GeckoPool[] {
       })();
     if (token === null) continue;
 
-    const txnsH1 = asRecord(asRecord(attributes?.transactions)?.h1);
+    const transactions = asRecord(attributes?.transactions);
+    const txnsH1 = asRecord(transactions?.h1);
+    const txnsM5 = asRecord(transactions?.m5);
     const volume = asRecord(attributes?.volume_usd);
     const change = asRecord(attributes?.price_change_percentage);
 
@@ -286,6 +304,8 @@ export function parseGeckoPools(body: unknown, network: Chain): GeckoPool[] {
       sellsH1: num(txnsH1?.sells),
       buyersH1: num(txnsH1?.buyers),
       sellersH1: num(txnsH1?.sellers),
+      buysM5: num(txnsM5?.buys),
+      buyersM5: num(txnsM5?.buyers),
       dexId: str(asRecord(asRecord(relationships?.dex)?.data)?.id),
       token,
     });
@@ -361,6 +381,11 @@ function mockInfoBody(network: Chain, address: string): unknown {
   return (tokenInfoFixture as Record<string, unknown>)[key] ?? null;
 }
 
+function mockTokenPoolsBody(network: Chain, address: string): unknown {
+  const key = `${network}:${normaliseAddress(address, network)}`;
+  return (tokenPoolsFixture as Record<string, unknown>)[key] ?? null;
+}
+
 /**
  * One page of a pool feed for one network. Cached for a minute, negatively too, so an
  * outage or a rate limit does not turn every agent tick into another doomed request.
@@ -396,6 +421,48 @@ export async function getGeckoTokenInfo(network: Chain, address: string): Promis
   const info = body === null ? null : parseGeckoTokenInfo(body, network, address);
   infoCache.set(key, info);
   return info;
+}
+
+/**
+ * Every pool of one token, newest-first as GeckoTerminal returns them.
+ *
+ * The point of this endpoint is the mint nothing else has indexed: a pump.fun token
+ * minutes old has no Jupiter record and no GT Score, but it does have a pool, and that
+ * pool carries a price, a reserve, a creation time and its transaction counts. One
+ * request, through the same limiter as everything else, cached for a minute.
+ *
+ * `[]` for a token GeckoTerminal has never seen, a failure, or a refused slot — all
+ * three mean "no pool data", and none may read as a token with no liquidity.
+ */
+export async function getGeckoTokenPools(network: Chain, address: string): Promise<GeckoPool[]> {
+  if (address.length < 3) return [];
+  if (isTokensMock()) return parseGeckoPools(mockTokenPoolsBody(network, address), network);
+
+  const key = `${network}:${normaliseAddress(address, network)}`;
+  const cached = tokenPoolsCache.get(key);
+  if (cached.hit) return cached.value ?? [];
+
+  const body = await geckoJson(`/networks/${network}/tokens/${encodeURIComponent(address)}/pools?page=1`);
+  const pools = body === null ? null : parseGeckoPools(body, network);
+  tokenPoolsCache.set(key, pools);
+  return pools ?? [];
+}
+
+/**
+ * The pool an order would actually route through: the deepest one. A pump.fun mint
+ * commonly has three pools within eight seconds of each other — a $21k pumpswap pool
+ * and two dust pools — so "the first one" is not the same answer as "the real one".
+ *
+ * Pure, and only ever considers pools whose base token is the one asked about when the
+ * caller passes an address (the endpoint answers per token, so that is normally moot).
+ */
+export function deepestGeckoPool(pools: readonly GeckoPool[], address?: string): GeckoPool | null {
+  let best: GeckoPool | null = null;
+  for (const pool of pools) {
+    if (address !== undefined && pool.token.address.toLowerCase() !== address.toLowerCase()) continue;
+    if (best === null || (pool.reserveUsd ?? -1) > (best.reserveUsd ?? -1)) best = pool;
+  }
+  return best;
 }
 
 /**

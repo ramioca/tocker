@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/hooks/use-session";
 import type { PendingProposalsSummary, RunDetail } from "@/server/types";
@@ -48,6 +49,53 @@ async function fetchRun(agentId: string, runId: string): Promise<RunDetail | nul
   // shows "running" from local state rather than flashing an error at the user.
   if (!response.ok) return null;
   return (await response.json()) as RunDetail;
+}
+
+/**
+ * True only where the browser has a Notification API *and* the user has already
+ * granted it. Every access is guarded: this module renders on the server, Safari on
+ * iOS has no constructor outside a PWA, and a locked-down browser can throw on the
+ * permission read itself.
+ */
+function notificationsGranted(): boolean {
+  if (typeof window === "undefined" || !("Notification" in window)) return false;
+  try {
+    return Notification.permission === "granted";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One desktop notification for one new proposal, with the four things the operator
+ * needs to decide whether to put the phone down: which agent, which side, how much,
+ * which token. Clicking it focuses this tab and opens the approvals page.
+ *
+ * `tag` is the trade id, so a re-render or a second poll replaces the same bubble
+ * rather than stacking another one on top of it.
+ */
+function alertNewProposal(summary: PendingProposalsSummary, open: () => void): void {
+  if (!notificationsGranted()) return;
+  const latest = summary.latest;
+  const title = latest
+    ? `${latest.agentName} wants to ${latest.side} $${Math.round(latest.requestedUsd)} of ${latest.symbol}`
+    : summary.count === 1
+      ? "A trade is waiting for your approval"
+      : `${summary.count} trades are waiting for your approval`;
+  const body = latest
+    ? "Approve it or let it expire — the quote is re-taken when you approve."
+    : "Open Tocker to approve or decline.";
+  try {
+    const notification = new Notification(title, { body, tag: latest?.tradeId ?? "tocker-proposals" });
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+      open();
+    };
+  } catch {
+    // An unsupported constructor, a denied permission race, or a browser that refuses
+    // to construct one outside a user gesture. A missed alert is not a failure state.
+  }
 }
 
 async function fetchPendingProposals(): Promise<PendingProposalsSummary> {
@@ -108,6 +156,25 @@ export function RunStatusProvider({ children }: { children: ReactNode }) {
   }, [queryClient]);
 
   const pendingProposals = proposalsQuery.data ?? NO_PROPOSALS;
+
+  // A proposal is worth interrupting someone for: it expires, and the whole point of
+  // approval mode on a five-minute tick is that the answer comes in minutes. Only a
+  // *rise* in the count fires — the first poll of a session never does, so opening the
+  // app with three already pending is silent.
+  const router = useRouter();
+  const lastCountRef = useRef<number | null>(null);
+  // Nothing is compared until the first real payload: the placeholder is a count of
+  // zero, and treating it as a baseline would alert for proposals that were already
+  // waiting when the tab opened.
+  const proposalsLoaded = proposalsQuery.data !== undefined;
+  useEffect(() => {
+    if (!proposalsLoaded) return;
+    const count = pendingProposals.count;
+    const previous = lastCountRef.current;
+    lastCountRef.current = count;
+    if (previous === null || count <= previous) return;
+    alertNewProposal(pendingProposals, () => router.push("/notifications"));
+  }, [proposalsLoaded, pendingProposals, router]);
 
   const value = useMemo<RunStatusValue>(
     () => ({ watched, detail, isRunning, watchRun, clearRun, pendingProposals, refreshProposals }),

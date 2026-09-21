@@ -21,6 +21,11 @@ export const DEFAULT_EXECUTION: ExecutionConfig = { mode: "auto", proposalTtlMin
  * browser.
  */
 export const PROPOSAL_TTL_PRESETS = [
+  {
+    minutes: 5,
+    label: "5 min",
+    hint: "Launch hunting on a 5-minute tick: one tick's life, then the agent re-reads the market instead of asking you about a stale one.",
+  },
   { minutes: 15, label: "15 min", hint: "Fast markets. Miss it and the agent re-proposes next tick." },
   { minutes: 60, label: "1 hour", hint: "The default. Long enough to see a phone notification." },
   { minutes: 240, label: "4 hours", hint: "You check in a few times a day." },
@@ -101,7 +106,7 @@ export function ExecutionControls({
             Past this the proposal dies on its own and the agent is free to propose the token again
             next tick. A quote you approve hours later is a quote for a different market.
           </p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-4">
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
             {PROPOSAL_TTL_PRESETS.map((preset) => {
               const active = value.proposalTtlMinutes === preset.minutes;
               return (

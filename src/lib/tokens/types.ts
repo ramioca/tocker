@@ -11,7 +11,7 @@
  * `@/server/types` and are re-exported here so consumers only need one import.
  */
 import type { Chain } from "@/server/types";
-import type { GeckoTokenInfo } from "./providers/geckoterminal";
+import type { GeckoPool, GeckoTokenInfo } from "./providers/geckoterminal";
 
 export type { GeckoPool, GeckoTokenInfo } from "./providers/geckoterminal";
 
@@ -244,6 +244,15 @@ export interface ScoreInput {
    * Null when GeckoTerminal has no record of it, or when the call failed.
    */
   gecko?: GeckoTokenInfo | null;
+  /**
+   * Free: the deepest pool GeckoTerminal has for this token, from
+   * `/tokens/<mint>/pools`. The last-resort source of a price, a reserve, an age and a
+   * 24h volume for a mint no indexer has caught up with — a pump.fun launch minutes
+   * old has one of these and nothing else. It never answers a *safety* question: the
+   * authorities stay RugCheck's and Jupiter's, and the honeypot flag stays
+   * {@link ScoreInput.gecko}'s.
+   */
+  geckoPool?: GeckoPool | null;
   sentiment?: SentimentInput | null;
   /** Paid: tracked smart-money flow. Present only when the agent bought it. */
   smartMoney?: SmartMoneyInput | null;
