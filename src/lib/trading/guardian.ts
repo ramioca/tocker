@@ -39,7 +39,7 @@
  */
 import { nanoid } from "nanoid";
 import { and, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
-import { agentRuns, agents, equitySnapshots, follows, getDb, notifications, positions as positionsTable, posts, trades } from "@/db";
+import { agentRuns, agents, equitySnapshots, follows, getDb, notifications, positions as positionsTable, posts, tokens as tokensTable, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
 import { parseAgentConfig } from "@/lib/agent/config";
 import { getAgentWallets, getPortfolio, snapshotEquity, toRiskPortfolio, type Portfolio } from "@/lib/agent/portfolio";
@@ -57,8 +57,7 @@ import {
   needsRescore,
   toExitRules,
   type ExitDecision,
-  type ExitPosition,
-} from "./exits";
+  type ExitPosition, priceText } from "./exits";
 import { applyFill, heldAmountToken, updatePeaks } from "./positions";
 import { buildReceipt, receiptSummary, saveReceipt } from "./receipt";
 import { riskGuard, type OrderIntent } from "./risk";
@@ -432,6 +431,9 @@ async function maybeSendDigest(agent: AgentRecord, now: Date): Promise<void> {
  * Executes one exit end to end. Returns a record either way — a throw here would take
  * the rest of the book down with it.
  */
+/** Exits whose trigger is the mark itself, so a bad mark means a bad trigger. */
+const PRICE_DRIVEN_EXITS: ReadonlySet<string> = new Set(["stop_loss", "take_profit", "trailing_stop"]);
+
 async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<GuardianExitRecord | GuardianSkip> {
   const db = await getDb();
   const { agent } = ctx;
@@ -576,6 +578,26 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
     quote = await executor.quote(request);
   } catch (err) {
     return failed(err instanceof Error ? err.message : "quote failed");
+  }
+
+  // The mark that fired a price rule was a feed read; the venue's quote is the price the
+  // sale would actually clear at. When the two disagree by more than 2× the mark was
+  // wrong, not the position — CLIP's dead pump.fun curve marked a live position at −89%
+  // while Jupiter had it 25× higher (2026-09-21) — and selling would dump a healthy
+  // token at the real price on the strength of a bad number. Correct the mark instead
+  // and let the rule re-check against it on the next pass.
+  if (PRICE_DRIVEN_EXITS.has(decision.reason) && quote.priceUsd > 0 && decision.markPriceUsd > 0) {
+    const ratio = quote.priceUsd / decision.markPriceUsd;
+    if (ratio > 2 || ratio < 0.5) {
+      const reason = `${decision.symbol} ${decision.reason} not taken: the mark said ${priceText(decision.markPriceUsd)} but Jupiter would fill at ${priceText(quote.priceUsd)} — a ${ratio.toFixed(1)}× disagreement means the mark was bad, not the position. Mark corrected; the rule is re-checked on the next pass.`;
+      await db.update(trades).set({ status: "rejected", error: reason }).where(eq(trades.id, tradeId));
+      await db
+        .update(tokensTable)
+        .set({ lastPriceUsd: quote.priceUsd.toFixed(12), priceUpdatedAt: ctx.now })
+        .where(eq(tokensTable.id, decision.tokenId));
+      log(agent.id, reason);
+      return { tokenId: decision.tokenId, symbol: decision.symbol, reason };
+    }
   }
 
   // `executeTrade` owns everything between the quote and a terminal row: the signature
