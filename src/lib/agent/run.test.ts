@@ -56,7 +56,9 @@ describe("runAgent with the scripted mock model", () => {
     expect(runs[0]?.status).toBe("succeeded");
     expect(runs[0]?.startedAt).not.toBeNull();
     expect(runs[0]?.finishedAt).not.toBeNull();
-    expect(Number(runs[0]?.dataSpendUsd)).toBeCloseTo(0.01, 6);
+    // $0.01 of sentiment on the deep score, plus $0.012 for the SolEnrich launch radar
+    // that every discovery sweep now buys.
+    expect(Number(runs[0]?.dataSpendUsd)).toBeCloseTo(0.022, 6);
     expect(runs[0]?.inputTokens).toBeGreaterThan(0);
 
     // Step log: a tool_call/tool_result pair per tool, with durations on the results.
@@ -87,11 +89,12 @@ describe("runAgent with the scripted mock model", () => {
     expect(steps.some((s) => s.kind === "message")).toBe(true);
     expect(steps.map((s) => s.seq)).toEqual(steps.map((_, i) => i));
 
-    // x402: one simulated payment recorded against the run.
+    // x402: two simulated payments recorded against the run — the SolEnrich launch
+    // radar every sweep buys, and the sentiment read on the deep score.
     const payments = await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
-    expect(payments).toHaveLength(1);
-    expect(payments[0]?.simulated).toBe(true);
-    expect(payments[0]?.runId).toBe(result.runId);
+    expect(payments).toHaveLength(2);
+    expect(payments.every((p) => p.simulated)).toBe(true);
+    expect(payments.every((p) => p.runId === result.runId)).toBe(true);
 
     // Trade: filled, paper, linked to the run.
     const trades = await db.select().from(schema.trades).where(eq(schema.trades.agentId, agentId));

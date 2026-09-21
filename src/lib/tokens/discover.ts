@@ -60,6 +60,8 @@ export interface DiscoverInput {
   x402?: X402Context;
   /** Sources the agent is allowed to pay for. Empty or absent means "any". */
   dataSources?: readonly string[];
+  /** Sweep the paid launch radars whether or not `dataSources` names them — the platform pays for them to be used. */
+  alwaysPaidLaunches?: boolean;
   /** Injected in tests so age maths is deterministic. */
   now?: number;
 }
@@ -363,14 +365,28 @@ export function filterGeckoPools(input: GeckoPoolFilter): GeckoPool[] {
  * about a token it actually looked at rather than a default for something it first
  * saw ninety seconds ago.
  */
-export function passesGeckoInfo(info: GeckoTokenInfo | null): boolean {
+/**
+ * The GT Score floor for an agent hunting the first hours: GeckoTerminal's score rewards
+ * age, holders and a creator's record, so a 40-minute-old launch it has assessed sits
+ * in the 30s even when every safety field is clean. Holding such an agent to 50 meant
+ * an empty window every tick (2026-09-22).
+ */
+export const GECKO_FRESH_MIN_GT_SCORE = 30;
+/** Below this many hours of max age, the fresh floor applies. */
+export const GECKO_FRESH_WINDOW_HOURS = 6;
+
+export function geckoFloorFor(maxAgeHours: number | null): number {
+  return maxAgeHours !== null && maxAgeHours <= GECKO_FRESH_WINDOW_HOURS ? GECKO_FRESH_MIN_GT_SCORE : GECKO_MIN_GT_SCORE;
+}
+
+export function passesGeckoInfo(info: GeckoTokenInfo | null, minGtScore: number = GECKO_MIN_GT_SCORE): boolean {
   if (info === null) return false;
   // The GT Score alone. A `creation` sub-score of 0 was also required at first, but a
   // day-old launch GeckoTerminal rates 52 overall (STAMP, 2026-09-21) still carries
   // creation 0 — that sub-score measures the creator's track record, which a fresh
   // launch never has, and it is exactly the launch this feed exists to surface. A
   // minutes-old mint scores 23 overall and fails the bar on its own.
-  return info.gtScore !== null && info.gtScore >= GECKO_MIN_GT_SCORE;
+  return info.gtScore !== null && info.gtScore >= minGtScore;
 }
 
 /** Pool page + `/info` → the chain-agnostic facts the pre-rank and the gates read. */
@@ -491,7 +507,7 @@ async function sweepGeckoLaunches(chains: readonly Chain[], ctx: DiscoveryContex
   }));
 
   return looked
-    .filter(({ info }) => passesGeckoInfo(info))
+    .filter(({ info }) => passesGeckoInfo(info, geckoFloorFor(ctx.universe.maxAgeHours)))
     .map(({ chain, pool, info }) => geckoCandidate(pool, info, chain, ctx.now));
 }
 
@@ -641,7 +657,9 @@ export async function discoverCandidates(input: DiscoverInput): Promise<TokenCan
   const x402 = input.x402;
   if (feeds.has("paid_launches") && x402) {
     for (const chain of chains) {
-      jobs.push(sweepPaidLaunches(chain, x402, input.dataSources, universe.minLiquidityUsd));
+      jobs.push(
+        sweepPaidLaunches(chain, x402, input.alwaysPaidLaunches ? undefined : input.dataSources, universe.minLiquidityUsd),
+      );
     }
   }
   const sweeps = await Promise.allSettled(jobs);

@@ -11,8 +11,6 @@ import { platformFeeUsd as flatFeeUsd } from "@/lib/platform/fee";
 import { MAX_PROPOSALS_PER_TICK, MIN_SCORED_PER_TICK, SEEN_WINDOW_MS } from "./limits";
 import { INTEL_SOURCE, planEnrichment, type EnrichmentPlan } from "./enrichment";
 
-/** The x402 launch radars; configuring one means the `paid_launches` feed runs. */
-const PAID_LAUNCH_SOURCE_IDS = ["solenrich-launches", "gate402-base-radar"] as const;
 import { nanoid } from "nanoid";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
@@ -253,19 +251,22 @@ export function buildTools(ctx: RunContext): ToolSet {
           return fail(`Chain ${parsed.chain} is not enabled for this agent.`, { enabled: agent.config.chains });
         }
 
-        // Launches first. GeckoTerminal's rated launches are free and always swept; a
-        // paid launch radar the owner configured is swept whether or not the feed list
-        // names it — they pay for it to be used (operator's instruction, 2026-09-22).
-        // The free Jupiter lists still run, but their names rank after the launches.
+        // Launches first, paid for. GeckoTerminal's rated launches and the paid launch
+        // radars (SolEnrich on Solana, gate402 on Base — the platform's wallet pays,
+        // about $0.02 a sweep) run on every sweep whatever the feed list says: the
+        // operator's instruction (2026-09-22) is to pay for the endpoints before
+        // deciding, never to let a free list gate what gets researched. Jupiter's free
+        // lists still run, but their names rank after the launches.
         const feeds = new Set<string>(parsed.feeds ?? universe.discovery);
         feeds.add("gecko_launches");
-        if (PAID_LAUNCH_SOURCE_IDS.some((id) => allowedSources.includes(id))) feeds.add("paid_launches");
+        feeds.add("paid_launches");
         const candidates = await discoverCandidates({
           chains,
           universe,
           // Only used by the `paid_launches` feed; every other feed ignores both.
           x402: ctx.x402,
           dataSources: allowedSources,
+          alwaysPaidLaunches: true,
           feeds: [...feeds] as typeof universe.discovery,
           // Wider than the old 20 by default: the fresh part of the table is what
           // matters, and a held, proposed or recently scored name takes a slot otherwise.

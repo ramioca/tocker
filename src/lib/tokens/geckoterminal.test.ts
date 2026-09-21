@@ -22,6 +22,7 @@ import {
   geckoCandidate,
   geckoPoolRank,
   geckoQuickScore,
+  geckoFloorFor,
   passesGeckoInfo,
   GECKO_MIN_BUYERS_H1,
   GECKO_MIN_GT_SCORE,
@@ -185,6 +186,17 @@ describe("parseGeckoTokenInfo", () => {
 });
 
 describe("passesGeckoInfo", () => {
+  it("lowers the floor to 30 for an agent whose window is the first hours", () => {
+    expect(geckoFloorFor(1)).toBe(30);
+    expect(geckoFloorFor(6)).toBe(30);
+    expect(geckoFloorFor(24)).toBe(50);
+    expect(geckoFloorFor(null)).toBe(50);
+    const young = { ...info(LAPTOP)!, gtScore: 41 };
+    expect(passesGeckoInfo(young, 30)).toBe(true);
+    expect(passesGeckoInfo(young, 50)).toBe(false);
+    expect(passesGeckoInfo(info(LAPTOP), 30)).toBe(false); // 23.9 fails either floor
+  });
+
   it("needs a GT Score at or above the bar — a fresh launch's zero creation sub-score does not disqualify it", () => {
     expect(passesGeckoInfo(info(BONK))).toBe(true); // 62.0, creation 100
     expect(passesGeckoInfo(info(AERO))).toBe(true); // 91.0, creation 100
