@@ -145,6 +145,79 @@ function Signals() {
   const outer = useRef<HTMLElement>(null);
   const track = useRef<HTMLDivElement>(null);
   const word = useRef<HTMLDivElement>(null);
+  const thumb = useRef<HTMLDivElement>(null);
+
+  // Under 768px the track is a native horizontal snap row. A finger swipes it;
+  // a mouse (a narrow desktop window, a tablet with a trackpad) grabs and drags
+  // it, and the row reports its position to the progress line beneath.
+  useEffect(() => {
+    const tr = track.current;
+    if (!tr) return;
+    const narrow = window.matchMedia("(max-width: 767px)");
+
+    const onTrackScroll = () => {
+      const bar = thumb.current;
+      if (!bar || !narrow.matches) return;
+      const max = tr.scrollWidth - tr.clientWidth;
+      const frac = max > 0 ? tr.scrollLeft / max : 0;
+      const vis = tr.scrollWidth > 0 ? tr.clientWidth / tr.scrollWidth : 1;
+      bar.style.width = `${vis * 100}%`;
+      bar.style.transform = `translateX(${vis > 0 ? (frac * (1 - vis)) / vis * 100 : 0}%)`;
+    };
+
+    let dragging = false;
+    let moved = false;
+    let startX = 0;
+    let startLeft = 0;
+    const down = (e: PointerEvent) => {
+      if (!narrow.matches || e.pointerType !== "mouse" || e.button !== 0) return;
+      dragging = true;
+      moved = false;
+      startX = e.clientX;
+      startLeft = tr.scrollLeft;
+      tr.classList.add("sig-dragging");
+      tr.setPointerCapture(e.pointerId);
+    };
+    const move = (e: PointerEvent) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      if (Math.abs(dx) > 3) moved = true;
+      tr.scrollLeft = startLeft - dx;
+    };
+    const up = (e: PointerEvent) => {
+      if (!dragging) return;
+      dragging = false;
+      tr.classList.remove("sig-dragging");
+      if (tr.hasPointerCapture(e.pointerId)) tr.releasePointerCapture(e.pointerId);
+    };
+    // A drag must not count as a click on whatever card it ended over.
+    const click = (e: MouseEvent) => {
+      if (!moved) return;
+      moved = false;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    tr.addEventListener("scroll", onTrackScroll, { passive: true });
+    tr.addEventListener("pointerdown", down);
+    tr.addEventListener("pointermove", move);
+    tr.addEventListener("pointerup", up);
+    tr.addEventListener("pointercancel", up);
+    tr.addEventListener("click", click, true);
+    narrow.addEventListener("change", onTrackScroll);
+    window.addEventListener("resize", onTrackScroll);
+    onTrackScroll();
+    return () => {
+      tr.removeEventListener("scroll", onTrackScroll);
+      tr.removeEventListener("pointerdown", down);
+      tr.removeEventListener("pointermove", move);
+      tr.removeEventListener("pointerup", up);
+      tr.removeEventListener("pointercancel", up);
+      tr.removeEventListener("click", click, true);
+      narrow.removeEventListener("change", onTrackScroll);
+      window.removeEventListener("resize", onTrackScroll);
+    };
+  }, []);
 
   useEffect(() => {
     let raf = 0;
@@ -195,7 +268,12 @@ function Signals() {
           Signals
         </div>
         <div className="sig-rail absolute top-1/2 left-0 z-10 -translate-y-1/2">
-          <div ref={track} className="sig-track flex items-center gap-7 pl-[clamp(20px,4vw,64px)] pr-[30vw] will-change-transform">
+          {/* data-lenis-prevent: the smooth-scroll root must not swallow wheel/touch on the row. */}
+          <div
+            ref={track}
+            data-lenis-prevent
+            className="sig-track flex items-center gap-7 pl-[clamp(20px,4vw,64px)] pr-[30vw] will-change-transform"
+          >
             <div className="sig-intro w-[26vw] max-w-[380px] shrink-0 pr-8">
               <p className="font-mono text-[11px] leading-[1.6] tracking-[0.08em] text-[rgba(244,244,241,0.55)] uppercase">
                 Your agent discovers and pays any of 16,000+ live services in the open x402 Bazaar
@@ -205,6 +283,12 @@ function Signals() {
             {SIGNALS.map((s) => (
               <SignalCard key={s.i} s={s} />
             ))}
+          </div>
+        </div>
+        <div className="sig-swipe" aria-hidden>
+          <span className="sig-swipe-hint">( swipe )</span>
+          <div className="sig-swipe-rail">
+            <div ref={thumb} className="sig-swipe-thumb" />
           </div>
         </div>
         <div className="sig-rule absolute bottom-6 left-0 h-px w-full bg-[rgba(244,244,241,0.08)]" />

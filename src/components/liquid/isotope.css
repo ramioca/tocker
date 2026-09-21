@@ -965,6 +965,51 @@ button.cta-primary {
     position: static;
     margin-top: 32px;
   }
+  /* Grab-and-drag with a mouse: snapping is suspended while the pointer is down. */
+  .sig-section .sig-track {
+    cursor: grab;
+  }
+  .sig-section .sig-track.sig-dragging {
+    cursor: grabbing;
+    scroll-snap-type: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  /* Swipe hint and progress line under the row. */
+  .sig-section .sig-swipe {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 18px 20px 0;
+    font-family: var(--font-geist-mono), "Geist Mono", ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(244, 244, 241, 0.45);
+  }
+  .sig-section .sig-swipe-hint {
+    flex-shrink: 0;
+  }
+  .sig-section .sig-swipe-rail {
+    position: relative;
+    flex: 1;
+    height: 1px;
+    background: rgba(244, 244, 241, 0.1);
+  }
+  .sig-section .sig-swipe-thumb {
+    position: absolute;
+    top: -1px;
+    left: 0;
+    height: 3px;
+    width: 20%;
+    border-radius: 2px;
+    background: rgba(244, 244, 241, 0.6);
+    will-change: transform;
+  }
+}
+/* The hint and progress line exist only for the mobile row. */
+.sig-swipe {
+  display: none;
 }
 /* The intro is the row's first slide, the same width as a card. */
 @media (max-width: 767px) {
