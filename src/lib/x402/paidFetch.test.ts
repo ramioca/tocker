@@ -81,6 +81,29 @@ describe("parsePaymentOptions", () => {
 });
 
 describe("selectPaymentOption", () => {
+  it("pays from the platform wallet that holds the money, whatever chain the agent trades", () => {
+    const base = {
+      scheme: "exact",
+      network: "eip155:8453",
+      asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      payTo: "0x1",
+      amount: "12000",
+      amountUsd: 0.012,
+    };
+    const sol = { ...base, network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp" };
+    const balances = new Map<"base" | "solana", number>([
+      ["solana", 0.005],
+      ["base", 4.9],
+    ]);
+    // A Solana agent, an empty Solana data wallet, a funded Base one: Base pays.
+    expect(selectPaymentOption([sol, base], sol.network, undefined, ["solana"], balances)?.network).toBe(base.network);
+    // Both funded: the agent's chain wins the tie.
+    balances.set("solana", 5);
+    expect(selectPaymentOption([sol, base], base.network, undefined, ["solana"], balances)?.network).toBe(sol.network);
+    // Balances unknown: the old preference order stands.
+    expect(selectPaymentOption([sol, base], base.network, undefined, ["solana"])?.network).toBe(sol.network);
+  });
+
   const base = {
     scheme: "exact",
     network: "eip155:8453",
@@ -382,6 +405,8 @@ describe("paidFetch accounting when a payment fails", () => {
     }));
     vi.doMock("@/lib/platform/wallets", () => ({
       ensurePlatformWallet: async (chain: string) => ({ walletId: "platform-wallet", chain, address: "0xplatform" }),
+      // Balances unknown in these tests: the choice falls back to the registry's network.
+      platformUsdcBalances: async () => new Map(),
     }));
     vi.doMock("@privy-io/node/x402", () => ({ createX402Client: () => fakeClient }));
     vi.doMock("@x402/fetch", async (importOriginal) => ({

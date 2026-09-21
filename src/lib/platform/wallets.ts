@@ -275,6 +275,34 @@ export async function readPlatformBalanceAll(): Promise<PlatformBalanceReading[]
   return Promise.all(rows.map(readPlatformBalance));
 }
 
+const BALANCE_CACHE_TTL_MS = 60_000;
+let balanceCache: { at: number; usdc: Map<Chain, number> } | null = null;
+
+/**
+ * USDC per platform wallet, read at most once a minute per instance. A paid data call
+ * asks this to pick the wallet that can actually pay; a minute of staleness on a
+ * balance that moves by cents is nothing, and a fresh Privy read per $0.01 call is not.
+ * Chains whose wallet could not be read are absent, not zero.
+ */
+export async function platformUsdcBalances(now = Date.now()): Promise<ReadonlyMap<Chain, number>> {
+  if (balanceCache && now - balanceCache.at < BALANCE_CACHE_TTL_MS) return balanceCache.usdc;
+  const usdc = new Map<Chain, number>();
+  try {
+    for (const reading of await readPlatformBalanceAll()) {
+      if (reading.usdc !== null) usdc.set(reading.chain, reading.usdc);
+    }
+  } catch {
+    // An unreadable set of balances means "no preference", not "nobody can pay".
+  }
+  balanceCache = { at: now, usdc };
+  return usdc;
+}
+
+/** Forget the cached balances — after a payment, or in tests. */
+export function resetPlatformBalanceCache(): void {
+  balanceCache = null;
+}
+
 /** USDC held by one platform wallet. `null` when there is no wallet, or it could not be read. */
 export async function platformUsdcBalance(chain: Chain): Promise<number | null> {
   const row = await getPlatformWallet(chain);

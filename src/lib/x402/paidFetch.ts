@@ -271,21 +271,47 @@ export function selectPaymentOption(
    * a source fail because the Base wallet is empty.
    */
   preferChains: ReadonlyArray<Chain> = [],
+  /**
+   * USDC each platform wallet holds, when known. The platform pays for data, not the
+   * agent, so the wallet that *can* pay comes first whatever chain the agent trades:
+   * an operator who funded Base for a Solana agent expects SolEnrich to be bought with
+   * that Base USDC once the Solana wallet runs dry, not to see a failed run.
+   */
+  balances: ReadonlyMap<Chain, number> = new Map(),
 ): ParsedPaymentOption | null {
+  const chainOf = (o: ParsedPaymentOption) => chainForNetwork(o.network);
   const affordable = options.filter((o) => {
-    const chain = chainForNetwork(o.network);
+    const chain = chainOf(o);
     return chain !== null && payable.some((w) => w.chain === chain);
   });
-  const onAgentChains = affordable.filter((o) => {
-    const chain = chainForNetwork(o.network);
-    return chain !== null && preferChains.includes(chain);
+  const funded = affordable.filter((o) => {
+    const chain = chainOf(o);
+    const held = chain === null ? undefined : balances.get(chain);
+    return held !== undefined && held >= o.amountUsd + FUNDED_MARGIN_USD;
   });
-  const pool = onAgentChains.length > 0 ? onAgentChains : affordable.length > 0 ? affordable : options;
+  const onAgentChains = (pool: ParsedPaymentOption[]) =>
+    pool.filter((o) => {
+      const chain = chainOf(o);
+      return chain !== null && preferChains.includes(chain);
+    });
+  // Funded on an agent chain → funded anywhere → (balances unknown) an agent chain →
+  // any wallet we hold → whatever was offered.
+  const tiers: ParsedPaymentOption[][] = [
+    onAgentChains(funded),
+    funded,
+    ...(balances.size === 0 ? [onAgentChains(affordable)] : []),
+    affordable,
+    options,
+  ];
+  const pool = tiers.find((tier) => tier.length > 0) ?? [];
   if (pool.length === 0) return null;
   const exact = pool.filter((o) => o.network === preferredNetwork);
   const ranked = (exact.length > 0 ? exact : pool).slice().sort((a, b) => a.amountUsd - b.amountUsd);
   return ranked[0] ?? null;
 }
+
+/** A wallet counts as able to pay when it holds the price plus this much. */
+const FUNDED_MARGIN_USD = 0.02;
 
 /** A wallet that can sign an x402 payment. Today, always a platform wallet. */
 interface PayingWallet {
@@ -560,11 +586,13 @@ export async function paidFetch(ctx: X402Context, req: PaidRequest): Promise<Pai
       }
 
       const options = await parsePaymentOptions(probe);
+      const { platformUsdcBalances } = await import("@/lib/platform/wallets");
       const option = selectPaymentOption(
         options,
         req.network,
         PAYABLE_CHAINS,
         ctx.wallets.map((w) => w.chain),
+        await platformUsdcBalances(),
       );
       if (!option) throw new X402RequestError(`${req.sourceId} returned a 402 we cannot parse or pay`, 402);
 
