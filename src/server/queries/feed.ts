@@ -155,7 +155,8 @@ export async function getComments(postId: string, cursor?: string | null): Promi
         ? and(
             eq(comments.postId, postId),
             or(
-              sql`${comments.createdAt} > ${c.at}`,
+              // ISO text, not a Date: raw `sql` params are not column-mapped (see run.ts).
+              sql`${comments.createdAt} > ${c.at.toISOString()}`,
               and(eq(comments.createdAt, c.at), sql`${comments.id} > ${c.id}`),
             ),
           )

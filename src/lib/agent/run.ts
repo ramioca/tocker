@@ -151,6 +151,9 @@ export const RUN_MODEL_TIMEOUT_MS = 240_000;
  */
 export async function reapStaleRuns(agentId?: string, now: Date = new Date()): Promise<number> {
   const db = await getDb();
+  // Bound as ISO text on purpose: a Date inside a raw `sql` template is serialised with
+  // Date#toString() ("Mon Sep 21 2026 14:58:23 GMT+0000 (...)"), which Postgres rejects.
+  // PGlite in the tests tolerated it; Neon in production 500'd every cron pass.
   const cutoff = new Date(now.getTime() - STALE_RUN_MS);
   const reaped = await db
     .update(agentRuns)
@@ -158,7 +161,7 @@ export async function reapStaleRuns(agentId?: string, now: Date = new Date()): P
     .where(
       and(
         inArray(agentRuns.status, ["queued", "running"]),
-        sql`coalesce(${agentRuns.startedAt}, ${agentRuns.createdAt}) < ${cutoff}`,
+        sql`coalesce(${agentRuns.startedAt}, ${agentRuns.createdAt}) < ${cutoff.toISOString()}`,
         ...(agentId === undefined ? [] : [eq(agentRuns.agentId, agentId)]),
       ),
     )
@@ -187,7 +190,7 @@ async function claimRun(runId: string, agentId: string, now: Date = new Date()):
           SELECT 1 FROM ${agentRuns} AS other
           WHERE other.agent_id = ${agentId}
             AND other.status = 'running'
-            AND coalesce(other.started_at, other.created_at) >= ${cutoff}
+            AND coalesce(other.started_at, other.created_at) >= ${cutoff.toISOString()}
         )`,
       ),
     )
