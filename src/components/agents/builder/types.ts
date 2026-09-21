@@ -123,7 +123,7 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     label: "Fresh launch hunter",
     blurb: "Lives in the first day of a token's life and leaves before the crowd.",
     chains: ["solana"],
-    dataSources: ["deepnets-token-safety", "x-search"],
+    dataSources: ["deepnets-token-safety", "solenrich-launches", "x-search"],
     prompt:
       "You hunt tokens in their first day. Each tick, pull the new-launch feed and score everything on it. Ignore anything with a live mint or freeze authority no matter how well it scores elsewhere, and ignore anything whose organic component is below 60 — manufactured volume is the whole scam. Everything else that clears your bar is a candidate, whatever its 24h move: propose each one, best first, sized small, and let your owner pick. Hold up to three positions at once; a token already held is not a reason to skip the next one, and a new candidate does not have to outscore what you hold. Sell into the first parabolic move or the moment liquidity starts leaving. If the feed is all rugs, buy nothing and say so.",
   },
@@ -200,7 +200,7 @@ export const UNIVERSE_PRESETS: UniversePreset[] = [
     label: "Degen",
     blurb: "Fresh launches and thin books, with no give at all on authorities.",
     values: {
-      discovery: ["new_launches", "momentum"],
+      discovery: ["gecko_launches", "paid_launches", "new_launches", "momentum"],
       minScore: 55,
       minLiquidityUsd: 5_000,
       minHolderCount: 50,
@@ -217,7 +217,7 @@ export const UNIVERSE_PRESETS: UniversePreset[] = [
     label: "Balanced",
     blurb: "Young enough to matter, liquid enough to leave. The default.",
     values: {
-      discovery: ["new_launches", "trending", "top_organic"],
+      discovery: ["gecko_launches", "paid_launches", "new_launches", "trending", "top_organic"],
       minScore: 62,
       minLiquidityUsd: 15_000,
       minHolderCount: 150,

@@ -253,9 +253,12 @@ export function buildTools(ctx: RunContext): ToolSet {
           return fail(`Chain ${parsed.chain} is not enabled for this agent.`, { enabled: agent.config.chains });
         }
 
-        // A paid launch radar the owner configured is swept whether or not the feed list
-        // names it: they pay for it to be used (operator's instruction, 2026-09-22).
+        // Launches first. GeckoTerminal's rated launches are free and always swept; a
+        // paid launch radar the owner configured is swept whether or not the feed list
+        // names it — they pay for it to be used (operator's instruction, 2026-09-22).
+        // The free Jupiter lists still run, but their names rank after the launches.
         const feeds = new Set<string>(parsed.feeds ?? universe.discovery);
+        feeds.add("gecko_launches");
         if (PAID_LAUNCH_SOURCE_IDS.some((id) => allowedSources.includes(id))) feeds.add("paid_launches");
         const candidates = await discoverCandidates({
           chains,

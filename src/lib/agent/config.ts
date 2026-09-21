@@ -98,7 +98,9 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigWithSizing = {
   dataSources: ["x-search", "cmc-quotes", "deepnets-token-safety"],
   chains: ["solana"],
   universe: {
-    discovery: ["new_launches", "trending", "top_organic"],
+    // Launch feeds lead: GeckoTerminal's rated launches (free) and the paid radar when
+    // a source for it is configured; Jupiter's lists fill the table after them.
+    discovery: ["gecko_launches", "paid_launches", "new_launches", "trending"],
     minScore: 62,
     minLiquidityUsd: 15_000,
     minHolderCount: 150,

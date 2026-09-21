@@ -656,10 +656,24 @@ export async function discoverCandidates(input: DiscoverInput): Promise<TokenCan
     }
   }
 
-  return Array.from(byId.values())
-    .filter((c) => isDiscoveryCandidate(c.token) && passesFreeGates(c, universe))
-    .sort((a, b) => (b.quickScore ?? 0) - (a.quickScore ?? 0))
-    .slice(0, limit);
+  return rankCandidates(
+    Array.from(byId.values()).filter((c) => isDiscoveryCandidate(c.token) && passesFreeGates(c, universe)),
+  ).slice(0, limit);
+}
+
+/** The feeds that find a launch before the market has priced it: they lead the table. */
+export const LAUNCH_FEEDS: ReadonlySet<DiscoveryFeed> = new Set(["gecko_launches", "paid_launches"]);
+
+/**
+ * Pure: launches first, then everything else, each tier by quick score. Ranking every
+ * feed together by quick score alone put Jupiter's trending names — established,
+ * high-volume, already priced — above a GeckoTerminal- or SolEnrich-rated launch that
+ * was minutes old, so the model scored the tokens everyone already owned (operator's
+ * instruction, 2026-09-22: find the fresh launches first).
+ */
+export function rankCandidates(candidates: readonly TokenCandidate[]): TokenCandidate[] {
+  const tier = (c: TokenCandidate) => (LAUNCH_FEEDS.has(c.origin) ? 0 : 1);
+  return [...candidates].sort((a, b) => tier(a) - tier(b) || (b.quickScore ?? 0) - (a.quickScore ?? 0));
 }
 
 /** Compact table for the model's context — one line per candidate, no JSON noise. */
