@@ -45,6 +45,25 @@ const WALLET_HOSTS = [
   "wss://*.walletconnect.org",
   "wss://relay.walletconnect.com",
 ];
+/**
+ * Solana RPC for Privy's embedded-wallet UIs (`solana.rpcs` in the provider). HTTP goes
+ * through the same-origin `/api/solana/rpc` proxy, so only the websocket endpoint —
+ * which serverless cannot proxy — and any explicitly configured public endpoints need
+ * listing here.
+ */
+function solanaHosts(): string[] {
+  const hosts = ["wss://api.mainnet-beta.solana.com", "https://api.mainnet-beta.solana.com"];
+  for (const raw of [process.env.NEXT_PUBLIC_SOLANA_RPC_URL, process.env.NEXT_PUBLIC_SOLANA_WSS_URL]) {
+    const value = raw?.trim();
+    if (!value) continue;
+    try {
+      hosts.push(new URL(value).origin);
+    } catch {
+      // A malformed URL is a deploy mistake the health check reports; do not let it break the CSP.
+    }
+  }
+  return hosts;
+}
 
 export interface CspOptions {
   /** Per-request nonce. Next.js reads it off the request CSP header and stamps its own scripts. */
@@ -73,7 +92,10 @@ export function contentSecurityPolicy({ nonce, isDev }: CspOptions): string {
     ["style-src", ["'self'", "'unsafe-inline'"]],
     ["img-src", ["'self'", "data:", "blob:", "https:"]],
     ["font-src", ["'self'", "data:"]],
-    ["connect-src", ["'self'", ...PRIVY_HOSTS, ...WALLET_HOSTS, ...(isDev ? ["ws:", "http://localhost:*"] : [])]],
+    [
+      "connect-src",
+      ["'self'", ...PRIVY_HOSTS, ...WALLET_HOSTS, ...solanaHosts(), ...(isDev ? ["ws:", "http://localhost:*"] : [])],
+    ],
     ["frame-src", ["'self'", ...PRIVY_HOSTS, "https://challenges.cloudflare.com"]],
     ["worker-src", ["'self'", "blob:"]],
     ["media-src", ["'self'", "data:", "blob:"]],
