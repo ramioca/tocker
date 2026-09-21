@@ -11,6 +11,7 @@ import { AgentAvatar } from "@/components/common/agent-avatar";
 import { EmptyState } from "@/components/common/empty-state";
 import { agentBySlug, agentWalletBudget, viewerSession, walletBalances } from "@/components/common/data-access";
 import { BudgetCard } from "@/components/agents/settings/budget-card";
+import { MoneyStrip } from "@/components/agents/settings/money-strip";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -71,16 +72,39 @@ export default async function AgentSettingsPage({ params }: Params) {
         </div>
       </header>
 
+      {/*
+        Money first, then the strategy editor, then the rest of the money in full.
+
+        The three things an operator opens this page to do — fund it, put it live, take
+        it out — used to sit below eight cards of strategy editing. The strip at the top
+        is the shortcut; the cards below are unchanged and still hold the detail, so
+        there is one Fund sheet and one Withdraw form in the product, not two.
+
+        Every card carries an `id` and `scroll-mt-20` so readiness, the live checklist
+        and the strip can link straight at one (#wallets #risk #budget #mode #withdraw)
+        and land clear of the sticky top bar.
+      */}
       <div className="mt-6 space-y-6">
+        <MoneyStrip agent={agent} initialBalances={balances} />
+
         <AgentSettingsForm agent={agent} config={agent.config} />
-        <WalletsCard agentId={agent.id} agentName={agent.name} initialBalances={balances} />
-        <BudgetCard
-          agentId={agent.id}
-          initialPerTxUsd={walletBudget?.perTxUsd ?? null}
-          hasRealWallets={hasRealWallets}
-        />
-        <GoLiveCard agent={agent} />
-        <WithdrawForm agent={agent} balances={balances} />
+
+        <div id="wallets" className="scroll-mt-20">
+          <WalletsCard agentId={agent.id} agentName={agent.name} initialBalances={balances} />
+        </div>
+        <div id="budget" className="scroll-mt-20">
+          <BudgetCard
+            agentId={agent.id}
+            initialPerTxUsd={walletBudget?.perTxUsd ?? null}
+            hasRealWallets={hasRealWallets}
+          />
+        </div>
+        <div id="mode" className="scroll-mt-20">
+          <GoLiveCard agent={agent} />
+        </div>
+        <div id="withdraw" className="scroll-mt-20">
+          <WithdrawForm agent={agent} balances={balances} />
+        </div>
         <DangerZone agent={agent} balances={balances} />
       </div>
     </div>

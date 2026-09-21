@@ -412,8 +412,8 @@ export function AgentBuilder({
             title="Data it buys"
             summary={
               chosen.length === 0
-                ? "Free feeds only — it pays for nothing."
-                : `${chosen.length} paid source${chosen.length === 1 ? "" : "s"} · up to ${formatUsd(costPerRun)} per run, from its own wallet`
+                ? "Free feeds only — nothing to pay for."
+                : `${chosen.length} paid source${chosen.length === 1 ? "" : "s"} · up to ${formatUsd(costPerRun)} per run, paid by Tocker`
             }
             open={open.has("data")}
             onToggle={() => toggle("data")}

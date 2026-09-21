@@ -39,9 +39,12 @@ export function GoLiveCard({ agent }: { agent: AgentDetail }) {
     .filter((balance) => balance.asset === "usdc")
     .reduce((sum, balance) => sum + balance.amount, 0);
 
-
-  const funded = usdc >= MIN_USDC;
   const live = agent.mode === "live";
+  // The product default is `approve`, and this card used to say flatly that live mode
+  // has "no approval step in between" — which would have the operator believe their
+  // first tick placed a trade when what it placed was a proposal waiting on them.
+  // Say whichever is actually configured.
+  const approves = agent.config?.execution.mode === "approve";
 
   const backToPaper = async () => {
     const result = await backToPaperAction(agent.id);
@@ -92,9 +95,21 @@ export function GoLiveCard({ agent }: { agent: AgentDetail }) {
       ) : (
         <>
           <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-            Live mode means the agent signs real transactions from its own wallet, with no approval step in
-            between. Its risk caps and its wallet budget are the only things standing between the model and your
-            balance, so it is not a toggle: the checklist walks nine preconditions — database, Privy, your second
+            Live mode means real money moves from the agent&rsquo;s own wallet.{" "}
+            {approves ? (
+              <>
+                This agent is set to <span className="text-foreground">propose and wait for you</span>: each
+                trade it decides on appears as a proposal you approve or reject, and nothing is signed until
+                you do.
+              </>
+            ) : (
+              <>
+                This agent is set to <span className="text-foreground">trade on its own</span>: it signs
+                without asking, and its risk caps and wallet budget are the only things between the model and
+                your balance.
+              </>
+            )}{" "}
+            Either way it is not a toggle: the checklist walks nine preconditions — database, Privy, your second
             factor, real wallets, funding, caps, risk, data sources and the kill switch — and refuses while any
             of them is red.
           </p>
@@ -107,6 +122,8 @@ export function GoLiveCard({ agent }: { agent: AgentDetail }) {
               </dd>
             </div>
             <div className="flex items-center justify-between gap-3 text-xs">
+              <dt className="text-muted-foreground">Who approves a trade</dt>
+              <dd className="text-foreground">{approves ? "You, per trade" : "The agent, on its own"}</dd>
             </div>
           </dl>
 
@@ -121,7 +138,9 @@ export function GoLiveCard({ agent }: { agent: AgentDetail }) {
                 Start the first-live-trade checklist
               </Link>
             </LiquidMetal>
-            {funded ? null : <FundAgentDrawer agentId={agent.id} agentName={agent.name} wallets={wallets} />}
+            {/* Always offered. Hiding Fund the moment the balance clears the minimum is
+                what made topping up hard to find — $5 is a floor, not a target. */}
+            <FundAgentDrawer agentId={agent.id} agentName={agent.name} wallets={wallets} />
           </div>
         </>
       )}

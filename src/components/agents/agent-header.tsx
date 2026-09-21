@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Lock, Play, Settings2 } from "lucide-react";
+import { ArrowDownToLine, Lock, Play, Settings2, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { FollowButton } from "@/components/spectrumui/follow-button";
 import { MorphButton } from "@/components/spectrumui/morph-button";
@@ -15,6 +15,8 @@ import { RelativeTime } from "@/components/common/relative-time";
 import { StatusBadge } from "@/components/common/status-badge";
 import { useRunStatus } from "@/components/providers/run-status";
 import { followUser } from "@/components/feed/feed-actions";
+import { FundAgentDrawer } from "./settings/fund-agent-drawer";
+import { useWalletBalances } from "./settings/wallets-card";
 import { ManualTradeSheet } from "./manual-trade";
 import { triggerRunAction } from "./agent-actions";
 import { cn } from "@/lib/utils";
@@ -125,14 +127,11 @@ export function AgentHeader({ agent }: { agent: AgentDetail }) {
                 {/* Owner-only: trade the agent's book by hand. */}
                 <ManualTradeSheet agent={agent} />
 
+                <OwnerMoneyActions agent={agent} />
+
                 <Link
                   href={`/agents/${agent.slug}/settings`}
-                  className={cn(
-                    "inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium",
-                    "transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]",
-                    "hover:bg-muted active:scale-[0.97]",
-                    "focus-ring",
-                  )}
+                  className={cn(HEADER_ACTION, "border-border hover:bg-muted")}
                 >
                   <Settings2 aria-hidden className="size-3.5" />
                   Settings
@@ -162,3 +161,53 @@ export function AgentHeader({ agent }: { agent: AgentDetail }) {
     </header>
   );
 }
+
+/**
+ * Fund and Go live, for the owner only.
+ *
+ * Its own component so the balance query is mounted only when there is an owner to
+ * mount it for — `getAgentWalletBalances` refuses a non-owner server-side, and a
+ * request that is going to be refused is one nobody should be making.
+ *
+ * These two are the things an owner does *to* an agent rather than *with* it, and the
+ * agent page is where you are standing when you decide to. They open the same sheet and
+ * the same checklist as the settings cards, so there is still exactly one Fund flow and
+ * one go-live flow in the product.
+ */
+function OwnerMoneyActions({ agent }: { agent: AgentDetail }) {
+  const { data: wallets = [] } = useWalletBalances(agent.id);
+  const live = agent.mode === "live";
+
+  return (
+    <>
+      <FundAgentDrawer
+        agentId={agent.id}
+        agentName={agent.name}
+        wallets={wallets}
+        trigger={
+          <button type="button" className={cn(HEADER_ACTION, "border-border hover:bg-muted")}>
+            <ArrowDownToLine aria-hidden className="size-3.5" />
+            Fund
+          </button>
+        }
+      />
+      <Link
+        href={`/agents/${agent.slug}/live`}
+        className={cn(
+          HEADER_ACTION,
+          live
+            ? "border-border hover:bg-muted"
+            : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/15",
+        )}
+      >
+        <Zap aria-hidden className="size-3.5" />
+        {live ? "Live tick" : "Go live"}
+      </Link>
+    </>
+  );
+}
+
+const HEADER_ACTION =
+  "inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium " +
+  "transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] " +
+  "active:scale-[0.97] focus-ring";
