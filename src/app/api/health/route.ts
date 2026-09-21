@@ -77,7 +77,10 @@ export async function GET() {
       database,
       embedded,
       env: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "unknown",
-      commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
+      // `?? null` does not catch the empty string, and Vercel sets this to "" on a
+      // deploy that did not come from a push — so the field read as `""`, which is
+      // neither a commit nor an honest "unknown".
+      commit: process.env.VERCEL_GIT_COMMIT_SHA?.trim().slice(0, 7) || null,
       mocks,
       privyConfigured,
       impersonation,

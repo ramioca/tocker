@@ -431,7 +431,7 @@ export function DataStep({
       {hideHeading ? null : (
         <StepHeading
         title="What it gets to see"
-        blurb="Each source is a paid API the agent calls over x402, from its own wallet. It pays per request, so every source you add is a recurring cost."
+        blurb="Each source is a paid API the agent calls over x402. Tocker's own wallet pays for the call, not yours — your agent's wallet is for trading — but every source you add is a per-request cost against its data budget for the run."
         />
       )}
 

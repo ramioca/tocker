@@ -14,7 +14,7 @@ import { KillSwitchCard } from "@/components/settings/security/kill-switch-card"
 import { LlmKeyInventory } from "@/components/settings/security/llm-key-inventory";
 import { AuditLog } from "@/components/settings/security/audit-log";
 
-export const metadata: Metadata = { title: "Security · Tocker" };
+export const metadata: Metadata = { title: "Security" }; // the root layout appends " · Tocker"
 
 /**
  * Everything that decides whether money can move, on one page, in the order
@@ -66,7 +66,7 @@ export default async function SecuritySettingsPage() {
         <SettingsSection
           id="mfa"
           title="Second factor"
-          description="Required before an agent can be switched to live mode, and before anything can be withdrawn from an agent wallet."
+          description="Optional. Tocker does not require one to go live or to withdraw — it protects the Privy account those wallets live under."
         >
           <MfaCard initial={mfa} />
         </SettingsSection>

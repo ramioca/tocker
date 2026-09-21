@@ -5,7 +5,7 @@ import { computeAnalytics, type AnalyticsFill } from "@/lib/analytics";
 import { toNum } from "@/lib/money";
 import { unrealized } from "@/lib/pnl";
 import type { AgentAnalytics, Chain, ExitReason, LeaderboardWindow, TradeRow } from "@/server/types";
-import { loadTokens, toTradeRow } from "./_shared";
+import { loadTokens, snapshotInCurrentMode, toTradeRow } from "./_shared";
 
 type TradeRecord = typeof trades.$inferSelect;
 
@@ -34,7 +34,11 @@ async function loadRows(db: Db, agentId: string): Promise<AnalyticsRows> {
     db
       .select({ at: equitySnapshots.at, equityUsd: equitySnapshots.equityUsd })
       .from(equitySnapshots)
-      .where(eq(equitySnapshots.agentId, agentId))
+      .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+      // Current mode only — `snapshotInCurrentMode` explains why. The Performance tab
+      // reads drawdown off this series, and a paper→live flip is a −99.9% step that
+      // would otherwise be reported as the agent's max drawdown forever.
+      .where(and(eq(equitySnapshots.agentId, agentId), snapshotInCurrentMode()))
       .orderBy(asc(equitySnapshots.at)),
     db
       .select({ position: positions, token: tokens })

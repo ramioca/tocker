@@ -15,7 +15,7 @@ import { SkeletonReveal } from "@/components/spectrumui/skeleton-reveal";
 import { EmptyState, ErrorState } from "@/components/common/empty-state";
 import { RelativeTime } from "@/components/common/relative-time";
 import { TokenIcon } from "@/components/common/token-icon";
-import { formatTokenAmount, formatUsd } from "@/components/common/format";
+import { formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
 import { fetchAgentTrades } from "./agent-actions";
 import { cn } from "@/lib/utils";
@@ -158,7 +158,7 @@ export function TradesTable({
                         {formatTokenAmount(trade.amountToken)}
                       </TableCell>
                       <TableCell className="tnum text-right text-muted-foreground">
-                        {formatUsd(trade.priceUsd)}
+                        {formatPriceUsd(trade.priceUsd)}
                       </TableCell>
                       <TableCell className="tnum text-right font-medium">
                         {formatUsd(trade.amountUsd)}

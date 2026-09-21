@@ -55,7 +55,18 @@ function RunRow({
             )}
           />
           <RunStatusBadge status={run.status} />
-          <span className="min-w-0 flex-1 truncate text-sm text-foreground/85">
+          {/*
+            `run.error` is already redacted for non-owners in the query (`visibleError`),
+            so whatever arrives here is safe to print. Tone it as a failure though: a red
+            status pill next to a line in the ordinary body colour reads like a summary
+            that happens to sit beside a badge.
+          */}
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-sm",
+              run.error ? "text-destructive/90" : "text-foreground/85",
+            )}
+          >
             {run.error ?? run.summary ?? (run.status === "running" ? "Working…" : "No summary")}
           </span>
           <span className="hidden shrink-0 items-center gap-3 font-mono text-[11px] text-muted-foreground sm:flex">
@@ -86,6 +97,23 @@ function RunRow({
           <div className="px-3 pb-4 pl-10">
             {detail.isPending && open ? (
               <p className="text-xs text-muted-foreground">Loading steps…</p>
+            ) : detail.data && !detail.data.transcriptVisible ? (
+              /*
+                Somebody else's run. The transcript is owner-only — which sources were
+                queried, with what arguments and in what order *is* the strategy — and
+                the query returns an empty `steps` array for a non-owner.
+
+                Say that, rather than letting `RunSteps` fall through to its "this run
+                ended before the model produced a step" empty state: the row directly
+                above this one says the run took three steps, so that copy reads as a
+                contradiction and makes the product look broken instead of discreet.
+              */
+              <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">
+                The transcript is private.{" "}
+                {detail.data.stepCount > 0
+                  ? `This run took ${detail.data.stepCount} step${detail.data.stepCount === 1 ? "" : "s"}; what it asked, and of which data sources, is part of the strategy and stays with its owner.`
+                  : "What a run asks, and of which data sources, is part of the strategy and stays with its owner."}
+              </p>
             ) : detail.data ? (
               <RunSteps steps={detail.data.steps} status={detail.data.status} durationMs={elapsed} />
             ) : open ? (

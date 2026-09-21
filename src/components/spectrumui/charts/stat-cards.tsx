@@ -172,7 +172,7 @@ function StatCard({
 
   return (
     <div
-      className="flex items-stretch justify-between gap-5 rounded-2xl border border-black/8 bg-white/60 p-5 dark:border-white/10 dark:bg-white/[0.02]"
+      className="flex items-stretch justify-between gap-3 rounded-2xl border border-black/8 bg-white/60 p-3.5 sm:gap-5 sm:p-5 dark:border-white/10 dark:bg-white/[0.02]"
       role="img"
       aria-label={`${label}: ${format(headline)}${
         delta != null ? `, ${rising ? 'up' : 'down'} ${Math.abs(delta).toFixed(0)} percent ${deltaLabel}` : ''
@@ -184,15 +184,15 @@ function StatCard({
       }
     >
       <div className="flex min-w-0 flex-col justify-between">
-        <p className="truncate text-[13px] text-neutral-500 dark:text-neutral-400">{label}</p>
-        <p className="mt-1.5 text-[27px] font-medium leading-none tracking-tight text-neutral-950 dark:text-white">
+        <p className="truncate text-[12px] sm:text-[13px] text-neutral-500 dark:text-neutral-400">{label}</p>
+        <p className="mt-1.5 text-[21px] sm:text-[27px] font-medium leading-none tracking-tight text-neutral-950 dark:text-white">
           <RollingNumber
             value={hover != null ? shown : displayValue}
             format={format}
             animate={!reduce}
           />
         </p>
-        <p className="mt-2 h-[17px] overflow-hidden whitespace-nowrap text-[12.5px] font-medium leading-none">
+        <p className="mt-2 h-[17px] overflow-hidden text-ellipsis whitespace-nowrap text-[11px] sm:text-[12.5px] font-medium leading-none">
           {hover != null && series ? (
             <span className="text-neutral-400 dark:text-neutral-500">
               day {hover + 1} of {n}
@@ -208,7 +208,9 @@ function StatCard({
       </div>
 
       {progress != null ? (
-        <div className="flex w-[38%] max-w-44 shrink-0 items-center">
+        // The side rail is the first thing to go on a phone: at ~160px of card it takes
+        // more room than the number it is annotating. The value and its delta survive.
+        <div className="hidden w-[38%] max-w-44 shrink-0 items-center sm:flex">
           <div
             aria-hidden
             className="relative h-1.5 w-full overflow-hidden rounded-full"
@@ -230,7 +232,9 @@ function StatCard({
       ) : series && n >= 2 ? (
         <div
           ref={sparkRef}
-          className="relative w-[44%] max-w-52 shrink-0 cursor-crosshair touch-pan-y select-none self-stretch focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-black/15 dark:focus-visible:ring-white/20"
+          // Hidden below `sm` for the same reason as the progress rail: it is a scrub
+          // target on a card too narrow to scrub, and the full curve is a tap away.
+          className="relative hidden w-[44%] max-w-52 shrink-0 cursor-crosshair touch-pan-y select-none self-stretch sm:block focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-black/15 dark:focus-visible:ring-white/20"
           style={{ minHeight: 58 }}
           tabIndex={0}
           onKeyDown={onKeyDown}
@@ -314,7 +318,9 @@ function StatCard({
 const COLUMN_CLASS: Record<number, string> = {
   1: 'grid-cols-1',
   2: 'grid-cols-1 sm:grid-cols-2',
-  3: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
+  // Two across on a phone, not one. Six full-width cards is a 1,400px column that
+  // buries the tabs and everything under them; two compact columns is three rows.
+  3: 'grid-cols-2 lg:grid-cols-3',
   4: 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-4',
 };
 

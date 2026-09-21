@@ -14,6 +14,14 @@
  *    tick and say nothing new.
  *  - nothing here ever throws for database reasons. History is a nice-to-have on
  *    the write path; a failed insert must not fail a run.
+ *
+ * KNOWN GAP (W7 review, not fixed here): rows carry no `universeKey`. Every scoring
+ * appends, whichever agent's universe produced it, so a public token chart can mix
+ * points computed under different thresholds and present them as one series — while the
+ * token page tells the reader the score is the platform default's. It is a correctness
+ * and an honesty problem, not a leak (only the total and components land here, never the
+ * thresholds). Closing it needs a `universe_key` column on `token_score_history` plus a
+ * filter in `getScoreHistory`, and `src/db/schema.ts` is another workstream's file.
  */
 import { and, asc, desc, eq, gte } from "drizzle-orm";
 import { nanoid } from "nanoid";

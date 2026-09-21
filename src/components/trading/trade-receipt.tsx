@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ArrowUpRight, ReceiptText, TriangleAlert } from "lucide-react";
 import { Address } from "@/components/common/address";
-import { formatAbsolute, formatUsd } from "@/components/common/format";
+import { formatAbsolute, formatPriceUsd, formatUsd } from "@/components/common/format";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import {
@@ -112,7 +112,7 @@ export function TradeReceiptRow({
         ·
       </span>
       <span>
-        {formatUsd(receipt.quotedPriceUsd)} → <span className="text-foreground">{formatUsd(receipt.filledPriceUsd)}</span>
+        {formatPriceUsd(receipt.quotedPriceUsd)} → <span className="text-foreground">{formatPriceUsd(receipt.filledPriceUsd)}</span>
       </span>
       <SlippageValue receipt={receipt} />
       {receipt.totalFeeUsd > 0 ? <span>{formatUsd(receipt.totalFeeUsd)} fees</span> : null}
@@ -185,8 +185,8 @@ export function TradeReceiptDetail({
           </span>{" "}
           {receipt.symbol}
         </Field>
-        <Field label="Quoted">{formatUsd(receipt.quotedPriceUsd)}</Field>
-        <Field label="Filled">{formatUsd(receipt.filledPriceUsd)}</Field>
+        <Field label="Quoted">{formatPriceUsd(receipt.quotedPriceUsd)}</Field>
+        <Field label="Filled">{formatPriceUsd(receipt.filledPriceUsd)}</Field>
         <Field label="Slippage" hint={`tolerance ${receipt.slippageToleranceBps} bps`}>
           <SlippageValue receipt={receipt} />
         </Field>

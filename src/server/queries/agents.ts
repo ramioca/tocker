@@ -38,12 +38,13 @@ import {
   loadAgentAggregates,
   loadTokens,
   pageSize,
+  snapshotInCurrentMode,
   toTokenRef,
   toTradeRow,
   type AgentRow,
 } from "./_shared";
 import { loadCachedScores } from "@/lib/trading/score-cache";
-import { isAgentOwner, toPublicProfile, visibleConfig, visibleSteps } from "./visibility";
+import { isAgentOwner, toPublicProfile, visibleConfig, visibleError, visibleSteps } from "./visibility";
 
 async function detailFor(agent: AgentRow | undefined, viewerId?: string | null): Promise<AgentDetail | null> {
   if (!agent) return null;
@@ -64,7 +65,9 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
       db
         .select({ at: equitySnapshots.at, equityUsd: equitySnapshots.equityUsd, cashUsd: equitySnapshots.cashUsd })
         .from(equitySnapshots)
-        .where(and(eq(equitySnapshots.agentId, agent.id), gte(equitySnapshots.at, since)))
+        .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+        // Current mode only — a paper book and a live book are different units.
+        .where(and(eq(equitySnapshots.agentId, agent.id), gte(equitySnapshots.at, since), snapshotInCurrentMode()))
         .orderBy(asc(equitySnapshots.at)),
       db
         .select({ id: wallets.id, chain: wallets.chain, address: wallets.address })
@@ -262,8 +265,29 @@ export async function listPublicAgents(opts?: {
   return { items, nextCursor: nextOffset < cards.length ? String(nextOffset) : null };
 }
 
-export async function getAgentRuns(agentId: string, cursor?: string | null): Promise<Page<RunSummary>> {
+/**
+ * An agent's run history.
+ *
+ * Takes a `viewerId` for two reasons, both of which used to be missing:
+ *  - a **private** agent's runs are its owner's alone. Without the check any id that
+ *    leaked while the agent was public keeps working after it is made private.
+ *  - a failure's *reason* is owner-only (`visibleError`). The failure itself is not —
+ *    the run still shows as failed to everybody.
+ */
+export async function getAgentRuns(
+  agentId: string,
+  cursor?: string | null,
+  viewerId?: string | null,
+): Promise<Page<RunSummary>> {
   const db = await getDb();
+  const [agent] = await db
+    .select({ ownerId: agents.ownerId, isPublic: agents.isPublic })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .limit(1);
+  if (!agent) return { items: [], nextCursor: null };
+  const isOwner = isAgentOwner(agent.ownerId, viewerId);
+  if (!agent.isPublic && !isOwner) return { items: [], nextCursor: null };
   const limit = DEFAULT_RUN_PAGE;
   const c = decodeCursor(cursor);
   const rows = await db
@@ -284,7 +308,7 @@ export async function getAgentRuns(agentId: string, cursor?: string | null): Pro
   const summaries = await summarizeRuns(page);
   const last = page.at(-1);
   return {
-    items: summaries,
+    items: summaries.map((run) => ({ ...run, error: visibleError(run.error, isOwner) })),
     nextCursor: rows.length > limit && last ? encodeCursor(last.createdAt, last.id) : null,
   };
 }
@@ -353,6 +377,8 @@ export async function getRun(runId: string, viewerId?: string | null): Promise<R
 
   return {
     ...summary,
+    // The failure is public, the sentence that explains it is not — see `visibleError`.
+    error: visibleError(summary.error, isOwner),
     // Status, summary, duration, spend and trades stay public; the transcript does not.
     // It shows which sources were queried, with what arguments, in what order — the system.
     steps: visibleSteps(
@@ -370,13 +396,30 @@ export async function getRun(runId: string, viewerId?: string | null): Promise<R
     transcriptVisible: isOwner,
     trades: tradeRows.flatMap((t) => {
       const token = tokenMap.get(t.tokenId);
-      return token ? [toTradeRow(t, token)] : [];
+      return token ? [{ ...toTradeRow(t, token), error: visibleError(t.error, isOwner) }] : [];
     }),
   };
 }
 
-export async function getAgentTrades(agentId: string, cursor?: string | null): Promise<Page<TradeRow>> {
+/**
+ * An agent's fills. `viewerId` gates the same two things `getAgentRuns` does: a private
+ * agent's book is owner-only, and a failed trade's provider error is owner-only while
+ * the failed status itself is public.
+ */
+export async function getAgentTrades(
+  agentId: string,
+  cursor?: string | null,
+  viewerId?: string | null,
+): Promise<Page<TradeRow>> {
   const db = await getDb();
+  const [agent] = await db
+    .select({ ownerId: agents.ownerId, isPublic: agents.isPublic })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .limit(1);
+  if (!agent) return { items: [], nextCursor: null };
+  const isOwner = isAgentOwner(agent.ownerId, viewerId);
+  if (!agent.isPublic && !isOwner) return { items: [], nextCursor: null };
   const limit = 25;
   const c = decodeCursor(cursor);
   const rows = await db
@@ -399,7 +442,7 @@ export async function getAgentTrades(agentId: string, cursor?: string | null): P
   return {
     items: page.flatMap((t) => {
       const token = tokenMap.get(t.tokenId);
-      return token ? [toTradeRow(t, token)] : [];
+      return token ? [{ ...toTradeRow(t, token), error: visibleError(t.error, isOwner) }] : [];
     }),
     nextCursor: rows.length > limit && last ? encodeCursor(last.createdAt, last.id) : null,
   };
@@ -412,7 +455,14 @@ export async function getEquitySeries(agentId: string, window: LeaderboardWindow
   const rows = await db
     .select({ at: equitySnapshots.at, equityUsd: equitySnapshots.equityUsd, cashUsd: equitySnapshots.cashUsd })
     .from(equitySnapshots)
-    .where(since ? and(eq(equitySnapshots.agentId, agentId), gte(equitySnapshots.at, since)) : eq(equitySnapshots.agentId, agentId))
+    .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+    .where(
+      and(
+        eq(equitySnapshots.agentId, agentId),
+        since ? gte(equitySnapshots.at, since) : undefined,
+        snapshotInCurrentMode(),
+      ),
+    )
     .orderBy(asc(equitySnapshots.at));
   return rows.map((r) => ({ at: r.at.toISOString(), equityUsd: toNum(r.equityUsd), cashUsd: toNum(r.cashUsd) }));
 }
@@ -437,7 +487,8 @@ export async function getAgentWindowPnl(agentId: string, window: LeaderboardWind
   const rows = await db
     .select({ at: equitySnapshots.at, equityUsd: equitySnapshots.equityUsd })
     .from(equitySnapshots)
-    .where(eq(equitySnapshots.agentId, agentId))
+    .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+    .where(and(eq(equitySnapshots.agentId, agentId), snapshotInCurrentMode()))
     .orderBy(asc(equitySnapshots.at));
   return pnlOverWindow(
     rows.map((r) => ({ at: r.at, equityUsd: toNum(r.equityUsd) })),

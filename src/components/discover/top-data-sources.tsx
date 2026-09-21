@@ -64,8 +64,20 @@ export function TopDataSources({ sources }: { sources: Row[] }) {
             <p className="relative mt-1 max-w-prose text-xs leading-5 text-muted-foreground">
               {source.description}
             </p>
+            {/*
+              A source nobody has bought yet is padding — the list is ranked by spend and
+              backfilled from the registry so it is never a one-line page. Saying
+              "0 agents · $0.00 paid all time" under a heading that promises what agents
+              actually pay for reads as a measurement of zero rather than an absence of
+              one, so say the absence instead.
+
+              Rows with spend are aggregates over at least `MIN_AGGREGATE_AGENTS` public
+              agents; smaller groups are dropped in the query, not hidden here.
+            */}
             <p className="relative mt-1.5 font-mono text-[11px] tabular-nums text-muted-foreground/80">
-              {formatCount(source.agentCount)} agents · {formatUsd(source.spendUsd)} paid all time
+              {source.agentCount === 0
+                ? "Not bought yet"
+                : `${formatCount(source.agentCount)} agents · ${formatUsd(source.spendUsd)} paid all time`}
             </p>
           </li>
         ))}

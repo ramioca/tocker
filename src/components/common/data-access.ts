@@ -84,16 +84,24 @@ export function agentBySlug(slug: string, viewerId: string | null): Promise<Agen
   return withMock(() => getAgentBySlug(slug, viewerId), () => mockAgentDetail(slug));
 }
 
-export function agentRuns(agentId: string, cursor?: string | null): Promise<Page<RunSummary>> {
-  return withMock(() => getAgentRuns(agentId, cursor), () => mockAgentRuns(agentId, cursor));
+export function agentRuns(
+  agentId: string,
+  cursor?: string | null,
+  viewerId?: string | null,
+): Promise<Page<RunSummary>> {
+  return withMock(() => getAgentRuns(agentId, cursor, viewerId), () => mockAgentRuns(agentId, cursor));
 }
 
 export function runDetail(runId: string, viewerId: string | null): Promise<RunDetail | null> {
   return withMock(() => getRun(runId, viewerId), () => mockRun(runId));
 }
 
-export function agentTrades(agentId: string, cursor?: string | null): Promise<Page<TradeRow>> {
-  return withMock(() => getAgentTrades(agentId, cursor), () => mockAgentTrades(agentId, cursor));
+export function agentTrades(
+  agentId: string,
+  cursor?: string | null,
+  viewerId?: string | null,
+): Promise<Page<TradeRow>> {
+  return withMock(() => getAgentTrades(agentId, cursor, viewerId), () => mockAgentTrades(agentId, cursor));
 }
 
 export function equitySeries(agentId: string, window: LeaderboardWindow): Promise<EquityPoint[]> {

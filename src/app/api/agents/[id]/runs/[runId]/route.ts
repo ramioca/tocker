@@ -6,8 +6,11 @@
  * two rules itself rather than trusting anything upstream:
  *  - a private agent is readable only by its owner (404/403), and
  *  - the transcript (`steps`) is owner-only even on a public agent, because it shows which
- *    data sources were bought, with what arguments, and in what order.
- * Status, summary, duration, spend and trades stay public — that is the track record.
+ *    data sources were bought, with what arguments, and in what order, and
+ *  - a failure's `error` string is owner-only, because it is whatever the provider said
+ *    and that has included API keys and RPC URLs (`visibleError`).
+ * Status, summary, duration, spend and trades stay public — that is the track record. A
+ * failed run reads as failed to everyone; only the reason is held back.
  */
 import { NextResponse } from "next/server";
 import { and, asc, desc, eq } from "drizzle-orm";
@@ -15,7 +18,7 @@ import { agentRuns, agentRunSteps, agents, getDb, tokens, trades } from "@/db";
 import { getSession } from "@/lib/auth";
 import { toTokenRef } from "@/lib/trading/tokens";
 import { toTradeRow } from "@/server/queries/_shared";
-import { isAgentOwner, visibleSteps } from "@/server/queries/visibility";
+import { isAgentOwner, visibleError, visibleSteps } from "@/server/queries/visibility";
 import type { RunDetail, RunStep, TradeRow } from "@/server/types";
 
 export const dynamic = "force-dynamic";
@@ -75,7 +78,11 @@ export async function GET(
   );
 
   // Public on purpose: the one-line rationale and the score are the record, after the fact.
-  const tradeList: TradeRow[] = tradeRows.map((r) => toTradeRow(r.trade, toTokenRef(r.token)));
+  // The per-trade `error` is not — same rule as the run's.
+  const tradeList: TradeRow[] = tradeRows.map((r) => ({
+    ...toTradeRow(r.trade, toTokenRef(r.token)),
+    error: visibleError(r.trade.error, isOwner),
+  }));
 
   const detail: RunDetail = {
     id: run.id,
@@ -85,7 +92,7 @@ export async function GET(
     startedAt: run.startedAt?.toISOString() ?? null,
     finishedAt: run.finishedAt?.toISOString() ?? null,
     summary: run.summary,
-    error: run.error,
+    error: visibleError(run.error, isOwner),
     dataSpendUsd: Number(run.dataSpendUsd),
     inputTokens: run.inputTokens,
     outputTokens: run.outputTokens,

@@ -4,8 +4,8 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { ChartEmpty } from "@/components/spectrumui/charts/chart-engine";
 import { formatAbsolute, formatUsd } from "@/components/common/format";
 import { cn } from "@/lib/utils";
-import type { ScoreHistoryPoint } from "@/server/types";
 import type { TokenMarker } from "@/server/queries/trading";
+import type { PricePoint } from "./price-points";
 
 /**
  * Price over the charted window, with the viewer's **own** entries and exits on it.
@@ -33,20 +33,6 @@ import type { TokenMarker } from "@/server/queries/trading";
 
 const PAD = { top: 12, right: 10, bottom: 22, left: 44 };
 const VIEW_W = 720;
-
-export interface PricePoint {
-  at: string;
-  priceUsd: number;
-}
-
-/** Price points from score history — the series we already store for every token. */
-export function pricePointsFrom(history: readonly ScoreHistoryPoint[]): PricePoint[] {
-  return history.flatMap((p) =>
-    p.priceUsd !== null && Number.isFinite(p.priceUsd) && p.priceUsd > 0
-      ? [{ at: p.at, priceUsd: p.priceUsd }]
-      : [],
-  );
-}
 
 interface Placed extends TokenMarker {
   cx: number;

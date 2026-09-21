@@ -1,9 +1,10 @@
 "use client";
 
-import { Suspense, useEffect, useRef } from "react";
+import { Suspense, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { POST_LOGIN_HOME, useSession } from "@/hooks/use-session";
+import { safeNext } from "./safe-next";
 
 /**
  * The only way in. Not linked from the landing page on purpose: opening /login
@@ -24,7 +25,14 @@ function LoginFlow() {
   const router = useRouter();
   const params = useSearchParams();
   const { ready, session, login } = useSession();
-  const next = safeNext(params.get("next"));
+  const raw = params.get("next");
+  // Resolved against this page's own origin — see safe-next.ts. `window` is undefined on
+  // the prerender pass, which falls back to the home path; the effect below runs on the
+  // client, where the real origin is available.
+  const next = useMemo(
+    () => safeNext(raw, typeof window === "undefined" ? null : window.location.origin, POST_LOGIN_HOME),
+    [raw],
+  );
   const opened = useRef(false);
 
   useEffect(() => {
@@ -53,10 +61,4 @@ function LoginFlow() {
       </div>
     </main>
   );
-}
-
-/** Only same-origin paths: never bounce a visitor to another site after login. */
-function safeNext(value: string | null): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return POST_LOGIN_HOME;
-  return value;
 }

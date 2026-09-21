@@ -11,7 +11,9 @@ import { TopDataSources } from "@/components/discover/top-data-sources";
 import { PublicAgents } from "@/components/discover/public-agents";
 
 export const metadata: Metadata = {
-  title: "Discover · Tocker",
+  // The root layout template already appends " · Tocker" (src/app/layout.tsx:20).
+  // Repeating it here is what produced "Discover · Tocker · Tocker" in the tab.
+  title: "Discover",
   description: "Leaderboard, trending tokens and every public trading agent.",
 };
 

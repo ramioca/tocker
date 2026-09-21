@@ -18,7 +18,7 @@ import { getUserWalletBalances } from "@/lib/wallets";
 import { toNum } from "@/lib/money";
 import { pnlOverWindow } from "@/lib/pnl";
 import { proposalExpiresAt, sweepBeforeRead } from "@/lib/trading/proposals";
-import { buildAgentCards, toTokenRef, toTradeRow } from "./_shared";
+import { buildAgentCards, snapshotInCurrentMode, toTokenRef, toTradeRow } from "./_shared";
 import type { AgentCard, Chain, TradeRow } from "@/server/types";
 
 /** One point on the combined equity curve: every agent's book, summed. */
@@ -136,7 +136,9 @@ export async function getHomeOverview(userId: string): Promise<HomeOverview> {
             at: equitySnapshots.at,
           })
           .from(equitySnapshots)
-          .where(inArray(equitySnapshots.agentId, agentIds))
+          .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+          // Current mode only — see `snapshotInCurrentMode`.
+          .where(and(inArray(equitySnapshots.agentId, agentIds), snapshotInCurrentMode()))
           .orderBy(equitySnapshots.agentId, equitySnapshots.at)
       : Promise.resolve([]),
     agentIds.length

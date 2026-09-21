@@ -214,7 +214,7 @@ function SettingsForm({
         />
       </section>
 
-      <section className="space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
+      <section id="execution" className="scroll-mt-20 space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
         <div>
           <h2 className="text-sm font-medium">Execution</h2>
           <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
@@ -262,7 +262,10 @@ function SettingsForm({
         </div>
       </section>
 
-      <section className="space-y-3 rounded-xl border border-border/70 bg-card/30 p-4">
+      {/* `scroll-mt-20` clears the sticky top bar; without it an anchored jump lands
+          with the heading hidden under the chrome, which reads as "the link did
+          nothing". Readiness and the live checklist deep-link here. */}
+      <section id="risk" className="scroll-mt-20 space-y-3 rounded-xl border border-border/70 bg-card/30 p-4">
         <h2 className="text-sm font-medium">Risk</h2>
         {/*
           There are two layers of cap and they are not the same thing, so say which
