@@ -11,6 +11,7 @@ import { AgentAvatar } from "@/components/common/agent-avatar";
 import { EmptyState } from "@/components/common/empty-state";
 import { agentBySlug, agentWalletBudget, viewerSession, walletBalances } from "@/components/common/data-access";
 import { BudgetCard } from "@/components/agents/settings/budget-card";
+import { HashScroll } from "@/components/agents/settings/hash-scroll";
 import { MoneyStrip } from "@/components/agents/settings/money-strip";
 
 type Params = { params: Promise<{ slug: string }> };
@@ -85,6 +86,7 @@ export default async function AgentSettingsPage({ params }: Params) {
         and land clear of the sticky top bar.
       */}
       <div className="mt-6 space-y-6">
+        <HashScroll />
         <MoneyStrip agent={agent} initialBalances={balances} />
 
         <AgentSettingsForm agent={agent} config={agent.config} />
