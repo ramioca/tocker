@@ -66,7 +66,7 @@ export default async function SecuritySettingsPage() {
         <SettingsSection
           id="mfa"
           title="Second factor"
-          description="Required before an agent can be switched to live mode, and before anything can be withdrawn from an agent wallet."
+          description="Optional. Tocker does not require one to go live or to withdraw — it protects the Privy account those wallets live under."
         >
           <MfaCard initial={mfa} />
         </SettingsSection>

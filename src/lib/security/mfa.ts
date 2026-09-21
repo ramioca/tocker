@@ -5,27 +5,31 @@ import { isPrivyConfigured, privy } from "@/lib/privy";
 import type { MfaMethod, MfaStatus } from "./types";
 
 /**
- * Second-factor gate for the two irreversible money actions: switching an agent
+ * Second-factor **status** for the two irreversible money actions: switching an agent
  * to live mode, and withdrawing from an agent wallet.
  *
- * HOW STRONG THIS IS, PRECISELY — read this before trusting it:
+ * WHAT THIS IS, PRECISELY — read this before trusting it, and before writing copy
+ * about it:
  *
- *  - The check is **server-side**. `getMfaStatus` asks Privy's API for the user's
- *    `mfa_methods`; it never believes a claim made by the browser. A client that
- *    lies about being enrolled gets refused.
- *  - What it verifies is **enrolment**, not a fresh challenge for this specific
- *    action. Privy's step-up challenge (`useMfa().promptMfa()`) happens in the
- *    browser and produces nothing the server can verify, and Tocker's agent
- *    wallets are signed server-side with the app's authorization key, so there is
- *    no user-side signing ceremony to attach a challenge to. Concretely: an
- *    attacker holding a live Privy session cookie for an enrolled user is not
- *    stopped by this. What it does stop is the *unenrolled* account — the one
- *    protected by an email OTP alone — from ever reaching live mode or a
- *    withdrawal, which is the realistic failure at this stage.
- *  - The honest upgrade path is Privy's `mfa.enabled` / `mfa.disabled` webhooks
- *    plus a per-action step-up, and it is written down in DEPLOY.md.
- *
- * The UI says all of this in one sentence rather than implying more than is true.
+ *  - **A second factor is optional.** `secondFactorBlock` returns `null` in every
+ *    case; it has never refused an action. That was a product decision (2026-09-16)
+ *    and it is the whole truth about the gate: enrolment is read and recorded, and
+ *    nothing anywhere is blocked on it. Any sentence in the UI that says live mode or
+ *    a withdrawal is "required to" or "blocked without" a second factor is false, and
+ *    a false security promise is worse than none — it is the promise people skip
+ *    their own precautions on.
+ *  - The **read** is server-side and is honest: `getMfaStatus` asks Privy's API for
+ *    the user's `mfa_methods` and never believes a claim made by the browser. So the
+ *    badge on the security page is true even though it gates nothing.
+ *  - What it reads is **enrolment**, not a fresh challenge for a specific action.
+ *    Privy's step-up (`useMfa().promptMfa()`) happens in the browser and produces
+ *    nothing the server can verify, and Tocker's agent wallets are signed server-side
+ *    with the app's authorization key, so there is no user-side signing ceremony to
+ *    attach a challenge to. Even if the gate were switched on, it would not stop an
+ *    attacker holding a live Privy session for an enrolled user.
+ *  - The honest upgrade path — turning this into a real gate — is Privy's
+ *    `mfa.enabled` / `mfa.disabled` webhooks plus a per-action step-up, and it is
+ *    written down in DEPLOY.md.
  */
 
 export type { MfaMethod, MfaStatus } from "./types";
@@ -36,7 +40,7 @@ const OFFLINE: MfaStatus = {
   userMethods: [],
   enrolled: false,
   blockedReason:
-    "Privy is not configured on this deployment (NEXT_PUBLIC_PRIVY_APP_ID / PRIVY_APP_SECRET), so no second factor can be enrolled or checked. Live trading is unavailable until it is.",
+    "Privy is not configured on this deployment (NEXT_PUBLIC_PRIVY_APP_ID / PRIVY_APP_SECRET), so no second factor can be enrolled or checked. A second factor is optional, so nothing is blocked by this — but nothing can be enrolled either.",
 };
 
 const NO_APP_METHODS =
@@ -136,13 +140,14 @@ export async function lastKnownMfaMethods(userId: string): Promise<MfaMethod[]> 
 }
 
 /**
- * The gate. Returns null when the action may proceed, or the sentence to show the
- * operator when it may not. Fails closed: an unreachable Privy blocks the action.
+ * Not a gate. Always returns `null` — the action always proceeds.
+ *
+ * A second factor is optional by product decision (2026-09-16). This function exists
+ * so the two money actions have one place to record enrolment for the audit trail, and
+ * one place to become a real gate later without touching either call site. Until that
+ * day, do not describe it as one anywhere in the product.
  */
-export async function secondFactorBlock(userId: string): Promise<string | null> {
-  // A second factor is optional by product decision (2026-09-16): enrolment is
-  // recorded for the audit trail when present, and nothing is ever blocked on it.
-  // The function keeps its shape so the two money actions read the same as before.
+export async function secondFactorBlock(userId: string): Promise<null> {
   const status = await getMfaStatus(userId);
   if (status.enrolled) void rememberMfaStatus(userId, status.userMethods);
   return null;

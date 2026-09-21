@@ -2,7 +2,7 @@
 
 import { useCallback, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { KeyRound, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
+import { KeyRound, Shield, ShieldCheck, ShieldX } from "lucide-react";
 import { toast } from "sonner";
 import { useMfaEnrollment, usePrivy } from "@privy-io/react-auth";
 import { noteMfaChangeAction, refreshMfaStatusAction } from "@/server/actions/security";
@@ -21,8 +21,13 @@ const METHOD_LABEL: Record<string, string> = {
  *
  * The status shown here comes from the **server**, which asks Privy's API for the
  * user's `mfa_methods`. The browser's own `user.mfaMethods` is used only to notice
- * that something changed and ask the server to look again — a client that lied
- * about being enrolled would still be refused by `goLiveAction`.
+ * that something changed and ask the server to look again.
+ *
+ * It is **optional**, and this card has to say so plainly: `secondFactorBlock` returns
+ * null in every case, so nothing in the product is refused for want of a factor. A
+ * security screen that overstates its own guarantee is the one place where good copy
+ * does real harm — it is what someone reads before deciding they do not need to be
+ * careful about anything else. See the module doc in `src/lib/security/mfa.ts`.
  *
  * When the Privy app has no MFA methods turned on there is nothing to enrol in,
  * and a disabled button with no explanation is the worst version of that. The
@@ -69,22 +74,26 @@ export function MfaCard({ initial }: { initial: MfaStatus }) {
 
   return (
     <div className="space-y-4">
+      {/* Not-enrolled is drawn neutral, not amber. An alert colour is a claim that
+          something is wrong, and nothing is: the factor is genuinely optional and
+          refuses nothing. Amber here would be the same overstatement as the old copy,
+          made with colour instead of words. */}
       <div
         className={cn(
           "glass flex items-start gap-3 rounded-xl border p-4",
-          enrolled ? "border-positive/30 bg-positive/5" : "border-amber-500/30 bg-amber-500/5",
+          enrolled ? "border-positive/30 bg-positive/5" : "border-border/70 bg-muted/20",
         )}
       >
         <span className="mt-0.5 shrink-0">
           {enrolled ? (
             <ShieldCheck aria-hidden className="size-5 text-positive" />
           ) : (
-            <ShieldAlert aria-hidden className="size-5 text-amber-500" />
+            <Shield aria-hidden className="size-5 text-muted-foreground" />
           )}
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">
-            {enrolled ? "A second factor is enrolled" : "No second factor enrolled"}
+            {enrolled ? "A second factor is enrolled" : "No second factor enrolled — optional"}
           </p>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
             {enrolled ? (
@@ -93,11 +102,12 @@ export function MfaCard({ initial }: { initial: MfaStatus }) {
                 <span className="text-foreground">
                   {status.userMethods.map((m) => METHOD_LABEL[m] ?? m).join(", ")}
                 </span>
-                . It is optional — nothing was ever blocked on it — but it is on the account that moves your money.
+                . Tocker does not require it, and never refused anything without it — but it is on the Privy
+                account that holds your money, which is where it counts.
               </>
             ) : (
               (status.blockedReason ??
-              "Optional: nothing is blocked without one. Enrol a second factor if you want it on the account that moves your money.")
+              "Nothing in Tocker is blocked without one. Enrol a second factor to protect the Privy account that holds your money.")
             )}
           </p>
         </div>
@@ -133,13 +143,15 @@ export function MfaCard({ initial }: { initial: MfaStatus }) {
         <p className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
           <ShieldX aria-hidden className="mt-0.5 size-3.5 shrink-0" />
           <span>
-            <span className="font-medium text-foreground">What this does and does not do.</span> The check is
-            server-side: Tocker asks Privy whether your account has a factor enrolled and refuses live mode and
-            withdrawals when it does not, even if the browser claims otherwise. It is a check on{" "}
-            <em>enrolment</em>, not a fresh challenge for each action — your agent&rsquo;s wallet is signed
-            server-side by the app&rsquo;s authorization key, so there is no user-side signing step to attach a
-            challenge to. It stops an account protected by an email code alone from ever reaching live mode; it
-            does not stop someone who already holds a live session on your device.
+            <span className="font-medium text-foreground">What this does and does not do.</span> Tocker does
+            not require a second factor for anything: going live and withdrawing both work without one. What
+            this page does is read, server-side, whether your Privy account has one enrolled, and record it in
+            the audit log — so the badge above is true even though it gates nothing. Even as a gate it would be
+            a check on <em>enrolment</em> and not a fresh challenge per action: your agent&rsquo;s wallet is
+            signed server-side by the app&rsquo;s authorization key, so there is no user-side signing step to
+            attach a challenge to, and someone already holding a live session on your device would not be
+            stopped. Enrol one because it protects the Privy account that holds your money, not because Tocker
+            asks for it.
           </span>
         </p>
       </div>
