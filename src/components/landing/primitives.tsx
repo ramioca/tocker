@@ -93,17 +93,7 @@ export function Reveal({
   );
 }
 
-const LINE_VARIANTS = {
-  hidden: { y: "110%" },
-  visible: { y: "0%" },
-} as const;
-
-/**
- * Per-line mask reveal for headings: translateY(110%) → 0 behind an overflow
- * clip. The viewport observer sits on the OUTER clip span, not the translated
- * inner one — the inner starts entirely outside the clip, so it would never
- * intersect the viewport and never animate.
- */
+/** Per-line mask reveal for headings: translateY(110%) → 0 behind an overflow clip. */
 export function RevealLine({
   children,
   delay = 0,
@@ -117,20 +107,18 @@ export function RevealLine({
   inView?: boolean;
 }) {
   const reduced = useReducedMotion();
+  const animate = { y: "0%" };
   return (
-    <motion.span
-      className={cn("ld-line", className)}
-      initial={reduced ? "visible" : "hidden"}
-      {...(inView ? { whileInView: "visible", viewport: VIEWPORT } : { animate: "visible" })}
-    >
+    <span className={cn("ld-line", className)}>
       <motion.span
         className="ld-line-inner"
-        variants={LINE_VARIANTS}
+        initial={reduced ? false : { y: "110%" }}
+        {...(inView ? { whileInView: animate, viewport: VIEWPORT } : { animate })}
         transition={{ duration: 0.7, ease: EASE_OUT, delay }}
       >
         {children}
       </motion.span>
-    </motion.span>
+    </span>
   );
 }
 
