@@ -12,7 +12,10 @@ import {
   TokenHeader,
   TokenTrades,
 } from "@/components/tokens/page";
-import { PriceChart, pricePointsFrom } from "@/components/trading";
+import { PriceChart } from "@/components/trading";
+// Server module on purpose — `price-chart.tsx` is "use client" and importing a helper out
+// of it from here returns a client reference, not a function (it 500'd this page).
+import { pricePointsFrom } from "@/components/trading/price-points";
 import { viewerSession } from "@/components/common/data-access";
 import { agentRefs, getTokenPage, myAgentsForBlocklist } from "@/server/queries/tokens";
 import { myTokenMarkers, receiptsFor, tokenActivityCount, type TokenMarker } from "@/server/queries/trading";
