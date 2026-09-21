@@ -33,6 +33,17 @@ export interface FillDelta {
   /** Gross USD notional of the fill, before fees. */
   amountUsd: number;
   feeUsd: number;
+  /**
+   * The token's decimals, so a sell that leaves behind less than one atomic unit can be
+   * recognised as a full exit (W7 H1). Optional: without it the residual has to be
+   * smaller than the `numeric(_, 12)` column can even store to count as closed.
+   */
+  decimals?: number;
+}
+
+/** The smallest amount of a token that exists. Falls back to the column's own precision. */
+function oneBaseUnit(decimals: number | undefined): number {
+  return decimals === undefined || !Number.isFinite(decimals) || decimals < 0 ? 1e-12 : 10 ** -decimals;
 }
 
 /**
@@ -67,7 +78,16 @@ const EMPTY_META: PositionMeta = { openedAt: null, peakPriceUsd: null, entryScor
  * Average-cost accounting.
  * - buy: weighted-average cost basis grows, fees are capitalised into the basis.
  * - sell: realized PnL = proceeds − basis of the sold amount − fees; basis per unit is unchanged.
- * Selling more than we hold is clamped to the held amount (the risk guard rejects it first).
+ *
+ * Selling more than we hold is clamped to the held amount. That clamp is load-bearing,
+ * not belt-and-braces: the risk guard checks a sell's **USD notional** against the
+ * position's value at the last mark, which says nothing about token counts once the mark
+ * and the route price disagree — the exact situation a stop loss fires in.
+ *
+ * A residual below one atomic unit is a full exit (W7 H1). Sizing a sell in USD and
+ * converting at a price that moved leaves a few base units behind; without this the
+ * position row stays open forever at a value no venue will route, the exit engine keeps
+ * firing on it, and the agent can never be flat.
  */
 export function applyFillToPosition(prev: PositionState, fill: FillDelta): PositionState {
   if (fill.side === "buy") {
@@ -83,7 +103,8 @@ export function applyFillToPosition(prev: PositionState, fill: FillDelta): Posit
   }
 
   const sold = Math.min(fill.amountToken, prev.amountToken);
-  const remaining = Math.max(0, prev.amountToken - sold);
+  const residual = Math.max(0, prev.amountToken - sold);
+  const remaining = residual < oneBaseUnit(fill.decimals) ? 0 : residual;
   const basisSold = sold * prev.avgCostUsd;
   const proceeds = fill.amountUsd - fill.feeUsd;
   return {
@@ -91,6 +112,58 @@ export function applyFillToPosition(prev: PositionState, fill: FillDelta): Posit
     avgCostUsd: remaining === 0 ? 0 : prev.avgCostUsd,
     realizedPnlUsd: prev.realizedPnlUsd + (proceeds - basisSold),
   };
+}
+
+/**
+ * How many whole tokens to send for a sell of `requestedUsd`, given what is actually
+ * held (W7 H1). `undefined` when we cannot say, which tells the executor to fall back to
+ * its own `amountUsd / price` conversion.
+ *
+ * The point of this number is that it comes from the **position**, not from a quote. A
+ * sell sized as `amountUsd ÷ (a fresh buy-side quote)` is wrong in both directions: when
+ * the mark is above the route price it asks for more tokens than the wallet holds and
+ * the venue refuses, and when it is below it leaves a dust position that can never be
+ * closed. A full exit asks for exactly the balance and neither happens.
+ */
+export function sellAmountToken(input: {
+  /** Whole units currently held. */
+  heldToken: number;
+  /** The position's value at the last mark, or null when it cannot be priced. */
+  positionValueUsd: number | null;
+  requestedUsd: number;
+  decimals: number;
+}): number | undefined {
+  const { heldToken, positionValueUsd, requestedUsd, decimals } = input;
+  if (!Number.isFinite(heldToken) || heldToken <= 0) return undefined;
+  if (positionValueUsd === null || !Number.isFinite(positionValueUsd) || positionValueUsd <= 0) return undefined;
+  if (!Number.isFinite(requestedUsd) || requestedUsd <= 0) return undefined;
+
+  // Within a cent of the whole position is the whole position. Asking for 99.97% of a
+  // balance is how dust is made.
+  if (requestedUsd >= positionValueUsd - 0.01) return heldToken;
+
+  const share = (heldToken * requestedUsd) / positionValueUsd;
+  // `10 ** decimals`, never `1 / 10 ** -decimals`: the reciprocal of 1e-5 is 99999.999…
+  // in binary floating point, and scaling by it turns every exact partial sell into one
+  // base unit less than it should be.
+  const scale = 10 ** (Number.isFinite(decimals) && decimals > 0 ? Math.floor(decimals) : 12);
+  // Floor to an atomic unit: rounding up is an over-ask, and an over-ask is a refusal.
+  // The epsilon covers the float error in the multiply, which otherwise loses a unit.
+  const floored = Math.floor(share * scale + 1e-6) / scale;
+  if (!(floored > 0)) return undefined;
+  return Math.min(floored, heldToken);
+}
+
+/** Whole units of `tokenId` this agent holds right now. Zero when there is no row. */
+export async function heldAmountToken(agentId: string, tokenId: string): Promise<number> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ amountToken: positions.amountToken })
+    .from(positions)
+    .where(and(eq(positions.agentId, agentId), eq(positions.tokenId, tokenId)))
+    .limit(1);
+  const held = row ? Number(row.amountToken) : 0;
+  return Number.isFinite(held) && held > 0 ? held : 0;
 }
 
 function finite(value: number | null | undefined): number | null {

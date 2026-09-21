@@ -17,6 +17,7 @@ import { and, asc, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { agents, getDb, positions, userSecurity } from "@/db";
 import { settleFeesForAgent } from "@/lib/platform/settlement";
 import { runGuardian, type GuardianResult } from "@/lib/trading/guardian";
+import { sweepSubmittedTrades } from "@/lib/trading/settle";
 import { getPortfolio, snapshotEquity } from "./portfolio";
 import { reapStaleRuns, runAgent, type RunAgentResult } from "./run";
 
@@ -112,6 +113,8 @@ export interface MarksTickResult {
   snapshots: number;
   /** `agent_runs` rows presumed dead and marked `failed` before this pass (W7 B3). */
   reaped: number;
+  /** `trades` rows stuck on `submitted` and settled against the chain (W7 H2). */
+  settled: number;
   results: GuardianResult[];
 }
 
@@ -144,6 +147,11 @@ export async function tickMarks(limit = 100, now: Date = new Date()): Promise<Ma
   // The marks loop runs on the same five-minute clock as the tick loop and is the one
   // that keeps running when the tick loop is wedged, so it reaps too.
   const reaped = await reapStaleRuns(undefined, now);
+  // And trades left on `submitted` by the same frozen invocations. `submitted` lasts
+  // milliseconds in the happy case; two minutes later it means nobody is coming back to
+  // finish the row, and a book that says nothing happened when money may have moved is
+  // the worst state this system can be in. Never throws.
+  const settled = await sweepSubmittedTrades(now);
   const { holding, flat } = await findGuardableAgents(limit);
 
   const guarded = await inBatches(holding, (agentId) => runGuardian({ agentId, trigger: "marks", now }));
@@ -166,6 +174,7 @@ export async function tickMarks(limit = 100, now: Date = new Date()): Promise<Ma
     exits: results.reduce((n, r) => n + r.exits.filter((e) => e.status === "filled").length, 0),
     snapshots: results.filter((r) => r.equityUsd !== null).length + flatSnapshots.filter(Boolean).length,
     reaped,
+    settled,
     results,
   };
 }

@@ -40,13 +40,21 @@ export class PaperExecutor implements TradeExecutor {
     if (price === null || price <= 0) {
       throw new Error(`No price available for ${req.symbol} on ${req.chain} — cannot simulate a fill.`);
     }
-    const feeUsd = (req.amountUsd * PAPER_FEE_BPS) / 10_000;
+    // W7 H1: the contract says an executor prefers `amountToken` when the caller knows
+    // it. The simulator honours it too, or a paper agent's exits would leave dust that a
+    // live agent's would not, and the two books would stop telling the same story.
+    const amountToken =
+      req.side === "sell" && typeof req.amountToken === "number" && req.amountToken > 0
+        ? req.amountToken
+        : req.amountUsd / price;
+    const amountUsd = amountToken * price;
+    const feeUsd = (amountUsd * PAPER_FEE_BPS) / 10_000;
     return {
       request: req,
       venue: "paper",
       priceUsd: price,
-      amountToken: req.amountUsd / price,
-      amountUsd: req.amountUsd,
+      amountToken,
+      amountUsd,
       feeUsd,
       handle: { simulated: true },
     };

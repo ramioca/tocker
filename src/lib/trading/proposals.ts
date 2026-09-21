@@ -36,10 +36,11 @@ import { toNum } from "@/lib/money";
 import { notifyFill } from "@/lib/notifications";
 import type { Chain, TokenScore, TradeStatus } from "@/server/types";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "./executor";
-import { applyFill } from "./positions";
+import { applyFill, heldAmountToken, sellAmountToken } from "./positions";
 import { buildReceipt, saveReceipt } from "./receipt";
 import { getPriceUsd } from "./prices";
 import { riskGuard, type OrderIntent } from "./risk";
+import { executeTrade } from "./settle";
 import { checkQuoteSanity } from "./sanity";
 
 /** The agent fields every proposal operation needs. */
@@ -453,6 +454,8 @@ export async function decideProposal(input: {
     mode: row.agent.mode,
     wallets: await getAgentWallets(row.agent.id),
   };
+  // W7 H1: an approved sell is sized from the position, not from a buy-side quote.
+  const heldPosition = portfolio.positions.find((p) => p.token.id === row.token.id) ?? null;
   const request: TradeRequest = {
     chain,
     side: row.trade.side,
@@ -461,6 +464,16 @@ export async function decideProposal(input: {
     symbol: row.token.symbol,
     decimals: row.token.decimals,
     amountUsd: requestedUsd,
+    ...(row.trade.side === "sell" && heldPosition
+      ? {
+          amountToken: sellAmountToken({
+            heldToken: heldPosition.amountToken,
+            positionValueUsd: heldPosition.valueUsd,
+            requestedUsd,
+            decimals: row.token.decimals,
+          }),
+        }
+      : {}),
     slippageBps: config.risk.slippageBps,
   };
 
@@ -491,13 +504,23 @@ export async function decideProposal(input: {
 
   await db
     .update(trades)
-    .set({ status: "submitted", scoreSnapshot: score === null ? row.trade.scoreSnapshot : toTradeScore(score) })
+    .set({ scoreSnapshot: score === null ? row.trade.scoreSnapshot : toTradeScore(score) })
     .where(eq(trades.id, input.tradeId));
 
-  const fill = await executor.execute(quote);
-  if (fill.status !== "filled") {
-    return settleFailed(`${row.token.symbol} ${row.trade.side} failed: ${fill.error ?? "execution failed"}`);
+  // W7 H2: signature persisted before `/execute`, throws contained, unknown outcomes
+  // reconciled against the chain, one over-ask retry on a sell.
+  const settled = await executeTrade({
+    tradeId: input.tradeId,
+    executor,
+    request,
+    quote,
+    refreshSellAmount: () => heldAmountToken(row.agent.id, row.token.id),
+  });
+  if (settled.status !== "filled") {
+    return settleFailed(`${row.token.symbol} ${row.trade.side} failed: ${settled.error}`);
   }
+  const fill = settled.fill;
+  quote = settled.quote;
 
   const filledAt = new Date();
   await db
@@ -531,6 +554,7 @@ export async function decideProposal(input: {
       amountToken: fill.amountToken,
       amountUsd: fill.amountUsd,
       feeUsd: fill.feeUsd + platformFeeUsd,
+      decimals: row.token.decimals,
     },
     { priceUsd: fill.priceUsd, score, now: filledAt },
   );

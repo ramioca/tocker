@@ -58,6 +58,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       // Runs this pass presumed dead and marked `failed` (W7 B3) — visible in the cron
       // log so a wedged agent shows up as a number rather than as silence.
       reaped: result.reaped,
+      settled: result.settled,
       // Compact per-agent detail: what fired, and anything that could not be taken.
       agents: result.results.map((r) => ({
         agentId: r.agentId,
