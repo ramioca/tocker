@@ -9,7 +9,7 @@
 import { eq, inArray } from "drizzle-orm";
 import { getDb, tokens } from "@/db";
 import type { Chain } from "@/server/types";
-import { fallbackPriceFor, jupiterHeaders, tokenId } from "./tokens";
+import { fallbackPriceFor, jupiterBase, jupiterHeaders, tokenId } from "./tokens";
 
 const TTL_MS = 30_000;
 const cache = new Map<string, { at: number; price: number }>();
@@ -32,7 +32,7 @@ export async function fetchSolanaPrices(mints: string[]): Promise<Map<string, nu
   const out = new Map<string, number>();
   if (mints.length === 0) return out;
   try {
-    const res = await fetch(`https://api.jup.ag/price/v3?ids=${mints.join(",")}`, {
+    const res = await fetch(`${jupiterBase()}/price/v3?ids=${mints.join(",")}`, {
       headers: jupiterHeaders(),
       signal: AbortSignal.timeout(8_000),
     });

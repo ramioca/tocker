@@ -13,10 +13,12 @@
  * liquidity and no `audit` at all — so every field is parsed as optional.
  */
 import fixture from "../fixtures/jupiter.json";
+import { jupiterBase } from "./jupiter-host";
 import type { JupiterAudit, JupiterStats, JupiterToken } from "../types";
 import { asArray, asRecord, flag, getJson, isTokensMock, isoMs, num, str, TtlCache } from "./http";
 
-const BASE = "https://api.jup.ag/tokens/v2";
+/** Keyed or keyless host, decided per call so a key added at runtime is honoured. */
+const base = () => `${jupiterBase()}/tokens/v2`;
 /** Token records move fast; two minutes is long enough to de-duplicate one sweep. */
 const TOKEN_TTL_MS = 120_000;
 const FEED_TTL_MS = 60_000;
@@ -150,7 +152,7 @@ export async function getJupiterToken(mintOrSymbol: string): Promise<JupiterToke
   const found = isTokensMock()
     ? fixtureLookup(query)
     : await (async () => {
-        const body = await getJson(`${BASE}/search?query=${encodeURIComponent(query)}`, headers());
+        const body = await getJson(`${base()}/search?query=${encodeURIComponent(query)}`, headers());
         const rows = parseList(body);
         return rows.find((r) => r.id === query) ?? rows[0] ?? null;
       })();
@@ -188,7 +190,7 @@ export async function getJupiterTokens(mints: readonly string[]): Promise<Map<st
 
   for (let i = 0; i < pending.length; i += 40) {
     const batch = pending.slice(i, i + 40);
-    const body = await getJson(`${BASE}/search?query=${encodeURIComponent(batch.join(","))}`, headers());
+    const body = await getJson(`${base()}/search?query=${encodeURIComponent(batch.join(","))}`, headers());
     const rows = parseList(body);
     const byId = new Map(rows.map((r) => [r.id, r]));
     for (const mint of batch) {
@@ -204,7 +206,7 @@ async function feed(path: string, fixtureIds: readonly string[]): Promise<Jupite
   const cached = feedCache.get(path);
   if (cached.hit) return cached.value ?? [];
 
-  const rows = isTokensMock() ? fixtureTokens(fixtureIds) : parseList(await getJson(`${BASE}/${path}`, headers()));
+  const rows = isTokensMock() ? fixtureTokens(fixtureIds) : parseList(await getJson(`${base()}/${path}`, headers()));
   feedCache.set(path, rows);
   for (const row of rows) tokenCache.set(row.id, row);
   return rows;

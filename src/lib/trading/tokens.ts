@@ -132,10 +132,7 @@ async function lookupBase(address: string): Promise<RemoteToken | null> {
   };
 }
 
-export function jupiterHeaders(): Record<string, string> {
-  const key = process.env.JUPITER_API_KEY?.trim();
-  return key ? { "x-api-key": key } : {};
-}
+export { jupiterBase, jupiterHeaders } from "@/lib/tokens/providers/jupiter-host";
 
 export interface TokenRecord extends TokenRef {
   fallbackPriceUsd: number | null;

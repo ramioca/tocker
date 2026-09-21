@@ -42,10 +42,10 @@ import {
   type TradeRequest,
   type ExecuteHooks,
 } from "./executor";
-import { jupiterHeaders, USDC_SOLANA } from "./tokens";
+import { jupiterHeaders, USDC_SOLANA, jupiterBase } from "./tokens";
 
-const ORDER_URL = "https://api.jup.ag/ultra/v1/order";
-const EXECUTE_URL = "https://api.jup.ag/ultra/v1/execute";
+const orderUrl = () => `${jupiterBase()}/ultra/v1/order`;
+const executeUrl = () => `${jupiterBase()}/ultra/v1/execute`;
 const USDC_DECIMALS = 6;
 
 /**
@@ -164,7 +164,7 @@ export function venueFeeUsd(feeBps: number | undefined, amountUsd: number): numb
  * Ultra used to return `null` here and surface three frames later as "no route".
  */
 async function fetchOrder(params: Record<string, string>): Promise<UltraOrder> {
-  const url = `${ORDER_URL}?${new URLSearchParams(params).toString()}`;
+  const url = `${orderUrl()}?${new URLSearchParams(params).toString()}`;
   let res: Response;
   try {
     res = await fetch(url, { headers: jupiterHeaders(), signal: AbortSignal.timeout(12_000) });
@@ -432,7 +432,7 @@ export class JupiterExecutor implements TradeExecutor {
       }
     }
 
-    const res = await fetch(EXECUTE_URL, {
+    const res = await fetch(executeUrl(), {
       method: "POST",
       headers: { "content-type": "application/json", ...jupiterHeaders() },
       body: JSON.stringify({ signedTransaction: signed.signed_transaction, requestId: order.requestId }),
