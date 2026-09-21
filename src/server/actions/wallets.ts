@@ -10,6 +10,7 @@ import {
   getAgentWalletBalances as loadBalances,
   getUserWalletBalances,
   withdrawFromAgent as sendWithdrawal,
+  type WithdrawResult,
 } from "@/lib/wallets";
 import { unifiedCash, type UnifiedCash } from "@/lib/wallets/funding";
 import { toNumeric } from "@/lib/money";
@@ -86,6 +87,16 @@ export async function getAgentFundingTargets(
   if (agent.ownerId !== session.userId) return fail("You do not own this agent");
 
   const rows = await getAgentWallets(agentId);
+
+  // Last stop before the user signs: make sure the agent's USDC account exists and that
+  // the platform, not the user, paid the rent for it (W7 B1). Idempotent, and a failure
+  // only means the user's own transfer creates it — it must never block funding.
+  const solana = rows.find((w) => w.chain === "solana");
+  if (solana) {
+    const { ensureAgentUsdcAta } = await import("@/lib/wallets/gas");
+    await ensureAgentUsdcAta({ agentId, address: solana.address });
+  }
+
   return {
     ok: true,
     data: rows.map((w) => ({ chain: w.chain, address: w.address, walletId: w.id })),
@@ -247,7 +258,7 @@ export async function withdrawFromAgent(input: {
   asset: "usdc" | "native";
   amount: number;
   toAddress: string;
-}): Promise<ActionResult<{ txHash: string }>> {
+}): Promise<ActionResult<WithdrawResult>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 

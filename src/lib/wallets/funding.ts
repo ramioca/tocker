@@ -52,8 +52,18 @@ export const FUND_PRESETS = [10, 25, 50, 100] as const;
  * Gas is sponsored through Privy, so funding never sends native tokens and never
  * blocks on them. The gas fields below survive for the types and for the day this
  * flips back; with it on, every leg's `native` is 0 and `chain-short-native` never fires.
+ *
+ * W7: this is now true of the code as well as the comment — `use-transfer.ts` passes
+ * `sponsor: true` on both chains. It still depends on **Fee sponsorship being enabled
+ * for this app in the Privy dashboard**, which no client can check ahead of time: the
+ * only signal is the signature failing with a message about the TEE stack. That case
+ * (and a dry wallet with sponsorship off) becomes {@link gasBlockerFor} at the point of
+ * failure, so the user is told what to deposit rather than shown a raw SDK error.
  */
 export const GAS_SPONSORED = true;
+
+/** What a Solana wallet needs to pay for one transfer itself: fee plus a little slack. */
+export const SELF_PAID_FEE_NATIVE: Record<Chain, number> = { base: 0.0005, solana: 0.01 };
 
 /** A tank, not a budget: enough gas for a few dozen trades — only used when gas is not sponsored. */
 export const DEFAULT_GAS_USD = 1;
@@ -433,6 +443,25 @@ export function transfersFor(plan: FundingPlan): Transfer[] {
     if (leg.usdc > 0) out.push({ chain: leg.chain, asset: "usdc", amount: leg.usdc });
   }
   return out;
+}
+
+/**
+ * The blocker to show when a transfer failed because nobody could pay the network fee.
+ *
+ * Sponsorship is a dashboard setting we cannot read from the browser, so this is a
+ * *reaction*, not a precondition: it turns "0x1: insufficient lamports" into a deposit
+ * button pointed at the right asset on the right chain.
+ */
+export function gasBlockerFor(chain: Chain, reason?: string): FundingBlocker {
+  const amount = SELF_PAID_FEE_NATIVE[chain];
+  const symbol = NATIVE_SYMBOL[chain];
+  return {
+    kind: "chain-short-native",
+    chain,
+    message:
+      `${reason ? `${reason} ` : ""}You need about ${amount} ${symbol} on ${chainName[chain]} to pay the network fee for this transfer.`.trim(),
+    deposit: { chain, asset: "native" },
+  };
 }
 
 export function transferLabel(transfer: Transfer): string {

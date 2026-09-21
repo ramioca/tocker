@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_GAS_USD,
   MIN_FUND_USD,
+  SELF_PAID_FEE_NATIVE,
   cashOn,
   defaultSplit,
   depositTargets,
   gasAllowanceNative,
+  gasBlockerFor,
   nativePriceFor,
   planFunding,
   splitProportional,
@@ -330,5 +332,45 @@ describe("defaultSplit", () => {
       { chain: "base", amount: 10 },
       { chain: "solana", amount: 90 },
     ]);
+  });
+});
+
+/**
+ * W7 B1. Sponsorship is a Privy dashboard setting no client can read ahead of time, so
+ * "you have no gas" stopped being a precondition of the plan and became a reaction to a
+ * failed signature. `gasBlockerFor` is what that reaction renders.
+ */
+describe("gasBlockerFor", () => {
+  it("points at the native asset on the chain that ran out of gas", () => {
+    const blocker = gasBlockerFor("solana");
+    expect(blocker.kind).toBe("chain-short-native");
+    expect(blocker.chain).toBe("solana");
+    expect(blocker.deposit).toEqual({ chain: "solana", asset: "native" });
+    // The number in the copy is the number the deposit sheet is opened for.
+    expect(blocker.message).toContain(String(SELF_PAID_FEE_NATIVE.solana));
+    expect(blocker.message).toContain("SOL");
+  });
+
+  it("does the same on Base, in ETH", () => {
+    const blocker = gasBlockerFor("base");
+    expect(blocker.deposit).toEqual({ chain: "base", asset: "native" });
+    expect(blocker.message).toContain("ETH");
+  });
+
+  it("leads with the reason the transfer failed when there is one", () => {
+    const blocker = gasBlockerFor("solana", "Gas sponsorship is not enabled for this app.");
+    expect(blocker.message.startsWith("Gas sponsorship is not enabled for this app.")).toBe(true);
+  });
+
+  it("dedupes through depositTargets like any other blocker", () => {
+    const plan = {
+      paper: false,
+      legs: [],
+      totalUsdc: 0,
+      totalGasUsd: 0,
+      ready: false,
+      blockers: [gasBlockerFor("solana"), gasBlockerFor("solana", "again")],
+    };
+    expect(depositTargets(plan)).toEqual([{ chain: "solana", asset: "native" }]);
   });
 });

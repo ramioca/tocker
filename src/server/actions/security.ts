@@ -18,7 +18,7 @@ import { and, eq } from "drizzle-orm";
 import { agents, getDb } from "@/db";
 import { getSession } from "@/lib/auth";
 import { agentConfigSchema } from "@/lib/agent/config";
-import { withdrawFromAgent as sendWithdrawal } from "@/lib/wallets";
+import { withdrawFromAgent as sendWithdrawal, type WithdrawResult } from "@/lib/wallets";
 import { recordAudit, listAuditEvents, type AuditRow } from "@/lib/security/audit";
 import { getKillSwitch, setTradingPaused } from "@/lib/security/kill-switch";
 import { getMfaStatus, rememberMfaStatus, secondFactorBlock, type MfaStatus } from "@/lib/security/mfa";
@@ -327,7 +327,10 @@ export async function secureWithdrawAction(input: {
   asset: "usdc" | "native";
   amount: number;
   toAddress: string;
-}): Promise<ActionResult<{ txHash: string }>> {
+  // W7 H12 (workstream A): a Privy transfer is a wallet *action*. It can still be
+  // `pending` when this returns, and its hash is null until a step broadcasts — so the
+  // result carries the status and the action id rather than pretending to be a receipt.
+}): Promise<ActionResult<WithdrawResult>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
