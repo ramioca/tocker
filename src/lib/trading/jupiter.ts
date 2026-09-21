@@ -158,8 +158,14 @@ export function manualSlippageFor(orderSlippageBps: number | undefined, ceilingB
   return orderSlippageBps > ceilingBps ? Math.round(ceilingBps) : null;
 }
 
-/** What a manual-mode order's priority fee has measured at (86k lamports live, 2026-09-21), rounded up. */
-const MANUAL_PRIORITY_FEE_LAMPORTS = 150_000;
+/**
+ * SOL the agent wallet must hold before any order is quoted: 0.006 SOL. Covers the rent
+ * on a first-time token account (0.00204), a wrapped-SOL scratch account when a route
+ * needs one, the signature and a manual-mode priority fee (measured 86k lamports), with
+ * headroom — Jupiter's manual-slippage route refused a wallet holding 0.0037 SOL for a
+ * new token (probed live 2026-09-21) while a funded wallet was quoted at once.
+ */
+const PRE_QUOTE_SOL_LAMPORTS = 6_000_000;
 /** Rent on a new token account, for the error message only (the real constant lives in gas.ts). */
 const ATA_RENT_HINT_LAMPORTS = 2_039_280;
 
@@ -389,13 +395,13 @@ export class JupiterExecutor implements TradeExecutor {
     // SOL (probed live 2026-09-21 against real gasless takers). A fresh Privy wallet is
     // exactly that wallet, so top it up first — a no-op once it holds a little SOL.
     if (this.agentId) {
-      const { ensureAgentGas, ATA_RENT_LAMPORTS, SIGNATURE_FEE_LAMPORTS } = await import("@/lib/wallets/gas");
+      const { ensureAgentGas } = await import("@/lib/wallets/gas");
       await ensureAgentGas({
         agentId: this.agentId,
         chain: "solana",
         walletId: this.wallet.walletId,
         address: this.wallet.address,
-        requiredLamports: ATA_RENT_LAMPORTS + SIGNATURE_FEE_LAMPORTS + MANUAL_PRIORITY_FEE_LAMPORTS,
+        requiredLamports: PRE_QUOTE_SOL_LAMPORTS,
       });
     }
 
@@ -408,7 +414,24 @@ export class JupiterExecutor implements TradeExecutor {
     const manual = manualSlippageFor(order.slippageBps, req.slippageBps);
     if (manual !== null && (order.errorCode === null || order.errorCode === undefined)) {
       params.slippageBps = String(manual);
-      order = await fetchOrder(params);
+      const ultraOrder = order;
+      try {
+        order = await fetchOrder(params);
+      } catch (err) {
+        // Reproduced live 2026-09-21 with the agent's own wallet as taker: the same
+        // token quotes in ultra mode (Jupiter fronting 0.0015 SOL of rent for the new
+        // token account) and answers 400 "Failed to get quotes" in manual mode, where the
+        // wallet must pay that rent itself and held 0.0037 SOL. Say so, with the numbers.
+        if (err instanceof JupiterError && err.httpStatus === 400 && (ultraOrder.rentFeeLamports ?? 0) > 0) {
+          throw new JupiterError(
+            `${err.message} Jupiter priced ${req.symbol} at ${ultraOrder.slippageBps} bps, above this agent's ${req.slippageBps} bps ceiling, so Tocker asked for a manual-slippage order — and that route makes the wallet pay the ${(
+              (ultraOrder.rentFeeLamports ?? 0) / 1e9
+            ).toFixed(4)} SOL rent on a first-time token account, which Jupiter refuses to build when the wallet's SOL is thin. Tocker tops the wallet up before quoting; if this persists, send 0.01 SOL to ${this.wallet.address} or raise the ceiling to ${ultraOrder.slippageBps} bps.`,
+            { httpStatus: 400 },
+          );
+        }
+        throw err;
+      }
     }
 
     // Ultra says who pays. If that is the agent and the agent cannot, top it up and ask
