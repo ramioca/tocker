@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { AlertTriangle, Check, KeyRound, Plus, Shuffle, X } from "lucide-react";
+import { AlertTriangle, KeyRound, Plus, Shuffle, X } from "lucide-react";
 import { toast } from "sonner";
 import { DEFAULT_MODELS } from "@/lib/agent/config";
 import { Input } from "@/components/ui/input";

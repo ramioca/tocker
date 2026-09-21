@@ -591,9 +591,10 @@ function sumAsset(
  *    refuses to sign an over-cap USDC transfer no matter who asks — the model, a
  *    buggy run loop, or a compromised route in this app.
  *
- * Both must sit at or under the per-trade cap the operator typed into the wizard.
- * A missing wallet policy is a hard fail for a *first live trade* specifically:
- * the whole point of the first one is that the floor under it is real.
+ * The app layer is what has to sit at or under the per-trade cap the operator typed.
+ * The wallet layer is optional (product decision, 2026-09-21): an agent can only ever
+ * spend the USDC in its own wallet and simply stops when that is gone, so a missing
+ * policy is worth a warning, never a block.
  */
 function checkBudget(
   config: AgentConfig,
@@ -615,12 +616,13 @@ function checkBudget(
       fix: { label: "Agent settings → Risk", href: `${settings}#risk` },
     };
   }
+  const ceiling = "Whatever happens, it can only ever spend the USDC in its own wallet, and it stops when that is gone.";
   if (!walletBudget) {
     return {
       id: "budget",
       title: "Spend caps applied",
-      state: "fail",
-      detail: `${appLayer} But no wallet budget is attached: nothing below this app refuses an over-cap transfer, so a bug here has no floor under it.`,
+      state: "warn",
+      detail: `${appLayer} ${ceiling} No Privy wallet policy is attached — optional; one would make the wallet itself refuse an over-cap transfer as a second layer.`,
       fix: { label: "Agent settings → Wallet budget", href: `${settings}#budget` },
     };
   }
@@ -628,8 +630,8 @@ function checkBudget(
     return {
       id: "budget",
       title: "Spend caps applied",
-      state: "fail",
-      detail: `${appLayer} The wallet policy caps transfers at $${walletBudget.perTxUsd}, above the $${capUsd} you entered.`,
+      state: "warn",
+      detail: `${appLayer} ${ceiling} The wallet policy underneath allows up to $${walletBudget.perTxUsd} a transfer — looser than the app cap, which is the one that binds.`,
       fix: { label: "Agent settings → Wallet budget", href: `${settings}#budget` },
     };
   }
