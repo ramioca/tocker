@@ -29,6 +29,7 @@ import {
   getAgentWindowPnl,
   getEquitySeries,
 } from "./agents";
+import { getAgentAnalytics } from "./analytics";
 import { getLeaderboard, getTopDataSources, MIN_AGGREGATE_AGENTS } from "./discover";
 import { REDACTED_ERROR } from "./visibility";
 
@@ -105,6 +106,15 @@ describe("equity reads are scoped to the agent's current mode", () => {
     const row = rows.find((r) => r.agent.id === agent.agentId);
     expect(row).toBeDefined();
     expect(row!.pnlPct).toBeCloseTo(4, 1);
+  });
+
+  it("the Performance tab's drawdown does not count the paper→live step", async () => {
+    const agent = await seedFlippedAgent();
+    const analytics = await getAgentAnalytics(agent.agentId, "all");
+    expect(analytics).not.toBeNull();
+    // The unfiltered series steps 9,980 → 10, i.e. a ~99.9% drawdown that would be
+    // reported as this agent's worst ever, forever.
+    expect(Math.abs(analytics!.maxDrawdownPct ?? 0)).toBeLessThan(50);
   });
 
   it("keeps rows with a null mode — they predate the column and belong to the current book", async () => {
