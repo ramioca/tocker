@@ -63,7 +63,19 @@ export interface PaidRequest {
   priceUsd: number | null;
   /** Payload returned (verbatim) when running in mock mode. */
   fixture: unknown;
+  /**
+   * How long the *free* probe may take, in ms. Defaults to `PROBE_TIMEOUT_MS` (20s).
+   * Nothing has been signed while this clock runs, so giving up costs nothing.
+   */
   timeoutMs?: number;
+  /**
+   * How long the *paid* retry may take, in ms. Floored at `MIN_PAID_TIMEOUT_MS` (25s)
+   * however small a number is passed: the retry signs an authorization and waits for a
+   * facilitator to settle it on-chain, and aborting that is the only abort in this
+   * module that can cost real money. Raise it for a source that advertises a long
+   * `maxTimeoutSeconds` and actually uses it.
+   */
+  paidTimeoutMs?: number;
 }
 
 export interface PaidResponse {

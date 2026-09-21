@@ -150,51 +150,139 @@ transfer whatever this app asks for, so a bug in the run loop or a compromised r
 still has a floor under it. The live wizard requires **both** to sit at or under the per-trade
 cap the operator typed, and a missing wallet policy is a hard fail for a first live trade.
 
-## 2b-2. Fund the platform data wallet on Base
+## 2b-2. Before the first live trade
 
-The platform pays for data, not the agent. Every x402 micropayment is signed by an
-app-owned Privy server wallet — one per chain, created on first use and owned by
-`PRIVY_AUTHORIZATION_PRIVATE_KEY`, exactly like an agent's. In practice the one that
-matters is **Base**: that is where SentimentAlpha, CoinMarketCap, Nansen, Plexa,
-gate402, DripMetrics and Otto price their 402s.
+Everything in this section has to be true before an agent signs anything. The live
+wizard (`/agents/<slug>/live`) re-checks all of it per agent, server-side, every time it
+is opened — but the wizard can only *report* these; you have to do them.
 
-```bash
-pnpm preflight   # creates both platform wallets and prints their addresses + USDC
-```
+### Privy dashboard
 
-Send USDC on Base to the address it prints for `base`. Until you do, every paid data
-call fails with an error that names the wallet ("top up the platform data wallet at
-0x…") rather than a bare 402, and `/agents/<slug>/live` refuses to let an agent go live
-with `X402_MOCK` off. You can see the same addresses and balances any time under
-**Settings → Platform**, along with the month's data spend and what the per-fill fee has
-collected.
+1. **Fee sponsorship → Sponsor gas fees**, with **Solana mainnet** under supported chains
+   and credits funded. Confirm the app is on Privy's **TEE execution** stack: sponsorship
+   throws `"Sponsoring transactions is only supported for wallets on the TEE stack"`
+   otherwise, and the deposit and funding transfers are the first thing that fails. This
+   covers the *user's* transfers, not the agent's swaps — see "Gas, in full" below.
+2. **Funding (card / exchange) is off.** The app config for
+   `cmtzr2ruh05ik0cl08kr4yo1c` has no `funding_config` and reports
+   `fiat_on_ramp_enabled: false`, so the "Buy USDC" button fails instantly no matter what
+   the UI offers. Enable it in the dashboard, or deposit by sending USDC to the Receive
+   address instead.
+3. **MFA**: at least one method enabled (2a above), and enrolled on your own account.
+   Nothing goes live without it.
 
-How much: a run costs whatever the agent's `maxDataSpendUsdPerRun` allows — cents. $20
-of USDC covers a long while for a handful of agents; the Platform card is where you watch
-it come down. The Solana wallet only needs funding if you enable a Solana-priced source
-(`solenrich-launches`, `token-intel-sol`); it collects fees regardless, which does not
-require a balance.
+### Money to have in place
 
-The other side of the ledger is the fee: `PLATFORM_FEE_USD` (default $0.10) on every
-executed fill, accrued at fill time and swept from the agent's wallet into these same
-platform wallets once the agent owes `PLATFORM_FEE_SETTLE_MIN_USD` (default $1.00). The
-sweep runs in the guardian's five-minute pass, never on the trade path, and a failed
-sweep simply retries — it can never delay or block an exit.
+| Wallet | Asset | Amount | Why |
+|---|---|---|---|
+| Your Privy embedded **Solana** wallet | USDC | 10 | the test deposit |
+| " | SOL | 0 with sponsorship on, **0.01** without | tx fee, plus ~0.00204 SOL rent if the agent's USDC token account does not exist yet |
+| Agent **Solana** wallet | USDC | 10 (transferred) | trading |
+| " | SOL | 0 | Ultra goes gasless for an empty taker, and the platform wallet drips `GAS_DRIP_SOL` when it does not |
+| **Platform Base** wallet | USDC | ~$5 | pays every 402 priced on `eip155:8453` |
+| **Platform Solana** wallet | USDC | ~$5 | pays every 402 priced on Solana — `deepnets-token-safety` is in the default source list, so this is **not** optional |
+| " | SOL | ~0.05 | it drips gas to agent wallets and opens their USDC token accounts. x402 itself needs none: every Solana 402 names an `extra.feePayer`, so the facilitator pays |
+
+**Create both platform wallets from Settings → Admin → Platform wallets** on the deployed
+site. The button is idempotent (a unique index on `chain` makes a second press a read) and
+the card then shows both addresses with their USDC *and* native balances, which sources
+each one pays for, and the month's spend.
+
+**Do not use `pnpm preflight` or `pnpm platform:wallets` for this.** Both write to
+whatever `DATABASE_URL` points at, which from a laptop is the local PGlite file — they
+will create a wallet, print an address, and look exactly like they succeeded, and USDC
+sent there is somewhere no deployed agent can spend from. Both scripts now say so at the
+top of their output. What they *are* for is proving your credentials can create and read
+a wallet at all.
+
+Which wallet pays is decided by the **resource's** network, not the agent's chain:
+`paidFetch` picks the platform wallet for the CAIP-2 in the 402. The registry is the
+authority — `dataChainsFor(config.dataSources)` in `src/lib/data-sources/registry.ts` is
+what the readiness checklist and the Platform card both read, so a source changing network
+moves the requirement on its own.
+
+How much USDC: a run costs whatever the agent's `maxDataSpendUsdPerRun` allows — cents.
+$20 covers a long while for a handful of agents. Note that since W7 a *failed* paid call
+is also charged to the run budget and written to `x402_payments` with `settled: false`:
+a payment can fail after the money moved, and a retrying model must not be able to re-pay
+past the cap.
+
+### Env vars
+
+- **Set `JUPITER_API_KEY`.** It is unset in production today. Un-keyed Ultra answers 200
+  under light load but 429s under any, and `fetchOrder` currently surfaces that as "no
+  order for X" rather than a rate limit.
+- **Verify `ADMIN_EMAILS` matches `users.email` as recorded at your first login.**
+  `src/lib/auth.ts` writes the email from Privy's linked accounts at signup and never
+  refreshes it. A mismatch means no Admin tab, no platform-wallet button, and a 404 with
+  no explanation — the page is deliberately an existence oracle for nobody.
+- **Leave unset in production:** `X402_MOCK`, `LLM_MOCK`, `TOKENS_MOCK`, `MOCK_DATA`.
+  Only the literal `"1"` enables mock mode, so `X402_MOCK=0` and `X402_MOCK=false` both
+  mean *real payments*.
+- **Check Vercel → Settings → Functions: Fluid compute must be enabled** before
+  `maxDuration` can go to 300. Without it the build rejects the value, and with a 60s cap
+  an agent run that takes longer is killed mid-flight.
+- Already required and present: Privy ×3, `ENCRYPTION_KEY`, `CRON_SECRET` (≥32 chars),
+  `SOLANA_RPC_URL`, `DATABASE_URL`, `PLATFORM_FEE_USD`, `CRON_MAX_AGENTS`,
+  `NEXT_PUBLIC_APP_URL`.
+
+`SOLANA_RPC_URL` now does one more job than it used to: `paidFetch` re-registers the x402
+Solana scheme with it, because `@x402/svm`'s own `registerExactSvmScheme` drops the RPC
+config and falls back to the public `api.mainnet-beta.solana.com`, which rate-limits.
+
+### What to expect during the run
+
+- The default `execution.mode` is **`approve`**. A tick produces a *proposal* with a TTL,
+  on the agent page, the bell and the run island — not a fill. You approve it there. The
+  readiness checklist's risk step names the mode explicitly so this is not a surprise.
+- Before the real $10 withdrawal, do a **$0.01 withdrawal first**. Privy's docs say a
+  wallet calling the transfer endpoint needs an explicit `transfer` rule in its policy,
+  and the policy Tocker attaches does not have one yet.
+- The first paid call to **SentimentAlpha** is the one to watch. Its 402 advertises
+  `extra.name: "USDC"` for Base USDC, whose on-chain `name()` is `"USD Coin"` — the
+  EIP-3009 signature lands under the wrong EIP-712 domain and the facilitator refuses it
+  with `ErrEip3009TokenNameMismatch`. `paidFetch` now rewrites the domain to the token's
+  own before signing, but that has never been proven against the live facilitator, so the
+  source ships `experimental: true` and out of the defaults. One successful $0.01 call is
+  all it takes to promote it. `x-search` ($0.006, correct domain) is the default sentiment
+  source until then.
+- Equity and PnL on the agent card and the public leaderboard are rebased at the
+  paper→live flip by the `mode` column on `equity_snapshots`; a snapshot is skipped rather
+  than written as zero when a live balance read fails.
 
 ## 2c. The first live trade
 
 `pnpm preflight` checks the deployment. `/agents/<slug>/live` checks the *agent*, on the
-server, every time it is opened or re-checked: database reachable and not PGlite, Privy
-configured with an authorization key, second factor enrolled, real (not `paper_`) wallets on
-every chain it trades, USDC above the $5 minimum plus native for gas, spend caps within the
-cap the operator typed, a first-trade-shaped risk config (one chain, ≤ $2 a trade, one trade
-a day, at least one exit rule), real x402 payments (`X402_MOCK` not `1`) with every configured source still in
-the registry, and the kill switch off. A "first-trade preset" button clamps the agent into that
-shape in one click. The data step also checks the **platform** data wallet: with
-`X402_MOCK` off it must exist and hold USDC, because that is the wallet the paid calls
-come out of — see 2b-2.
+server, every time it is opened or re-checked:
 
-A step is green only when it was checked and passed; "could not tell" is red. Going live is a
+- database reachable and not PGlite; Privy configured with an authorization key; a second
+  factor enrolled; the kill switch off;
+- real (not `paper_`) wallets on every chain it trades, holding USDC above the $5 minimum;
+- **gas**: a Solana agent passes when it holds ≥ `MIN_AGENT_SOL` *or* the platform Solana
+  wallet holds ≥ `MIN_PLATFORM_SOL` to drip to it. It fails only when neither is true,
+  because either one alone works. Base-only agents skip it;
+- spend caps within the cap you typed, at **both** layers — `riskGuard()` here and the
+  Privy policy on the agent's own wallets;
+- a first-trade-shaped risk config (one chain, ≤ $2 a trade, one trade a day, at least one
+  exit rule), **and a simulation**: the real `riskGuard` run against the real balance for a
+  `maxTradeUsd` buy, failing with the guard's own sentence. This is what catches a
+  `maxPositionPct` the funded amount cannot satisfy — a $2 ticket is 20% of a $10 wallet,
+  and a 10% cap rejects every buy while the rest of the checklist stays green. The step
+  also states the agent's **execution mode**, because "ready" means the first tick can
+  fill in `auto` and can only propose in `approve`;
+- real x402 payments (`X402_MOCK` not `1`), every configured source still in the registry,
+  and a funded platform wallet on **every chain those sources price on** — derived from
+  the registry, not a constant, so an agent scoring Solana tokens is told about the Solana
+  wallet before its first run rather than by a 402 in the log.
+
+A "first-trade preset" button clamps the agent into that shape in one click, and re-applies
+the Privy wallet policy at the new cap so the budget step does not then fail on the old one.
+
+A step is green only when it was checked and passed; "could not tell" is red, with one
+deliberate exception — a platform *balance* Privy refused to answer for is amber, not red,
+because blocking a funded operator's test over a balance-endpoint hiccup costs more than
+letting a paid call fail with an error that names the wallet to top up. A wallet that was
+read and found empty is still red. Going live is a
 hold-to-confirm, and `goLiveAction` re-runs every check server-side before it agrees, so a
 stale green checklist cannot be used to get past the gate. The last step runs one tick, streams
 the run's steps, and ends in a receipt with the fill price, fees, an explorer link (Solscan /
@@ -229,16 +317,21 @@ curl -H "Authorization: Bearer $CRON_SECRET" https://your-app.vercel.app/api/cro
 - Agent runs happen inside the request that triggers them. This is fine at demo scale. Past a few dozen active agents, move the run loop to a queue or a worker rather than a serverless function.
 - The exit engine is the part that must never miss a beat. If you run crons on GitHub Actions, note that its scheduler can delay jobs under load; for real money, use Pro crons or a dedicated scheduler.
 
-## Gas sponsorship
+## Gas, in full
 
-Tocker does not show gas anywhere and does not send native tokens to agents. That
-holds because gas is sponsored through Privy — enable **Gas sponsorship** in the Privy
-dashboard for Base and Solana, and fund it. What that covers, precisely:
+Gas is paid by three different things depending on which transaction it is, and the app
+used to say "gas is sponsored" for all of them. It is not one answer.
 
-- Withdrawals from agent wallets and the user's own deposits/funding transfers go
-  through Privy's RPC methods, which take `sponsor: true` — covered.
-- Base **swaps** go through Privy's swap API and Solana swaps are built by Jupiter
-  Ultra with the agent as fee payer. Neither path carries a sponsorship flag in the SDK
-  today, so the first live trade is the test: if a swap fails for gas, the run's
-  trade record carries the exact error, and the fallback is a small native top-up to
-  the agent wallet from the settings page's funding drawer.
+| Transaction | Who pays the network fee |
+|---|---|
+| Your deposit / funding transfer into an agent | Privy's sponsor, via `sponsor: true` on the RPC call — **requires Fee sponsorship enabled for Solana mainnet, funded, on the TEE stack** (2b-2). Unsponsored, it comes out of your own wallet, which needs ~0.01 SOL |
+| Withdrawal from an agent wallet | Same |
+| The agent's **Solana swap** | Jupiter Ultra goes gasless when the taker holds under ~0.01 SOL and the order is not in manual-slippage mode. When it does not, the **platform Solana wallet** drips `GAS_DRIP_SOL` to the agent and the order is re-fetched (`ensureAgentGas`, `src/lib/wallets/gas.ts`). Privy's `sponsor: true` is not an option here: it only exists on `signAndSendTransaction`, which bypasses Jupiter's `/execute` |
+| The agent's **Base swap** | Privy's swap API |
+| An **x402 data payment** | Nobody on our side. Every Solana 402 probed for W7 carries `extra.feePayer` — the facilitator pays — and Base EIP-3009 authorizations are settled by the facilitator too. The platform wallets need USDC, not gas |
+| Opening the agent's USDC **token account** on Solana | The platform Solana wallet, pre-created at `createAgentWallets` so your funding transfer never pays the ~0.00204 SOL rent |
+
+The practical consequence: the **platform Solana wallet needs ~0.05 SOL** even though
+nothing about x402 does. The live checklist's gas step reports exactly which of these the
+agent is currently standing on, and the Platform card shows the native balance next to the
+USDC one so it is visible before it runs out rather than after.

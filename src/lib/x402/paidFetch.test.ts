@@ -1,9 +1,9 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
-import { paidFetch, parsePaymentOptions, selectPaymentOption } from "./paidFetch";
+import { correctEip712Domains, paidFetch, parsePaymentOptions, selectPaymentOption } from "./paidFetch";
 import { chainForNetwork, newBudget, X402BudgetError, type AgentWalletRef, type X402Context } from "./types";
 
 let db: Db;
@@ -277,5 +277,232 @@ describe("paidFetch in mock mode", () => {
     });
     expect(res.amountUsd).toBe(0);
     expect(c.budget.spentUsd).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------- the signing path
+//
+// Everything below runs with `X402_MOCK` off, which is the only mode where a payment
+// can actually fail. The wallet, the Privy client and `wrapFetchWithPayment` are all
+// replaced: the point is not to exercise x402 (that is the vendor's test suite) but to
+// pin the two decisions this module makes around it — which side of the signature a
+// failure fell on, and what the client is configured with before it signs.
+
+describe("correctEip712Domains", () => {
+  const base = (extra: Record<string, unknown>, asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") =>
+    ({
+      scheme: "exact",
+      network: "eip155:8453",
+      asset,
+      amount: "10000",
+      payTo: "0xpay",
+      maxTimeoutSeconds: 300,
+      extra,
+    }) as unknown as Parameters<typeof correctEip712Domains>[1][number];
+
+  /** SentimentAlpha's exact 402, re-probed live 2026-09-21. */
+  it("rewrites Base USDC's domain name when the server advertises the wrong one", () => {
+    const [fixed] = correctEip712Domains(1, [base({ name: "USDC", version: "2" })]);
+    expect(fixed?.extra).toEqual({ name: "USD Coin", version: "2" });
+  });
+
+  /** x402Atlas already gets it right; a no-op has to stay a no-op, object identity included. */
+  it("leaves a server that already agrees with the token untouched", () => {
+    const input = [base({ merchant: "x402Atlas", name: "USD Coin", version: "2" })];
+    expect(correctEip712Domains(2, input)[0]).toBe(input[0]);
+  });
+
+  it("does not touch an asset whose domain nobody has read off the chain", () => {
+    const input = [base({ name: "United Stables", version: "1" }, "0xcE24439F2D9C6a2289F741120FE202248B666666")];
+    expect(correctEip712Domains(2, input)[0]).toBe(input[0]);
+  });
+
+  /** Permit2 signs against the Permit2 contract's domain, not the token's. Hands off. */
+  it("does not touch a Permit2 requirement", () => {
+    const input = [base({ name: "USDC", version: "2", assetTransferMethod: "permit2-exact" })];
+    expect(correctEip712Domains(2, input)[0]).toBe(input[0]);
+  });
+
+  it("keeps every other field, and does not mutate the server's object", () => {
+    const input = base({ name: "USDC", version: "2", merchant: "someone" });
+    const [fixed] = correctEip712Domains(1, [input]);
+    expect(fixed).toMatchObject({ payTo: "0xpay", amount: "10000", scheme: "exact" });
+    expect(fixed?.extra).toMatchObject({ merchant: "someone" });
+    expect(input.extra).toEqual({ name: "USDC", version: "2", merchant: "someone" });
+  });
+});
+
+describe("paidFetch accounting when a payment fails", () => {
+  /** What the fake `wrapFetchWithPayment` should do on the paid retry. */
+  let paidBehaviour: () => Promise<Response>;
+  /** Whether the fake client signed before that happened. */
+  let signBeforeRetry = true;
+  let registeredPolicies: Array<(v: number, r: unknown[]) => unknown[]>;
+  let spendControls: { maxAmountPerPayment: string } | null;
+
+  beforeEach(() => {
+    vi.stubEnv("X402_MOCK", "");
+    vi.resetModules();
+    registeredPolicies = [];
+    spendControls = null;
+    signBeforeRetry = true;
+    paidBehaviour = async () => new Response("{}", { status: 200 });
+
+    const afterPaymentHooks: Array<() => Promise<void>> = [];
+    const fakeClient = {
+      setSpendControls(controls: { maxAmountPerPayment: string }) {
+        spendControls = controls;
+      },
+      register() {},
+      registerV1() {},
+      registerPolicy(policy: (v: number, r: unknown[]) => unknown[]) {
+        registeredPolicies.push(policy);
+      },
+      onAfterPaymentCreation(hook: () => Promise<void>) {
+        afterPaymentHooks.push(hook);
+      },
+    };
+
+    vi.doMock("@/lib/privy", () => ({
+      privy: () => ({}),
+      authorizationContext: () => ({}),
+      authorizationPublicKey: () => "pk",
+      isPrivyConfigured: () => true,
+    }));
+    vi.doMock("@/lib/platform/wallets", () => ({
+      ensurePlatformWallet: async (chain: string) => ({ walletId: "platform-wallet", chain, address: "0xplatform" }),
+    }));
+    vi.doMock("@privy-io/node/x402", () => ({ createX402Client: () => fakeClient }));
+    vi.doMock("@x402/fetch", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("@x402/fetch")>()),
+      wrapFetchWithPayment: () => async () => {
+        // The real client fires this the instant a payload is signed, which is the line
+        // this module charges against.
+        if (signBeforeRetry) for (const hook of afterPaymentHooks) await hook();
+        return paidBehaviour();
+      },
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.doUnmock("@/lib/privy");
+    vi.doUnmock("@/lib/platform/wallets");
+    vi.doUnmock("@privy-io/node/x402");
+    vi.doUnmock("@x402/fetch");
+    vi.resetModules();
+  });
+
+  /** A 402 shaped exactly like the one SentimentAlpha returns, so the option parses. */
+  function stubProbe402(): void {
+    vi.stubGlobal("fetch", async () =>
+      Response.json(
+        {
+          x402Version: 1,
+          accepts: [
+            {
+              scheme: "exact",
+              network: "base",
+              maxAmountRequired: "10000",
+              asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+              payTo: "0xpay",
+              maxTimeoutSeconds: 300,
+              extra: { name: "USDC", version: "2" },
+            },
+          ],
+        },
+        { status: 402 },
+      ),
+    );
+  }
+
+  /**
+   * A fresh copy of the module, so its dynamic imports resolve to the mocks above.
+   * `@/db` is re-imported with it, but `setupTestDb` keeps one process-wide PGlite, so
+   * the rows it writes are the rows this file reads.
+   */
+  async function live() {
+    return import("./paidFetch");
+  }
+
+  const req = {
+    sourceId: "sentimentalpha",
+    url: "https://sentimentalpha.ai/v1/narrative-alpha",
+    network: "eip155:8453",
+    priceUsd: 0.01,
+    fixture: {},
+  } as const;
+
+  it("charges the run and writes an unsettled row when the resource fails after payment", async () => {
+    stubProbe402();
+    paidBehaviour = async () => new Response("upstream on fire", { status: 503 });
+    const { paidFetch: livePaidFetch } = await live();
+
+    const c = ctx(0.25);
+    await expect(livePaidFetch(c, req)).rejects.toThrow(/responded 503 after payment/);
+
+    expect(c.budget.spentUsd).toBeCloseTo(0.01, 9);
+    const rows = await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.settled).toBe(false);
+    expect(rows[0]?.simulated).toBe(false);
+    expect(rows[0]?.txHash).toBeNull();
+    expect(Number(rows[0]?.amountUsd)).toBeCloseTo(0.01, 9);
+  });
+
+  it("charges a still-402 answer too — the money may well have moved", async () => {
+    stubProbe402();
+    paidBehaviour = async () => new Response("{}", { status: 402 });
+    const { paidFetch: livePaidFetch } = await live();
+
+    const c = ctx(0.25);
+    await expect(livePaidFetch(c, req)).rejects.toThrow(/Could not pay/);
+    expect(c.budget.spentUsd).toBeCloseTo(0.01, 9);
+    expect(await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId))).toHaveLength(1);
+  });
+
+  it("charges nothing when the client threw before it ever signed", async () => {
+    stubProbe402();
+    signBeforeRetry = false;
+    paidBehaviour = async () => {
+      throw new Error("no default asset configured for network");
+    };
+    const { paidFetch: livePaidFetch } = await live();
+
+    const c = ctx(0.25);
+    await expect(livePaidFetch(c, req)).rejects.toThrow(/Could not pay/);
+    expect(c.budget.spentUsd).toBe(0);
+    expect(await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId))).toHaveLength(0);
+  });
+
+  /** The whole point of charging a failure: a retrying model cannot re-pay past the cap. */
+  it("lets the per-run cap stop a source that keeps failing", async () => {
+    stubProbe402();
+    paidBehaviour = async () => new Response("nope", { status: 500 });
+    const { paidFetch: livePaidFetch } = await live();
+
+    const c = ctx(0.025);
+    await expect(livePaidFetch(c, req)).rejects.toThrow(/responded 500/);
+    await expect(livePaidFetch(c, req)).rejects.toThrow(/responded 500/);
+    // Matched on the message, not the class: `vi.resetModules()` hands this describe a
+    // second copy of `./types`, so the thrown `X402BudgetError` is a different
+    // constructor than the one imported at the top of this file.
+    await expect(livePaidFetch(c, req)).rejects.toThrow(/Data spend cap reached/);
+    expect(c.budget.spentUsd).toBeCloseTo(0.02, 9);
+  });
+
+  it("caps the client at the quoted price and installs the domain correction before signing", async () => {
+    stubProbe402();
+    const { paidFetch: livePaidFetch } = await live();
+    await livePaidFetch(ctx(0.25), req);
+
+    // +5% of $0.01, so a resource that reprices upward on the retry is refused.
+    expect(spendControls).toEqual({ maxAmountPerPayment: "$0.010500" });
+    expect(registeredPolicies).toHaveLength(1);
+    const [fixed] = registeredPolicies[0]!(1, [
+      { asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", extra: { name: "USDC", version: "2" } },
+    ]) as Array<{ extra: Record<string, unknown> }>;
+    expect(fixed?.extra).toEqual({ name: "USD Coin", version: "2" });
   });
 });

@@ -1,8 +1,13 @@
 /**
- * SolEnrich — Solana on-chain intelligence, and the one paid source in this batch
- * that is billed to the agent's **Solana** wallet.
+ * SolEnrich — Solana on-chain intelligence, priced on Solana and therefore settled by
+ * the **platform's Solana wallet** (since W5 the platform pays for data; an agent funds
+ * itself to trade). Turning this on is one of the two reasons the Solana platform wallet
+ * has to hold USDC — `deepnets-token-safety` is the other.
  *
- * REAL request shape, EXPERIMENTAL response shape. Verified live at build time:
+ * REAL request shape, unverified response shape. Re-probed live 2026-09-21 — a POST
+ * (the entrypoints are POST-only; a GET is a bare 404) answers 402 with an x402 **v2**
+ * header offering Solana USDC `amount: "12000"` = $0.012 with an `extra.feePayer`, and
+ * Base USDC at the same price as an alternative. Earlier build-time notes:
  * `https://api.solenrich.com/.well-known/x402` lists 44 `POST /entrypoints/<name>/invoke`
  * resources, each with its price and `network:
  * "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"` (alt `eip155:8453`), and the service's
@@ -123,7 +128,7 @@ export const solEnrichLaunches = defineSource({
   id: "solenrich-launches",
   name: "SolEnrich launches",
   description:
-    "Solana new-launch radar and token due diligence, paid from your SOLANA wallet. mode 'launches' returns freshly launched tokens already filtered by liquidity and a 0-1 risk score and ranked safest first; mode 'token' adds top-20 holders, HHI concentration, volatility and slippage for one mint; mode 'ask' routes a plain-English question. EXPERIMENTAL: the request shape is verified live but the response keys are undocumented, so fields may arrive named differently.",
+    "Solana new-launch radar and token due diligence, priced on Solana (the platform pays, not your agent). mode 'launches' returns freshly launched tokens already filtered by liquidity and a 0-1 risk score and ranked safest first; mode 'token' adds top-20 holders, HHI concentration, volatility and slippage for one mint; mode 'ask' routes a plain-English question. EXPERIMENTAL: the request shape is verified live but the response keys are undocumented, so fields may arrive named differently.",
   category: "onchain",
   network: CAIP2_SOLANA,
   priceUsd: MODES.launches.priceUsd,
@@ -159,7 +164,6 @@ export const solEnrichLaunches = defineSource({
       network: CAIP2_SOLANA,
       priceUsd: mode.priceUsd,
       fixture,
-      timeoutMs: 10_000,
     });
 
     const data = res.data;

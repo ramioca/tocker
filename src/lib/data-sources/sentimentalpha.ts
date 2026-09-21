@@ -1,9 +1,27 @@
 /**
  * SentimentAlpha — real-time X (Twitter) narrative alpha.
  *
- * REAL: verified live at build time. `POST https://sentimentalpha.ai/v1/narrative-alpha`
- * answers HTTP 402 with an x402 **v1** body (`accepts[].maxAmountRequired = "10000"`,
- * USDC on Base) plus `x-payment-*` headers. $0.01 per query.
+ * The endpoint is real and the 402 is real: re-probed live 2026-09-21,
+ * `https://sentimentalpha.ai/v1/narrative-alpha` answers HTTP 402 with an x402 **v1**
+ * body (`accepts[0].maxAmountRequired = "10000"` = $0.01, `network: "base"`, asset
+ * `0x8335…2913`) plus the legacy `x-payment-*` headers.
+ *
+ * What is *not* real yet is a settled payment. Its `accepts[0].extra` declares
+ * `{ name: "USDC", version: "2" }`, but Base USDC's own EIP-712 domain is
+ * `name = "USD Coin"` (read on-chain: `name()` → `"USD Coin"`, `version()` → `"2"`,
+ * `DOMAIN_SEPARATOR()` → `0x02fa7265…`). `@x402/evm` signs the EIP-3009 authorization
+ * with whatever name the *server* advertises
+ * (`chunk-7KWSWAVE.mjs` → `signAuthorization`), so the signature lands under the wrong
+ * domain and the facilitator rejects it with `ErrEip3009TokenNameMismatch`. Nothing is
+ * lost when that happens — the transfer never executes — but the call always fails.
+ *
+ * W7 corrects the domain inside `paidFetch` (an `x402Client.registerPolicy` transform
+ * that rewrites `extra.name`/`extra.version` to the values read from the token itself,
+ * for EIP-3009 requirements on assets we have verified). That fix is unit-tested but has
+ * never been proven against the live facilitator, because proving it means spending real
+ * money — so this source stays `experimental: true` and out of
+ * `DEFAULT_AGENT_CONFIG.dataSources`. One successful $0.01 call is all it takes to
+ * promote it; `x-search` is the sentiment source that ships on by default until then.
  */
 import { z } from "zod";
 import { paidFetch } from "@/lib/x402/paidFetch";
@@ -29,12 +47,12 @@ export const sentimentAlpha = defineSource({
   id: "sentimentalpha",
   name: "SentimentAlpha",
   description:
-    "Real-time X/Twitter narrative alpha: sentiment score, narrative velocity and a contrarian signal for a topic or ticker.",
+    "Real-time X/Twitter narrative alpha: sentiment score, narrative velocity and a contrarian signal for a topic or ticker. Paid on Base at $0.01 a call. EXPERIMENTAL: this vendor advertises the wrong EIP-712 domain name for Base USDC; Tocker corrects it before signing, but no payment to it has settled yet — prefer x-search until one has.",
   category: "sentiment",
   network: "eip155:8453",
   priceUsd: 0.01,
   url: "https://sentimentalpha.ai/v1/narrative-alpha",
-  experimental: false,
+  experimental: true,
   inputSchema,
   async query(ctx, input): Promise<NormalizedResult> {
     const res = await paidFetch(ctx, {

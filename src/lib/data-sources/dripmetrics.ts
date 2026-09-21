@@ -62,7 +62,6 @@ export const dripmetricsSummary = defineSource({
       network: BASE_NETWORK,
       priceUsd: 0.25,
       fixture: summaryFixture,
-      timeoutMs: 10_000,
     });
 
     const data = res.data;
@@ -193,7 +192,6 @@ export const dripmetricsMetric = defineSource({
       network: BASE_NETWORK,
       priceUsd: priceOf(input.metric),
       fixture: metricFixture,
-      timeoutMs: 10_000,
     });
 
     const data = res.data;

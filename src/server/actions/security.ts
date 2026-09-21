@@ -176,21 +176,70 @@ export async function applyFirstTradePresetAction(agentId: string): Promise<Acti
   const parsed = agentConfigSchema.safeParse(next);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "The preset produced an invalid config");
 
-  await db.update(agents).set({ config: parsed.data, updatedAt: new Date() }).where(eq(agents.id, agent.id));
+  /**
+   * The preset lowers `maxTradeUsd`, and the wallet policy has to come down with it.
+   *
+   * Two layers enforce spend, and the readiness checklist requires both to sit at or
+   * under the cap the operator typed: `riskGuard()` in this app, and a Privy policy on
+   * the agent's own wallets underneath it. This action used to move only the first. The
+   * result was a button, offered on the go-live screen as the fix, that made the screen
+   * *less* ready than before — the budget step then failed with "the wallet policy caps
+   * transfers at $100, above the $2 you entered" and `goLiveAction` refused.
+   *
+   * Best-effort on purpose. Privy can be down, and an agent whose app-layer cap came
+   * down but whose wallet policy did not is strictly safer than one where neither did;
+   * refusing the whole preset over it would leave the operator with the original problem
+   * and no button. The failure is audited and the readiness check below reports it
+   * honestly, because the budget step re-reads what is actually attached.
+   */
+  let walletBudget = agent.walletBudget;
+  let policyError: string | null = null;
+  try {
+    const { applyAgentBudgetPolicy } = await import("@/lib/wallets");
+    walletBudget =
+      (await applyAgentBudgetPolicy({
+        agentId: agent.id,
+        agentName: agent.name,
+        perTxUsd: parsed.data.risk.maxTradeUsd,
+        existing: agent.walletBudget,
+      })) ?? agent.walletBudget;
+  } catch (err) {
+    policyError = err instanceof Error ? err.message : String(err);
+    console.error("[applyFirstTradePresetAction] wallet policy", err);
+  }
+
+  await db
+    .update(agents)
+    .set({ config: parsed.data, walletBudget, updatedAt: new Date() })
+    .where(eq(agents.id, agent.id));
 
   await recordAudit({
     userId: session.userId,
     kind: "first_trade_preset",
     agentId: agent.id,
     agentName: agent.name,
-    summary: `Applied the first-trade preset to ${agent.name}: $${parsed.data.risk.maxTradeUsd} a trade, ${parsed.data.risk.maxDailyTrades} a day, ${parsed.data.chains.join(" and ")} only.`,
+    summary:
+      `Applied the first-trade preset to ${agent.name}: $${parsed.data.risk.maxTradeUsd} a trade, ` +
+      `${parsed.data.risk.maxDailyTrades} a day, ${parsed.data.chains.join(" and ")} only.` +
+      (policyError
+        ? ` The wallet policy could not be lowered to match: ${policyError}`
+        : walletBudget
+          ? ` Its wallet policy now refuses any USDC transfer above $${walletBudget.perTxUsd}.`
+          : ""),
     metadata: {
-      before: { maxTradeUsd: before.risk.maxTradeUsd, maxDailyTrades: before.risk.maxDailyTrades, chains: before.chains },
+      before: {
+        maxTradeUsd: before.risk.maxTradeUsd,
+        maxDailyTrades: before.risk.maxDailyTrades,
+        chains: before.chains,
+        walletPerTxUsd: agent.walletBudget?.perTxUsd ?? null,
+      },
       after: {
         maxTradeUsd: parsed.data.risk.maxTradeUsd,
         maxDailyTrades: parsed.data.risk.maxDailyTrades,
         chains: parsed.data.chains,
+        walletPerTxUsd: walletBudget?.perTxUsd ?? null,
       },
+      ...(policyError ? { walletPolicyError: policyError } : {}),
     },
   });
 
@@ -202,7 +251,7 @@ export async function applyFirstTradePresetAction(agentId: string): Promise<Acti
       slug: agent.slug,
       ownerId: agent.ownerId,
       config: parsed.data,
-      walletBudget: agent.walletBudget,
+      walletBudget,
       capUsd: parsed.data.risk.maxTradeUsd,
     }),
   };

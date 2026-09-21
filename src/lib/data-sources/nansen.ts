@@ -151,7 +151,6 @@ export const nansenSmartMoney = defineSource({
       network: BASE_NETWORK,
       priceUsd: PRICE_USD,
       fixture,
-      timeoutMs: 10_000,
     });
 
     const data = res.data;

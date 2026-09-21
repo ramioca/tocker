@@ -161,31 +161,55 @@ async function main() {
 
   // 9. the platform's own wallets — the ones that pay for data and collect the fee.
   //
-  // Created here on purpose: they are created lazily on first use in the app, but an
-  // operator cannot fund an address that does not exist yet, and "fund the platform data
-  // wallet on Base" is the last setup step before a first live run. One per chain,
-  // guarded by a unique index, so running preflight twice creates nothing twice.
+  // **This writes to whatever database `DATABASE_URL` points at, which from a laptop is
+  // your local PGlite file, not production.** A wallet created here is not the wallet
+  // your deployment will use, and funding the address it prints sends USDC somewhere no
+  // deployed agent can spend from. Create the production wallets from
+  // **Settings → Admin → Platform wallets** on the deployed site instead; what this check
+  // is for is proving the *credentials* can create and read one at all.
   if (!dbUrl) {
     warn("skipped the platform wallets: they live in the database, and DATABASE_URL is missing");
   } else {
-    if (dbUrl.startsWith("pglite://")) warn("platform wallet rows live in embedded PGlite — fine for a local test, not for a deployment");
+    const local = dbUrl.startsWith("pglite://");
+    if (local) {
+      warn(
+        "DATABASE_URL is embedded PGlite, so the wallets below are LOCAL. Do not fund these addresses — " +
+          "create the real ones from Settings → Admin → Platform wallets on the deployed site.",
+      );
+    }
     try {
-      const { ensurePlatformWallet, readPlatformBalances } = await import("../src/lib/platform/wallets");
+      const { ensurePlatformWallet, readPlatformBalance } = await import("../src/lib/platform/wallets");
+      const { dataChainsFor } = await import("../src/lib/data-sources/registry");
+      const { DEFAULT_AGENT_CONFIG } = await import("../src/lib/agent/config");
+
+      // Which wallets a default agent actually spends from. Not a constant: the registry
+      // decides, because `paidFetch` picks the payer by the resource's own network.
+      const needed = dataChainsFor(DEFAULT_AGENT_CONFIG.dataSources);
+
       for (const chain of ["base", "solana"] as const) {
         const wallet = await ensurePlatformWallet(chain);
-        const balances = await readPlatformBalances(wallet);
-        const usdc = balances.balances
-          .filter((b) => b.asset.toLowerCase() === "usdc")
-          .reduce((sum, b) => sum + b.amount, 0);
-        ok(`platform ${chain} wallet ${wallet.address} — ${usdc.toFixed(2)} USDC`);
-        if (chain === "base" && !(usdc > 0)) {
+        const reading = await readPlatformBalance(wallet);
+        const usdc = reading.usdc === null ? "unreadable" : `${reading.usdc.toFixed(2)} USDC`;
+        const native = reading.native === null ? "unreadable" : `${reading.native.toFixed(4)} ${chain === "base" ? "ETH" : "SOL"}`;
+        ok(`platform ${chain} wallet ${wallet.address} — ${usdc}, ${native}`);
+
+        if (reading.error) {
+          warn(`could not read the ${chain} balance: ${reading.error}`);
+        } else if (needed.includes(chain) && !(reading.usdc! > 0) && !local) {
           warn(
-            `the platform data wallet on base holds no USDC. Every x402 data call is paid from it, so fund it before any agent uses a paid source: send USDC to ${wallet.address}`,
+            `the platform ${chain} wallet holds no USDC, and the default source list has sources priced on ` +
+              `${chain}. Every one of those calls would 402. Send USDC to ${wallet.address}`,
           );
         }
       }
       console.log(
-        `      The per-fill fee (PLATFORM_FEE_USD, default $0.10) is swept into these wallets in batches once an agent owes PLATFORM_FEE_SETTLE_MIN_USD (default $1.00).`,
+        `      Default sources price on: ${needed.join(", ") || "nothing paid"}. Both wallets also receive the ` +
+          `per-fill fee (PLATFORM_FEE_USD, default $0.10), swept in batches once an agent owes ` +
+          `PLATFORM_FEE_SETTLE_MIN_USD (default $1.00).`,
+      );
+      console.log(
+        `      The Solana wallet additionally needs ~0.05 SOL: it drips gas to agent wallets and opens their ` +
+          `USDC token accounts. x402 itself needs no SOL — every Solana 402 carries an extra.feePayer.`,
       );
     } catch (e) {
       bad(`platform wallets unavailable: ${(e as Error).message}`);

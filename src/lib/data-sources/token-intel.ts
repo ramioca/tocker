@@ -1,21 +1,24 @@
 /**
- * Solana token due-diligence sources.
+ * Solana token due diligence.
  *
- * - `deepnets-token-safety` — REAL. `GET https://api.deepnets.ai/api/token-safety?mint=`
- *   verified live: x402 v2, **Solana** USDC (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`,
- *   `amount: "10000"` = $0.01). This is the one source an agent pays for from its
- *   Solana wallet rather than its Base wallet.
- * - `token-intel-sol` — EXPERIMENTAL. `token-intel-x402.echolonius.deno.net` returned
- *   503 USAGE_EXCEEDED at build time (Deno Deploy suspended), so it ships with a fixture.
- * - `rugmunch` — EXPERIMENTAL. `x402.rugmunch.io` is behind Cloudflare (403 at the root,
- *   404 on probed paths) and is not in the Bazaar index; fixture only.
+ * `deepnets-token-safety` — REAL, re-probed live 2026-09-21:
+ * `GET https://api.deepnets.ai/api/token-safety?mint=` answers 402 with an x402 **v2**
+ * `PAYMENT-REQUIRED` header priced in **Solana** USDC
+ * (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`, `amount: "10000"` = $0.01) and carries an
+ * `extra.feePayer`, so the facilitator pays the SOL network fee and the platform's
+ * Solana wallet needs USDC only. This is the source that makes the **Solana** platform
+ * wallet a real dependency, not an optional one — see `checkPlatformDataWallets` in
+ * `src/lib/security/live-readiness.ts`.
+ *
+ * Two entries were removed in W7 rather than kept as fixtures that look like data:
+ * `token-intel-sol` (`token-intel-x402.echolonius.deno.net`, **503 USAGE_EXCEEDED** —
+ * the Deno Deploy project is suspended) and `rugmunch` (`x402.rugmunch.io/api/analyze`,
+ * **404 `not_found`**). Both re-probed 2026-09-21.
  */
 import { z } from "zod";
 import { paidFetch } from "@/lib/x402/paidFetch";
 import { CAIP2_SOLANA } from "@/lib/trading/tokens";
 import deepnetsFixture from "./fixtures/deepnets.json";
-import tokenIntelFixture from "./fixtures/token-intel-sol.json";
-import rugmunchFixture from "./fixtures/rugmunch.json";
 import {
   asArray,
   asNumber,
@@ -46,7 +49,7 @@ export const deepnetsTokenSafety = defineSource({
   id: "deepnets-token-safety",
   name: "Deepnets token safety",
   description:
-    "Solana token safety analysis: overall risk level, wallet-network concentration, bundle detection, mint/freeze authority flags, critical risks and warnings.",
+    "Solana token safety analysis: overall risk level, wallet-network concentration, bundle detection, mint/freeze authority flags, critical risks and warnings. Paid on Solana at $0.01 a call, from the platform's Solana wallet.",
   category: "onchain",
   network: CAIP2_SOLANA,
   priceUsd: 0.01,
@@ -84,79 +87,6 @@ export const deepnetsTokenSafety = defineSource({
       ),
       data,
       signals: { risk: clampRisk(risk) },
-    };
-  },
-});
-
-export const tokenIntelSol = defineSource({
-  id: "token-intel-sol",
-  name: "Token Intel (Solana)",
-  description:
-    "Solana token due diligence: mint/freeze authority, LP lock, holder concentration, honeypot checks. EXPERIMENTAL: upstream was suspended (503) at build time, so this returns a fixture.",
-  category: "onchain",
-  network: CAIP2_SOLANA,
-  priceUsd: 0.01,
-  url: "https://token-intel-x402.echolonius.deno.net/intel",
-  experimental: true,
-  inputSchema: mintInput,
-  async query(ctx, input): Promise<NormalizedResult> {
-    const res = await paidFetch(ctx, {
-      sourceId: "token-intel-sol",
-      url: `https://token-intel-x402.echolonius.deno.net/intel?mint=${encodeURIComponent(input.mint)}`,
-      network: CAIP2_SOLANA,
-      priceUsd: 0.01,
-      fixture: tokenIntelFixture,
-      timeoutMs: 10_000,
-    });
-
-    const data = res.data;
-    const risk = asNumber(pick(data, "risk_score"));
-    const verdict = asString(pick(data, "verdict")) ?? "unknown";
-    const lp = asNumber(pick(data, "checks", "lp_locked_pct"));
-    const top10 = asNumber(pick(data, "checks", "top10_holder_pct"));
-    return {
-      summary: truncate(
-        `Token Intel verdict "${verdict}" for ${input.mint}: LP locked ${lp ?? "?"}%, top-10 holders ${top10 ?? "?"}%, risk score ${risk ?? "?"}.`,
-        600,
-      ),
-      data,
-      signals: risk === null ? undefined : { risk: clampRisk(risk) },
-    };
-  },
-});
-
-export const rugMunch = defineSource({
-  id: "rugmunch",
-  name: "Rug Munch",
-  description:
-    "Rug-probability grade for a Solana token: deployer history, liquidity locks, buy/sell tax, sellability. EXPERIMENTAL: the service is Cloudflare-gated and undocumented, so this returns a fixture.",
-  category: "onchain",
-  network: CAIP2_SOLANA,
-  priceUsd: 0.01,
-  url: "https://x402.rugmunch.io/api/analyze",
-  experimental: true,
-  inputSchema: mintInput,
-  async query(ctx, input): Promise<NormalizedResult> {
-    const res = await paidFetch(ctx, {
-      sourceId: "rugmunch",
-      url: `https://x402.rugmunch.io/api/analyze?mint=${encodeURIComponent(input.mint)}`,
-      network: CAIP2_SOLANA,
-      priceUsd: 0.01,
-      fixture: rugmunchFixture,
-      timeoutMs: 10_000,
-    });
-
-    const data = res.data;
-    const p = asNumber(pick(data, "rug_probability"));
-    const grade = asString(pick(data, "grade")) ?? "?";
-    const canSell = pick(data, "trading", "can_sell") !== false;
-    return {
-      summary: truncate(
-        `Rug Munch grade ${grade} for ${input.mint}: rug probability ${p ?? "?"}, sellable=${canSell}, ${asArray(pick(data, "flags")).length} flag(s).`,
-        600,
-      ),
-      data,
-      signals: p === null ? undefined : { risk: clampRisk(p) },
     };
   },
 });

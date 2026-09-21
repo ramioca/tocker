@@ -5,7 +5,9 @@
  * operator funds. Today they do two jobs:
  *
  *  - **They pay for data.** Every x402 402 is settled by the platform wallet on the
- *    resource's network (Base, in practice). See `src/lib/x402/paidFetch.ts`.
+ *    resource's network — Base for most sources, Solana for `deepnets-token-safety` and
+ *    `solenrich-launches`. Both wallets are load-bearing; see `src/lib/x402/paidFetch.ts`
+ *    and `dataChainsFor` in `src/lib/data-sources/registry.ts`.
  *  - **They collect the fee.** A live agent's accrued `platform_fees` are swept into
  *    them by the guardian. See `./settlement.ts`.
  *
@@ -28,7 +30,7 @@
  */
 import { eq } from "drizzle-orm";
 import { getDb, platformWallets } from "@/db";
-import type { Chain, WalletBalance } from "@/server/types";
+import type { Chain } from "@/server/types";
 
 export interface PlatformWalletRow {
   /** Privy wallet id. */
@@ -43,8 +45,25 @@ const CHAIN_TYPE: Record<Chain, "ethereum" | "solana"> = { base: "ethereum", sol
 const CHAIN_NAME: Record<Chain, "base" | "solana"> = { base: "base", solana: "solana" };
 const NATIVE_ASSET: Record<Chain, "eth" | "sol"> = { base: "eth", solana: "sol" };
 
-/** The chain the platform pays for data on in practice. Used for messages and checks. */
+/**
+ * The chain most paid sources price on, and the one a deployment with no Solana source
+ * configured can get away with funding alone.
+ *
+ * It is **not** the only chain that pays: `deepnets-token-safety` and
+ * `solenrich-launches` price on Solana, and `plexa-pretrade`, `otto-pulse` and
+ * `nansen-smart-money` offer Solana alongside Base. Which wallets an *agent* actually
+ * needs comes from `dataChainsFor(config.dataSources)` in
+ * `src/lib/data-sources/registry.ts` — this constant is a default for copy and for the
+ * scripts, never a check.
+ */
 export const DATA_CHAIN: Chain = "base";
+
+/** What each platform wallet is for, in the operator's words. */
+export function platformWalletPurpose(chain: Chain): string {
+  return chain === "base"
+    ? "Pays every 402 priced on Base (eip155:8453), and receives Base fee sweeps."
+    : "Pays every 402 priced on Solana, and receives Solana fee sweeps.";
+}
 
 /** What these wallets are called in the UI and in every error an operator will read. */
 export function platformWalletLabel(chain: Chain): string {
@@ -175,57 +194,83 @@ export async function ensurePlatformWallet(chain: Chain): Promise<PlatformWallet
 }
 
 /**
- * USDC (and native, for information) on one platform wallet.
+ * What one platform wallet holds, with "we could not tell" kept distinct from "zero".
  *
- * One `balance.get` call per asset. The SDK's types accept an array but serialise it as
- * a single comma-joined query value ("usdc,eth") that the API rejects with a 400 — the
- * same trap `readWalletBalances` documents in `src/lib/wallets/index.ts`. Never throws:
- * a balance we cannot read is reported as zero with a warning, so the operator card and
- * the preflight still render.
+ * Until W7 this reported an unreadable balance as `amount: 0`, so the operator card and
+ * the preflight would still render — which made a Privy hiccup indistinguishable from an
+ * empty wallet. The readiness checklist turns an empty platform wallet into a hard block
+ * on going live, and a rule that says "could not tell is a fail, never a pass" cannot be
+ * built on a reader that answers zero when it means nothing.
+ *
+ * So the error is left in: `null` means unread, a number means read. The card still
+ * renders either way; it just says which it is looking at.
  */
-export async function readPlatformBalances(row: PlatformWalletRow): Promise<WalletBalance> {
+export interface PlatformBalanceReading {
+  chain: Chain;
+  address: string;
+  walletId: string;
+  /** USDC held, or `null` when Privy could not be read. */
+  usdc: number | null;
+  /** ETH on Base / SOL on Solana, or `null` when Privy could not be read. */
+  native: number | null;
+  /** Why it could not be read. `null` when it could. */
+  error: string | null;
+}
+
+export async function readPlatformBalance(row: PlatformWalletRow): Promise<PlatformBalanceReading> {
   const assets = ["usdc", NATIVE_ASSET[row.chain]] as const;
-  const empty = assets.map((asset) => ({ asset, amount: 0, usd: null as number | null }));
+  const unread = (error: string): PlatformBalanceReading => ({
+    chain: row.chain,
+    address: row.address,
+    walletId: row.walletId,
+    usdc: null,
+    native: null,
+    error,
+  });
   try {
     const { privy, isPrivyConfigured } = await import("@/lib/privy");
-    if (!isPrivyConfigured()) {
-      return { chain: row.chain, address: row.address, walletId: row.walletId, balances: empty };
-    }
+    if (!isPrivyConfigured()) return unread("Privy is not configured on this deployment.");
+
+    // One `balance.get` per asset: the SDK's types accept an array but serialise it as a
+    // single comma-joined query value ("usdc,eth") the API rejects with a 400. Same trap
+    // `readWalletBalances` documents in `src/lib/wallets/index.ts`.
     const results = await Promise.all(
       assets.map((asset) => privy().wallets().balance.get(row.walletId, { chain: CHAIN_NAME[row.chain], asset })),
     );
-    const balances = results
-      .flatMap((res) => res.balances ?? [])
-      .map((b) => {
-        const decimals = b.raw_value_decimals ?? 0;
-        const amount = Number(b.raw_value ?? "0") / 10 ** decimals;
-        const usdRaw = b.display_values?.usd ?? b.display_values?.USD;
-        const usd = usdRaw === undefined ? null : Number(usdRaw);
-        return {
-          asset: String(b.asset),
-          amount: Number.isFinite(amount) ? amount : 0,
-          usd: usd !== null && Number.isFinite(usd) ? usd : null,
-        };
-      });
+    const held = new Map<string, number>();
+    for (const res of results) {
+      for (const b of res.balances ?? []) {
+        const amount = Number(b.raw_value ?? "0") / 10 ** (b.raw_value_decimals ?? 0);
+        const key = String(b.asset).toLowerCase();
+        held.set(key, (held.get(key) ?? 0) + (Number.isFinite(amount) ? amount : 0));
+      }
+    }
     return {
       chain: row.chain,
       address: row.address,
       walletId: row.walletId,
-      balances: balances.length > 0 ? balances : empty,
+      // A wallet Privy answered for but that holds nothing reports no balance line at
+      // all, which is a read that found zero — not a read that failed.
+      usdc: held.get("usdc") ?? 0,
+      native: held.get(NATIVE_ASSET[row.chain]) ?? 0,
+      error: null,
     };
   } catch (err) {
-    console.warn(
-      `[platform] balance lookup failed for the ${row.chain} wallet:`,
-      err instanceof Error ? err.message : err,
-    );
-    return { chain: row.chain, address: row.address, walletId: row.walletId, balances: empty };
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[platform] balance lookup failed for the ${row.chain} wallet:`, message);
+    return unread(message);
   }
 }
 
-/** USDC held by one platform wallet, as a number. Unreadable balances count as zero. */
+/** {@link readPlatformBalance} for every platform wallet on record, in a stable order. */
+export async function readPlatformBalanceAll(): Promise<PlatformBalanceReading[]> {
+  const rows = await listPlatformWallets();
+  return Promise.all(rows.map(readPlatformBalance));
+}
+
+/** USDC held by one platform wallet. `null` when there is no wallet, or it could not be read. */
 export async function platformUsdcBalance(chain: Chain): Promise<number | null> {
   const row = await getPlatformWallet(chain);
   if (!row) return null;
-  const balances = await readPlatformBalances(row);
-  return balances.balances.filter((b) => b.asset.toLowerCase() === "usdc").reduce((sum, b) => sum + b.amount, 0);
+  return (await readPlatformBalance(row)).usdc;
 }

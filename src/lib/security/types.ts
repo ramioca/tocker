@@ -54,6 +54,8 @@ export type ReadinessStepId =
   | "mfa"
   | "wallets"
   | "funding"
+  /** Can anything here pay a Solana network fee? Added in W7; see `./live-readiness.ts`. */
+  | "gas"
   | "budget"
   | "risk"
   | "data"

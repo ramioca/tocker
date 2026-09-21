@@ -98,7 +98,6 @@ export const gate402BaseRadar = defineSource({
       network: BASE_NETWORK,
       priceUsd: PRICE_USD,
       fixture: input.mode === "momentum" ? momentumFixture : launchesFixture,
-      timeoutMs: 10_000,
     });
 
     const data = res.data;

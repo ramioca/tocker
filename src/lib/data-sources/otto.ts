@@ -2,9 +2,10 @@
  * Otto AI — the cheap ambient read: what crypto Twitter is talking about, and a
  * four-sentence state of the market.
  *
- * REAL request, EXPERIMENTAL response. Verified live at build time:
+ * REAL request, unverified response. Re-probed live 2026-09-21:
  * - `GET https://x402.ottoai.services/twitter-summary` — 402, x402 v2, `accepts[]`
- *   offering **$0.001** USDC on both Base (`eip155:8453`) and Solana; described by the
+ *   offering **$0.001** USDC on Base (`eip155:8453`), Base via Permit2, and Solana
+ *   (with an `extra.feePayer`, so the facilitator covers the SOL fee); described by the
  *   service itself as "quick pulse check from crypto Twitter. Breaking news, trending
  *   narratives, and sentiment shifts at a glance". No parameters.
  * - `GET https://x402.ottoai.services/news-recaps` — same flow at **$0.003**; a 4-6
@@ -116,7 +117,6 @@ export const ottoPulse = defineSource({
       network: BASE_NETWORK,
       priceUsd: mode.priceUsd,
       fixture: input.mode === "recap" ? recapFixture : pulseFixture,
-      timeoutMs: 10_000,
     });
 
     const data = res.data;
