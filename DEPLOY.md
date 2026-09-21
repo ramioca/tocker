@@ -157,11 +157,18 @@ is opened — but the wizard can only *report* these; you have to do them.
 
 ### Privy dashboard
 
-1. **Fee sponsorship → Sponsor gas fees**, with **Solana mainnet** under supported chains
-   and credits funded. Confirm the app is on Privy's **TEE execution** stack: sponsorship
-   throws `"Sponsoring transactions is only supported for wallets on the TEE stack"`
-   otherwise, and the deposit and funding transfers are the first thing that fails. This
-   covers the *user's* transfers, not the agent's swaps — see "Gas, in full" below.
+1. **Fee sponsorship → Sponsor gas fees**, for **Base**. Confirm the app is on Privy's
+   **TEE execution** stack: sponsorship throws `"Sponsoring transactions is only supported
+   for wallets on the TEE stack"` otherwise, and a Base funding transfer is the first
+   thing that fails. This covers the *user's* Base transfers, not the agent's swaps — see
+   "Gas, in full" below.
+
+   **Solana does not use this, and no longer depends on the dashboard at all.** Privy's
+   Solana gas model is a fee-payer wallet, not a flag: Tocker builds the funding
+   transaction with the **platform Solana wallet** as `payerKey`, the user signs it in the
+   browser, and the server adds the platform's signature and broadcasts
+   (`prepareSponsoredFunding` / `submitSponsoredFunding`). So the one thing that makes
+   Solana funding work is SOL in the platform Solana wallet — see the table below.
 2. **Funding (card / exchange) is off.** The app config for
    `cmtzr2ruh05ik0cl08kr4yo1c` has no `funding_config` and reports
    `fiat_on_ramp_enabled: false`, so the "Buy USDC" button fails instantly no matter what
@@ -174,12 +181,12 @@ is opened — but the wizard can only *report* these; you have to do them.
 | Wallet | Asset | Amount | Why |
 |---|---|---|---|
 | Your Privy embedded **Solana** wallet | USDC | 10 | the test deposit |
-| " | SOL | 0 with sponsorship on, **0.01** without | tx fee, plus ~0.00204 SOL rent if the agent's USDC token account does not exist yet |
+| " | SOL | **0** | the platform Solana wallet is the fee payer on your funding transfer and pays the ~0.00204 SOL token-account rent. Hold SOL only if you want the self-paid fallback to work when the platform wallet is dry |
 | Agent **Solana** wallet | USDC | 10 (transferred) | trading |
-| " | SOL | 0 | Ultra goes gasless for an empty taker, and the platform wallet drips `GAS_DRIP_SOL` when it does not |
+| " | SOL | 0 | Ultra goes gasless for an empty taker, and the platform wallet drips `GAS_DRIP_SOL` when it does not — including before a withdrawal or a fee sweep, which the agent pays for itself |
 | **Platform Base** wallet | USDC | ~$5 | pays every 402 priced on `eip155:8453` |
 | **Platform Solana** wallet | USDC | ~$5 | pays every 402 priced on Solana — `deepnets-token-safety` is in the default source list, so this is **not** optional |
-| " | SOL | ~0.05 | it drips gas to agent wallets and opens their USDC token accounts. x402 itself needs none: every Solana 402 names an `extra.feePayer`, so the facilitator pays |
+| " | SOL | ~0.05 | **load-bearing for funding.** It is the fee payer on every user→agent Solana transfer, it opens agents' USDC token accounts, and it drips gas to them for trades, withdrawals and fee sweeps. x402 itself needs none: every Solana 402 names an `extra.feePayer`, so the facilitator pays |
 
 **Create both platform wallets from Settings → Admin → Platform wallets** on the deployed
 site. The button is idempotent (a unique index on `chain` makes a second press a read) and
@@ -256,9 +263,11 @@ server, every time it is opened or re-checked:
 - database reachable and not PGlite; Privy configured with an authorization key; a second
   factor enrolled; the kill switch off;
 - real (not `paper_`) wallets on every chain it trades, holding USDC above the $5 minimum;
-- **gas**: a Solana agent passes when it holds ≥ `MIN_AGENT_SOL` *or* the platform Solana
-  wallet holds ≥ `MIN_PLATFORM_SOL` to drip to it. It fails only when neither is true,
-  because either one alone works. Base-only agents skip it;
+- **gas**: a Solana agent needs the platform Solana wallet to hold ≥ `MIN_PLATFORM_SOL`,
+  and the step **fails** without it however much SOL the agent itself holds. That wallet
+  is the fee payer on the operator's own funding transfer, so an empty one means no USDC
+  can get in and none can be withdrawn or swept back out; the agent's own SOL only covers
+  its trades, which Ultra usually makes gasless anyway. Base-only agents skip it;
 - spend caps within the cap you typed, at **both** layers — `riskGuard()` here and the
   Privy policy on the agent's own wallets;
 - a first-trade-shaped risk config (one chain, ≤ $2 a trade, one trade a day, at least one
@@ -322,14 +331,18 @@ used to say "gas is sponsored" for all of them. It is not one answer.
 
 | Transaction | Who pays the network fee |
 |---|---|
-| Your deposit / funding transfer into an agent | Privy's sponsor, via `sponsor: true` on the RPC call — **requires Fee sponsorship enabled for Solana mainnet, funded, on the TEE stack** (2b-2). Unsponsored, it comes out of your own wallet, which needs ~0.01 SOL |
-| Withdrawal from an agent wallet | Same |
+| Your funding transfer into an agent, **on Solana** | The **platform Solana wallet**, as the transaction's `payerKey`. The server builds it (`prepareSponsoredFunding`), you sign it in the browser with `signTransaction`, the server adds the platform's signature and broadcasts it (`submitSponsoredFunding`). No dashboard setting is involved. When the platform wallet cannot pay you are told so by name and address, and the transfer falls back to your own wallet — which then needs ~0.01 SOL |
+| Your funding transfer into an agent, **on Base** | Privy's sponsor, via `sponsor: true` — **requires Fee sponsorship enabled for Base, funded, on the TEE stack** (2b-2). Unsponsored, it comes out of your own wallet |
+| Withdrawal to an external address, from **your own** wallet | You. It is not Tocker's fee to pay, and a wallet with USDC and no SOL cannot make one — deposit ~0.01 SOL first |
+| Withdrawal **from an agent wallet**, and the platform's fee sweep | The agent's own wallet, which is the fee payer on its outgoing transfer. A USDC-only agent holds no SOL, so `withdrawFromAgent` drips from the platform Solana wallet first and waits for it to confirm (`ensureAgentGas`). A platform wallet that cannot drip fails the withdrawal with its own sentence, and leaves fees accrued for the next sweep |
 | The agent's **Solana swap** | Jupiter Ultra goes gasless when the taker holds under ~0.01 SOL and the order is not in manual-slippage mode. When it does not, the **platform Solana wallet** drips `GAS_DRIP_SOL` to the agent and the order is re-fetched (`ensureAgentGas`, `src/lib/wallets/gas.ts`). Privy's `sponsor: true` is not an option here: it only exists on `signAndSendTransaction`, which bypasses Jupiter's `/execute` |
 | The agent's **Base swap** | Privy's swap API |
 | An **x402 data payment** | Nobody on our side. Every Solana 402 probed for W7 carries `extra.feePayer` — the facilitator pays — and Base EIP-3009 authorizations are settled by the facilitator too. The platform wallets need USDC, not gas |
 | Opening the agent's USDC **token account** on Solana | The platform Solana wallet, pre-created at `createAgentWallets` so your funding transfer never pays the ~0.00204 SOL rent |
 
 The practical consequence: the **platform Solana wallet needs ~0.05 SOL** even though
-nothing about x402 does. The live checklist's gas step reports exactly which of these the
-agent is currently standing on, and the Platform card shows the native balance next to the
-USDC one so it is visible before it runs out rather than after.
+nothing about x402 does — and it is the single point of failure for Solana money movement
+in both directions, which is why the live checklist's gas step **fails** rather than warns
+when it is under `MIN_PLATFORM_SOL`. That step reports exactly which of these the agent is
+currently standing on, and the Platform card shows the native balance next to the USDC one
+so it is visible before it runs out rather than after.

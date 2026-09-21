@@ -15,7 +15,12 @@ import {
 import { unifiedCash, type UnifiedCash } from "@/lib/wallets/funding";
 import { toNumeric } from "@/lib/money";
 import { newId } from "@/server/queries/_shared";
-import type { ActionResult, Chain, WalletBalance } from "@/server/types";
+import type {
+  ActionResult,
+  Chain,
+  PreparedSponsoredFunding,
+  WalletBalance,
+} from "@/server/types";
 
 function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
@@ -101,6 +106,310 @@ export async function getAgentFundingTargets(
     ok: true,
     data: rows.map((w) => ({ chain: w.chain, address: w.address, walletId: w.id })),
   };
+}
+
+// ------------------------------------------------- sponsored Solana funding
+
+/**
+ * Resolve a destination address to an agent the session user owns.
+ *
+ * Nothing about ownership comes from the caller: the address is looked up in `wallets`,
+ * it has to be an `agent_server` Solana row, and that row's agent has to belong to the
+ * session. An address that is not one of the caller's agents' wallets is not a case to
+ * sponsor — it is a plain transfer the user pays for, so the client falls back.
+ */
+async function ownedAgentSolanaWallet(
+  userId: string,
+  toAddress: string,
+): Promise<ActionResult<{ agentId: string; agentName: string; slug: string; address: string }>> {
+  const to = toAddress?.trim();
+  if (!to) return fail("No destination address");
+
+  const db = await getDb();
+  const [row] = await db
+    .select({ address: wallets.address, agentId: wallets.agentId })
+    .from(wallets)
+    .where(and(eq(wallets.address, to), eq(wallets.chain, "solana"), eq(wallets.kind, "agent_server")))
+    .limit(1);
+  if (!row?.agentId) return fail("That address is not one of your agents' Solana wallets.");
+
+  const [agent] = await db
+    .select({ id: agents.id, ownerId: agents.ownerId, name: agents.name, slug: agents.slug })
+    .from(agents)
+    .where(eq(agents.id, row.agentId))
+    .limit(1);
+  if (!agent) return fail("That wallet's agent no longer exists");
+  if (agent.ownerId !== userId) return fail("You do not own this agent");
+
+  return { ok: true, data: { agentId: agent.id, agentName: agent.name, slug: agent.slug, address: row.address } };
+}
+
+/** The session user's recorded embedded Solana wallet — the only wallet we will build a transfer out of. */
+async function myEmbeddedSolanaAddress(userId: string): Promise<ActionResult<string>> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ address: wallets.address })
+    .from(wallets)
+    .where(and(eq(wallets.userId, userId), eq(wallets.chain, "solana"), eq(wallets.kind, "user_embedded")))
+    .limit(1);
+  if (!row) {
+    return fail(
+      "Tocker has no Solana wallet on record for you, so it cannot build a transfer out of one. Sync your wallets from Settings and try again.",
+    );
+  }
+  return { ok: true, data: row.address };
+}
+
+/**
+ * Step 1 of sponsored funding: build the transaction the user is asked to sign.
+ *
+ * The operator's embedded Solana wallet holds USDC and no SOL, so it cannot pay a
+ * network fee. Tocker's platform Solana wallet — the same one that pays for x402 data
+ * and drips gas — is the fee payer, and it also pays the rent on the agent's USDC
+ * account. Nothing here is signed: it returns bytes, and the browser decides.
+ *
+ * When the platform wallet cannot cover the fee this succeeds with `sponsored: false`
+ * and a message naming the wallet and its address. That is deliberate. It is the
+ * operator's own wallet, they are the only person who can fix it, and turning it into a
+ * generic error would hide the one sentence that says what to do.
+ */
+export async function prepareSponsoredFunding(input: {
+  toAddress: string;
+  amount: number;
+}): Promise<ActionResult<PreparedSponsoredFunding>> {
+  const session = await getSession();
+  if (!session) return fail("Sign in first");
+
+  const amount = Number(input.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return fail("Enter an amount greater than zero");
+
+  const target = await ownedAgentSolanaWallet(session.userId, input.toAddress);
+  if (!target.ok) return target;
+
+  const from = await myEmbeddedSolanaAddress(session.userId);
+  if (!from.ok) return from;
+  if (from.data === target.data.address) return fail("That is the agent's own wallet, not yours");
+
+  const { PlatformWalletError, ensurePlatformWallet } = await import("@/lib/platform/wallets");
+  const cannotPay = (message: string): ActionResult<PreparedSponsoredFunding> => ({
+    ok: true,
+    data: { sponsored: false, blocker: "platform_cannot_pay", message },
+  });
+
+  let platform: { walletId: string; address: string };
+  try {
+    platform = await ensurePlatformWallet("solana");
+  } catch (err) {
+    return cannotPay(
+      err instanceof PlatformWalletError
+        ? err.message
+        : `Tocker's platform Solana wallet could not be reached, so it cannot pay this network fee: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+    );
+  }
+
+  const { PublicKey } = await import("@solana/web3.js");
+  const { SOLANA_USDC_MINT, associatedTokenAddress } = await import("@/lib/wallets/solana-transfer");
+  const { accountExists, getSolBalance } = await import("@/lib/wallets/solana-rpc");
+  const { LAMPORTS_PER_SOL, MIN_PLATFORM_SOL, sponsoredFundingLamports } = await import("@/lib/wallets/gas");
+
+  const ata = associatedTokenAddress(new PublicKey(target.data.address), SOLANA_USDC_MINT).toBase58();
+  // An unreadable account is assumed missing: that only ever makes the check stricter,
+  // and being wrong the other way would mean promising to pay rent we cannot cover.
+  const ataExists = await accountExists(ata).catch(() => false);
+  const needLamports = sponsoredFundingLamports({ ataExists });
+  const needSol = needLamports / LAMPORTS_PER_SOL;
+
+  let platformSol: number;
+  try {
+    platformSol = await getSolBalance(platform.address);
+  } catch (err) {
+    return cannotPay(
+      `Tocker could not read the platform Solana wallet (${platform.address}) to confirm it can pay this network fee: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+
+  if (platformSol * LAMPORTS_PER_SOL < needLamports) {
+    return cannotPay(
+      `Tocker's platform Solana wallet (${platform.address}) holds ${platformSol.toFixed(6)} SOL and needs at least ` +
+        `${needSol.toFixed(6)} SOL to pay the network fee${
+          ataExists ? "" : " and the token-account rent"
+        } on this funding transfer. Send that wallet at least ${MIN_PLATFORM_SOL} SOL and try again.`,
+    );
+  }
+
+  try {
+    const { buildSponsoredUsdcTransfer } = await import("@/lib/wallets/solana-sponsored");
+    const transaction = await buildSponsoredUsdcTransfer({
+      from: from.data,
+      to: target.data.address,
+      feePayer: platform.address,
+      amount,
+    });
+    return {
+      ok: true,
+      data: {
+        sponsored: true,
+        transaction: Buffer.from(transaction).toString("base64"),
+        feePayer: platform.address,
+        from: from.data,
+        expectedAmount: amount,
+      },
+    };
+  } catch (err) {
+    console.error("[prepareSponsoredFunding]", err);
+    return fail(
+      `Tocker could not build the funding transaction: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
+ * Step 2 of sponsored funding: co-sign what the user signed, and broadcast it.
+ *
+ * This is a public POST endpoint that ends in the platform wallet putting its signature
+ * on bytes from a browser, so the order here is the whole design:
+ *
+ *  1. session, then ownership, then the expectation rebuilt **from the session** — the
+ *     caller says which agent and how much, never who is sending or who is paying;
+ *  2. `validateSponsoredUsdcTransfer`, which accepts only the exact transaction this
+ *     server authored, signed by the wallet on record. A failure returns here. Nothing
+ *     is signed;
+ *  3. Privy adds the platform's signature, and the result is validated **again** — the
+ *     user's signature must still verify over the same message, and both slots must be
+ *     filled. A backend that dropped the partial signature would otherwise produce a
+ *     transaction that broadcasts and fails;
+ *  4. only then, broadcast and confirm.
+ */
+export async function submitSponsoredFunding(input: {
+  toAddress: string;
+  amount: number;
+  /** The transaction from `prepareSponsoredFunding`, with the user's signature on it. */
+  signedTransaction: string;
+}): Promise<ActionResult<{ hash: string; confirmed: boolean }>> {
+  const session = await getSession();
+  if (!session) return fail("Sign in first");
+
+  const amount = Number(input.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return fail("Enter an amount greater than zero");
+  if (!input.signedTransaction) return fail("No signed transaction was submitted");
+
+  const target = await ownedAgentSolanaWallet(session.userId, input.toAddress);
+  if (!target.ok) return target;
+
+  const from = await myEmbeddedSolanaAddress(session.userId);
+  if (!from.ok) return from;
+
+  const { PlatformWalletError, ensurePlatformWallet } = await import("@/lib/platform/wallets");
+  let platform: { walletId: string; address: string };
+  try {
+    platform = await ensurePlatformWallet("solana");
+  } catch (err) {
+    return fail(err instanceof PlatformWalletError ? err.message : "Tocker's platform Solana wallet is unavailable");
+  }
+
+  let submitted: Uint8Array;
+  try {
+    submitted = new Uint8Array(Buffer.from(input.signedTransaction, "base64"));
+  } catch {
+    return fail("The signed transaction was not valid base64");
+  }
+
+  const expected = {
+    from: from.data,
+    to: target.data.address,
+    feePayer: platform.address,
+    amount,
+  };
+
+  const { isFullySigned, validateSponsoredUsdcTransfer } = await import("@/lib/wallets/solana-sponsored");
+  const check = validateSponsoredUsdcTransfer(submitted, expected);
+  if (!check.ok) {
+    console.warn(`[submitSponsoredFunding] refused to co-sign for ${session.userId}: ${check.reason}`);
+    return fail(
+      `Tocker will not sign this transaction because ${check.reason}. Nothing was sent. Start the transfer again.`,
+    );
+  }
+
+  const { authorizationContext, privy } = await import("@/lib/privy");
+  let signedBase64: string;
+  try {
+    const signed = await privy()
+      .wallets()
+      .solana()
+      .signTransaction(platform.walletId, {
+        transaction: input.signedTransaction,
+        authorization_context: authorizationContext(),
+      });
+    signedBase64 = signed.signed_transaction;
+  } catch (err) {
+    console.error("[submitSponsoredFunding] platform signature failed", err);
+    return fail(
+      `Tocker's platform wallet (${platform.address}) could not sign this transfer: ${
+        err instanceof Error ? err.message : String(err)
+      }. Nothing was sent.`,
+    );
+  }
+
+  const fullySigned = new Uint8Array(Buffer.from(signedBase64, "base64"));
+  if (!isFullySigned(fullySigned)) {
+    return fail(
+      "The platform signed this transfer but the result is missing a signature — your own signature did not survive. Nothing was sent; tell the operator.",
+    );
+  }
+  // The same boundary, run again on the bytes that are about to be broadcast: the
+  // platform's signature is the only thing that may have changed.
+  const after = validateSponsoredUsdcTransfer(fullySigned, expected);
+  if (!after.ok) {
+    return fail(
+      `The platform's signature changed this transfer (${after.reason}). Nothing was sent; tell the operator.`,
+    );
+  }
+
+  const { confirmSignature, sendRawTransaction } = await import("@/lib/wallets/solana-rpc");
+  let hash: string;
+  try {
+    hash = await sendRawTransaction(signedBase64);
+  } catch (err) {
+    // The RPC's own sentence, and whose wallet was paying — a bare "insufficient
+    // lamports" here is about Tocker's platform wallet, never the user's, and a message
+    // that does not say so sends them to deposit SOL that would not have helped.
+    return fail(
+      `The network rejected this transfer: ${err instanceof Error ? err.message : String(err)}. Tocker's ` +
+        `platform wallet (${platform.address}) was paying its fee; your USDC did not move.`,
+    );
+  }
+
+  const status = await confirmSignature(hash, { timeoutMs: 25_000 });
+  const confirmed = status === "confirmed";
+
+  const { recordAudit } = await import("@/lib/security/audit");
+  await recordAudit({
+    userId: session.userId,
+    // Borrowing the nearest honest existing kind, exactly as the gas drip does: the
+    // audit enum belongs to another workstream's schema block, and this is a wallet
+    // funding event the platform paid for.
+    kind: "budget_change",
+    agentId: target.data.agentId,
+    agentName: target.data.agentName,
+    summary: `Tocker's platform Solana wallet paid the network fee so ${amount} USDC could be funded into this agent's Solana wallet.`,
+    metadata: {
+      reason: "sponsored_funding",
+      chain: "solana",
+      amountUsdc: amount,
+      fromAddress: expected.from,
+      toAddress: expected.to,
+      feePayer: platform.address,
+      signature: hash,
+      confirmed,
+    },
+  });
+
+  revalidatePath(`/agents/${target.data.slug}/settings`);
+  return { ok: true, data: { hash, confirmed } };
 }
 
 // ----------------------------------------------------------- funding intents

@@ -21,6 +21,18 @@
  *  - **A row is only ever marked settled after the transfer returned a hash.** A failed
  *    transfer leaves every row `accrued`, so the next pass retries the same money rather
  *    than losing it.
+ *
+ * ## Gas for the sweep itself
+ *
+ * On Solana the agent's wallet is the fee payer for its own outgoing transfer, and a
+ * USDC-only agent wallet holds no SOL — so the sweep would fail for five thousand
+ * lamports. `withdrawFromAgent` now calls `ensureAgentGas` before Privy's `transfer` on
+ * that chain (see `src/lib/wallets/index.ts`), which drips from the platform Solana
+ * wallet and waits for it to confirm. It is deliberately done there and not here, so
+ * that a withdrawal and a sweep cannot disagree about what a transfer costs. When the
+ * platform wallet cannot drip, the `PlatformWalletError` lands in `settleBatch`'s catch
+ * like any other failure: the fees stay accrued and the next pass tries again. Nothing
+ * about "settlement never throws" changes.
  */
 import { platformFeeUsd, planSettlement, settleMinUsd, type SettlementBatch } from "./fee";
 import { accruedFees, markFeesSettled } from "./fees";
@@ -92,6 +104,8 @@ export async function settlePlatformFees(input: SettleFeesInput): Promise<Settle
 
     // `@/lib/wallets` is `server-only`; imported here so a plain tsx script (`pnpm demo`,
     // `pnpm tick`) can still load the guardian without tripping over the marker module.
+    // On Solana this function tops the agent's wallet up with gas before it transfers —
+    // see the note at the top of this file.
     const { withdrawFromAgent } = await import("@/lib/wallets");
 
     const batches: SettledBatch[] = [];

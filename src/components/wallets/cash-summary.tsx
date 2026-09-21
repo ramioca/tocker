@@ -86,15 +86,18 @@ export function ChainBreakdown({
  * "Cash" and "gas" said once, in the words the rest of the product uses.
  *
  * W7 M2: it now says *who* pays. "Gas is sponsored" left the reader with no idea
- * whether that was them, and the agent's gas is paid by a different party again — the
- * platform wallet, not Privy's sponsor.
+ * whether that was them.
+ *
+ * W7 B1: and on Solana the answer changed. Tocker's platform wallet is the fee payer on
+ * the transfers you sign there, not Privy's sponsor — which is why the sentence names
+ * Tocker for both halves now instead of splitting them between two parties.
  */
 export function CashLegend(_: { cash: UnifiedCash }) {
   return (
     <p className="text-[11px] leading-relaxed text-muted-foreground">
       Cash is USDC across your wallets on Base and Solana, shown as one balance. Network
-      fees are not yours to hold: Privy sponsors the ones you sign, and Tocker&rsquo;s own
-      wallet pays for what your agents sign.
+      fees are not yours to hold: Tocker&rsquo;s own wallet pays them, both for what you
+      sign and for what your agents sign.
     </p>
   );
 }

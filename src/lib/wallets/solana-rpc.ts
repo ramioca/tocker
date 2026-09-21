@@ -30,6 +30,58 @@ async function rpc<T>(method: string, params: unknown[], timeoutMs = 10_000): Pr
   return body.result;
 }
 
+/**
+ * A blockhash to build a transaction against, from the *server's* endpoint.
+ *
+ * `solana-transfer.ts` has its own version for the browser, which goes through
+ * `/api/solana/blockhash` so a provider key never leaves the server. This one is for
+ * transactions the server builds itself — the sponsored funding transfer, above all.
+ */
+export async function getLatestBlockhash(): Promise<string> {
+  const result = await rpc<{ value?: { blockhash?: string } }>("getLatestBlockhash", [
+    { commitment: "confirmed" },
+  ]);
+  const blockhash = result?.value?.blockhash;
+  if (!blockhash) throw new Error("Solana RPC getLatestBlockhash returned no blockhash");
+  return blockhash;
+}
+
+/**
+ * Broadcast an already-signed transaction and return its signature.
+ *
+ * Deliberately *not* routed through {@link rpc}: when a send is rejected, the RPC's own
+ * sentence ("Attempt to debit an account but found no record of a prior credit",
+ * "Blockhash not found", a program's custom error) is the only thing that says what
+ * actually went wrong, and wrapping it in our own prose buries it. The last simulation
+ * log line is appended when the node returns one, because that is where a program error
+ * names itself.
+ */
+export async function sendRawTransaction(base64: string): Promise<string> {
+  const res = await fetch(solanaRpcUrl(), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "sendTransaction",
+      params: [base64, { encoding: "base64", preflightCommitment: "confirmed", maxRetries: 5 }],
+    }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!res.ok) throw new Error(`Solana RPC sendTransaction failed (HTTP ${res.status})`);
+  const body = (await res.json()) as {
+    result?: string;
+    error?: { message?: string; data?: { logs?: string[] } };
+  };
+  if (body.error) {
+    const logs = body.error.data?.logs;
+    const tail = Array.isArray(logs) && logs.length > 0 ? ` — ${logs[logs.length - 1]}` : "";
+    throw new Error(`${body.error.message ?? "the RPC rejected the transaction"}${tail}`);
+  }
+  if (!body.result) throw new Error("The RPC accepted the transaction but returned no signature.");
+  return body.result;
+}
+
 /** Lamports held by an address. Throws when the RPC is unreachable — callers decide. */
 export async function getLamports(address: string): Promise<number> {
   const result = await rpc<{ value?: number }>("getBalance", [address, { commitment: "confirmed" }]);

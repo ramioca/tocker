@@ -2,7 +2,7 @@
  * The platform's own wallets — one app-owned Privy server wallet per chain.
  *
  * These are the wallets the *business* spends from, as opposed to the agent wallets an
- * operator funds. Today they do two jobs:
+ * operator funds. Today they do three jobs:
  *
  *  - **They pay for data.** Every x402 402 is settled by the platform wallet on the
  *    resource's network — Base for most sources, Solana for `deepnets-token-safety` and
@@ -10,6 +10,13 @@
  *    and `dataChainsFor` in `src/lib/data-sources/registry.ts`.
  *  - **They collect the fee.** A live agent's accrued `platform_fees` are swept into
  *    them by the guardian. See `./settlement.ts`.
+ *  - **The Solana one pays every network fee on that chain.** It is the `payerKey` on
+ *    the operator's own funding transfer (`prepareSponsoredFunding` — their embedded
+ *    wallet holds USDC and no SOL, so it cannot pay for itself), it pays the rent on
+ *    agents' USDC token accounts, and it drips SOL to agent wallets for trades,
+ *    withdrawals and fee sweeps. See `src/lib/wallets/{gas,solana-sponsored}.ts`. This
+ *    is why the live checklist fails, rather than warns, when it holds no SOL: without
+ *    it, money cannot move onto or off the chain at all.
  *
  * Created lazily on first use, with the same `owner: { public_key }` pattern
  * `createAgentWallets` uses: the app's authorization key owns them so the server can

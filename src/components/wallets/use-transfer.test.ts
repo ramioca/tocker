@@ -6,6 +6,21 @@ import { isNativeGasShortfall, transferErrorMessage } from "./use-transfer";
  * "your wallet rejected it" from the outside, and neither is the user's fault.
  */
 describe("transferErrorMessage", () => {
+  it("passes a platform-wallet failure through word for word", () => {
+    // On Solana the fee payer is Tocker's own wallet, so this message already names an
+    // address the operator can top up. Rewriting it — worse, into "deposit 0.01 SOL" —
+    // would send them to fund the wrong wallet.
+    const raw =
+      "Tocker's platform Solana wallet (7xKX…9bQ2) holds 0.000000 SOL and needs at least 0.003044 SOL to pay the network fee and the token-account rent on this funding transfer. Send that wallet at least 0.02 SOL and try again.";
+    expect(transferErrorMessage(new Error(raw), "solana")).toBe(raw);
+  });
+
+  it("does not turn a platform-wallet gas shortfall into advice about the user's own SOL", () => {
+    const raw =
+      "The network rejected this transfer: Attempt to debit an account but found no record of a prior credit. Tocker's platform wallet (7xKX…9bQ2) was paying its fee; your USDC did not move.";
+    expect(transferErrorMessage(new Error(raw), "solana")).toBe(raw);
+  });
+
   it("names sponsorship being off for the app, not the user's wallet", () => {
     const message = transferErrorMessage(
       new Error("Sponsoring transactions is only supported for wallets on the TEE stack"),

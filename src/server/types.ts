@@ -356,6 +356,39 @@ export interface WalletBalance {
   balances: Array<{ asset: string; amount: number; usd: number | null }>;
 }
 
+/**
+ * Sponsored Solana funding (`prepareSponsoredFunding` / `submitSponsoredFunding`).
+ *
+ * The user's embedded Solana wallet holds USDC and no SOL, so Tocker's platform Solana
+ * wallet is the fee payer on the funding transfer: the server builds it, the browser
+ * signs it, the server co-signs and broadcasts it. These shapes live here rather than
+ * in the action module so a `"use client"` hook can import the types without importing
+ * anything that is `server-only`.
+ */
+export interface SponsoredFundingPlan {
+  sponsored: true;
+  /** Unsigned v0 transaction, base64. The user signs it; they never broadcast it. */
+  transaction: string;
+  /** The platform Solana wallet, which is its fee payer. */
+  feePayer: string;
+  /** The user's embedded Solana wallet, as recorded — the client must sign with this. */
+  from: string;
+  /** Echoed back so the client submits the amount the transaction was built for. */
+  expectedAmount: number;
+}
+
+/**
+ * The honest "we cannot pay for this" answer. Not an error: the user may still be able
+ * to pay for themselves, and the message names the wallet the operator has to fund.
+ */
+export interface SponsoredFundingUnavailable {
+  sponsored: false;
+  blocker: "platform_cannot_pay";
+  message: string;
+}
+
+export type PreparedSponsoredFunding = SponsoredFundingPlan | SponsoredFundingUnavailable;
+
 export interface DataSourceInfo {
   id: string;
   name: string;

@@ -298,6 +298,15 @@ function failureText(action: {
  * platform fees collected against a transfer that had not happened yet. So: poll the
  * action with `?include=steps` until it reaches a terminal status, throw on
  * `rejected`/`failed` with Privy's own reason, and return the step's real signature.
+ *
+ * On Solana the agent's wallet is the **fee payer for its own withdrawal**, and a
+ * USDC-only agent wallet holds no SOL at all: the funding transfer into it was paid for
+ * by the platform, and Jupiter Ultra goes gasless, so nothing has ever put SOL there.
+ * That made a withdrawal — and the platform's own fee sweep, which goes through this
+ * same function — fail for want of five thousand lamports. So the wallet is topped up
+ * first, for the signature and, when the destination has no USDC account yet, its rent.
+ * A platform wallet that cannot drip raises `PlatformWalletError`, which the withdraw
+ * action shows verbatim and `settleBatch` catches and leaves the fees accrued.
  */
 export async function withdrawFromAgent(input: WithdrawInput): Promise<WithdrawResult> {
   if (!isPrivyConfigured()) throw new Error("Privy is not configured — withdrawals are unavailable");
@@ -306,6 +315,16 @@ export async function withdrawFromAgent(input: WithdrawInput): Promise<WithdrawR
   const [wallet] = (await getAgentWallets(input.agentId)).filter((w) => w.chain === input.chain);
   if (!wallet) throw new Error(`No ${input.chain} wallet for this agent`);
   if (isPaperWallet(wallet.id)) throw new Error("Paper wallets hold no real funds");
+
+  if (input.chain === "solana") {
+    await ensureSolanaTransferGas({
+      agentId: input.agentId,
+      walletId: wallet.id,
+      address: wallet.address,
+      asset: input.asset,
+      toAddress: input.toAddress,
+    });
+  }
 
   const asset = input.asset === "usdc" ? "usdc" : NATIVE_ASSET[input.chain];
   const created = await privy()
@@ -318,6 +337,46 @@ export async function withdrawFromAgent(input: WithdrawInput): Promise<WithdrawR
     });
 
   return pollWithdrawal(wallet.id, created.id, created);
+}
+
+/**
+ * Make sure an agent's Solana wallet can pay for one USDC transfer out of itself.
+ *
+ * The estimate is a signature, plus the destination token account's rent when that
+ * account does not exist yet — the agent is the payer on the `createIdempotent` Privy
+ * puts in front of a transfer to a fresh account. A destination whose state we cannot
+ * read is assumed to need the rent: over-dripping costs a tenth of a cent, and
+ * under-dripping costs the whole transfer.
+ */
+async function ensureSolanaTransferGas(input: {
+  agentId: string;
+  walletId: string;
+  address: string;
+  asset: "usdc" | "native";
+  toAddress: string;
+}): Promise<void> {
+  const { agentTransferLamports, ensureAgentGas } = await import("./gas");
+
+  let ataExists = true;
+  if (input.asset === "usdc") {
+    try {
+      const { PublicKey } = await import("@solana/web3.js");
+      const { SOLANA_USDC_MINT, associatedTokenAddress } = await import("./solana-transfer");
+      const { accountExists } = await import("./solana-rpc");
+      const ata = associatedTokenAddress(new PublicKey(input.toAddress), SOLANA_USDC_MINT);
+      ataExists = await accountExists(ata.toBase58());
+    } catch {
+      ataExists = false;
+    }
+  }
+
+  await ensureAgentGas({
+    agentId: input.agentId,
+    chain: "solana",
+    walletId: input.walletId,
+    address: input.address,
+    requiredLamports: agentTransferLamports({ ataExists }),
+  });
 }
 
 /** Poll one wallet action to a terminal status. Exported for the fee-settlement path. */
