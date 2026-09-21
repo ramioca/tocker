@@ -374,7 +374,13 @@ export async function submitSponsoredFunding(input: {
   try {
     hash = await sendRawTransaction(signedBase64);
   } catch (err) {
-    return fail(`The network rejected this transfer: ${err instanceof Error ? err.message : String(err)}`);
+    // The RPC's own sentence, and whose wallet was paying — a bare "insufficient
+    // lamports" here is about Tocker's platform wallet, never the user's, and a message
+    // that does not say so sends them to deposit SOL that would not have helped.
+    return fail(
+      `The network rejected this transfer: ${err instanceof Error ? err.message : String(err)}. Tocker's ` +
+        `platform wallet (${platform.address}) was paying its fee; your USDC did not move.`,
+    );
   }
 
   const status = await confirmSignature(hash, { timeoutMs: 25_000 });

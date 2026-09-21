@@ -242,10 +242,17 @@ function usePrivyTransfer(): UseTransfer {
 
       const sent = await submitSponsoredFunding({
         toAddress: request.to,
-        amount: request.amount,
+        // The amount the transaction was actually built for, not the one we asked for:
+        // the server validates the signed bytes against this number, so submitting
+        // anything else can only ever be a mismatch it refuses to sign.
+        amount: plan.expectedAmount,
         signedTransaction: signed,
       });
-      if (!sent.ok) throw new Error(transferErrorMessage(new Error(sent.error), "solana"));
+      // Not run through `transferErrorMessage`: the server already wrote these in plain
+      // language and named whose wallet was paying, and the generic table would rewrite
+      // "insufficient lamports" into advice about the user's own SOL, which is wrong
+      // here — the fee payer was Tocker's.
+      if (!sent.ok) throw new Error(sent.error);
       return { hash: sent.data.hash };
     },
     [sendSelfPaid, sendTransaction, signTransaction, solanaWallets],

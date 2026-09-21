@@ -49,16 +49,26 @@ export const DEFAULT_FUND_USD = 10;
 export const FUND_PRESETS = [10, 25, 50, 100] as const;
 
 /**
- * Gas is sponsored through Privy, so funding never sends native tokens and never
- * blocks on them. The gas fields below survive for the types and for the day this
- * flips back; with it on, every leg's `native` is 0 and `chain-short-native` never fires.
+ * Somebody other than the user pays the network fee on a funding transfer, so funding
+ * never sends native tokens and never blocks on them. The gas fields below survive for
+ * the types and for the day this flips back; with it on, every leg's `native` is 0 and
+ * `chain-short-native` never fires.
  *
- * W7: this is now true of the code as well as the comment — `use-transfer.ts` passes
- * `sponsor: true` on both chains. It still depends on **Fee sponsorship being enabled
- * for this app in the Privy dashboard**, which no client can check ahead of time: the
- * only signal is the signature failing with a message about the TEE stack. That case
- * (and a dry wallet with sponsorship off) becomes {@link gasBlockerFor} at the point of
- * failure, so the user is told what to deposit rather than shown a raw SDK error.
+ * **Who "somebody" is differs by chain, and that matters.**
+ *
+ *  - **Solana: Tocker's own platform wallet pays it.** It is the fee payer on the
+ *    transaction (`prepareSponsoredFunding` builds it with `payerKey` set to that
+ *    wallet, the user signs, the server co-signs and broadcasts), and it pays the rent
+ *    on the agent's USDC account too. Nothing in Privy's dashboard is involved, so this
+ *    is checkable ahead of time — and it is checked, both by the live-readiness gas step
+ *    and by `prepareSponsoredFunding` itself, which refuses with a sentence naming the
+ *    platform wallet and the SOL it is short of rather than letting a signature fail.
+ *  - **Base: Privy sponsors it**, via `sponsor: true` on `sendTransaction`. That still
+ *    depends on **fee sponsorship being enabled for this app in the Privy dashboard**,
+ *    which no client can check ahead of time: the only signal is the signature failing
+ *    with a message about the TEE stack. That case (and a dry wallet with sponsorship
+ *    off) becomes {@link gasBlockerFor} at the point of failure, so the user is told
+ *    what to deposit rather than shown a raw SDK error.
  */
 export const GAS_SPONSORED = true;
 

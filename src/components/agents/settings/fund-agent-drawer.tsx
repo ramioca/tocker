@@ -60,11 +60,12 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
   const { ready, session } = useSession();
   const { data } = useUserWallets(Boolean(ready && session));
   const [chain, setChain] = useState<Chain>(wallets[0]?.chain ?? "base");
-  // USDC only. Gas on both legs is somebody else's job now — Privy's sponsor pays the
-  // user→agent transfer (B1) and the platform Solana wallet pays the agent's trades
-  // (B2) — so the "SOL · gas" toggle that used to sit here only ever queued a transfer
-  // nobody needed. Anyone who really wants to hand the agent gas can send it to the
-  // address on the Wallets card.
+  // USDC only. Gas on both legs is somebody else's job now — on Solana Tocker's own
+  // platform wallet is the fee payer on the user→agent transfer (B1) and also pays for
+  // the agent's trades (B2); on Base Privy's sponsor covers the transfer — so the
+  // "SOL · gas" toggle that used to sit here only ever queued a transfer nobody needed.
+  // Anyone who really wants to hand the agent gas can send it to the address on the
+  // Wallets card.
   const asset = "usdc" as const;
   const [amount, setAmount] = useState("");
   const [pending, setPending] = useState(false);

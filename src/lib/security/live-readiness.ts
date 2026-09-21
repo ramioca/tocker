@@ -451,9 +451,15 @@ async function checkWallets(
  *     (`ensureAgentGas`), which needs the platform wallet to hold {@link MIN_PLATFORM_SOL};
  *  3. the agent holding {@link MIN_AGENT_SOL} itself.
  *
- * It fails only when *both* floors are missing — the agent is dry **and** the platform
- * cannot drip — because either one alone still works. Only the constants and the pure
- * helper are imported from `src/lib/wallets/gas.ts`; the effectful half is workstream A's.
+ * ## Why an empty platform wallet is now a fail, not a warning
+ *
+ * Because the operator cannot get money *in* without it. The platform Solana wallet is
+ * the fee payer on the funding transfer itself (`prepareSponsoredFunding`): the user's
+ * embedded wallet holds USDC and no SOL, so if the platform cannot pay, there is no
+ * funding transfer to make — and withdrawing or sweeping fees back out needs a drip from
+ * the same wallet. It also still drips gas for trades and pays the agent's token-account
+ * rent. The agent holding its own SOL covers item 3 and nothing else, so it can no
+ * longer rescue an empty platform wallet the way it used to.
  *
  * Base-only agents skip it: Base swaps do not ask the agent's wallet for a native
  * balance, and a step that reports on a chain the agent does not trade is noise.
@@ -506,19 +512,26 @@ async function checkGas(config: AgentConfig, agentSol: number): Promise<Readines
         `The agent holds ${agentSays}, under the ${MIN_AGENT_SOL} SOL it needs to sign for itself, and the ` +
         `platform Solana wallet holds ${platformSays}, under the ${MIN_PLATFORM_SOL} SOL it needs to top the ` +
         `agent up. Nothing here can pay a signature fee or the ~${ATA_RENT_SOL.toFixed(5)} SOL rent for the ` +
-        `token account the first buy has to open. Fund the platform wallet — it drips automatically — or send ` +
-        `the agent ${GAS_DRIP_SOL} SOL directly.`,
+        `token account the first buy has to open — and the platform wallet is the fee payer on your own funding ` +
+        `transfer too, so you cannot get USDC in until it holds SOL. Fund the platform wallet — it pays that fee ` +
+        `and drips to the agent automatically — or send the agent ${GAS_DRIP_SOL} SOL directly.`,
       fix: { label: "Settings → Admin → Platform wallets", href: PLATFORM_CARD.href },
     };
   }
   if (!platformOk) {
+    // A fail rather than a warning, and it stays a fail however much SOL the agent
+    // holds: the platform wallet is the fee payer on the operator's funding transfer,
+    // so an empty one means no money can get in, and none can be withdrawn or swept
+    // back out either. The agent's own SOL only covers its trades.
     return {
       id: "gas",
       title,
-      state: "warn",
+      state: "fail",
       detail:
-        `The agent holds ${agentSays}, enough to sign for itself. The platform Solana wallet holds ${platformSays}, ` +
-        `under the ${MIN_PLATFORM_SOL} SOL it needs to top the agent up later or open a token account for it.`,
+        `The agent holds ${agentSays}. The platform Solana wallet holds ${platformSays}, under the ` +
+        `${MIN_PLATFORM_SOL} SOL it needs. That wallet pays the network fee on your funding transfer — your own ` +
+        `Solana wallet holds USDC and no SOL, so it cannot pay for itself — and it is what tops the agent up for ` +
+        `a withdrawal, a fee sweep, or a trade Jupiter does not make gasless. Fund it before going live.`,
       fix: { label: "Settings → Admin → Platform wallets", href: PLATFORM_CARD.href },
     };
   }
@@ -529,7 +542,8 @@ async function checkGas(config: AgentConfig, agentSol: number): Promise<Readines
       state: "pass",
       detail:
         `The agent holds ${agentSays}. That is fine: Jupiter Ultra goes gasless for a taker this empty, and when ` +
-        `it does not, the platform Solana wallet (${platformSays}) drips ${GAS_DRIP_SOL} SOL before the order is signed.`,
+        `it does not, the platform Solana wallet (${platformSays}) drips ${GAS_DRIP_SOL} SOL before the order is ` +
+        `signed. The same wallet pays the fee on your funding transfer and on the agent's first token account.`,
       fix: null,
     };
   }
@@ -537,7 +551,9 @@ async function checkGas(config: AgentConfig, agentSol: number): Promise<Readines
     id: "gas",
     title,
     state: "pass",
-    detail: `The agent holds ${agentSays}, and the platform Solana wallet holds ${platformSays} to top it up.`,
+    detail:
+      `The agent holds ${agentSays}, and the platform Solana wallet holds ${platformSays} — enough to pay the fee ` +
+      `on your funding transfer and to top the agent up.`,
     fix: null,
   };
 }
