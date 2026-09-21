@@ -1,13 +1,13 @@
 import "server-only";
 import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
-import { agents, equitySnapshots, getDb, tokens, trades, x402Payments } from "@/db";
+import { agents, equitySnapshots, getDb, x402Payments } from "@/db";
 import { DATA_SOURCES } from "@/lib/data-sources/registry";
 import { toNum } from "@/lib/money";
 import { pnlOverWindow, WINDOW_DAYS } from "@/lib/pnl";
-import type { DataSourceInfo, LeaderboardRow, LeaderboardWindow, TokenScore, TrendingToken } from "@/server/types";
+import type { DataSourceInfo, LeaderboardRow, LeaderboardWindow, TokenScore } from "@/server/types";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import { discoverCandidates, getTokenScore } from "@/lib/tokens";
-import { buildAgentCards, toTokenRef } from "./_shared";
+import { buildAgentCards, snapshotInCurrentMode } from "./_shared";
 
 /**
  * Leaderboard per SPEC: PnL% = (latest − snapshot at window start) / snapshot at
@@ -28,7 +28,10 @@ export async function getLeaderboard(window: LeaderboardWindow, limit = 25): Pro
   const snapshots = await db
     .select({ agentId: equitySnapshots.agentId, at: equitySnapshots.at, equityUsd: equitySnapshots.equityUsd })
     .from(equitySnapshots)
-    .where(since ? and(inArray(equitySnapshots.agentId, ids), gte(equitySnapshots.at, since)) : inArray(equitySnapshots.agentId, ids))
+    .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+    // Current mode only. Without this an agent that went live yesterday shows up on the
+    // public leaderboard at roughly −99.9%, which is a change of units, not a loss.
+    .where(and(inArray(equitySnapshots.agentId, ids), snapshotInCurrentMode(), since ? gte(equitySnapshots.at, since) : undefined))
     .orderBy(asc(equitySnapshots.at));
 
   const series = new Map<string, Array<{ at: Date; equityUsd: number }>>();
@@ -59,46 +62,19 @@ export async function getLeaderboard(window: LeaderboardWindow, limit = 25): Pro
   }));
 }
 
-/** Tokens agents traded most in the last 7 days, with net USD flow. */
-export async function getTrendingTokens(limit = 12): Promise<TrendingToken[]> {
-  const db = await getDb();
-  const since = new Date(Date.now() - 7 * 86_400_000);
-  const rows = await db
-    .select({
-      tokenId: trades.tokenId,
-      buys: sql<number>`sum(case when ${trades.side} = 'buy' then 1 else 0 end)::int`,
-      sells: sql<number>`sum(case when ${trades.side} = 'sell' then 1 else 0 end)::int`,
-      netFlow: sql<string>`sum(case when ${trades.side} = 'buy' then ${trades.amountUsd} else -${trades.amountUsd} end)`,
-      volume: sql<string>`sum(${trades.amountUsd})`,
-    })
-    .from(trades)
-    .where(and(eq(trades.status, "filled"), gte(trades.createdAt, since)))
-    .groupBy(trades.tokenId)
-    .orderBy(desc(sql`sum(${trades.amountUsd})`))
-    .limit(limit);
-  if (rows.length === 0) return [];
+/**
+ * How many distinct public agents an x402 aggregate needs before it may be published.
+ *
+ * Which sources an operator pays for is part of their strategy — `toPublicProfile`
+ * deliberately publishes a *count* of data sources and not the list. A public
+ * "3 agents paid SentimentAlpha $0.31" says nothing about any one of them; the same row
+ * built from a single agent is that agent's source list, spend and cadence, attributable
+ * to whoever is visibly holding the only public position. Three is the smallest k that
+ * keeps a row from being read back to one operator even when two of the three are known.
+ */
+export const MIN_AGGREGATE_AGENTS = 3;
 
-  const tokenRows = await db.select().from(tokens).where(inArray(tokens.id, rows.map((r) => r.tokenId)));
-  const byId = new Map(tokenRows.map((t) => [t.id, toTokenRef(t)]));
-
-  return rows.flatMap((r) => {
-    const token = byId.get(r.tokenId);
-    if (!token) return [];
-    return [
-      {
-        token,
-        agentBuys: Number(r.buys ?? 0),
-        agentSells: Number(r.sells ?? 0),
-        netFlowUsd: toNum(r.netFlow),
-        // 24h price change needs a price history feed — RUNTIME's prices cache
-        // can fill this in; null renders as "—".
-        change24hPct: null,
-      },
-    ];
-  });
-}
-
-/** x402 spend leaderboard for data sources. */
+/** x402 spend leaderboard for data sources. Public agents only, k-anonymous. */
 export async function getTopDataSources(
   limit = 8,
 ): Promise<Array<DataSourceInfo & { agentCount: number; spendUsd: number }>> {
@@ -112,7 +88,12 @@ export async function getTopDataSources(
       network: sql<string>`min(${x402Payments.network})`,
     })
     .from(x402Payments)
+    // A private agent contributes nothing at all — not its spend, not its head count.
+    // Joining rather than filtering in JS keeps the rule in the one place a careless
+    // caller cannot skip.
+    .innerJoin(agents, and(eq(agents.id, x402Payments.agentId), eq(agents.isPublic, true)))
     .groupBy(x402Payments.sourceId)
+    .having(sql`count(distinct ${x402Payments.agentId}) >= ${MIN_AGGREGATE_AGENTS}`)
     .orderBy(desc(sql`sum(${x402Payments.amountUsd})`))
     .limit(limit);
 

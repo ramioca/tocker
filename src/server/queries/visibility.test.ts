@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import type { AgentConfig } from "@/db/schema";
 import type { RunStep } from "@/server/types";
-import { isAgentOwner, toPublicProfile, visibleConfig, visibleSteps } from "./visibility";
+import { isAgentOwner, REDACTED_ERROR, toPublicProfile, visibleConfig, visibleError, visibleSteps } from "./visibility";
 
 const OWNER = "did:privy:owner";
 const OTHER = "did:privy:someone-else";
@@ -112,5 +112,41 @@ describe("visibleSteps", () => {
     const payload = JSON.stringify(visibleSteps(steps, false));
     expect(payload).not.toContain("sentimentalpha");
     expect(payload).not.toContain("WIF narrative velocity");
+  });
+});
+
+describe("visibleError", () => {
+  // Real shapes the product has actually produced. Each one is a credential or an
+  // internal address that a public run page would otherwise publish verbatim.
+  const LEAKY = [
+    "Incorrect API key provided: sk-proj-9XbQ2mA7fTn1. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "fetch failed: https://mainnet.helius-rpc.com/?api-key=8b1f0c2e-77aa-4d31-9a50-1c0f8e6b2d44",
+    "Privy policy rjq4ke denied signTransaction for wallet zx91v: Transfer.amount 2000000 exceeds 1000000",
+  ];
+
+  it("gives the owner the provider's own words", () => {
+    for (const error of LEAKY) expect(visibleError(error, true)).toBe(error);
+  });
+
+  it("gives everyone else a fixed sentence and none of the original", () => {
+    for (const error of LEAKY) {
+      const shown = visibleError(error, false);
+      expect(shown).toBe(REDACTED_ERROR);
+      // Nothing from the original survives — not a key, not a host, not a wallet id.
+      for (const secret of ["sk-proj-9XbQ2mA7fTn1", "helius-rpc.com", "api-key", "rjq4ke", "zx91v"]) {
+        expect(shown).not.toContain(secret);
+      }
+    }
+  });
+
+  it("keeps null null for both, so a run that did not fail never reads as failed", () => {
+    expect(visibleError(null, true)).toBeNull();
+    expect(visibleError(null, false)).toBeNull();
+    expect(visibleError(undefined, false)).toBeNull();
+    expect(visibleError("", false)).toBeNull();
+  });
+
+  it("still tells a stranger that it failed — the record keeps its losses", () => {
+    expect(visibleError("boom", false)).toBeTruthy();
   });
 });

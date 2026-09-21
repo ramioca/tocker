@@ -54,3 +54,25 @@ export function toPublicProfile(config: AgentConfig | null | undefined): PublicP
 export function visibleSteps(steps: RunStep[], isOwner: boolean): RunStep[] {
   return isOwner ? steps : [];
 }
+
+/**
+ * What a non-owner may be told about a failure.
+ *
+ * `agent_runs.error` and `trades.error` are whatever the thing that broke said. That is
+ * a provider string, verbatim: the AI SDK surfaces the vendor's `error.message`, so a
+ * bad key produces `Incorrect API key provided: sk-proj-…`, an RPC produces a node URL
+ * with its key in the query string, and a Privy policy denial names the policy and the
+ * wallet. None of that is the track record, and some of it is a credential.
+ *
+ * The *fact* of the failure stays public — a run that failed shows as failed, a trade
+ * that failed shows as failed, because a track record that quietly drops its losses is
+ * worthless. Only the sentence explaining it is owner-only, and non-owners get a fixed
+ * string rather than `null` so the row still reads as an explained failure instead of an
+ * empty one.
+ */
+export const REDACTED_ERROR = "This run failed. The details are visible to the owner." as const;
+
+export function visibleError(error: string | null | undefined, isOwner: boolean): string | null {
+  if (!error) return null;
+  return isOwner ? error : REDACTED_ERROR;
+}

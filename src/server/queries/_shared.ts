@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   agents,
@@ -206,6 +206,28 @@ const EMPTY_AGG: AgentAggregates = {
 };
 
 /**
+ * The equity series belongs to the book the agent is running **now**.
+ *
+ * An agent is born in paper mode with a $10,000 notional and gets snapshotted every
+ * marks pass. Going live swaps that book for a real wallet holding, say, $10. Reading
+ * both halves as one series makes the flip look like a −99.9% day — on the agent card,
+ * on the public leaderboard and on the home overview — which is not a loss, it is a
+ * change of units.
+ *
+ * So every read of `equity_snapshots` filters to the agent's current mode.
+ * `mode` is nullable because rows written before the column existed have none; those
+ * are treated as the current mode, which is right for the overwhelmingly common case
+ * (an agent that has never flipped) and no worse than today's behaviour otherwise.
+ *
+ * The predicate compares against `agents.mode`, so the query has to have `agents`
+ * joined. That is deliberate: it keeps one rule in one place instead of passing a mode
+ * down through four call sites that would each have to remember to.
+ */
+export function snapshotInCurrentMode() {
+  return or(isNull(equitySnapshots.mode), eq(equitySnapshots.mode, agents.mode));
+}
+
+/**
  * Batch-load the numbers every agent card needs. One query per aggregate rather
  * than one per agent.
  */
@@ -224,7 +246,8 @@ export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<M
         at: equitySnapshots.at,
       })
       .from(equitySnapshots)
-      .where(inArray(equitySnapshots.agentId, ids))
+      .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+      .where(and(inArray(equitySnapshots.agentId, ids), snapshotInCurrentMode()))
       .orderBy(equitySnapshots.agentId, equitySnapshots.at),
     db
       .select({ agentId: trades.agentId, n: sql<number>`count(*)::int` })
