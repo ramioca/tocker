@@ -438,6 +438,17 @@ function SettingsForm({
             meaning={`x402 calls are refused past ${formatUsd(config.risk.maxDataSpendUsdPerRun)} in a single run.`}
             onChange={(maxDataSpendUsdPerRun) => patchRisk({ maxDataSpendUsdPerRun })}
           />
+          <RiskSlider
+            id="settings-slippage"
+            label="Slippage tolerance"
+            value={config.risk.slippageBps}
+            min={10}
+            max={2_000}
+            step={10}
+            format={(value) => `${Math.round(value)} bps`}
+            meaning={`Fills worse than ${(config.risk.slippageBps / 100).toFixed(2)}% off the quote are rejected on chain. Launch-day memecoins usually need 300–500 bps; Jupiter picks tighter when the pool allows.`}
+            onChange={(slippageBps) => patchRisk({ slippageBps: Math.round(slippageBps) })}
+          />
         </div>
 
         {/*
