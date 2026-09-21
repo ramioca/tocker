@@ -6,6 +6,7 @@
  * Tools return structured failures instead of throwing, so one bad call does not kill
  * the run — the model gets to read the reason and try something else.
  */
+import { MAX_PROPOSALS_PER_TICK } from "./limits";
 import { nanoid } from "nanoid";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
@@ -478,7 +479,7 @@ export function buildTools(ctx: RunContext): ToolSet {
     place_trade: tool({
       description:
         approvalMode
-          ? "Propose a buy or sell of a token for USDC. This agent runs in APPROVAL MODE: the token is scored and the risk guard runs exactly as normal, but instead of routing the order it is sent to your owner for a decision. A proposal is not a fill. Propose a token at most once per tick and do not wait for the answer — finish the tick. `rationale` is what your owner reads when deciding, and it is published verbatim if they approve, so it must cite the score."
+          ? `Propose a buy or sell of a token for USDC. This agent runs in APPROVAL MODE: the token is scored and the risk guard runs exactly as normal, but instead of routing the order it is sent to your owner for a decision. A proposal is not a fill. Propose each token at most once per tick; several different tokens may be proposed in one tick (up to ${MAX_PROPOSALS_PER_TICK}, never more than the trades left today), best first, each with its own rationale. Do not wait for answers — finish the tick when your shortlist is out. \`rationale\` is what your owner reads when deciding, and it is published verbatim if they approve, so it must cite the score and lead with your conviction.`
           : "Buy or sell a token for USDC. Scores the token, then runs the risk guard (blocklist, minScore, hard gates, size, daily count, position concentration, balance) and only then routes to the venue. A token you have not scored, or one that fails a gate, is rejected rather than filled. `rationale` is published to your followers' feed verbatim and must cite the score.",
       inputSchema: z.object({
         chain: chainSchema,
@@ -585,6 +586,15 @@ export function buildTools(ctx: RunContext): ToolSet {
               { alreadyProposed: true },
             );
           }
+          // A tick lays out a shortlist, not a page of decisions against the same cash.
+          const tradesLeftToday = Math.max(0, agent.config.risk.maxDailyTrades - portfolio.tradesToday);
+          const proposalCap = Math.min(MAX_PROPOSALS_PER_TICK, Math.max(1, tradesLeftToday));
+          if (proposedThisTick.size >= proposalCap) {
+            return fail(
+              `This tick has already proposed ${proposedThisTick.size} token${proposedThisTick.size === 1 ? "" : "s"}, its limit (${proposalCap}: the smaller of ${MAX_PROPOSALS_PER_TICK} per tick and the ${tradesLeftToday} trade${tradesLeftToday === 1 ? "" : "s"} left today). Finish the tick.`,
+              { limitReached: true },
+            );
+          }
           const priceUsd = await indicativePrice(executorAgent, request);
           const proposal = await createProposal({
             agent: {
@@ -617,7 +627,11 @@ export function buildTools(ctx: RunContext): ToolSet {
             side: parsed.side,
             requestedUsd: parsed.amountUsd,
             quotedPriceUsd: priceUsd,
-            message: "Proposed — awaiting owner approval; do not re-propose this token this tick",
+            message: `Proposed — awaiting owner approval; do not re-propose this token this tick. ${
+              proposedThisTick.size < proposalCap
+                ? `You may propose ${proposalCap - proposedThisTick.size} more different token${proposalCap - proposedThisTick.size === 1 ? "" : "s"} this tick if they clear your bar, then finish.`
+                : "That was this tick's last proposal — finish."
+            }`,
           };
         }
 

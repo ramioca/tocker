@@ -5,6 +5,7 @@
  * perishable state (book, recent trades, remaining budgets, clock). Keeping them
  * separate means the system half is stable enough to cache.
  */
+import { MAX_PROPOSALS_PER_TICK } from "./limits";
 import type { AgentConfig } from "@/db/schema";
 import type { DataSource } from "@/lib/data-sources/registry";
 import { exitDistances } from "@/lib/pnl";
@@ -176,7 +177,7 @@ ${
     config.execution?.mode === "approve"
       ? `place_trade does **not** route an order for you. It scores the token and runs the risk guard exactly as normal, and then sends the order to your owner as a proposal with a ${config.execution.proposalTtlMinutes ?? 60}-minute deadline. Nothing is signed until they approve it, and if they do not answer in time the proposal expires and nothing happens.
 
-What follows from that: propose a token at most once per tick, never wait for the answer, and never describe a proposal as a trade — in your summary or anywhere else. Your \`rationale\` is what your owner reads while deciding, so it has to stand on its own.`
+What follows from that: propose each token at most once per tick, never wait for the answer, and never describe a proposal as a trade — in your summary or anywhere else. Several **different** tokens may be proposed in one tick when several clear your bar — one place_trade per token, best first, up to ${MAX_PROPOSALS_PER_TICK} a tick and never more than the trades you have left today. They share the same cash, so size them as a set. Your \`rationale\` is what your owner reads while deciding, so it has to stand on its own: lead with your conviction (high, medium or low) and end with what would make you wrong.`
       : "place_trade routes the order itself. Once the risk guard passes, real funds move without anyone else looking at it first."
   }
 Guardian exits are the exception under either mode: stop losses, take profits and the
@@ -268,7 +269,7 @@ ${sourceLines}
 2. discover_tokens to sweep your feeds. It is free and returns a ranked table already
    filtered on the gates that can be checked for free (age, liquidity, holders,
    blocklist). Widen it with maxAgeHours / minLiquidityUsd when the table is thin.
-3. score_token on the two or three candidates you actually care about. Free. Read the
+3. score_token on the two, three or four candidates you actually care about. Free. Read the
    components, not just the total: a 70 built on safety 95 / momentum 30 is a different
    trade from a 70 built on safety 40 / momentum 95.
    **score_token comes before place_trade, always.** An unscored buy is refused outright —
@@ -278,10 +279,11 @@ ${sourceLines}
    ${config.risk.maxPositionPct}%-of-equity concentration cap and the cash you have left after
    the ${money(platformFeeUsd())} fee, and it names which of the three is binding. Inside it,
    let conviction and the liquidity component set the size — thin books deserve smaller clips.
-5. place_trade. It re-scores the token (usually a cache hit) and runs the risk guard,
-   so a token you have not scored, or one that fails a gate, is rejected rather than filled.${
+5. place_trade — once per token that clears your bar, best first. It re-scores the token
+   (usually a cache hit) and runs the risk guard, so a token you have not scored, or one
+   that fails a gate, is rejected rather than filled.${
      config.execution?.mode === "approve"
-       ? " In this agent's mode it then proposes the order to your owner instead of routing it."
+       ? ` In this agent's mode it then proposes the order to your owner instead of routing it, and your owner sees every proposal from this tick side by side — so when two or three candidates deserve it, propose two or three (up to ${MAX_PROPOSALS_PER_TICK}), each with its own rationale, and let them choose.`
        : ""
    }
 6. Every place_trade needs a rationale in your own voice, and it **must cite the score**:
@@ -357,7 +359,11 @@ ${trades}
 ## Remaining budgets this run
   - Data spend: ${money(input.dataBudgetRemainingUsd)} of ${money(input.config.risk.maxDataSpendUsdPerRun)}
   - Trades left today: ${Math.max(0, input.config.risk.maxDailyTrades - input.portfolio.tradesToday)}
-  - Cash available: ${money(input.portfolio.cashUsd)}
+  - Cash available: ${money(input.portfolio.cashUsd)}${
+    input.config.execution?.mode === "approve"
+      ? `\n  - Proposals you may open this tick: ${Math.min(MAX_PROPOSALS_PER_TICK, Math.max(0, input.config.risk.maxDailyTrades - input.portfolio.tradesToday))} (one per token, best first)`
+      : ""
+  }
 
 Decide what, if anything, to do this tick. Finish with the finish tool.`;
 }

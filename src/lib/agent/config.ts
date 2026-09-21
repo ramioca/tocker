@@ -136,7 +136,9 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigWithSizing = {
   // so too). A new operator opts into "trade on its own"; they don't get it by default.
   execution: { mode: "approve", proposalTtlMinutes: 60 },
   schedule: { intervalMinutes: 15 },
-  llm: { provider: "anthropic", model: "claude-sonnet-5", temperature: 0.4, maxSteps: 12 },
+  // 16 steps: portfolio, discovery, three or four scores, up to three proposals and a
+  // finish fit with room for one paid intel call; 12 forced a single proposal.
+  llm: { provider: "anthropic", model: "claude-sonnet-5", temperature: 0.4, maxSteps: 16 },
 };
 
 export function parseAgentConfig(input: unknown): AgentConfigWithSizing {
