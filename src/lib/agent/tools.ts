@@ -365,6 +365,7 @@ export function buildTools(ctx: RunContext): ToolSet {
           },
           intel,
           notBought: plan.skipped,
+          dataSpentThisRunUsd: Number(ctx.budget.spentUsd.toFixed(4)),
           dataBudgetRemainingUsd: Math.max(0, ctx.budget.maxUsd - ctx.budget.spentUsd),
         };
       }),
@@ -384,6 +385,7 @@ export function buildTools(ctx: RunContext): ToolSet {
           unrealizedPnlUsd: portfolio.unrealizedPnlUsd,
           tradesToday: portfolio.tradesToday,
           tradesRemainingToday: Math.max(0, agent.config.risk.maxDailyTrades - portfolio.tradesToday),
+          dataSpentThisRunUsd: Number(ctx.budget.spentUsd.toFixed(4)),
           dataBudgetRemainingUsd: Math.max(0, ctx.budget.maxUsd - ctx.budget.spentUsd),
           positions: portfolio.positions.map((p) => ({
             symbol: p.token.symbol,
@@ -471,7 +473,8 @@ export function buildTools(ctx: RunContext): ToolSet {
             summary: result.summary,
             signals: result.signals ?? null,
             data: result.data,
-            dataBudgetRemainingUsd: Math.max(0, ctx.budget.maxUsd - ctx.budget.spentUsd),
+            dataSpentThisRunUsd: Number(ctx.budget.spentUsd.toFixed(4)),
+          dataBudgetRemainingUsd: Math.max(0, ctx.budget.maxUsd - ctx.budget.spentUsd),
           };
         } catch (err) {
           if (err instanceof X402BudgetError) {
@@ -527,7 +530,8 @@ export function buildTools(ctx: RunContext): ToolSet {
             summary: result.summary,
             signals: result.signals ?? null,
             data: result.data,
-            dataBudgetRemainingUsd: Math.max(0, ctx.budget.maxUsd - ctx.budget.spentUsd),
+            dataSpentThisRunUsd: Number(ctx.budget.spentUsd.toFixed(4)),
+          dataBudgetRemainingUsd: Math.max(0, ctx.budget.maxUsd - ctx.budget.spentUsd),
           };
         } catch (err) {
           if (err instanceof X402BudgetError) return fail(err.message, { budgetExhausted: true });
