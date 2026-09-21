@@ -16,6 +16,7 @@
  * - **Live money is held, not tapped.** A paper agent gets a morph button; a live one
  *   gets hold-to-confirm, the same gesture as going live in the first place.
  */
+import { GeckoTerminalLink } from "@/components/common/chart-link";
 import { useState } from "react";
 import { ArrowDownRight, ArrowUpRight, Clock, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
@@ -127,6 +128,7 @@ export function ProposalCard({
           {formatUsd(requestedUsd)} of {proposal.token.symbol}
         </h3>
         <ChainBadge chain={proposal.chain} />
+        <GeckoTerminalLink chain={proposal.chain} address={proposal.token.address} symbol={proposal.token.symbol} />
         {proposal.isPaper ? null : (
           <span className="rounded-md border border-[oklch(0.7_0.19_300)]/40 bg-[oklch(0.7_0.19_300)]/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[oklch(0.78_0.15_300)]">
             Live money

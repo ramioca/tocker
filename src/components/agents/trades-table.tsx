@@ -1,5 +1,6 @@
 "use client";
 
+import { GeckoTerminalLink } from "@/components/common/chart-link";
 import Link from "next/link";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ArrowUpRight, Receipt } from "lucide-react";
@@ -158,6 +159,13 @@ export function TradesTable({
                           <TokenIcon token={trade.token} size="xs" />
                           <span className="font-medium">{trade.token.symbol}</span>
                         </Link>
+                        <GeckoTerminalLink
+                          chain={trade.token.chain}
+                          address={trade.token.address}
+                          symbol={trade.token.symbol}
+                          size="xs"
+                          className="ml-1.5 align-middle"
+                        />
                       </TableCell>
                       <TableCell className="tnum text-right text-muted-foreground">
                         {formatTokenAmount(trade.amountToken)}

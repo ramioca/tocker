@@ -14,6 +14,7 @@
  * the tap that spends real money, and it is deliberately not a tap. Reject is a plain
  * button — refusing to trade is never the dangerous direction.
  */
+import { GeckoTerminalLink } from "@/components/common/chart-link";
 import { useState } from "react";
 import { ArrowDownRight, ArrowUpRight, Clock, HelpCircle } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
@@ -78,6 +79,7 @@ export function ProposalPanel({
         <HelpCircle aria-hidden className="size-4 text-primary" />
         <h3 className="text-sm font-medium">Proposed — waiting for you</h3>
         <ChainBadge chain={trade.chain} className="ml-auto" />
+        <GeckoTerminalLink chain={trade.chain} address={trade.token.address} symbol={trade.token.symbol} />
       </div>
 
       <p className="mt-2 text-sm leading-6 text-muted-foreground">

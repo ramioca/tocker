@@ -1,4 +1,5 @@
 import { Wallet } from "lucide-react";
+import { GeckoTerminalLink } from "@/components/common/chart-link";
 import {
   Table,
   TableBody,
@@ -121,6 +122,7 @@ export function PositionsTable({
                   <TokenIcon token={position.token} size="sm" />
                   <span className="font-medium">{position.token.symbol}</span>
                   <ChainBadge chain={position.token.chain} className="hidden sm:inline-flex" />
+                  <GeckoTerminalLink chain={position.token.chain} address={position.token.address} symbol={position.token.symbol} />
                 </span>
               </TableCell>
               <TableCell className="tnum text-right text-muted-foreground">

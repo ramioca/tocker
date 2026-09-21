@@ -7,6 +7,7 @@
  * there is not, so an unscored token still shows a price rather than a page of
  * dashes.
  */
+import { GeckoTerminalLink } from "@/components/common/chart-link";
 import type { ReactNode } from "react";
 import { Address } from "@/components/common/address";
 import { ChainBadge } from "@/components/common/chain-badge";
@@ -41,7 +42,10 @@ export function TokenHeader({
               ) : null}
               <ChainBadge chain={token.chain} />
             </div>
-            <Address address={token.address} label="token address" className="mt-1" />
+            <span className="mt-1 flex flex-wrap items-center gap-3">
+              <Address address={token.address} label="token address" />
+              <GeckoTerminalLink chain={token.chain} address={token.address} symbol={token.symbol} label="GeckoTerminal" />
+            </span>
           </div>
 
           <div className="flex flex-col items-end gap-1.5">
