@@ -29,7 +29,7 @@ import { nanoid } from "nanoid";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { agents, follows, getDb, notifications, posts, tokens, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
-import { getAgentWallets, getPortfolio, toRiskPortfolio } from "@/lib/agent/portfolio";
+import { getAgentWallets, getPortfolio, snapshotEquity, toRiskPortfolio } from "@/lib/agent/portfolio";
 import { chargePlatformFee } from "@/lib/platform/fees";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { toNum } from "@/lib/money";
@@ -580,6 +580,14 @@ export async function decideProposal(input: {
     },
     { priceUsd: fill.priceUsd, score, now: filledAt },
   );
+
+  // The chart and the agent list read snapshots; without one here they keep showing
+  // the pre-fill book until the next marks pass. Best effort — the fill is already real.
+  try {
+    await snapshotEquity(await getPortfolio(row.agent.id));
+  } catch (err) {
+    console.warn(`[proposals] post-fill snapshot failed for ${row.agent.id}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // An approved proposal is a trade, so it gets the same receipt. The quote here is the
   // *fresh* one taken at approval, not the indicative price from when it was proposed —

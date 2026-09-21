@@ -49,7 +49,11 @@ import { isAgentOwner, toPublicProfile, visibleConfig, visibleError, visibleStep
 /** The USDC a live agent's wallets hold right now, or null when it cannot be read. */
 async function liveCashUsd(agentId: string): Promise<number | null> {
   try {
-    const { getPortfolio } = await import("@/lib/agent/portfolio");
+    const { getAgentWallets, getPortfolio } = await import("@/lib/agent/portfolio");
+    // No real wallet yet (placeholders only) is "cannot read", not "$0": the snapshot
+    // series is the better answer for such an agent, and $0 would read as a wipe-out.
+    const walletRows = await getAgentWallets(agentId);
+    if (!walletRows.some((w) => !w.walletId.startsWith("paper_"))) return null;
     const portfolio = await getPortfolio(agentId);
     return portfolio.cashReadFailed ? null : portfolio.cashUsd;
   } catch {
@@ -168,10 +172,12 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
   );
 
   const marks = Object.fromEntries(livePositions.map((p) => [p.token.id, p.markPriceUsd]));
-  // A live agent with no snapshot yet (funded minutes ago, first marks pass still to
-  // come) is worth what its wallet holds, not $0 — read it rather than show a −100%.
-  const cashUsd =
-    agg?.cashUsd ?? (agent.mode === "paper" ? toNum(agent.paperStartingUsd) : await liveCashUsd(agent.id));
+  // A live agent is worth what its wallet holds *now*: a fill that landed a minute ago
+  // has moved cash into a position, and the last snapshot (marks run every five
+  // minutes) still shows the pre-fill book — "$15 cash, $4.77 position, $15 equity".
+  // Read the wallet, and fall back to the snapshot only when the read fails.
+  const liveCash = agent.mode === "live" ? await liveCashUsd(agent.id) : null;
+  const cashUsd = liveCash ?? agg?.cashUsd ?? (agent.mode === "paper" ? toNum(agent.paperStartingUsd) : null);
   const equitySnapshot = computeEquity({
     cash: cashUsd ?? 0,
     positions: livePositions.map((p) => ({
@@ -187,7 +193,8 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
 
   return {
     ...card,
-    equityUsd: equity.at(-1)?.equityUsd ?? equitySnapshot.equityUsd,
+    // Live and readable: cash now plus positions at their marks. Otherwise the series.
+    equityUsd: liveCash !== null ? equitySnapshot.equityUsd : (equity.at(-1)?.equityUsd ?? equitySnapshot.equityUsd),
     // THE GATE. The strategy prompt, universe rules, thresholds and data-source list
     // never leave the server for anyone but the owner. Everyone else gets the shape of
     // the agent (chains, model, cadence, how many sources it buys) and nothing more.

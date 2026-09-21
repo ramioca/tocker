@@ -1,7 +1,36 @@
 import { NextResponse } from "next/server";
+import { and, eq } from "drizzle-orm";
+import { agents, getDb } from "@/db";
 import { getSession } from "@/lib/auth";
 import { getUserWalletBalances, syncUserEmbeddedWallets } from "@/lib/wallets";
-import { CHAINS, unifiedCash } from "@/lib/wallets/funding";
+import { CHAINS, unifiedCash, type AgentCash } from "@/lib/wallets/funding";
+
+/**
+ * USDC the user's live agents hold, one entry per agent whose wallet could be read.
+ * Money the user moved into an agent is still theirs; a top bar that dropped it the
+ * moment it was funded read as a loss.
+ */
+async function liveAgentCash(userId: string): Promise<AgentCash[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({ id: agents.id, slug: agents.slug, name: agents.name })
+    .from(agents)
+    .where(and(eq(agents.ownerId, userId), eq(agents.mode, "live")));
+  if (rows.length === 0) return [];
+  const { getPortfolio } = await import("@/lib/agent/portfolio");
+  const read = await Promise.all(
+    rows.map(async (row): Promise<AgentCash | null> => {
+      try {
+        const portfolio = await getPortfolio(row.id);
+        if (portfolio.cashReadFailed) return null;
+        return { id: row.id, slug: row.slug, name: row.name, usdcUsd: Math.max(0, portfolio.cashUsd) };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return read.filter((a): a is AgentCash => a !== null);
+}
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +61,6 @@ export async function GET() {
     if (recorded.length > wallets.length) wallets = await getUserWalletBalances(session.userId);
   }
 
-  const cash = unifiedCash(wallets);
+  const cash = unifiedCash(wallets, await liveAgentCash(session.userId));
   return NextResponse.json({ wallets, cash, cashUsd: cash.totalUsd });
 }

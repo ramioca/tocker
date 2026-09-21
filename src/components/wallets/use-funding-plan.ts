@@ -44,7 +44,7 @@ export function useFundingPlan(input: FundingPlanInput): UseFundingPlan {
         amountUsd: 0,
         gasUsd: 0,
         chains,
-        cash: { totalUsd: 0, gasUsd: 0, perChain: [] },
+        cash: { totalUsd: 0, gasUsd: 0, perChain: [], inAgentsUsd: 0, agents: [], allUsd: 0 },
       });
     }
     if (!cash) return null;

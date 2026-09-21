@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { formatUsd } from "@/components/common/format";
 import { chainLabelFor, type UnifiedCash } from "@/lib/wallets/funding";
@@ -13,10 +14,13 @@ import type { Chain } from "@/server/types";
 export function CashTotal({
   cash,
   size = "md",
+  scope = "own",
   className,
 }: {
   cash: UnifiedCash | undefined;
   size?: "sm" | "md" | "lg";
+  /** "own": the user's wallets (what they can fund with). "all": plus what their live agents hold. */
+  scope?: "own" | "all";
   className?: string;
 }) {
   const type =
@@ -33,7 +37,9 @@ export function CashTotal({
   }
 
   return (
-    <span className={cn("tnum tracking-tight", type, className)}>{formatUsd(cash.totalUsd)}</span>
+    <span className={cn("tnum tracking-tight", type, className)}>
+      {formatUsd(scope === "all" ? cash.allUsd : cash.totalUsd)}
+    </span>
   );
 }
 
@@ -78,6 +84,23 @@ export function ChainBreakdown({
           </div>
         </li>
       ))}
+      {cash.agents.map((agent) => (
+        <li
+          key={agent.id}
+          className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-border/50 bg-background/20 px-3 py-2.5"
+        >
+          <div className="min-w-0">
+            <Link
+              href={`/agents/${agent.slug}`}
+              className="block truncate text-sm font-medium underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {agent.name}
+            </Link>
+            <p className="text-[11px] text-muted-foreground">in the agent&rsquo;s wallet</p>
+          </div>
+          <p className="tnum text-sm font-medium">{formatUsd(agent.usdcUsd)}</p>
+        </li>
+      ))}
     </ul>
   );
 }
@@ -92,10 +115,10 @@ export function ChainBreakdown({
  * the transfers you sign there, not Privy's sponsor — which is why the sentence names
  * Tocker for both halves now instead of splitting them between two parties.
  */
-export function CashLegend(_: { cash: UnifiedCash }) {
+export function CashLegend({ cash }: { cash: UnifiedCash }) {
   return (
     <p className="text-[11px] leading-relaxed text-muted-foreground">
-      Cash is USDC across your wallets on Base and Solana, shown as one balance. Network
+      Cash is USDC across your wallets on Base and Solana{cash.agents.length > 0 ? " and in your live agents' wallets" : ""}, shown as one balance. Network
       fees are not yours to hold: Tocker&rsquo;s own wallet pays them, both for what you
       sign and for what your agents sign.
     </p>

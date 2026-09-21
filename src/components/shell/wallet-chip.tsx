@@ -49,7 +49,7 @@ export function WalletChip() {
           className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-2.5 text-sm transition-colors duration-150 hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:h-8"
           aria-label="Cash balance — deposit or withdraw"
         >
-          <CashTotal cash={data?.cash} size="sm" />
+          <CashTotal cash={data?.cash} size="sm" scope="all" />
           <span className="hidden text-xs text-muted-foreground sm:inline">cash</span>
           <ChevronDown
             aria-hidden
@@ -63,7 +63,7 @@ export function WalletChip() {
         <PopoverContent align="end" className="glass-heavy w-80 space-y-3 rounded-2xl border border-border/60 p-4">
           <div>
             <p className="text-[11px] text-muted-foreground">Cash</p>
-            <CashTotal cash={data?.cash} size="lg" className="mt-0.5 block" />
+            <CashTotal cash={data?.cash} size="lg" scope="all" className="mt-0.5 block" />
           </div>
 
           {data ? (

@@ -116,12 +116,25 @@ export interface ChainCash {
   nativePriceUsd: number | null;
 }
 
+/** USDC one of the user's live agents holds in its own wallet, net of fees it owes. */
+export interface AgentCash {
+  id: string;
+  slug: string;
+  name: string;
+  usdcUsd: number;
+}
+
 export interface UnifiedCash {
-  /** The one number: USDC across every embedded wallet, in dollars. */
+  /** USDC across the user's own embedded wallets, in dollars — what they can deposit into an agent. */
   totalUsd: number;
   /** Native assets, in dollars, shown small and separately. Never counted as cash. */
   gasUsd: number;
   perChain: ChainCash[];
+  /** USDC sitting in the user's live agents' wallets, in dollars. Theirs, but working. */
+  inAgentsUsd: number;
+  agents: AgentCash[];
+  /** Own wallets plus agents: the number the top bar shows. */
+  allUsd: number;
 }
 
 function balanceOf(wallet: WalletBalance, asset: string) {
@@ -165,15 +178,20 @@ export function emptyChainCash(chain: Chain): ChainCash {
  * breakdown. Chains the user has no wallet for still appear, at zero — a
  * missing row reads as a bug, a zero row reads as "deposit here".
  */
-export function unifiedCash(wallets: WalletBalance[]): UnifiedCash {
+export function unifiedCash(wallets: WalletBalance[], agents: AgentCash[] = []): UnifiedCash {
   const perChain = CHAINS.map((chain) => {
     const wallet = wallets.find((w) => w.chain === chain);
     return wallet ? readChainCash(wallet) : emptyChainCash(chain);
   });
+  const totalUsd = round(perChain.reduce((sum, c) => sum + c.usdcUsd, 0), 2);
+  const inAgentsUsd = round(agents.reduce((sum, a) => sum + a.usdcUsd, 0), 2);
   return {
-    totalUsd: round(perChain.reduce((sum, c) => sum + c.usdcUsd, 0), 2),
+    totalUsd,
     gasUsd: round(perChain.reduce((sum, c) => sum + (c.nativeUsd ?? 0), 0), 2),
     perChain,
+    inAgentsUsd,
+    agents,
+    allUsd: round(totalUsd + inAgentsUsd, 2),
   };
 }
 
