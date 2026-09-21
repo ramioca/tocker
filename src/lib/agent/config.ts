@@ -119,7 +119,9 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigWithSizing = {
     maxDataSpendUsdPerRun: 0.25,
     stopLossPct: 15,
     takeProfitPct: 40,
-    slippageBps: 100,
+    // 3%: Jupiter Ultra itself picks 300-500 bps on the launch-day tokens this product
+    // trades; at 100 bps a fresh agent could not fill its first buy.
+    slippageBps: 300,
     // Exit engine. Trailing stop off by default: a 30-40% retrace is normal for a
     // launch that is working; the fixed stop loss is the floor.
     trailingStopPct: null,

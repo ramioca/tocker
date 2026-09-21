@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderFeeLamports, parseUltraOrder, sellBaseUnits, takerPaysGas, venueFeeUsd } from "./jupiter";
+import { orderFeeLamports, parseUltraOrder, sellBaseUnits, takerPaysGas, venueFeeUsd, manualSlippageFor } from "./jupiter";
 import { clampToHeld, floorBaseUnits, isDustBaseUnits } from "./executor";
 
 /**
@@ -211,5 +211,17 @@ describe("isDustBaseUnits", () => {
   it("falls back to a single base unit when there is no price", () => {
     expect(isDustBaseUnits(BigInt(1), 6, 0)).toBe(true);
     expect(isDustBaseUnits(BigInt(5), 6, 0)).toBe(false);
+  });
+});
+
+describe("manualSlippageFor", () => {
+  it("asks for the ceiling only when Jupiter picked looser", () => {
+    expect(manualSlippageFor(392, 100)).toBe(100);
+    expect(manualSlippageFor(27, 100)).toBeNull();
+    expect(manualSlippageFor(100, 100)).toBeNull();
+  });
+  it("leaves the order alone with no ceiling or no reported slippage", () => {
+    expect(manualSlippageFor(392, 0)).toBeNull();
+    expect(manualSlippageFor(undefined, 100)).toBeNull();
   });
 });

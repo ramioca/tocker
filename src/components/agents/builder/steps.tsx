@@ -570,7 +570,7 @@ export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
           max={2_000}
           step={10}
           format={(value) => `${Math.round(value)} bps`}
-          meaning={`Orders are rejected if the fill would be worse than ${(risk.slippageBps / 100).toFixed(2)}% off the quote. Thin memecoins usually need more than 100 bps.`}
+          meaning={`Orders are rejected if the fill would be worse than ${(risk.slippageBps / 100).toFixed(2)}% off the quote. Launch-day memecoins usually need 300–500 bps; Jupiter picks tighter when the pool allows.`}
           onChange={(slippageBps) => patch({ slippageBps: Math.round(slippageBps) })}
         />
       </div>

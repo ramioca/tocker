@@ -16,13 +16,18 @@
  *
  * ## Slippage (W7)
  *
- * We deliberately do **not** send `slippageBps`. Probed live 2026-09-21: sending it puts
- * the order in `mode: "manual"` with `gasless: false`; omitting it leaves `mode: "ultra"`,
- * where Jupiter picks the slippage per route (27 bps on a $1 USDC→SOL order) and pays the
- * signature itself when the taker is nearly dry. The operator's configured number stops
- * being an instruction and becomes a **ceiling**: `slippageBps` on the order is recorded
- * as the tolerance actually used, and a route whose tolerance exceeds the operator's
- * ceiling is refused before anything is signed.
+ * The first order is fetched **without** `slippageBps`. Probed live 2026-09-21: sending
+ * it puts the order in `mode: "manual"` with `gasless: false`; omitting it leaves
+ * `mode: "ultra"`, where Jupiter picks the slippage per route (27 bps on a $1 USDC→SOL
+ * order) and pays the signature itself when the taker is nearly dry. The operator's
+ * configured number is a **ceiling** on that choice. When Jupiter's pick is looser than
+ * the ceiling — routine on a launch-day memecoin, where Ultra chooses 300-500 bps — the
+ * order is fetched again in manual mode with the ceiling as the instruction, so the
+ * route is built to refuse any fill worse than the operator allows (the chain rejects
+ * it, and a rejected swap costs a fee of a few hundred lamports, not the position).
+ * Manual mode is never gasless; the gas step below covers the taker's fee. Refusing to
+ * sign outright, as this module did before, meant a 100 bps agent could never buy the
+ * tokens it was built to buy, and the operator learned that only on Approve.
  *
  * ## Gas (W7)
  *
@@ -141,6 +146,16 @@ export function orderFeeLamports(order: UltraOrder): number {
     (order.prioritizationFeeLamports ?? 0) +
     (order.rentFeeLamports ?? 0)
   );
+}
+
+/**
+ * The slippage to ask Jupiter for in manual mode, or null to keep the Ultra-mode order:
+ * only when Jupiter's own pick is looser than the operator's ceiling (and there is a
+ * ceiling). Pure, so the decision is testable without an order.
+ */
+export function manualSlippageFor(orderSlippageBps: number | undefined, ceilingBps: number): number | null {
+  if (!(ceilingBps > 0) || orderSlippageBps === undefined) return null;
+  return orderSlippageBps > ceilingBps ? Math.round(ceilingBps) : null;
 }
 
 /** True when the *taker* (not Jupiter, not a relayer) has to pay this order's fees. */
@@ -338,9 +353,17 @@ export class JupiterExecutor implements TradeExecutor {
       }
     }
 
-    // No `slippageBps`: see the module comment. `req.slippageBps` is the ceiling.
-    const params = { inputMint, outputMint, amount, taker: this.wallet.address };
+    // No `slippageBps` first: see the module comment. `req.slippageBps` is the ceiling.
+    const params: Record<string, string> = { inputMint, outputMint, amount, taker: this.wallet.address };
     let order = await fetchOrder(params);
+
+    // Jupiter chose looser than the operator allows: ask again with the ceiling as the
+    // instruction. The second order is built so the fill cannot be worse than that.
+    const manual = manualSlippageFor(order.slippageBps, req.slippageBps);
+    if (manual !== null && (order.errorCode === null || order.errorCode === undefined)) {
+      params.slippageBps = String(manual);
+      order = await fetchOrder(params);
+    }
 
     // Ultra says who pays. If that is the agent and the agent cannot, top it up and ask
     // again — the second order is the one we sign, with the drip already confirmed.
@@ -370,12 +393,11 @@ export class JupiterExecutor implements TradeExecutor {
       );
     }
 
-    // The operator's number is a ceiling on the tolerance Jupiter chose, not an
-    // instruction to it. A route that is looser than the ceiling is not signed.
+    // Belt and braces: even asked for the ceiling, an order looser than it is not signed.
     const applied = order.slippageBps;
     if (applied !== undefined && req.slippageBps > 0 && applied > req.slippageBps) {
       throw new JupiterError(
-        `Jupiter priced ${req.symbol} with ${applied} bps of slippage and this agent's ceiling is ${req.slippageBps} bps, so nothing was signed. ${req.symbol} is thinner than the agent's risk settings allow — raise Slippage tolerance in Risk, or leave this one alone.`,
+        `Jupiter would only fill ${req.symbol} with ${applied} bps of slippage and this agent's ceiling is ${req.slippageBps} bps, so nothing was signed. ${req.symbol} is thinner than the agent's risk settings allow — raise Slippage tolerance in Risk, or leave this one alone.`,
       );
     }
 

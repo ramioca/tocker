@@ -106,7 +106,7 @@ describe("receipts are written on every execution path", () => {
     expect(receipt!.filledPriceUsd).toBeGreaterThan(0);
     // The paper simulator fills at its own quote, so there is nothing to slip against.
     expect(receipt!.slippageBps).toBe(0);
-    expect(receipt!.slippageToleranceBps).toBe(100);
+    expect(receipt!.slippageToleranceBps).toBe(300);
     expect(receipt!.venueFeeUsd).toBeGreaterThan(0);
     // The platform's cut is on the document, and inside the total.
     expect(receipt!.platformFeeUsd).toBeCloseTo(PLATFORM_FEE, 6);
