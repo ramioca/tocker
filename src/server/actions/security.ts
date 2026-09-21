@@ -304,6 +304,16 @@ export async function goLiveAction(input: {
     .set({ mode: "live", updatedAt: new Date(), ...(startSchedule ? { nextRunAt: new Date() } : {}) })
     .where(eq(agents.id, agent.id));
 
+  // The first live point, so the curve and the "vs start" baseline exist from the
+  // switch rather than from the next marks pass. Best-effort: a balance read that fails
+  // here is skipped by snapshotEquity itself, and the cron writes the point later.
+  try {
+    const { getPortfolio, snapshotEquity } = await import("@/lib/agent/portfolio");
+    await snapshotEquity(await getPortfolio(agent.id));
+  } catch (err) {
+    console.warn("[goLiveAction] first live snapshot skipped:", err instanceof Error ? err.message : err);
+  }
+
   await recordAudit({
     userId: session.userId,
     kind: "go_live",

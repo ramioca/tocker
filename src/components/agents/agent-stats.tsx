@@ -15,12 +15,15 @@ import type { AgentDetail } from "@/server/types";
 export function AgentStats({ agent }: { agent: AgentDetail }) {
   const equity = agent.equityUsd ?? agent.paperStartingUsd;
   const series = agent.equity.map((point) => point.equityUsd);
+  // Paper starts at its starting balance; a live book starts at its first live point,
+  // and until there is one it starts at what it holds now — never at a paper number.
+  const start = agent.mode === "live" ? (series[0] ?? equity) : agent.paperStartingUsd;
 
   const cards: StatCardData[] = [
     {
       label: "Equity",
       value: equity,
-      previous: agent.paperStartingUsd,
+      previous: start,
       series: series.length > 1 ? series : undefined,
       format: (value) => formatUsd(value, { compact: true }),
       goodWhen: "up",

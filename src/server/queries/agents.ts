@@ -46,6 +46,17 @@ import {
 import { loadCachedScores } from "@/lib/trading/score-cache";
 import { isAgentOwner, toPublicProfile, visibleConfig, visibleError, visibleSteps } from "./visibility";
 
+/** The USDC a live agent's wallets hold right now, or null when it cannot be read. */
+async function liveCashUsd(agentId: string): Promise<number | null> {
+  try {
+    const { getPortfolio } = await import("@/lib/agent/portfolio");
+    const portfolio = await getPortfolio(agentId);
+    return portfolio.cashReadFailed ? null : portfolio.cashUsd;
+  } catch {
+    return null;
+  }
+}
+
 async function detailFor(agent: AgentRow | undefined, viewerId?: string | null): Promise<AgentDetail | null> {
   if (!agent) return null;
   const db = await getDb();
@@ -157,7 +168,10 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
   );
 
   const marks = Object.fromEntries(livePositions.map((p) => [p.token.id, p.markPriceUsd]));
-  const cashUsd = agg?.cashUsd ?? (agent.mode === "paper" ? toNum(agent.paperStartingUsd) : null);
+  // A live agent with no snapshot yet (funded minutes ago, first marks pass still to
+  // come) is worth what its wallet holds, not $0 — read it rather than show a −100%.
+  const cashUsd =
+    agg?.cashUsd ?? (agent.mode === "paper" ? toNum(agent.paperStartingUsd) : await liveCashUsd(agent.id));
   const equitySnapshot = computeEquity({
     cash: cashUsd ?? 0,
     positions: livePositions.map((p) => ({
