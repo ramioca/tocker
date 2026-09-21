@@ -25,7 +25,7 @@
 import { discoverAnthropicWorkspace, isWorkspaceScopeError, needsWorkspaceHeader } from "./anthropic-workspace";
 import { nanoid } from "nanoid";
 import { after } from "next/server";
-import { generateText, hasToolCall, stepCountIs, type LanguageModel } from "ai";
+import { generateText, stepCountIs, type LanguageModel } from "ai";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { agentRuns, agents, getDb, llmKeys, notifications, tokens, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
@@ -407,7 +407,9 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
       // which is the difference between "the model stalled" and a row stuck on `running`
       // that bricks the agent until the reaper notices.
       abortSignal: AbortSignal.timeout(RUN_MODEL_TIMEOUT_MS),
-      stopWhen: [stepCountIs(config.llm.maxSteps), hasToolCall("finish")],
+      // The run ends when `finish` *accepted* the summary, not when it was merely called:
+      // in approval mode the tool sends the model back once for an unproposed shortlist.
+      stopWhen: [stepCountIs(config.llm.maxSteps), () => ctx.finished.summary !== null],
       onStepFinish: async (step) => {
         const text = step.text?.trim();
         if (text) await logger.log({ kind: "message", payload: { text } });

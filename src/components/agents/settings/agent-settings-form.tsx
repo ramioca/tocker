@@ -264,6 +264,19 @@ function SettingsForm({
             />
           </div>
         </div>
+        <RiskSlider
+          id="settings-llm-steps"
+          label="Steps per run"
+          value={config.llm.maxSteps}
+          min={4}
+          max={40}
+          step={1}
+          format={(value) => String(Math.round(value))}
+          meaning={`Up to ${Math.round(config.llm.maxSteps)} tool calls a run. A shortlist of three proposals needs about 12; deeper research needs more, and every step costs model tokens.`}
+          onChange={(maxSteps) =>
+            setConfig((current) => ({ ...current, llm: { ...current.llm, maxSteps: Math.round(maxSteps) } }))
+          }
+        />
         <div className="space-y-2">
           <span className="block text-xs text-muted-foreground">API key</span>
           {keysForProvider.length > 0 ? (

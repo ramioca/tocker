@@ -165,6 +165,9 @@ export function buildTools(ctx: RunContext): ToolSet {
   const approvalMode = requiresApproval(agent.config);
   /** Tokens already proposed this tick, so one tick cannot queue five decisions on BONK. */
   const proposedThisTick = new Set<string>();
+  /** Tokens scored this tick that clear the bar — the shortlist `finish` holds the model to, once. */
+  const shortlistThisTick = new Map<string, { symbol: string; total: number }>();
+  let finishNudged = false;
 
   /** Scores a token for this agent. Returns `null` only when scoring itself blew up. */
   const scoreFor = async (
@@ -301,10 +304,13 @@ export function buildTools(ctx: RunContext): ToolSet {
           ...(parsed.sellCheck === true ? { sellCheck: true } : {}),
         });
         if (!score) return fail(`Could not score ${token.symbol} — every data provider failed. Do not buy it.`);
+        const meetsMinScore = score.blockers.length === 0 && score.verdict !== "avoid" && score.total >= universe.minScore;
+        if (meetsMinScore) shortlistThisTick.set(token.id, { symbol: token.symbol, total: score.total });
+        else shortlistThisTick.delete(token.id);
         return {
           ...scorePayload(score),
           minScore: universe.minScore,
-          meetsMinScore: score.blockers.length === 0 && score.verdict !== "avoid" && score.total >= universe.minScore,
+          meetsMinScore,
           dataBudgetRemainingUsd: Math.max(0, ctx.budget.maxUsd - ctx.budget.spentUsd),
         };
       }),
@@ -836,6 +842,24 @@ export function buildTools(ctx: RunContext): ToolSet {
       inputSchema: z.object({ summary: z.string().min(5).max(1000) }),
       execute: logged(ctx, "finish", async (input) => {
         const parsed = z.object({ summary: z.string() }).parse(input);
+        // Approval mode, once per tick: a model that scored two or three tokens above the
+        // bar and proposed one has not given its owner the shortlist they asked for. Send
+        // it back for the rest — or for a sentence on why each one is not worth proposing.
+        if (approvalMode && !finishNudged) {
+          const left = [...shortlistThisTick.entries()]
+            .filter(([tokenId]) => !proposedThisTick.has(tokenId))
+            .map(([, s]) => s)
+            .sort((a, b) => b.total - a.total);
+          const room = MAX_PROPOSALS_PER_TICK - proposedThisTick.size;
+          if (left.length > 0 && room > 0) {
+            finishNudged = true;
+            const names = left.slice(0, room).map((s) => `${s.symbol} (${Math.round(s.total)})`).join(", ");
+            return fail(
+              `Not yet. You scored ${names} above your ${universe.minScore} floor but did not propose ${left.length === 1 ? "it" : "them"}, and this tick has room for ${room} more proposal${room === 1 ? "" : "s"}. Your owner asked for a shortlist to choose from: place_trade each one that deserves it (its own rationale, conviction first), or say in your summary why it does not — then call finish again.`,
+              { nudged: true, unproposed: left.map((s) => s.symbol) },
+            );
+          }
+        }
         ctx.finished.summary = parsed.summary;
         return { ok: true, summary: parsed.summary };
       }),
