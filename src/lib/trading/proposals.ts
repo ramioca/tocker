@@ -255,6 +255,16 @@ export async function expireProposals(now: Date = new Date(), opts?: { agentId?:
   return updated.length;
 }
 
+/** USD this agent's undecided proposals ask for — money the next proposal cannot count on. */
+export async function openProposalsUsd(agentId: string): Promise<number> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ total: sql<string>`coalesce(sum(coalesce(${trades.requestedUsd}, ${trades.amountUsd})), 0)` })
+    .from(trades)
+    .where(and(eq(trades.agentId, agentId), eq(trades.status, "proposed"), eq(trades.side, "buy")));
+  return toNum(row?.total ?? "0");
+}
+
 /** A single-agent sweep, for the runtime to call before it proposes anything new. */
 export function expireAgentProposals(agentId: string, now?: Date): Promise<number> {
   return expireProposals(now ?? new Date(), { agentId });

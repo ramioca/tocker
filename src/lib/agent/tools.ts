@@ -6,6 +6,7 @@
  * Tools return structured failures instead of throwing, so one bad call does not kill
  * the run — the model gets to read the reason and try something else.
  */
+import { platformFeeUsd as flatFeeUsd } from "@/lib/platform/fee";
 import { MAX_PROPOSALS_PER_TICK } from "./limits";
 import { INTEL_SOURCE, planEnrichment, type EnrichmentPlan } from "./enrichment";
 import { nanoid } from "nanoid";
@@ -27,6 +28,7 @@ import { chargePlatformFee } from "@/lib/platform/fees";
 import { notifyFill } from "@/lib/notifications";
 import {
   createProposal,
+  openProposalsUsd,
   expireAgentProposals,
   hasPendingProposal,
   indicativePrice,
@@ -650,6 +652,21 @@ export function buildTools(ctx: RunContext): ToolSet {
               { alreadyProposed: true },
             );
           }
+          // One purse. What is already proposed and undecided counts as spent, or the
+          // third approval finds the cash gone — seen live: $13.40 proposed against
+          // $9.90, the first two filled, the third could not even be quoted.
+          if (parsed.side === "buy") {
+            const committedUsd = await openProposalsUsd(agent.id);
+            const feeUsd = flatFeeUsd();
+            const affordable = portfolio.cashUsd - committedUsd - feeUsd;
+            if (parsed.amountUsd > affordable + 1e-9) {
+              return fail(
+                `Not affordable alongside what is already proposed: cash $${portfolio.cashUsd.toFixed(2)}, $${committedUsd.toFixed(2)} already awaiting your owner's decision, $${feeUsd.toFixed(2)} fee per fill — at most $${Math.max(0, affordable).toFixed(2)} is left for this one. Shrink it to fit or skip it; the set has to add up to the cash you hold.`,
+                { unaffordable: true, affordableUsd: Math.max(0, affordable) },
+              );
+            }
+          }
+
           // A tick lays out a shortlist, not a page of decisions against the same cash.
           const tradesLeftToday = Math.max(0, agent.config.risk.maxDailyTrades - portfolio.tradesToday);
           const proposalCap = Math.min(MAX_PROPOSALS_PER_TICK, Math.max(1, tradesLeftToday));

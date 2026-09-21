@@ -53,6 +53,27 @@ export function startOfUtcDay(now: Date = new Date()): Date {
  * a wallet holding nothing, and the equity snapshot written on top of it recorded a live
  * agent as having lost everything. A gap in the curve is honest; a zero is not.
  */
+/**
+ * A Solana wallet's USDC straight from the chain, or null when the RPC could not say.
+ * Privy's balance endpoint is an indexer and can trail a fill by minutes — long enough
+ * for a third approval to pass the cash check against money the first two already
+ * spent. The chain has no such lag. A missing token account reads as 0 USDC.
+ */
+async function solanaUsdcOnChain(address: string): Promise<number | null> {
+  try {
+    const { PublicKey } = await import("@solana/web3.js");
+    const { associatedTokenAddress, SOLANA_USDC_DECIMALS, SOLANA_USDC_MINT } = await import(
+      "@/lib/wallets/solana-transfer"
+    );
+    const { getTokenAccountBalance } = await import("@/lib/wallets/solana-rpc");
+    const ata = associatedTokenAddress(new PublicKey(address), SOLANA_USDC_MINT);
+    const raw = await getTokenAccountBalance(ata.toBase58());
+    return raw === null ? null : Number(raw) / 10 ** SOLANA_USDC_DECIMALS;
+  } catch {
+    return null;
+  }
+}
+
 async function getLiveCash(walletRefs: AgentWalletRef[]): Promise<{ usd: number; complete: boolean }> {
   const usable = walletRefs.filter((w) => !w.walletId.startsWith("paper_"));
   if (usable.length === 0) return { usd: 0, complete: true };
@@ -61,6 +82,13 @@ async function getLiveCash(walletRefs: AgentWalletRef[]): Promise<{ usd: number;
   let total = 0;
   let complete = true;
   for (const w of usable) {
+    if (w.chain === "solana" && w.address) {
+      const onChain = await solanaUsdcOnChain(w.address);
+      if (onChain !== null) {
+        total += onChain;
+        continue;
+      }
+    }
     try {
       const res = await client
         .wallets()
