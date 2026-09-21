@@ -253,10 +253,29 @@ async function attemptedRecently(agentId: string, tokenId: string, now: Date): P
  *
  * A fill on the same token ends the episode: after it, the next failure starts fresh.
  */
-async function reusableExitRow(agentId: string, tokenId: string, now: Date): Promise<{ id: string; createdAt: Date } | null> {
+const FAILING_SINCE = " — this exit has been failing since ";
+
+/**
+ * When this episode's first attempt was, from the row's own error text.
+ *
+ * The row's `createdAt` is bumped on every retry — it is what `attemptedRecently` reads
+ * to stop the back-to-back marks and tick passes from both firing — so the origin has to
+ * survive somewhere else. It survives in the sentence the operator reads.
+ */
+function episodeStart(error: string | null, fallback: Date): Date {
+  const at = error?.split(FAILING_SINCE)[1];
+  const parsed = at === undefined ? NaN : Date.parse(at);
+  return Number.isNaN(parsed) ? fallback : new Date(parsed);
+}
+
+async function reusableExitRow(
+  agentId: string,
+  tokenId: string,
+  now: Date,
+): Promise<{ id: string; createdAt: Date; error: string | null } | null> {
   const db = await getDb();
   const [candidate] = await db
-    .select({ id: trades.id, createdAt: trades.createdAt })
+    .select({ id: trades.id, createdAt: trades.createdAt, error: trades.error })
     .from(trades)
     .where(
       and(
@@ -486,8 +505,13 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
   // W7 H10: reuse this episode's row rather than minting a new one every five minutes.
   const episode = await reusableExitRow(agent.id, decision.tokenId, ctx.now);
   const tradeId = episode?.id ?? nanoid();
-  const failingSince = episode?.createdAt ?? null;
+  const failingSince = episode === null ? null : episodeStart(episode.error, episode.createdAt);
   const rowValues = {
+    // Bumped on every attempt so `attemptedRecently` can still see that this token was
+    // tried moments ago — the marks cron and the tick cron fire back to back, and
+    // without this both of them would re-attempt the same refused exit. The episode's
+    // true start is carried in the error text instead (see `episodeStart`).
+    createdAt: ctx.now,
     runId: ctx.runId,
     chain: decision.chain,
     side: "sell" as const,
@@ -513,9 +537,12 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
     await db.insert(trades).values({ id: tradeId, agentId: agent.id, ownerId: agent.ownerId, ...rowValues });
   }
 
-  /** The failure text, carrying how long this exit has been stuck when it has. */
+  /**
+   * The failure text, carrying how long this exit has been stuck when it has. It is also
+   * where the episode's start time lives between attempts — `episodeStart` reads it back.
+   */
   const withHistory = (message: string): string =>
-    failingSince === null ? message : `${message} — this exit has been failing since ${failingSince.toISOString()}`;
+    failingSince === null ? message : `${message}${FAILING_SINCE}${failingSince.toISOString()}`;
 
   const decimals = ctx.decimals.get(decision.tokenId) ?? 9;
   const request: TradeRequest = {

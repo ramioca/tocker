@@ -374,6 +374,17 @@ describe("runGuardian — failing exits", () => {
     await db.update(schema.trades).set({ createdAt: shifted }).where(eq(schema.trades.agentId, agentId));
   }
 
+  it("stands down when the back-to-back marks and tick passes both want the same exit", async () => {
+    const { agentId } = await seedStuckExit();
+
+    await runGuardian({ agentId, trigger: "marks" });
+    // The cron workflow calls marks and then tick within seconds of each other. The
+    // second pass must not re-attempt the exit the first one just failed.
+    const second = await runGuardian({ agentId, trigger: "tick" });
+    expect(second.exits).toHaveLength(0);
+    expect(second.skipped[0]?.reason).toContain("attempted moments ago");
+  });
+
   it("reuses one row per exit episode instead of writing a new one every pass", async () => {
     const { agentId } = await seedStuckExit();
 
@@ -381,7 +392,14 @@ describe("runGuardian — failing exits", () => {
     const first = await tradesFor(agentId);
     expect(first).toHaveLength(1);
 
-    for (let pass = 0; pass < 3; pass += 1) {
+    // Second pass: the row is reused and the episode's start is stamped into the message.
+    await ageAttempts(agentId, 5);
+    await runGuardian({ agentId, trigger: "marks" });
+    const [second] = await tradesFor(agentId);
+    const origin = second?.error?.split("has been failing since ")[1];
+    expect(origin).toBeTruthy();
+
+    for (let pass = 0; pass < 2; pass += 1) {
       await ageAttempts(agentId, 5);
       await runGuardian({ agentId, trigger: "marks" });
     }
@@ -391,8 +409,11 @@ describe("runGuardian — failing exits", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.id).toBe(first[0]?.id);
     expect(rows[0]?.status).toBe("failed");
-    // And the row now says how long this has been going on.
-    expect(rows[0]?.error).toContain("has been failing since");
+    // `createdAt` tracks the latest attempt — that is what stops two overlapping passes
+    // from both firing — so the episode's start survives in the message instead, and it
+    // must not drift forward with every retry.
+    expect(rows[0]?.createdAt.getTime()).toBeGreaterThan(Date.parse(origin as string));
+    expect(rows[0]?.error).toContain(`has been failing since ${origin}`);
   });
 
   it("notifies the owner once per token per hour, however often it retries", async () => {
