@@ -65,6 +65,8 @@ export async function addLlmKey(input: {
   provider: "anthropic" | "openai" | "openrouter";
   key: string;
   label?: string;
+  /** Anthropic only: the workspace an organization-level key should act in. */
+  workspaceId?: string;
 }): Promise<ActionResult<{ id: string; last4: string }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
@@ -83,6 +85,7 @@ export async function addLlmKey(input: {
       label: input.label?.trim() || null,
       encryptedKey: encryptSecret(key),
       last4: last4(key),
+      workspaceId: input.provider === "anthropic" && input.workspaceId?.trim() ? input.workspaceId.trim().slice(0, 80) : null,
     });
   } catch (err) {
     // Message only: the raw error can echo bound query params near the encrypted

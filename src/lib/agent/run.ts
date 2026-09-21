@@ -70,7 +70,10 @@ export async function resolveModel(agent: { llmKeyId: string | null; config: Age
   switch (row.provider) {
     case "anthropic": {
       const { createAnthropic } = await import("@ai-sdk/anthropic");
-      return createAnthropic({ apiKey })(modelId);
+      // An organization-level key must name the workspace it acts in; a key created
+      // inside a workspace must not (Anthropic rejects the header on those).
+      const headers = row.workspaceId ? { "anthropic-workspace-id": row.workspaceId } : undefined;
+      return createAnthropic({ apiKey, ...(headers ? { headers } : {}) })(modelId);
     }
     case "openai": {
       const { createOpenAI } = await import("@ai-sdk/openai");
@@ -81,6 +84,17 @@ export async function resolveModel(agent: { llmKeyId: string | null; config: Age
       return createOpenRouter({ apiKey })(modelId);
     }
   }
+}
+
+/**
+ * A provider's error, with the one sentence that says what to do when we know it.
+ * Everything else passes through untouched.
+ */
+export function explainProviderError(message: string): string {
+  if (/anthropic-workspace-id/i.test(message)) {
+    return `${message} — This Anthropic key is an organization-level key. Under Settings → LLM API keys, add it again with its Workspace ID (Anthropic Console → Workspaces), or create a key inside a workspace instead; then select the new key on the agent.`;
+  }
+  return message;
 }
 
 async function loadRecentTrades(agentId: string, limit = 10): Promise<RecentTrade[]> {
@@ -396,7 +410,7 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
 
     return { runId, status: "succeeded", summary: summary ?? undefined };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = explainProviderError(err instanceof Error ? err.message : String(err));
     await logger.log({ kind: "error", payload: { error: message } });
     await logger.flush();
 

@@ -43,6 +43,13 @@
       "when": 1789985782314,
       "tag": "0005_smart_slyde",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790003907494,
+      "tag": "0006_fuzzy_fantastic_four",
+      "breakpoints": true
     }
   ]
 }

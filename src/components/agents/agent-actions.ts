@@ -155,6 +155,7 @@ export async function addLlmKeyAction(input: {
   provider: "anthropic" | "openai" | "openrouter";
   key: string;
   label?: string;
+  workspaceId?: string;
 }): Promise<ActionResult<{ id: string; last4: string }>> {
   if (input.key.trim().length < 12) {
     return { ok: false, error: "That does not look like an API key." };

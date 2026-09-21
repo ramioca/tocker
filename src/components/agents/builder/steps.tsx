@@ -139,6 +139,7 @@ function AddKeyInline({ onAdded }: { onAdded: (key: LlmKeyRow) => void }) {
   const [provider, setProvider] = useState<"anthropic" | "openai" | "openrouter">("anthropic");
   const [value, setValue] = useState("");
   const [label, setLabel] = useState("");
+  const [workspaceId, setWorkspaceId] = useState("");
   const [pending, start] = useTransition();
 
   if (!open) {
@@ -190,8 +191,21 @@ function AddKeyInline({ onAdded }: { onAdded: (key: LlmKeyRow) => void }) {
         placeholder="Label (optional)"
         onChange={(event) => setLabel(event.target.value)}
       />
+      {provider === "anthropic" ? (
+        <Input
+          value={workspaceId}
+          placeholder="Workspace ID — only for an organization-level key (wrkspc_…)"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => setWorkspaceId(event.target.value)}
+          className="font-mono"
+        />
+      ) : null}
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         Encrypted at rest and decrypted only inside the run loop. It never reaches the browser again.
+        {provider === "anthropic"
+          ? " A key created inside an Anthropic workspace needs no workspace ID; an organization-level key does."
+          : ""}
       </p>
       <button
         type="button"
@@ -202,6 +216,7 @@ function AddKeyInline({ onAdded }: { onAdded: (key: LlmKeyRow) => void }) {
               provider,
               key: value,
               label: label || undefined,
+              workspaceId: provider === "anthropic" && workspaceId.trim() ? workspaceId.trim() : undefined,
             });
             if (!result.ok) {
               toast.error("Key not saved", { description: result.error });

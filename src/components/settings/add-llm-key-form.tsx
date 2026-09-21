@@ -26,6 +26,7 @@ export function AddLlmKeyForm({
   const [provider, setProvider] = useState<Provider>("anthropic");
   const [key, setKey] = useState("");
   const [label, setLabel] = useState("");
+  const [workspaceId, setWorkspaceId] = useState("");
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,7 +46,12 @@ export function AddLlmKeyForm({
       createdAt: new Date().toISOString(),
     };
     try {
-      const result = await addLlmKey({ provider, key: key.trim(), label: label.trim() || undefined });
+      const result = await addLlmKey({
+        provider,
+        key: key.trim(),
+        label: label.trim() || undefined,
+        workspaceId: provider === "anthropic" && workspaceId.trim() ? workspaceId.trim() : undefined,
+      });
       if (!result.ok) {
         setError(result.error);
         throw new Error(result.error);
@@ -125,6 +131,25 @@ export function AddLlmKeyForm({
           {revealed ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
         </button>
       </div>
+
+      {provider === "anthropic" ? (
+        <div>
+          <FloatingLabelInput
+            id={`${uid}-workspace`}
+            label="Workspace ID (organization-level keys only)"
+            value={workspaceId}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => setWorkspaceId(event.target.value)}
+            className="font-mono"
+          />
+          <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">
+            Only for a key made at the organization level: Anthropic needs the workspace it should act in
+            (Console → Workspaces, e.g. wrkspc_…). A key created inside a workspace already knows — leave
+            this empty.
+          </p>
+        </div>
+      ) : null}
 
       <p className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
         <Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden />

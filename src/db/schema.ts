@@ -77,6 +77,12 @@ export const llmKeys = pgTable(
     label: text("label"),
     encryptedKey: text("encrypted_key").notNull(), // base64(iv|tag|ciphertext)
     last4: text("last4").notNull(),
+    /**
+     * W7: Anthropic organization-level keys are not scoped to a workspace and must send
+     * `anthropic-workspace-id` on every request; a key created inside a workspace needs
+     * nothing. Null for every other provider and for workspace-scoped Anthropic keys.
+     */
+    workspaceId: text("workspace_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("llm_keys_user_idx").on(t.userId)],

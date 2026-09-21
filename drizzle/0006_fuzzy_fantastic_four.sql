@@ -1,0 +1,1 @@
+ALTER TABLE "llm_keys" ADD COLUMN "workspace_id" text;
