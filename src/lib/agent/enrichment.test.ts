@@ -16,17 +16,28 @@ describe("planEnrichment", () => {
     expect(plan).toMatchObject({ intel: false, sellCheck: true, deep: true, smartMoney: true });
   });
 
-  it("pays nothing for a hard-blocked or far-below-floor token", () => {
-    expect(planEnrichment({ free: free(80, ["mint_authority_unknown"]), chain: "solana", sources: all, remainingUsd: 1, minScore: 60, already: false }).plannedUsd).toBe(0);
-    expect(planEnrichment({ free: free(40), chain: "solana", sources: all, remainingUsd: 1, minScore: 60, already: false }).plannedUsd).toBe(0);
+  it("pays nothing for a token the free data has confirmed unbuyable", () => {
+    const plan = planEnrichment({ free: free(80, ["mint_authority_active"]), chain: "solana", sources: all, remainingUsd: 1, minScore: 60, already: false });
+    expect(plan.plannedUsd).toBe(0);
+    expect(plan.skipped.join(" ")).toMatch(/mint_authority_active/);
   });
 
-  it("skips smart money on a weak score and says so", () => {
-    const plan = planEnrichment({ free: free(47), chain: "solana", sources: all, remainingUsd: 1, minScore: 60, already: false });
-    expect(plan.smartMoney).toBe(false);
-    expect(plan.skipped.join(" ")).toMatch(/smartMoney/);
-    expect(plan.plannedUsd).toBeCloseTo(0.02, 6);
-    expect(plan.intel && plan.deep).toBe(true);
+  it("still buys when the only blockers are unknowns — that is what the safety read resolves", () => {
+    const plan = planEnrichment({
+      free: free(55, ["mint_authority_unknown", "freeze_authority_unknown"], "avoid"),
+      chain: "solana",
+      sources: all,
+      remainingUsd: 1,
+      minScore: 60,
+      already: false,
+    });
+    expect(plan).toMatchObject({ intel: true, deep: true, smartMoney: true });
+  });
+
+  it("does not let a weak free score save the money — the operator configured the sources to be used", () => {
+    const plan = planEnrichment({ free: free(30), chain: "solana", sources: all, remainingUsd: 1, minScore: 60, already: false });
+    expect(plan).toMatchObject({ intel: true, deep: true, smartMoney: true });
+    expect(plan.plannedUsd).toBeCloseTo(0.07, 6);
   });
 
   it("stops at the budget, cheapest reads first", () => {

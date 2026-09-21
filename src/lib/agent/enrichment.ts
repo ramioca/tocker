@@ -4,9 +4,16 @@
  * The paid add-ons used to be the model's call, and the model's call was almost always
  * "no": a whole tick of scoring, three candidates above the floor, $0.00 of data spent,
  * and a decision made on free components alone. The operator pays for those sources so
- * they get used. So: any token that clears the free gates is enriched automatically, in
- * a fixed order, until the run's data budget is spent — and the model reads the result
- * rather than deciding whether to ask for it. Explicit flags on the call still win.
+ * they get used. So: every token the agent scores is enriched automatically, in a fixed
+ * order, until the run's data budget is spent — and the model reads the result rather
+ * than deciding whether to ask for it. Explicit flags on the call still win.
+ *
+ * The one exception is a token the free data has *confirmed* unbuyable (a live mint
+ * authority, a honeypot, below the liquidity floor): no paid read changes that. A
+ * blocker that merely says `_unknown` is the opposite case — it is exactly what the
+ * Deepnets read resolves — so it never blocks the purchase. The operator's instruction
+ * (2026-09-22): when paid endpoints are configured, use them; the free pass is a
+ * pre-read, not a gate.
  *
  * Pure, so the order and the thresholds are testable without a run.
  */
@@ -56,11 +63,9 @@ export function planEnrichment(input: {
   already: boolean;
 }): EnrichmentPlan {
   if (input.already) return noEnrichment("already enriched this tick");
-  if (input.free.blockers.length > 0 || input.free.verdict === "avoid") {
-    return noEnrichment("hard-blocked on free data — paid signals cannot rescue it");
-  }
-  if (input.free.total < input.minScore - 15) {
-    return noEnrichment(`free score ${Math.round(input.free.total)} is too far under the ${input.minScore} floor to be worth paying for`);
+  const confirmed = input.free.blockers.filter((blocker) => !blocker.endsWith("_unknown"));
+  if (confirmed.length > 0) {
+    return noEnrichment(`unbuyable on confirmed free data (${confirmed.join(", ")}) — no paid read changes that`);
   }
 
   const plan: EnrichmentPlan = { intel: false, deep: false, smartMoney: false, sellCheck: false, skipped: [], plannedUsd: 0 };
@@ -80,10 +85,6 @@ export function planEnrichment(input: {
   if (input.chain === "solana" && has(INTEL_SOURCE)) buy("intel", ENRICHMENT_PRICE_USD.intel);
   if (input.chain === "base" && has(SELL_CHECK_SOURCE)) buy("sellCheck", ENRICHMENT_PRICE_USD.sellCheck);
   if (SENTIMENT_SOURCES.some(has)) buy("deep", ENRICHMENT_PRICE_USD.deep);
-  // Smart money is a tie-breaker: worth it on a borderline-or-better score, wasted on a weak one.
-  if (has(SMART_MONEY_SOURCE)) {
-    if (input.free.total >= input.minScore - 10) buy("smartMoney", ENRICHMENT_PRICE_USD.smartMoney);
-    else plan.skipped.push(`smartMoney: free score ${Math.round(input.free.total)} is under ${input.minScore - 10}, where netflow cannot change the call`);
-  }
+  if (has(SMART_MONEY_SOURCE)) buy("smartMoney", ENRICHMENT_PRICE_USD.smartMoney);
   return plan;
 }

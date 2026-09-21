@@ -213,8 +213,12 @@ candidate 60-79, strong 80+), built from five free components:
   - organic (20) — real buyers versus manufactured volume; heavy volume with almost no organic buyers is wash trading
   - distribution (15) — holder count, top-10 share, dev share
   - momentum (15) — 1h/6h/24h price, volume and liquidity trend
-Two more components exist only when you pay for them, and each *reweights* the five
-above rather than adding a sixth slice, so the total stays 0-100:
+Three more components are nullable, and each *reweights* the five above rather than
+adding a slice, so the total stays 0-100 whichever of them arrived:
+  - gecko (10) — GeckoTerminal's own GT Score, free and fetched for every token it has
+    rated. Null means GeckoTerminal has no rating at all, which for something minutes
+    old is the normal answer rather than a red flag. A \`gt_score_low\` warning is the
+    opposite: it means GeckoTerminal looked and rated the token under 40.
   - sentiment (15) — score_token with deep: true
   - smartMoney (10) — score_token with smartMoney: true; tracked-wallet net flow measured
     against the token's own liquidity, so $80k into a $200k pool scores near the top and
@@ -224,8 +228,11 @@ is unbuyable no matter how good the rest looks. warnings are worth reading but a
 not disqualifying.
 
 ## Paid signals — bought for you
-score_token buys the paid signals your owner configured **on its own**, for any token
-that clears the free gates, in a fixed order until this run's data budget is spent:
+score_token buys the paid signals your owner configured **on its own**, for every token
+you score except one the free data has *confirmed* unbuyable (a blocker that only says
+\`_unknown\` is precisely what the safety read resolves), in a fixed order until this
+run's data budget is spent. Your owner set that budget so it gets used; the free pass is
+a pre-read, never a reason to skip the paid one:
 Deepnets safety (Solana) or the Plexa sell check (Base) first, then sentiment, then
 smart money on a borderline-or-better score. You do not ask; you read. \`paidSignals\`
 on the result says what was bought, \`intel\` carries the safety read, and \`notBought\`
