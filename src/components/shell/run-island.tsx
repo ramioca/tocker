@@ -109,12 +109,12 @@ export function RunIsland() {
               className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               {status === "failed" ? (
-                <TriangleAlert aria-hidden className="size-4 text-negative" />
+                <TriangleAlert aria-hidden className="size-4 shrink-0 text-negative" />
               ) : (
-                <Check aria-hidden className="size-4" />
+                <Check aria-hidden className="size-4 shrink-0" />
               )}
-              <span className="flex flex-col leading-tight">
-                <span className="text-[13px] font-medium">
+              <span className="flex min-w-0 flex-col leading-tight">
+                <span className="whitespace-nowrap text-[13px] font-medium">
                   {status === "failed" ? "Run failed" : "Run finished"}
                 </span>
                 <span className="max-w-[16rem] truncate text-[11px] opacity-70">
@@ -122,7 +122,7 @@ export function RunIsland() {
                 </span>
               </span>
               {detail?.tradeCount ? (
-                <span className="tnum rounded-full bg-white/10 px-2 py-0.5 font-mono text-[11px]">
+                <span className="tnum shrink-0 whitespace-nowrap rounded-full bg-white/10 px-2 py-0.5 font-mono text-[11px]">
                   {detail.tradeCount} {detail.tradeCount === 1 ? "trade" : "trades"}
                 </span>
               ) : null}

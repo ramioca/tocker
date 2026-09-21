@@ -175,15 +175,33 @@ export function venueFeeUsd(feeBps: number | undefined, amountUsd: number): numb
 }
 
 /**
- * One `/order` call. Throws {@link JupiterError} with the body — a 429 from an unkeyed
- * Ultra used to return `null` here and surface three frames later as "no route".
+ * Whether an `/order` failure is the kind that a second try a moment later usually
+ * clears: a rate limit, a server error, or Jupiter's own "Failed to get quotes" (a 400
+ * its routing tier returns when it briefly has no quote for a pool it priced seconds
+ * earlier — seen live on a launch-day token, 2026-09-21). Pure, for tests.
  */
-async function fetchOrder(params: Record<string, string>): Promise<UltraOrder> {
+export function isTransientOrderFailure(status: number, body: string): boolean {
+  if (status === 429 || status >= 500) return true;
+  return status === 400 && /failed to get quotes/i.test(body);
+}
+
+const ORDER_RETRY_DELAY_MS = 900;
+
+/**
+ * One `/order` call, retried once on a transient failure. Throws {@link JupiterError}
+ * with the body — a 429 from an unkeyed Ultra used to return `null` here and surface
+ * three frames later as "no route".
+ */
+async function fetchOrder(params: Record<string, string>, attempt = 0): Promise<UltraOrder> {
   const url = `${orderUrl()}?${new URLSearchParams(params).toString()}`;
   let res: Response;
   try {
     res = await fetch(url, { headers: jupiterHeaders(), signal: AbortSignal.timeout(12_000) });
   } catch (err) {
+    if (attempt === 0) {
+      await new Promise((resolve) => setTimeout(resolve, ORDER_RETRY_DELAY_MS));
+      return fetchOrder(params, 1);
+    }
     throw new JupiterError(
       `Jupiter Ultra did not answer: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -191,6 +209,10 @@ async function fetchOrder(params: Record<string, string>): Promise<UltraOrder> {
 
   const raw = await res.text().catch(() => "");
   if (!res.ok) {
+    if (attempt === 0 && isTransientOrderFailure(res.status, raw)) {
+      await new Promise((resolve) => setTimeout(resolve, ORDER_RETRY_DELAY_MS));
+      return fetchOrder(params, 1);
+    }
     const hint =
       res.status === 429
         ? " Ultra is rate-limiting this app — set JUPITER_API_KEY."

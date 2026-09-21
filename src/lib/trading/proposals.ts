@@ -416,6 +416,22 @@ export async function decideProposal(input: {
     return { ok: false, error: reason, status: "rejected" };
   };
 
+  // Nothing has been signed or sent yet, so the proposal is still just a proposal:
+  // hand it back untouched with the reason on it, rather than burn it on a venue
+  // hiccup or a setting the owner can change in a minute. Only `pending` rows revert,
+  // so this can never resurrect a row the execution path has already settled.
+  const settleRetryable = async (reason: string): Promise<DecideProposalResult> => {
+    await db
+      .update(trades)
+      .set({ status: "proposed", decidedAt: null, decidedBy: null, error: reason })
+      .where(and(eq(trades.id, input.tradeId), eq(trades.status, "pending")));
+    return {
+      ok: false,
+      error: `${reason} Nothing was sent — the proposal is still open, so you can approve it again in a moment.`,
+      status: "proposed",
+    };
+  };
+
   const settleFailed = async (reason: string): Promise<DecideProposalResult> => {
     await db
       .update(trades)
@@ -487,7 +503,7 @@ export async function decideProposal(input: {
   try {
     executor = await getExecutor(executorAgent, chain);
   } catch (err) {
-    return settleFailed(err instanceof Error ? err.message : "No executor available for this chain.");
+    return settleRetryable(err instanceof Error ? err.message : "No executor available for this chain.");
   }
 
   const quotedAt = new Date();
@@ -495,7 +511,7 @@ export async function decideProposal(input: {
   try {
     quote = await executor.quote(request);
   } catch (err) {
-    return settleFailed(`Could not quote ${row.token.symbol}: ${err instanceof Error ? err.message : "quote failed"}`);
+    return settleRetryable(`Could not quote ${row.token.symbol}: ${err instanceof Error ? err.message : "quote failed"}`);
   }
 
   // Same last check as the automatic path: an approved proposal is a trade, and a

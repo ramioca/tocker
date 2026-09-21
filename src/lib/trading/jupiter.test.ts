@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderFeeLamports, parseUltraOrder, sellBaseUnits, takerPaysGas, venueFeeUsd, manualSlippageFor } from "./jupiter";
+import { orderFeeLamports, parseUltraOrder, sellBaseUnits, takerPaysGas, venueFeeUsd, manualSlippageFor, isTransientOrderFailure } from "./jupiter";
 import { clampToHeld, floorBaseUnits, isDustBaseUnits } from "./executor";
 
 /**
@@ -223,5 +223,17 @@ describe("manualSlippageFor", () => {
   it("leaves the order alone with no ceiling or no reported slippage", () => {
     expect(manualSlippageFor(392, 0)).toBeNull();
     expect(manualSlippageFor(undefined, 100)).toBeNull();
+  });
+});
+
+describe("isTransientOrderFailure", () => {
+  it("retries rate limits, server errors and Jupiter's momentary 'Failed to get quotes'", () => {
+    expect(isTransientOrderFailure(429, "")).toBe(true);
+    expect(isTransientOrderFailure(502, "bad gateway")).toBe(true);
+    expect(isTransientOrderFailure(400, '{"requestId":"x","error":"Failed to get quotes"}')).toBe(true);
+  });
+  it("does not retry a real rejection", () => {
+    expect(isTransientOrderFailure(400, '{"error":"invalid mint"}')).toBe(false);
+    expect(isTransientOrderFailure(401, "")).toBe(false);
   });
 });
