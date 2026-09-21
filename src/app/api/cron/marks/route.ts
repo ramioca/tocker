@@ -22,7 +22,10 @@ import { authorizeCron } from "@/lib/security/cron";
 import { RATE_LIMITS, clientKey, limiter, rateLimitHeaders } from "@/lib/security/rate-limit";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Hobby caps at 60s; raise to 300 on Pro.
+export const maxDuration = 300;
+// 300s needs **Fluid compute** on the Vercel project (Settings → Functions). Without it
+// the platform caps the function at 60s and the build rejects this value. The old 60s
+// cap is what froze a run mid-tick and left its `agent_runs` row `running` forever.
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const verdict = limiter.consume(clientKey(req.headers, "cron:marks"), RATE_LIMITS.cron);
@@ -34,7 +37,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const limitParam = Number(req.nextUrl.searchParams.get("limit"));
-  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 100;
+  // Same batch knob as `/api/cron/tick`: every guarded agent is processed inside this
+  // one invocation, so a deploy that had to shrink the tick batch has to shrink this
+  // one too or the pass runs past the function's duration cap and the exits at the end
+  // of the list are never reached. Note the trade-off `CRON_MAX_AGENTS` buys: agents
+  // past the cap do not get a guardian pass this time round, and `findGuardableAgents`
+  // orders by agent id, so raise it as soon as the deploy holds more books than the cap.
+  const configured = Number(process.env.CRON_MAX_AGENTS);
+  const fallback = Number.isFinite(configured) && configured > 0 ? Math.min(configured, 200) : 100;
+  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : fallback;
 
   try {
     const result = await tickMarks(limit);
@@ -44,6 +55,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       guarded: result.guarded,
       exits: result.exits,
       snapshots: result.snapshots,
+      // Runs this pass presumed dead and marked `failed` (W7 B3) — visible in the cron
+      // log so a wedged agent shows up as a number rather than as silence.
+      reaped: result.reaped,
+      settled: result.settled,
       // Compact per-agent detail: what fired, and anything that could not be taken.
       agents: result.results.map((r) => ({
         agentId: r.agentId,

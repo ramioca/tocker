@@ -125,8 +125,17 @@ export interface SizedOrder {
   /** One line, written for a human: how this number was reached. */
   explanation: string;
   /**
-   * True when the computed size fell under `minTradeUsd`. The caller should skip the
-   * trade rather than write a dust ticket.
+   * True when the computed ceiling fell under `minTradeUsd`.
+   *
+   * **Advisory, not enforced (W7).** Nothing in `riskGuard` reads this: a ticket under
+   * the floor is placed like any other. It is deliberately left that way for now — the
+   * first-trade preset caps `maxTradeUsd` at $2 while `DEFAULT_SIZING.minTradeUsd` is
+   * $5, so turning this into a rule would refuse every trade of the exact configuration
+   * the product recommends to a new operator. Any UI that reads this flag must say "this
+   * is smaller than your floor", not "the agent will skip it".
+   *
+   * To make it a rule later, lower `minTradeUsd` in `FIRST_TRADE_PRESET` in the same
+   * change, and check the *order*, not just the ceiling.
    */
   belowMinimum: boolean;
 }

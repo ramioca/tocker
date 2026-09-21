@@ -11,7 +11,7 @@ import { agents, equitySnapshots, getDb, positions, tokens, trades, wallets } fr
 import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { Position, TokenRef } from "@/server/types";
 import type { AgentWalletRef } from "@/lib/x402/types";
-import { netLiveCashUsd } from "@/lib/platform/fee";
+import { netLiveCashUsd, platformFeeUsd } from "@/lib/platform/fee";
 import { accruedFeesUsd } from "@/lib/platform/fees";
 import { getMarks } from "@/lib/trading/prices";
 import { getPaperCash } from "@/lib/trading/paper";
@@ -30,19 +30,36 @@ export interface Portfolio {
   unrealizedPnlUsd: number;
   tradesToday: number;
   startingUsd: number;
+  /**
+   * W7 H8: true when a live wallet balance could not be read, so `cashUsd` (and every
+   * number derived from it) understates the book. Always false for a paper agent, whose
+   * cash is recomputed from its own ledger. Nothing may write an equity snapshot while
+   * this is true.
+   */
+  cashReadFailed: boolean;
 }
 
 export function startOfUtcDay(now: Date = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
-/** USDC across the agent's live wallets. Missing/failed lookups count as zero. */
-async function getLiveCash(walletRefs: AgentWalletRef[]): Promise<number> {
+/**
+ * USDC across the agent's live wallets, and whether every wallet actually answered
+ * (W7 H8).
+ *
+ * A wallet we cannot read still contributes zero to the number — the run must go on, and
+ * an agent with one unreadable wallet can still act on the one it can read. What changed
+ * is that the caller is now *told*: a balance read that failed used to look identical to
+ * a wallet holding nothing, and the equity snapshot written on top of it recorded a live
+ * agent as having lost everything. A gap in the curve is honest; a zero is not.
+ */
+async function getLiveCash(walletRefs: AgentWalletRef[]): Promise<{ usd: number; complete: boolean }> {
   const usable = walletRefs.filter((w) => !w.walletId.startsWith("paper_"));
-  if (usable.length === 0) return 0;
+  if (usable.length === 0) return { usd: 0, complete: true };
   const { privy } = await import("@/lib/privy");
   const client = privy();
   let total = 0;
+  let complete = true;
   for (const w of usable) {
     try {
       const res = await client
@@ -53,10 +70,10 @@ async function getLiveCash(walletRefs: AgentWalletRef[]): Promise<number> {
         if (Number.isFinite(raw)) total += raw / 10 ** b.raw_value_decimals;
       }
     } catch {
-      // a wallet we cannot read contributes nothing rather than failing the run
+      complete = false;
     }
   }
-  return total;
+  return { usd: total, complete };
 }
 
 export async function getAgentWallets(agentId: string): Promise<AgentWalletRef[]> {
@@ -133,10 +150,15 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
   // money it cannot keep, and the shortfall would surface as a failed settlement —
   // the worst possible place to find out. Paper cash nets its fees the same way, in
   // `computePaperCash`.
-  const cashUsd =
-    agent.mode === "paper"
-      ? await getPaperCash(agentId)
-      : netLiveCashUsd(await getLiveCash(await getAgentWallets(agentId)), await accruedFeesUsd(agentId));
+  let cashReadFailed = false;
+  let cashUsd: number;
+  if (agent.mode === "paper") {
+    cashUsd = await getPaperCash(agentId);
+  } else {
+    const live = await getLiveCash(await getAgentWallets(agentId));
+    cashReadFailed = !live.complete;
+    cashUsd = netLiveCashUsd(live.usd, await accruedFeesUsd(agentId));
+  }
 
   const todayRows = await db
     .select({ id: trades.id })
@@ -153,6 +175,7 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
     unrealizedPnlUsd,
     tradesToday: todayRows.length,
     startingUsd: Number(agent.paperStartingUsd),
+    cashReadFailed,
   };
 }
 
@@ -173,32 +196,106 @@ export function toRiskPortfolio(portfolio: Portfolio): RiskPortfolio {
   };
 }
 
-/** Writes one `equity_snapshots` row. Called at the end of every run. */
-export async function snapshotEquity(portfolio: Portfolio): Promise<void> {
+/**
+ * Writes one `equity_snapshots` row. Called at the end of every run and on every marks
+ * pass. Returns whether a row was actually written.
+ *
+ * Two W7 H8 rules, both about not recording a number we know to be wrong:
+ *
+ *  - **The mode is stamped on the point.** A paper book starts at `paperStartingUsd`
+ *    (10,000 by default) and a live book at whatever was deposited. A series that mixes
+ *    the two reads as a −99.9% crash from the instant an agent goes live, on its own card
+ *    and on the public leaderboard. Readers filter to the agent's current mode; a null
+ *    here means a row written before the column existed, which is treated as current.
+ *  - **A failed balance read is a gap, not a zero.** When a live wallet could not be
+ *    read, `cashUsd` understates the book by however much is in it — and a point drawn
+ *    on that says the agent lost everything at 14:05 and got it back at 14:10. Missing
+ *    the point is the honest outcome; the next pass is five minutes away.
+ */
+export async function snapshotEquity(portfolio: Portfolio): Promise<boolean> {
+  if (portfolio.cashReadFailed) {
+    console.warn(`[portfolio] ${portfolio.agentId}: skipping equity snapshot — a live balance read failed`);
+    return false;
+  }
   const db = await getDb();
   await db.insert(equitySnapshots).values({
     id: nanoid(),
     agentId: portfolio.agentId,
     equityUsd: portfolio.equityUsd.toFixed(6),
     cashUsd: portfolio.cashUsd.toFixed(6),
+    mode: portfolio.mode,
   });
+  return true;
+}
+
+/**
+ * The largest buy the risk guard would actually let through right now, for a token not
+ * already held, and the binding constraint (W7 H11).
+ *
+ * The sizing ceiling on its own is not the answer, and printing it alone was actively
+ * misleading: a $10 wallet under the first-trade preset was told its clip was $2 while
+ * `maxPositionPct` refused anything over $1. Three limits apply to every buy and the
+ * smallest wins — the sizing mode, the concentration cap, and the cash the agent has
+ * left after the platform's flat fee. The model should be told the number it has, and
+ * why, rather than being made to discover it by being refused.
+ */
+export function effectiveTicketUsd(
+  portfolio: Pick<Portfolio, "cashUsd" | "equityUsd">,
+  config: AgentConfig,
+): { amountUsd: number; reason: string } {
+  const ceiling = sizeCeiling(config, portfolio, {});
+  const feeUsd = platformFeeUsd();
+  const equity = portfolio.equityUsd > 0 ? portfolio.equityUsd : portfolio.cashUsd;
+
+  const limits: Array<{ amountUsd: number; reason: string }> = [
+    {
+      amountUsd: ceiling.amountUsd,
+      reason: `${ceiling.effectiveMode.replace(/_/g, " ")} sizing — ${ceiling.explanation}`,
+    },
+    {
+      amountUsd: Math.max(0, portfolio.cashUsd - feeUsd),
+      reason:
+        feeUsd > 0
+          ? `cash $${portfolio.cashUsd.toFixed(2)} minus the $${feeUsd.toFixed(2)} Tocker fee charged on the fill`
+          : `cash $${portfolio.cashUsd.toFixed(2)}`,
+    },
+  ];
+  if (equity > 0) {
+    limits.push({
+      amountUsd: (config.risk.maxPositionPct / 100) * equity,
+      reason: `maxPositionPct ${config.risk.maxPositionPct}% of $${equity.toFixed(2)} equity`,
+    });
+  }
+
+  const binding = limits.reduce((lowest, limit) => (limit.amountUsd < lowest.amountUsd ? limit : lowest));
+  return { amountUsd: Math.max(0, binding.amountUsd), reason: binding.reason };
 }
 
 /** Compact, model-friendly rendering used by both the tick prompt and `get_portfolio`. */
 export function describePortfolio(portfolio: Portfolio, config: AgentConfig): string {
-  // The sizing ceiling belongs in the book, not in a rejection. A model that is told
-  // "$250 is your clip right now, and here is why" writes one good order; a model that
-  // has to discover the number by being refused burns a step and a tool call to learn it.
-  const ceiling = sizeCeiling(config, portfolio, {});
+  // The ceiling belongs in the book, not in a rejection. A model that is told "$0.97 is
+  // your clip right now, and here is why" writes one good order; a model that has to
+  // discover the number by being refused burns a step and a tool call to learn it.
+  const ticket = effectiveTicketUsd(portfolio, config);
   const lines = [
     `Cash: $${portfolio.cashUsd.toFixed(2)} · Equity: $${portfolio.equityUsd.toFixed(2)} · Mode: ${portfolio.mode}`,
     `Realized PnL $${portfolio.realizedPnlUsd.toFixed(2)} · Unrealized PnL $${portfolio.unrealizedPnlUsd.toFixed(2)}`,
     `Trades today: ${portfolio.tradesToday}/${config.risk.maxDailyTrades}`,
-    `Max ticket right now: $${ceiling.amountUsd.toFixed(2)} (${ceiling.effectiveMode.replace(/_/g, " ")} sizing — ${ceiling.explanation})` +
-      (ceiling.effectiveMode === "volatility_scaled" || readSizing(config.risk as AgentRiskWithSizing).mode === "volatility_scaled"
+    `Max ticket right now: $${ticket.amountUsd.toFixed(2)} — the binding limit is ${ticket.reason}. An order above this is rejected, not trimmed.` +
+      (readSizing(config.risk as AgentRiskWithSizing).mode === "volatility_scaled"
         ? " A token that has been ranging widely gets a smaller ticket than this; size down when you see one."
+        : "") +
+      // A token already held eats into its own concentration headroom, so the real
+      // ceiling for an add is lower than this. Saying so is cheaper than a rejection.
+      (portfolio.positions.length > 0
+        ? " Adding to a token you already hold has less room than this: the position you hold counts towards the same concentration cap."
         : ""),
   ];
+  if (portfolio.cashReadFailed) {
+    lines.push(
+      "WARNING: at least one wallet balance could not be read this tick, so the cash figure above is too low. Do not open a new position on it.",
+    );
+  }
   if (portfolio.positions.length === 0) {
     lines.push("Positions: none.");
   } else {

@@ -11,10 +11,21 @@
  * Concurrency: the run row is claimed with a conditional UPDATE that also asserts no
  * other run for this agent is `running`, so two schedulers racing produce one run and
  * one `skipped`.
+ *
+ * Liveness (W7 B3): on a serverless platform the function is frozen the moment the
+ * response is sent, so a run continued on a detached promise dies mid-flight and leaves
+ * its row `running` forever — and that row then blocks every future run through the
+ * `NOT EXISTS` above. Two fixes, both here:
+ *   - the background continuation is scheduled with `after()` from `next/server`, which
+ *     keeps the invocation alive until the callback resolves;
+ *   - a `queued`/`running` row whose clock started more than {@link STALE_RUN_MS} ago is
+ *     treated as dead — {@link reapStaleRuns} marks it `failed`, and `claimRun` ignores
+ *     it when deciding whether the agent is busy.
  */
 import { nanoid } from "nanoid";
+import { after } from "next/server";
 import { generateText, hasToolCall, stepCountIs, type LanguageModel } from "ai";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { agentRuns, agents, getDb, llmKeys, notifications, tokens, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
 import { parseAgentConfig } from "@/lib/agent/config";
@@ -112,19 +123,72 @@ async function createRunRow(agentId: string, trigger: RunAgentInput["trigger"]):
 }
 
 /**
- * Atomically moves the run from `queued` to `running`, but only if no other run for
- * this agent is already `running`.
+ * How long a `queued`/`running` row may sit before it is presumed dead. The run itself
+ * is capped well below this (`maxDuration` 300s on the route, a 240s abort on the model
+ * call), so anything past ten minutes was killed by the platform, not by us.
  */
-async function claimRun(runId: string, agentId: string): Promise<boolean> {
+export const STALE_RUN_MS = 10 * 60_000;
+
+/** What a reaped row's `error` says. Deliberately plain: an operator reads this. */
+export const ABANDONED_RUN_ERROR = "abandoned: the function timed out";
+
+/**
+ * How long the model may think. Sits under the route's 300s `maxDuration` by a minute so
+ * the run loop, not the platform, is the thing that gives up — and can say so on the row.
+ */
+export const RUN_MODEL_TIMEOUT_MS = 240_000;
+
+/**
+ * Marks every `queued`/`running` row older than {@link STALE_RUN_MS} as `failed`.
+ *
+ * Nothing else reads `agent_runs.status` to decide liveness, so without this a single
+ * frozen invocation makes the agent permanently unrunnable: `claimRun` sees a `running`
+ * row, refuses the claim, and the next run is cancelled — forever. Called from
+ * `claimRun` (per agent), from both crons (globally), and from `triggerRun`.
+ *
+ * @param agentId Limit the sweep to one agent. Omit to reap every agent's.
+ * @returns how many rows were reaped.
+ */
+export async function reapStaleRuns(agentId?: string, now: Date = new Date()): Promise<number> {
   const db = await getDb();
+  const cutoff = new Date(now.getTime() - STALE_RUN_MS);
+  const reaped = await db
+    .update(agentRuns)
+    .set({ status: "failed", error: ABANDONED_RUN_ERROR, finishedAt: now })
+    .where(
+      and(
+        inArray(agentRuns.status, ["queued", "running"]),
+        sql`coalesce(${agentRuns.startedAt}, ${agentRuns.createdAt}) < ${cutoff}`,
+        ...(agentId === undefined ? [] : [eq(agentRuns.agentId, agentId)]),
+      ),
+    )
+    .returning({ id: agentRuns.id });
+  return reaped.length;
+}
+
+/**
+ * Atomically moves the run from `queued` to `running`, but only if no other *live* run
+ * for this agent is already `running`. A `running` row that stopped moving more than
+ * {@link STALE_RUN_MS} ago is not live — it is reaped first, and ignored by the guard
+ * even if the reap lost a race.
+ */
+async function claimRun(runId: string, agentId: string, now: Date = new Date()): Promise<boolean> {
+  const db = await getDb();
+  await reapStaleRuns(agentId, now);
+  const cutoff = new Date(now.getTime() - STALE_RUN_MS);
   const claimed = await db
     .update(agentRuns)
-    .set({ status: "running", startedAt: new Date() })
+    .set({ status: "running", startedAt: now })
     .where(
       and(
         eq(agentRuns.id, runId),
         eq(agentRuns.status, "queued"),
-        sql`NOT EXISTS (SELECT 1 FROM ${agentRuns} AS other WHERE other.agent_id = ${agentId} AND other.status = 'running')`,
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${agentRuns} AS other
+          WHERE other.agent_id = ${agentId}
+            AND other.status = 'running'
+            AND coalesce(other.started_at, other.created_at) >= ${cutoff}
+        )`,
       ),
     )
     .returning({ id: agentRuns.id });
@@ -144,13 +208,25 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
 /**
  * Creates the run row synchronously and returns its id, continuing the work in the
  * background. Foundation's `triggerRun` can use either this or `runAgent`.
+ *
+ * The continuation is handed to `after()` so the serverless invocation stays alive until
+ * the tick is done: a bare `void executeRun(...)` is frozen the instant the response is
+ * flushed, which is how a first live trade used to leave a `running` row that blocked
+ * the agent forever. `after()` only exists inside a request scope, so scripts and tests
+ * fall back to the detached promise — nothing freezes there.
  */
 export async function startRun(input: RunAgentInput): Promise<{ runId: string }> {
   const runId = await createRunRow(input.agentId, input.trigger);
   if (runId === null) throw new Error("Agent not found");
-  void executeRun(runId, input).catch(() => {
-    // executeRun already records failures on the run row.
-  });
+  const finishInBackground = () =>
+    executeRun(runId, input).catch(() => {
+      // executeRun already records failures on the run row.
+    });
+  try {
+    after(finishInBackground);
+  } catch {
+    void finishInBackground();
+  }
   return { runId };
 }
 
@@ -279,6 +355,11 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
       prompt,
       tools: buildTools(ctx),
       temperature: config.llm.temperature,
+      // The route is allowed 300s. Cut the model off at 240 so the remaining minute is
+      // ours: the catch below still gets to write `failed` + the reason on the run row,
+      // which is the difference between "the model stalled" and a row stuck on `running`
+      // that bricks the agent until the reaper notices.
+      abortSignal: AbortSignal.timeout(RUN_MODEL_TIMEOUT_MS),
       stopWhen: [stepCountIs(config.llm.maxSteps), hasToolCall("finish")],
       onStepFinish: async (step) => {
         const text = step.text?.trim();

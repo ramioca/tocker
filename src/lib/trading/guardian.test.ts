@@ -319,7 +319,9 @@ describe("runGuardian — resilience", () => {
     expect(feed).toHaveLength(1);
   });
 
-  it("stands down when a guardian exit for the token just filled", async () => {
+  // W7 H10 widened this from "just filled" to "just attempted": a token the venue keeps
+  // refusing was being re-attempted by every overlapping pass, each writing its own row.
+  it("stands down when a guardian exit for the token was just attempted", async () => {
     const { agentId } = await seedAgent(db, {
       config: { chains: ["solana"], risk: { stopLossPct: 15, takeProfitPct: null, exitScoreBelow: null, exitOnLiquidityDropPct: null } },
     });
@@ -335,7 +337,147 @@ describe("runGuardian — resilience", () => {
 
     const second = await runGuardian({ agentId, trigger: "marks" });
     expect(second.exits).toHaveLength(0);
-    expect(second.skipped[0]?.reason).toContain("just filled");
+    expect(second.skipped[0]?.reason).toContain("attempted moments ago");
+    expect(await tradesFor(agentId)).toHaveLength(1);
+  });
+});
+
+/**
+ * W7 H10. An exit that cannot fill retries every five minutes, forever, and until now
+ * each retry wrote its own `failed` row and told nobody. One stuck token therefore
+ * produced 288 rows a day, buried the real trade history, and the operator — the only
+ * person who could do anything about it — never found out.
+ */
+describe("runGuardian — failing exits", () => {
+  /** WIF can be marked (so the exit fires) but never quoted (so it always fails). */
+  function breakWifQuotes(): void {
+    vi.spyOn(prices, "getPriceUsd").mockImplementation(async (chain, address) =>
+      address === WIF ? null : realPriceUsd(chain, address),
+    );
+  }
+
+  async function seedStuckExit() {
+    breakWifQuotes();
+    const seeded = await seedAgent(db, {
+      config: {
+        chains: ["solana"],
+        risk: { stopLossPct: 15, takeProfitPct: null, exitScoreBelow: null, exitOnLiquidityDropPct: null },
+      },
+    });
+    await seedPosition({ agentId: seeded.agentId, tokenId: WIF_ID, amountToken: 100, avgCostUsd: WIF_PRICE * 2 });
+    return seeded;
+  }
+
+  /** The attempt window is a minute; a real retry is five minutes later. */
+  async function ageAttempts(agentId: string, minutes: number): Promise<void> {
+    const shifted = new Date(Date.now() - minutes * 60_000);
+    await db.update(schema.trades).set({ createdAt: shifted }).where(eq(schema.trades.agentId, agentId));
+  }
+
+  it("stands down when the back-to-back marks and tick passes both want the same exit", async () => {
+    const { agentId } = await seedStuckExit();
+
+    await runGuardian({ agentId, trigger: "marks" });
+    // The cron workflow calls marks and then tick within seconds of each other. The
+    // second pass must not re-attempt the exit the first one just failed.
+    const second = await runGuardian({ agentId, trigger: "tick" });
+    expect(second.exits).toHaveLength(0);
+    expect(second.skipped[0]?.reason).toContain("attempted moments ago");
+  });
+
+  it("reuses one row per exit episode instead of writing a new one every pass", async () => {
+    const { agentId } = await seedStuckExit();
+
+    await runGuardian({ agentId, trigger: "marks" });
+    const first = await tradesFor(agentId);
+    expect(first).toHaveLength(1);
+
+    // Second pass: the row is reused and the episode's start is stamped into the message.
+    await ageAttempts(agentId, 5);
+    await runGuardian({ agentId, trigger: "marks" });
+    const [second] = await tradesFor(agentId);
+    const origin = second?.error?.split("has been failing since ")[1];
+    expect(origin).toBeTruthy();
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      await ageAttempts(agentId, 5);
+      await runGuardian({ agentId, trigger: "marks" });
+    }
+
+    const rows = await tradesFor(agentId);
+    // Four passes, one row. Before H10 this was four.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(first[0]?.id);
+    expect(rows[0]?.status).toBe("failed");
+    // `createdAt` tracks the latest attempt — that is what stops two overlapping passes
+    // from both firing — so the episode's start survives in the message instead, and it
+    // must not drift forward with every retry.
+    expect(rows[0]?.createdAt.getTime()).toBeGreaterThan(Date.parse(origin as string));
+    expect(rows[0]?.error).toContain(`has been failing since ${origin}`);
+  });
+
+  it("notifies the owner once per token per hour, however often it retries", async () => {
+    const { agentId, userId } = await seedStuckExit();
+
+    for (let pass = 0; pass < 4; pass += 1) {
+      await ageAttempts(agentId, 5);
+      await runGuardian({ agentId, trigger: "marks" });
+    }
+
+    const notes = await db
+      .select()
+      .from(schema.notifications)
+      .where(eq(schema.notifications.userId, userId));
+    const failures = notes.filter((n) => n.kind === "exit_failed");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.title).toContain("could not sell WIF");
+    expect(failures[0]?.body).toContain("Stop loss hit");
+  });
+
+  /**
+   * W7 H1. The exit used to be sized as `amountUsd ÷ a fresh buy-side quote`, which is
+   * the one conversion that is guaranteed to be wrong precisely when a stop loss fires:
+   * the mark and the route price have just diverged. A full exit asks for the balance.
+   */
+  it("sends the held balance, not a USD notional converted at a moved price", async () => {
+    const { agentId } = await seedAgent(db, {
+      config: {
+        chains: ["solana"],
+        risk: { stopLossPct: 15, takeProfitPct: null, exitScoreBelow: null, exitOnLiquidityDropPct: null },
+      },
+    });
+    await seedPosition({ agentId, amountToken: 10_000_000, avgCostUsd: 0.0000036 });
+
+    const result = await runGuardian({ agentId, trigger: "marks" });
+    expect(result.exits[0]?.status).toBe("filled");
+
+    const [row] = await tradesFor(agentId);
+    // Every held token, exactly — not `amountUsd / price` rounded to whatever the quote
+    // happened to say.
+    expect(Number(row?.amountToken)).toBeCloseTo(10_000_000, 6);
+
+    // And the position is closed, with no dust row for the exit engine to keep firing on.
+    const [position] = await positionFor(agentId);
+    expect(Number(position?.amountToken)).toBe(0);
+    expect(position?.openedAt).toBeNull();
+    expect(position?.peakPriceUsd).toBeNull();
+  });
+
+  it("starts a fresh row and a fresh notification once an hour has passed", async () => {
+    const { agentId, userId } = await seedStuckExit();
+    await runGuardian({ agentId, trigger: "marks" });
+
+    // Age both the attempt and the notification past the hourly ceiling.
+    const longAgo = new Date(Date.now() - 2 * 60 * 60_000);
+    await db.update(schema.trades).set({ createdAt: longAgo }).where(eq(schema.trades.agentId, agentId));
+    await db.update(schema.notifications).set({ createdAt: longAgo }).where(eq(schema.notifications.userId, userId));
+
+    await runGuardian({ agentId, trigger: "marks" });
+
+    const failures = (await db.select().from(schema.notifications).where(eq(schema.notifications.userId, userId)))
+      .filter((n) => n.kind === "exit_failed");
+    expect(failures).toHaveLength(2);
+    // Past the 24h episode window the row would also be new; inside it, still one row.
     expect(await tradesFor(agentId)).toHaveLength(1);
   });
 

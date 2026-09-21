@@ -11,7 +11,10 @@ import { requireSession } from "@/lib/auth";
 import { startRun } from "@/lib/agent/run";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Hobby caps at 60s; raise to 300 on Pro.
+export const maxDuration = 300;
+// 300s needs **Fluid compute** on the Vercel project (Settings → Functions). Without it
+// the platform caps the function at 60s and the build rejects this value. The old 60s
+// cap is what froze a run mid-tick and left its `agent_runs` row `running` forever.
 
 export async function POST(
   _req: Request,

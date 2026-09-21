@@ -38,7 +38,7 @@
  *    It cannot throw and it cannot delay an exit; a failure retries in five minutes.
  */
 import { nanoid } from "nanoid";
-import { and, desc, eq, gte, lt, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
 import { agentRuns, agents, equitySnapshots, follows, getDb, notifications, positions as positionsTable, posts, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
 import { parseAgentConfig } from "@/lib/agent/config";
@@ -59,9 +59,10 @@ import {
   type ExitDecision,
   type ExitPosition,
 } from "./exits";
-import { applyFill, updatePeaks } from "./positions";
+import { applyFill, heldAmountToken, updatePeaks } from "./positions";
 import { buildReceipt, receiptSummary, saveReceipt } from "./receipt";
 import { riskGuard, type OrderIntent } from "./risk";
+import { executeTrade } from "./settle";
 import { ensureQuoteToken } from "./tokens";
 
 export type GuardianTrigger = "tick" | "marks" | "manual";
@@ -199,8 +200,30 @@ async function followerIds(agentId: string): Promise<string[]> {
   return rows.map((r) => r.followerId);
 }
 
-/** True when a guardian sell for this token filled in the last minute. */
-async function soldRecently(agentId: string, tokenId: string, now: Date): Promise<boolean> {
+/**
+ * How close together two guardian attempts on the same token may land. Short on purpose:
+ * a stop loss that backs off exponentially is worse than one that is noisy, so this only
+ * has to stop the tick pass and the marks pass from double-firing in the same breath —
+ * the real cadence is the five-minute marks loop, which is unaffected.
+ */
+const EXIT_ATTEMPT_WINDOW_MS = 60_000;
+
+/** At most one `exit_failed` push per token per hour, however often the exit retries. */
+const EXIT_FAILED_NOTIFY_MS = 60 * 60_000;
+
+/**
+ * How long one failing exit counts as the same episode. Inside it, the retries update a
+ * single `trades` row instead of inserting a new one every five minutes — which is 288
+ * rows a day per stuck token, enough to bury the real trade history.
+ */
+const EXIT_EPISODE_MS = 24 * 60 * 60_000;
+
+/**
+ * True when a guardian sell for this token was *attempted* in the last minute — filled
+ * or failed. Failures count (W7 H10): before this, a token the venue kept refusing was
+ * re-attempted by every overlapping pass, each one writing its own row.
+ */
+async function attemptedRecently(agentId: string, tokenId: string, now: Date): Promise<boolean> {
   const db = await getDb();
   const rows = await db
     .select({ id: trades.id })
@@ -211,13 +234,117 @@ async function soldRecently(agentId: string, tokenId: string, now: Date): Promis
         eq(trades.tokenId, tokenId),
         eq(trades.side, "sell"),
         eq(trades.origin, "guardian"),
-        eq(trades.status, "filled"),
-        gte(trades.createdAt, new Date(now.getTime() - 60_000)),
+        inArray(trades.status, ["filled", "failed", "submitted"]),
+        gte(trades.createdAt, new Date(now.getTime() - EXIT_ATTEMPT_WINDOW_MS)),
       ),
     )
     .orderBy(desc(trades.createdAt))
     .limit(1);
   return rows.length > 0;
+}
+
+/**
+ * The `trades` row this exit episode is already using, if there is one.
+ *
+ * A stop loss that cannot fill retries twelve times an hour. Each retry used to be a new
+ * `failed` row, so one stuck token produced 288 rows a day and the owner's trade history
+ * became unreadable. Instead the episode keeps one row and rewrites it — the timeline
+ * shows "this exit has been failing since 09:14", which is the true and useful statement.
+ *
+ * A fill on the same token ends the episode: after it, the next failure starts fresh.
+ */
+const FAILING_SINCE = " — this exit has been failing since ";
+
+/**
+ * When this episode's first attempt was, from the row's own error text.
+ *
+ * The row's `createdAt` is bumped on every retry — it is what `attemptedRecently` reads
+ * to stop the back-to-back marks and tick passes from both firing — so the origin has to
+ * survive somewhere else. It survives in the sentence the operator reads.
+ */
+function episodeStart(error: string | null, fallback: Date): Date {
+  const at = error?.split(FAILING_SINCE)[1];
+  const parsed = at === undefined ? NaN : Date.parse(at);
+  return Number.isNaN(parsed) ? fallback : new Date(parsed);
+}
+
+async function reusableExitRow(
+  agentId: string,
+  tokenId: string,
+  now: Date,
+): Promise<{ id: string; createdAt: Date; error: string | null } | null> {
+  const db = await getDb();
+  const [candidate] = await db
+    .select({ id: trades.id, createdAt: trades.createdAt, error: trades.error })
+    .from(trades)
+    .where(
+      and(
+        eq(trades.agentId, agentId),
+        eq(trades.tokenId, tokenId),
+        eq(trades.side, "sell"),
+        eq(trades.origin, "guardian"),
+        eq(trades.status, "failed"),
+        gte(trades.createdAt, new Date(now.getTime() - EXIT_EPISODE_MS)),
+      ),
+    )
+    .orderBy(desc(trades.createdAt))
+    .limit(1);
+  if (!candidate) return null;
+
+  const [filledSince] = await db
+    .select({ id: trades.id })
+    .from(trades)
+    .where(
+      and(
+        eq(trades.agentId, agentId),
+        eq(trades.tokenId, tokenId),
+        eq(trades.status, "filled"),
+        gte(trades.createdAt, candidate.createdAt),
+      ),
+    )
+    .limit(1);
+  return filledSince ? null : candidate;
+}
+
+/**
+ * One `exit_failed` notification per token per hour.
+ *
+ * An exit that cannot fill is the single most important thing an operator can be told,
+ * and it was told to nobody: the failure went to `console.warn` and a `failed` trade row.
+ * It is also the thing most likely to repeat every five minutes until it is fixed, so the
+ * hourly ceiling is what keeps it from becoming the notification people mute.
+ */
+async function notifyExitFailed(ctx: ExitContext, decision: ExitDecision, message: string): Promise<void> {
+  try {
+    const db = await getDb();
+    const href = `/agents/${ctx.agent.slug}?exit=${encodeURIComponent(decision.tokenId)}`;
+    const [recent] = await db
+      .select({ id: notifications.id })
+      .from(notifications)
+      .where(
+        and(
+          eq(notifications.userId, ctx.agent.ownerId),
+          eq(notifications.kind, "exit_failed"),
+          eq(notifications.href, href),
+          gte(notifications.createdAt, new Date(ctx.now.getTime() - EXIT_FAILED_NOTIFY_MS)),
+        ),
+      )
+      .limit(1);
+    if (recent) return;
+
+    await notify([
+      {
+        userId: ctx.agent.ownerId,
+        kind: "exit_failed",
+        title: `${ctx.agent.name} could not sell ${decision.symbol}`,
+        body: `${EXIT_TITLES[decision.reason]} fired but the order did not go through: ${message.slice(0, 400)}`,
+        href,
+      },
+    ]);
+  } catch (err) {
+    // A warning that cannot be delivered must not also cost the next retry.
+    log(ctx.agent.id, `exit_failed notification failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 interface AgentRecord {
@@ -328,8 +455,12 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
   if (!(amountToken > 0)) {
     return { tokenId: decision.tokenId, symbol: decision.symbol, reason: "position already closed" };
   }
-  if (await soldRecently(agent.id, decision.tokenId, ctx.now)) {
-    return { tokenId: decision.tokenId, symbol: decision.symbol, reason: "a guardian exit for this token just filled" };
+  if (await attemptedRecently(agent.id, decision.tokenId, ctx.now)) {
+    return {
+      tokenId: decision.tokenId,
+      symbol: decision.symbol,
+      reason: "a guardian exit for this token was attempted moments ago",
+    };
   }
 
   // Clamp to what is actually held at the mark we decided on.
@@ -370,44 +501,72 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
 
   const score = ctx.scores.get(decision.tokenId) ?? null;
   const quoteTokenId = await ensureQuoteToken(decision.chain);
-  const tradeId = nanoid();
-  await db.insert(trades).values({
-    id: tradeId,
-    agentId: agent.id,
+
+  // W7 H10: reuse this episode's row rather than minting a new one every five minutes.
+  const episode = await reusableExitRow(agent.id, decision.tokenId, ctx.now);
+  const tradeId = episode?.id ?? nanoid();
+  const failingSince = episode === null ? null : episodeStart(episode.error, episode.createdAt);
+  const rowValues = {
+    // Bumped on every attempt so `attemptedRecently` can still see that this token was
+    // tried moments ago — the marks cron and the tick cron fire back to back, and
+    // without this both of them would re-attempt the same refused exit. The episode's
+    // true start is carried in the error text instead (see `episodeStart`).
+    createdAt: ctx.now,
     runId: ctx.runId,
-    ownerId: agent.ownerId,
     chain: decision.chain,
-    side: "sell",
+    side: "sell" as const,
     tokenId: decision.tokenId,
     quoteTokenId,
     amountToken: "0",
     amountUsd: toNumeric(amountUsd, 6),
     priceUsd: "0",
     feeUsd: "0",
-    status: "pending",
+    status: "pending" as const,
     isPaper: executor.isPaper,
     rationale: decision.rationale,
     scoreSnapshot: score === null ? null : toTradeScore(score),
-    origin: "guardian",
+    origin: "guardian" as const,
     exitReason: decision.reason,
+    error: null,
     // `requestedUsd`/`proposedAt` stay null on purpose: those belong to approval mode, and
     // an exit is never proposed. A stop loss that waits for a human is not a stop loss.
-  });
+  };
+  if (episode) {
+    await db.update(trades).set(rowValues).where(eq(trades.id, tradeId));
+  } else {
+    await db.insert(trades).values({ id: tradeId, agentId: agent.id, ownerId: agent.ownerId, ...rowValues });
+  }
 
+  /**
+   * The failure text, carrying how long this exit has been stuck when it has. It is also
+   * where the episode's start time lives between attempts — `episodeStart` reads it back.
+   */
+  const withHistory = (message: string): string =>
+    failingSince === null ? message : `${message}${FAILING_SINCE}${failingSince.toISOString()}`;
+
+  const decimals = ctx.decimals.get(decision.tokenId) ?? 9;
   const request: TradeRequest = {
     chain: decision.chain,
     side: "sell",
     tokenId: decision.tokenId,
     tokenAddress: decision.address,
     symbol: decision.symbol,
-    decimals: ctx.decimals.get(decision.tokenId) ?? 9,
+    decimals,
     amountUsd,
+    // W7 H1. The exact balance, from the row we just re-read — not `amountUsd ÷ a
+    // fresh buy-side quote`. A stop loss fires precisely when the mark and the route
+    // price disagree, and that is the conversion that then asks for tokens the wallet
+    // does not have. `decision.amountToken` is a full exit; the clamp handles a pass
+    // that raced a manual sell.
+    amountToken: Math.min(decision.amountToken, amountToken),
     slippageBps: agent.config.risk.slippageBps,
   };
 
-  const failed = async (message: string): Promise<GuardianExitRecord> => {
+  const failed = async (raw: string): Promise<GuardianExitRecord> => {
+    const message = withHistory(raw);
     await db.update(trades).set({ status: "failed", error: message }).where(eq(trades.id, tradeId));
     log(agent.id, `${decision.symbol} ${decision.reason} failed: ${message}`);
+    await notifyExitFailed(ctx, decision, raw);
     return { ...base, amountUsd, tradeId, status: "failed", error: message };
   };
 
@@ -419,15 +578,20 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
     return failed(err instanceof Error ? err.message : "quote failed");
   }
 
-  await db.update(trades).set({ status: "submitted" }).where(eq(trades.id, tradeId));
-
-  let fill;
-  try {
-    fill = await executor.execute(quote);
-  } catch (err) {
-    return failed(err instanceof Error ? err.message : "execution threw");
-  }
-  if (fill.status !== "filled") return failed(fill.error ?? "execution failed");
+  // `executeTrade` owns everything between the quote and a terminal row: the signature
+  // is persisted before `/execute`, a throw becomes `failed` instead of escaping, an
+  // unknown outcome is checked against the chain, and an over-ask is retried once
+  // against the balance as it really is.
+  const settled = await executeTrade({
+    tradeId,
+    executor,
+    request,
+    quote,
+    refreshSellAmount: () => heldAmountToken(agent.id, decision.tokenId),
+  });
+  if (settled.status !== "filled") return failed(settled.error);
+  const fill = settled.fill;
+  quote = settled.quote;
 
   const filledAt = new Date();
   await db
@@ -461,6 +625,9 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
       amountToken: fill.amountToken,
       amountUsd: fill.amountUsd,
       feeUsd: fill.feeUsd + platformFeeUsd,
+      // So a residual below one atomic unit closes the position instead of leaving a
+      // dust row the exit engine keeps firing on and no venue will route.
+      decimals,
     },
     { priceUsd: fill.priceUsd, now: filledAt },
   );
@@ -606,8 +773,10 @@ export async function runGuardian(input: RunGuardianInput): Promise<GuardianResu
         try {
           // Re-read after exits so the snapshot reflects them.
           const after = result.exits.some((e) => e.status === "filled") ? await getPortfolio(agent.id) : portfolio;
-          await snapshotEquity(after);
-          result.equityUsd = after.equityUsd;
+          // Null when the snapshot was skipped because a live balance read failed
+          // (W7 H8) — the pass still ran and still took its exits; it just has no
+          // trustworthy equity figure to report or to draw.
+          result.equityUsd = (await snapshotEquity(after)) ? after.equityUsd : null;
         } catch (err) {
           log(agent.id, `equity snapshot failed: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -639,10 +808,14 @@ export async function runGuardian(input: RunGuardianInput): Promise<GuardianResu
     }
 
     // Rescore only when a rule reads a score, and only from the free providers.
+    // In parallel (W7 M4): these are independent read-only provider calls, and a book of
+    // ten holdings was serialising ten round trips inside a cron pass that has a hard
+    // duration cap — the positions at the end of the list were the ones whose stop losses
+    // did not get evaluated. The exits themselves stay sequential; they share state.
     const scores = new Map<string, TokenScore>();
     if (needsRescore(rules)) {
-      for (const p of portfolio.positions) {
-        try {
+      const rescored = await Promise.allSettled(
+        portfolio.positions.map(async (p) => {
           const score = await getTokenScore({
             chain: p.token.chain,
             address: p.token.address,
@@ -651,10 +824,12 @@ export async function runGuardian(input: RunGuardianInput): Promise<GuardianResu
             symbolHint: p.token.symbol,
             // No `deep`, no x402 context: a guardian pass never spends money.
           });
-          scores.set(p.token.id, score);
-        } catch {
-          // No score means the collapse rules simply have no opinion this pass.
-        }
+          return [p.token.id, score] as const;
+        }),
+      );
+      for (const outcome of rescored) {
+        // A rejection means the collapse rules simply have no opinion on that holding.
+        if (outcome.status === "fulfilled") scores.set(outcome.value[0], outcome.value[1]);
       }
       result.rescored = scores.size;
     }

@@ -33,7 +33,11 @@ export function FirstFillPanel({
   children?: React.ReactNode;
 }) {
   const reduce = useReducedMotion();
-  const failed = trade.status === "failed" || trade.status === "rejected";
+  // `expired` joins the failures (W7 B6): a proposal nobody answered in time did not
+  // trade, and green is the wrong colour for it. `proposed` never reaches this panel —
+  // it gets `ProposalPanel`, which can actually be acted on.
+  const failed = trade.status === "failed" || trade.status === "rejected" || trade.status === "expired";
+  const settling = trade.status === "pending" || trade.status === "submitted";
 
   return (
     <motion.section
@@ -42,19 +46,38 @@ export function FirstFillPanel({
       transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 30 }}
       className={cn(
         "glass-heavy rounded-xl border p-4",
-        failed ? "border-destructive/40 bg-destructive/5" : "border-positive/30 bg-positive/[0.04]",
+        failed
+          ? "border-destructive/40 bg-destructive/5"
+          : settling
+            ? "border-border/70 bg-card/30"
+            : "border-positive/30 bg-positive/[0.04]",
       )}
       aria-label="Trade receipt"
     >
       <div className="flex items-center gap-2">
-        <Receipt aria-hidden className={cn("size-4", failed ? "text-destructive" : "text-positive")} />
+        <Receipt
+          aria-hidden
+          className={cn("size-4", failed ? "text-destructive" : settling ? "text-muted-foreground" : "text-positive")}
+        />
         <h3 className="text-sm font-medium">
           {failed
-            ? "The trade did not fill"
-            : `${trade.side === "buy" ? "Bought" : "Sold"} ${trade.token.symbol}`}
+            ? trade.status === "expired"
+              ? "The proposal expired before it was answered"
+              : "The trade did not fill"
+            : settling
+              ? `Still settling ${trade.token.symbol}`
+              : `${trade.side === "buy" ? "Bought" : "Sold"} ${trade.token.symbol}`}
         </h3>
         <ChainBadge chain={trade.chain} className="ml-auto" />
       </div>
+
+      {settling ? (
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          The order was submitted and the chain has not answered yet. It settles by itself — the marks loop
+          reconciles anything still open after two minutes against the transaction, and the result lands on the
+          agent page.
+        </p>
+      ) : null}
 
       {trade.isPaper ? (
         <p className="mt-2 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground">

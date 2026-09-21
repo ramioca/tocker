@@ -17,12 +17,15 @@ import { and, asc, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { agents, getDb, positions, userSecurity } from "@/db";
 import { settleFeesForAgent } from "@/lib/platform/settlement";
 import { runGuardian, type GuardianResult } from "@/lib/trading/guardian";
+import { sweepSubmittedTrades } from "@/lib/trading/settle";
 import { getPortfolio, snapshotEquity } from "./portfolio";
-import { runAgent, type RunAgentResult } from "./run";
+import { reapStaleRuns, runAgent, type RunAgentResult } from "./run";
 
 export interface TickResult {
   due: number;
   results: Array<RunAgentResult & { agentId: string }>;
+  /** `agent_runs` rows presumed dead and marked `failed` before this pass (W7 B3). */
+  reaped: number;
 }
 
 const BATCH_SIZE = 5;
@@ -65,8 +68,16 @@ export async function findDueAgents(limit = 20, now: Date = new Date()): Promise
   return rows.map((r) => r.id);
 }
 
-/** Runs every due agent. Never throws: a failed agent shows up in `results`. */
+/**
+ * Runs every due agent. Never throws: a failed agent shows up in `results`.
+ *
+ * Reaps abandoned runs first. A frozen serverless invocation leaves its row `running`,
+ * and `claimRun` refuses to start anything while one exists — so without a sweep on the
+ * loop that actually runs every five minutes, one timeout would be the last tick that
+ * agent ever took.
+ */
 export async function tickDueAgents(limit = 20, now: Date = new Date()): Promise<TickResult> {
+  const reaped = await reapStaleRuns(undefined, now);
   const due = await findDueAgents(limit, now);
   const results: Array<RunAgentResult & { agentId: string }> = [];
 
@@ -88,7 +99,7 @@ export async function tickDueAgents(limit = 20, now: Date = new Date()): Promise
     });
   }
 
-  return { due: due.length, results };
+  return { due: due.length, results, reaped };
 }
 
 export interface MarksTickResult {
@@ -100,6 +111,10 @@ export interface MarksTickResult {
   exits: number;
   /** Equity snapshots written (one per active agent). */
   snapshots: number;
+  /** `agent_runs` rows presumed dead and marked `failed` before this pass (W7 B3). */
+  reaped: number;
+  /** `trades` rows stuck on `submitted` and settled against the chain (W7 H2). */
+  settled: number;
   results: GuardianResult[];
 }
 
@@ -129,6 +144,14 @@ export async function findGuardableAgents(limit = 100): Promise<{ holding: strin
  * and still pays what it owes.
  */
 export async function tickMarks(limit = 100, now: Date = new Date()): Promise<MarksTickResult> {
+  // The marks loop runs on the same five-minute clock as the tick loop and is the one
+  // that keeps running when the tick loop is wedged, so it reaps too.
+  const reaped = await reapStaleRuns(undefined, now);
+  // And trades left on `submitted` by the same frozen invocations. `submitted` lasts
+  // milliseconds in the happy case; two minutes later it means nobody is coming back to
+  // finish the row, and a book that says nothing happened when money may have moved is
+  // the worst state this system can be in. Never throws.
+  const settled = await sweepSubmittedTrades(now);
   const { holding, flat } = await findGuardableAgents(limit);
 
   const guarded = await inBatches(holding, (agentId) => runGuardian({ agentId, trigger: "marks", now }));
@@ -136,13 +159,14 @@ export async function tickMarks(limit = 100, now: Date = new Date()): Promise<Ma
 
   const flatSnapshots = await inBatches(flat, async (agentId) => {
     const portfolio = await getPortfolio(agentId);
-    await snapshotEquity(portfolio);
+    // `false` when a live balance read failed: a gap in the curve, not a zero (W7 H8).
+    const written = await snapshotEquity(portfolio);
     // A flat agent still gets the platform-fee sweep. It does not get a guardian pass
     // (there is nothing to guard), and without this a live agent that closed its last
     // position while owing fees would not be collected from until it opened another.
     // Never throws — see `settleFeesForAgent`.
     await settleFeesForAgent(agentId, now);
-    return true;
+    return written;
   });
 
   return {
@@ -150,6 +174,8 @@ export async function tickMarks(limit = 100, now: Date = new Date()): Promise<Ma
     guarded: results.length,
     exits: results.reduce((n, r) => n + r.exits.filter((e) => e.status === "filled").length, 0),
     snapshots: results.filter((r) => r.equityUsd !== null).length + flatSnapshots.filter(Boolean).length,
+    reaped,
+    settled,
     results,
   };
 }

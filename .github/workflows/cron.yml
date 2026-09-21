@@ -14,7 +14,11 @@ jobs:
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      # Always: the two loops are independent, and a marks pass that 500s or times out
+      # must not also stop every agent from thinking. The reverse ordering is deliberate
+      # (exits before new positions), not a dependency.
       - name: Run agents that are due
+        if: always()
         run: curl -fsS --max-time 300 -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/tick" | head -c 400
         env:
           APP_URL: ${{ secrets.APP_URL }}

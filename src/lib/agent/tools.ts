@@ -16,7 +16,7 @@ import { DATA_SOURCES, getDataSource, toDataSourceInfo } from "@/lib/data-source
 import { searchDataSources } from "@/lib/x402/discovery";
 import { X402BudgetError, type RunBudget, type X402Context } from "@/lib/x402/types";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
-import { applyFill } from "@/lib/trading/positions";
+import { applyFill, heldAmountToken, sellAmountToken } from "@/lib/trading/positions";
 import { getPriceUsd } from "@/lib/trading/prices";
 import { recentRangePct } from "@/lib/trading/range";
 import { checkQuoteSanity } from "@/lib/trading/sanity";
@@ -32,6 +32,7 @@ import {
   requiresApproval,
 } from "@/lib/trading/proposals";
 import { riskGuard, type OrderIntent } from "@/lib/trading/risk";
+import { executeTrade } from "@/lib/trading/settle";
 import { ensureQuoteToken, resolveToken } from "@/lib/trading/tokens";
 import {
   discoverCandidates,
@@ -546,6 +547,11 @@ export function buildTools(ctx: RunContext): ToolSet {
           });
         }
 
+        // W7 H1. A sell is sized from the **position**, not from a buy-side quote: the
+        // model asks in dollars, the book knows how many tokens that is, and the venue
+        // is told the token amount so a mark that has moved since cannot turn the order
+        // into an over-ask (or into permanent dust).
+        const heldPosition = portfolio.positions.find((p) => p.token.id === token.id) ?? null;
         const request: TradeRequest = {
           chain: parsed.chain,
           side: parsed.side,
@@ -554,6 +560,16 @@ export function buildTools(ctx: RunContext): ToolSet {
           symbol: token.symbol,
           decimals: token.decimals,
           amountUsd: parsed.amountUsd,
+          ...(parsed.side === "sell" && heldPosition
+            ? {
+                amountToken: sellAmountToken({
+                  heldToken: heldPosition.amountToken,
+                  positionValueUsd: heldPosition.valueUsd,
+                  requestedUsd: parsed.amountUsd,
+                  decimals: token.decimals,
+                }),
+              }
+            : {}),
           slippageBps: agent.config.risk.slippageBps,
         };
 
@@ -653,16 +669,23 @@ export function buildTools(ctx: RunContext): ToolSet {
           return fail(sanity.reason, { rejected: true, deviationBps: sanity.deviationBps });
         }
 
-        await db.update(trades).set({ status: "submitted" }).where(eq(trades.id, tradeId));
-        const fill = await executor.execute(quote);
-
-        if (fill.status !== "filled") {
-          await db
-            .update(trades)
-            .set({ status: "failed", error: fill.error ?? "execution failed" })
-            .where(eq(trades.id, tradeId));
-          return fail(`${token.symbol} ${parsed.side} failed: ${fill.error ?? "execution failed"}`);
+        // W7 H2. `executeTrade` persists the signed transaction's signature before
+        // `/execute`, contains any throw as a `failed` row rather than letting it escape
+        // and strand the trade on `submitted`, reconciles an unknown outcome against the
+        // chain, and retries a sell once when the venue says the wallet holds less than
+        // we asked for.
+        const settled = await executeTrade({
+          tradeId,
+          executor,
+          request,
+          quote,
+          refreshSellAmount: () => heldAmountToken(agent.id, token.id),
+        });
+        if (settled.status !== "filled") {
+          return fail(`${token.symbol} ${parsed.side} failed: ${settled.error}`);
         }
+        const fill = settled.fill;
+        quote = settled.quote;
 
         const filledAt = new Date();
         await db
@@ -718,6 +741,8 @@ export function buildTools(ctx: RunContext): ToolSet {
             // Both fees. PnL is net of what the trade actually cost, and the platform
             // fee is as real a cost as the venue's.
             feeUsd: fill.feeUsd + platformFeeUsd,
+            // A sell whose residual is under one atomic unit closes the position.
+            decimals: token.decimals,
           },
           // Entry bookkeeping for the exit engine: opens `openedAt`/`peakPriceUsd` on a
           // buy from flat and freezes the entry score + pooled liquidity from `score`.

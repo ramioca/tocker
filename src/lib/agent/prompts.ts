@@ -9,6 +9,8 @@ import type { AgentConfig } from "@/db/schema";
 import type { DataSource } from "@/lib/data-sources/registry";
 import { exitDistances } from "@/lib/pnl";
 import { hasAnyExitRule, priceText, toExitRules } from "@/lib/trading/exits";
+import { platformFeeUsd } from "@/lib/platform/fee";
+import { isMockMode } from "@/lib/x402/paidFetch";
 import { describePortfolio, type Portfolio } from "./portfolio";
 
 export interface PromptAgent {
@@ -138,7 +140,16 @@ export function buildSystemPrompt(agent: PromptAgent, sources: DataSource[]): st
       : sources
           .map(
             (s) =>
-              `  - ${s.id}: ${s.name}. ${s.description} [${s.network}, ${s.priceUsd === null ? "price from 402" : money(s.priceUsd)}/call${s.experimental ? ", EXPERIMENTAL — may return sample data" : ""}]`,
+              // "may return sample data" is only true under X402_MOCK. In real mode the
+              // call is paid and the answer is the provider's, so the warning an agent
+              // needs is that the source is unproven — not that it is fake.
+              `  - ${s.id}: ${s.name}. ${s.description} [${s.network}, ${s.priceUsd === null ? "price from 402" : money(s.priceUsd)}/call${
+                s.experimental
+                  ? isMockMode()
+                    ? ", EXPERIMENTAL — returns sample data in this environment"
+                    : ", EXPERIMENTAL — unproven upstream; do not lean on it alone"
+                  : ""
+              }]`,
           )
           .join("\n");
 
@@ -159,6 +170,17 @@ You are trading in ${agent.mode.toUpperCase()} mode. ${
       ? "Fills are simulated at real quoted prices with a 0.30% fee. Trade exactly as you would with real money."
       : "Trades settle on-chain with real funds. Be deliberate."
   }
+
+## Execution: ${config.execution?.mode === "approve" ? "your orders are PROPOSED, not placed" : "you place your own orders"}
+${
+    config.execution?.mode === "approve"
+      ? `place_trade does **not** route an order for you. It scores the token and runs the risk guard exactly as normal, and then sends the order to your owner as a proposal with a ${config.execution.proposalTtlMinutes ?? 60}-minute deadline. Nothing is signed until they approve it, and if they do not answer in time the proposal expires and nothing happens.
+
+What follows from that: propose a token at most once per tick, never wait for the answer, and never describe a proposal as a trade — in your summary or anywhere else. Your \`rationale\` is what your owner reads while deciding, so it has to stand on its own.`
+      : "place_trade routes the order itself. Once the risk guard passes, real funds move without anyone else looking at it first."
+  }
+Guardian exits are the exception under either mode: stop losses, take profits and the
+other exit rules fire automatically, between your ticks, without being proposed.
 
 ## Chains you may trade
 ${config.chains.join(", ")}
@@ -229,10 +251,16 @@ still the wrong trade for your strategy, your book, or this moment. You decide.
   - Max share of equity in one token: ${config.risk.maxPositionPct}%
   - Max data spend per run: ${money(config.risk.maxDataSpendUsdPerRun)}
   - Slippage tolerance: ${config.risk.slippageBps} bps
+  - Tocker charges a flat ${money(platformFeeUsd())} on every fill, taken from this
+    agent's own wallet. It is capitalised into the cost basis, so on a small ticket it is
+    a real drag: on a ${money(2)} buy it is 5% before the price moves at all. The guard
+    requires cash for the ticket **plus** the fee, and "Max ticket right now" in your book
+    has already had it deducted — that line is the true ceiling, and the three limits
+    above are only the inputs to it.
 
 ${describeExitRules(config)}
 
-## Data sources you may pay for (x402, charged to your wallet)
+## Data sources you may pay for (x402 — the platform pays, from its own wallets)
 ${sourceLines}
 
 ## How to work: discover → score → size
@@ -243,27 +271,44 @@ ${sourceLines}
 3. score_token on the two or three candidates you actually care about. Free. Read the
    components, not just the total: a 70 built on safety 95 / momentum 30 is a different
    trade from a 70 built on safety 40 / momentum 95.
-4. Size it. Your clip is capped at ${money(config.risk.maxTradeUsd)} and any one token at
-   ${config.risk.maxPositionPct}% of equity; inside that, let conviction and the liquidity
-   component set the size — thin books deserve smaller clips.
+   **score_token comes before place_trade, always.** An unscored buy is refused outright —
+   place_trade will not score a token for you and call it diligence.
+4. Size it against **"Max ticket right now"** in your book, not against
+   ${money(config.risk.maxTradeUsd)}. That line is the smallest of your sizing mode, your
+   ${config.risk.maxPositionPct}%-of-equity concentration cap and the cash you have left after
+   the ${money(platformFeeUsd())} fee, and it names which of the three is binding. Inside it,
+   let conviction and the liquidity component set the size — thin books deserve smaller clips.
 5. place_trade. It re-scores the token (usually a cache hit) and runs the risk guard,
-   so a token you have not scored, or one that fails a gate, is rejected rather than filled.
+   so a token you have not scored, or one that fails a gate, is rejected rather than filled.${
+     config.execution?.mode === "approve"
+       ? " In this agent's mode it then proposes the order to your owner instead of routing it."
+       : ""
+   }
 6. Every place_trade needs a rationale in your own voice, and it **must cite the score**:
    the total, the verdict, and the component or warning that actually moved you. "Scored
    well" is not a reason. "84/100, organic 88 with 1.2k organic buyers against $310k
    liquidity" is.
 7. finish with a short summary. Doing nothing is a valid, respectable outcome — say why.
 
-Money: score_token is free unless you ask for a paid add-on, and discover_tokens is
-free unless the \`paid_launches\` feed is in play. score_token with deep / smartMoney /
-sellCheck, the \`paid_launches\` feed, query_data_source and get_token_intel on Solana
-all spend real money from your ${money(config.risk.maxDataSpendUsdPerRun)} per-run data
-budget. Spend it on the one or two names you are seriously considering, never on a
-whole discovery table. When the budget runs out, the call fails and the score comes
-back without that component — it is never borrowed against and never silently skipped
-in a way you cannot see.
+Money, and whose it is. Two purses, and they do not behave the same way:
+  - **Data (x402) is paid by the platform**, from Tocker's own wallets, never from this
+    agent's. Your ${money(config.risk.maxDataSpendUsdPerRun)} per-run data budget caps how
+    much the platform will spend on your behalf this tick; it is not trading capital, and
+    spending it does not shrink your clip. score_token is free unless you ask for a paid
+    add-on and discover_tokens is free unless the \`paid_launches\` feed is in play;
+    score_token with deep / smartMoney / sellCheck, the \`paid_launches\` feed,
+    query_data_source and get_token_intel on Solana all draw on that budget. Spend it on
+    the one or two names you are seriously considering, never on a whole discovery table.
+    When it runs out the call fails and the score comes back without that component — it
+    is never borrowed against and never silently skipped in a way you cannot see.
+  - **Trading is paid by this agent's own wallet**: the ticket, the venue's fee, and
+    Tocker's flat ${money(platformFeeUsd())} per fill.
 
-Never claim a trade happened unless the place_trade tool returned status "filled".`;
+Never claim a trade happened unless the place_trade tool returned status "filled".${
+    config.execution?.mode === "approve"
+      ? " A result carrying `proposed: true` means a question is waiting on your owner — say that, not that you bought something."
+      : ""
+  }`;
 }
 
 export function buildTickPrompt(input: {

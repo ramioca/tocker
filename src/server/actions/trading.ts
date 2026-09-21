@@ -22,7 +22,7 @@ import { getAgentWallets, getPortfolio, toRiskPortfolio } from "@/lib/agent/port
 import { chargePlatformFee } from "@/lib/platform/fees";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
-import { applyFill } from "@/lib/trading/positions";
+import { applyFill, heldAmountToken, sellAmountToken } from "@/lib/trading/positions";
 import { getPriceUsd } from "@/lib/trading/prices";
 import { recentRangePct } from "@/lib/trading/range";
 import { checkQuoteSanity } from "@/lib/trading/sanity";
@@ -36,6 +36,7 @@ import {
   type ProposalDecision,
 } from "@/lib/trading/proposals";
 import { riskGuard, type OrderIntent } from "@/lib/trading/risk";
+import { executeTrade } from "@/lib/trading/settle";
 import { ensureQuoteToken, resolveToken } from "@/lib/trading/tokens";
 import type {
   ActionResult,
@@ -258,6 +259,9 @@ export async function placeManualTrade(
     mode: agent.mode,
     wallets: await getAgentWallets(agent.id),
   };
+  // W7 H1: the owner's own sell is sized from the position too — the venue is told how
+  // many tokens to send, not a dollar figure to convert at a price that has moved.
+  const heldPosition = portfolio.positions.find((p) => p.token.id === token.id) ?? null;
   const request: TradeRequest = {
     chain: input.chain,
     side: input.side,
@@ -266,6 +270,16 @@ export async function placeManualTrade(
     symbol: token.symbol,
     decimals: token.decimals,
     amountUsd,
+    ...(input.side === "sell" && heldPosition
+      ? {
+          amountToken: sellAmountToken({
+            heldToken: heldPosition.amountToken,
+            positionValueUsd: heldPosition.valueUsd,
+            requestedUsd: amountUsd,
+            decimals: token.decimals,
+          }),
+        }
+      : {}),
     slippageBps: config.risk.slippageBps,
   };
 
@@ -323,13 +337,21 @@ export async function placeManualTrade(
     return fail(sanity.reason);
   }
 
-  await db.update(trades).set({ status: "submitted" }).where(eq(trades.id, tradeId));
-  const fill = await executor.execute(quote);
-  if (fill.status !== "filled") {
-    const message = fill.error ?? "execution failed";
-    await db.update(trades).set({ status: "failed", error: message }).where(eq(trades.id, tradeId));
-    return fail(`${token.symbol} ${input.side} failed: ${message}`);
+  // W7 H2: the signature is persisted before `/execute`, a throw becomes a `failed` row
+  // instead of escaping this action, an unknown outcome is reconciled against the chain,
+  // and a sell the venue calls an over-ask is retried once against the real balance.
+  const settled = await executeTrade({
+    tradeId,
+    executor,
+    request,
+    quote,
+    refreshSellAmount: () => heldAmountToken(agent.id, token.id),
+  });
+  if (settled.status !== "filled") {
+    return fail(`${token.symbol} ${input.side} failed: ${settled.error}`);
   }
+  const fill = settled.fill;
+  quote = settled.quote;
 
   const filledAt = new Date();
   await db
@@ -363,6 +385,7 @@ export async function placeManualTrade(
       amountToken: fill.amountToken,
       amountUsd: fill.amountUsd,
       feeUsd: fill.feeUsd + platformFeeUsd,
+      decimals: token.decimals,
     },
     // A manual buy opens a position like any other, so the exit engine needs the same
     // entry facts frozen onto it — otherwise the stop loss has nothing to measure from.

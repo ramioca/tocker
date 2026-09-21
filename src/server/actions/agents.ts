@@ -256,9 +256,10 @@ export async function deleteAgent(id: string): Promise<ActionResult> {
 }
 
 /**
- * Kick off a manual run. The run executes server-side after this action
- * returns — `runAgent` (RUNTIME) creates the `agent_runs` row itself, so there
- * is no id to hand back synchronously; poll `getAgentRuns` for the new run.
+ * Kick off a manual run. `startRun` inserts the `agent_runs` row synchronously and
+ * schedules the tick itself with `after()`, so the id comes back immediately and the
+ * work still finishes after this action's response — poll
+ * `/api/agents/[id]/runs/[runId]` for the transcript.
  */
 export async function triggerRun(id: string): Promise<ActionResult<{ runId: string }>> {
   const session = await getSession();
@@ -270,17 +271,29 @@ export async function triggerRun(id: string): Promise<ActionResult<{ runId: stri
   if (agent.ownerId !== session.userId) return fail("You do not own this agent");
   if (agent.status === "draft") return fail("Activate the agent before running it");
 
+  // A run that stopped moving more than ten minutes ago was killed by the platform, not
+  // by us. Reap it before looking for a live one: returning `{ok: true}` pointing at a
+  // frozen row is how "Run one tick now" used to spin for five minutes and then say
+  // nothing, every time, forever.
+  const { reapStaleRuns, startRun, STALE_RUN_MS } = await import("@/lib/agent/run");
+  await reapStaleRuns(id);
+
   const [running] = await db
-    .select({ id: agentRuns.id })
+    .select({ id: agentRuns.id, startedAt: agentRuns.startedAt, createdAt: agentRuns.createdAt })
     .from(agentRuns)
     .where(and(eq(agentRuns.agentId, id), eq(agentRuns.status, "running")))
     .limit(1);
-  if (running) return { ok: true, data: { runId: running.id } };
+  if (running) {
+    const since = (running.startedAt ?? running.createdAt).getTime();
+    if (Date.now() - since < STALE_RUN_MS) return { ok: true, data: { runId: running.id } };
+    // Still `running` after the reap: another writer is racing us. Say so rather than
+    // hand back an id that will never finish.
+    return fail("A previous run for this agent is stuck. Try again in a minute.");
+  }
 
   try {
-    // startRun inserts the run row synchronously and continues in the background,
-    // so the UI gets an id to poll immediately.
-    const { startRun } = await import("@/lib/agent/run");
+    // startRun inserts the run row synchronously and hands the continuation to
+    // `after()`, so the UI gets an id to poll immediately and the tick still completes.
     const { runId } = await startRun({ agentId: id, trigger: "manual" });
     revalidatePath(`/agents/${agent.slug}`);
     return { ok: true, data: { runId } };

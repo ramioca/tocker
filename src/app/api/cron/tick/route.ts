@@ -22,7 +22,10 @@ import { countPausedDueAgents } from "@/lib/security/kill-switch";
 import { RATE_LIMITS, clientKey, limiter, rateLimitHeaders } from "@/lib/security/rate-limit";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Hobby caps at 60s; raise to 300 on Pro.
+export const maxDuration = 300;
+// 300s needs **Fluid compute** on the Vercel project (Settings → Functions). Without it
+// the platform caps the function at 60s and the build rejects this value. The old 60s
+// cap is what froze a run mid-tick and left its `agent_runs` row `running` forever.
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   // Rate limit before the secret check: an attacker guessing the secret must not
