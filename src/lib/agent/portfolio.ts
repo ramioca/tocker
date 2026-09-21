@@ -188,10 +188,21 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
     cashUsd = netLiveCashUsd(live.usd, await accruedFeesUsd(agentId));
   }
 
+  // Buys only. The daily limit caps how much *new* exposure an agent may take on; a
+  // stop-out, a take-profit or a manual sell reduces exposure and must never spend it —
+  // seen live: 17 fills in a day, ten of them exits, and the guard refusing every new
+  // proposal as "limit reached" while the book sat in cash.
   const todayRows = await db
     .select({ id: trades.id })
     .from(trades)
-    .where(and(eq(trades.agentId, agentId), eq(trades.status, "filled"), gte(trades.createdAt, startOfUtcDay())));
+    .where(
+      and(
+        eq(trades.agentId, agentId),
+        eq(trades.status, "filled"),
+        eq(trades.side, "buy"),
+        gte(trades.createdAt, startOfUtcDay()),
+      ),
+    );
 
   return {
     agentId,

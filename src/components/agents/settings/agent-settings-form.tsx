@@ -427,7 +427,7 @@ function SettingsForm({
             min={1}
             max={100}
             format={(value) => String(Math.round(value))}
-            meaning={`Up to ${formatUsd(config.risk.maxTradeUsd * config.risk.maxDailyTrades)} of turnover a day.`}
+            meaning={`Up to ${formatUsd(config.risk.maxTradeUsd * config.risk.maxDailyTrades)} of new positions a day; sells and exits never count.`}
             onChange={(maxDailyTrades) => patchRisk({ maxDailyTrades: Math.round(maxDailyTrades) })}
           />
           <RiskSlider

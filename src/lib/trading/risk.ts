@@ -229,7 +229,7 @@ export function riskGuard(
     if (portfolio.tradesToday >= risk.maxDailyTrades) {
       return {
         ok: false,
-        reason: `Daily trade limit reached (${portfolio.tradesToday}/${risk.maxDailyTrades}).`,
+        reason: `Daily buy limit reached (${portfolio.tradesToday}/${risk.maxDailyTrades} buys today; sells and exits never count). It resets at 00:00 UTC, or raise Max trades per day under Risk.`,
       };
     }
 

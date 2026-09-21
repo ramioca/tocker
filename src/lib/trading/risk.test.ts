@@ -116,7 +116,7 @@ describe("riskGuard", () => {
       scoreWith(),
     );
     expect(verdict).toMatchObject({ ok: false });
-    if (!verdict.ok) expect(verdict.reason).toContain("Daily trade limit");
+    if (!verdict.ok) expect(verdict.reason).toContain("Daily buy limit");
   });
 
   it("rejects a buy larger than available cash", () => {

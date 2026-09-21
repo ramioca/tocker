@@ -374,7 +374,7 @@ ${trades}
 
 ## Remaining budgets this run
   - Data spend: ${money(input.dataBudgetRemainingUsd)} of ${money(input.config.risk.maxDataSpendUsdPerRun)}
-  - Trades left today: ${Math.max(0, input.config.risk.maxDailyTrades - input.portfolio.tradesToday)}
+  - Buys left today: ${Math.max(0, input.config.risk.maxDailyTrades - input.portfolio.tradesToday)} (sells and exits never count)
   - Cash available: ${money(input.portfolio.cashUsd)}${
     input.config.execution?.mode === "approve"
       ? `\n  - Proposals you may open this tick: ${Math.min(MAX_PROPOSALS_PER_TICK, Math.max(0, input.config.risk.maxDailyTrades - input.portfolio.tradesToday))} (one per token, best first)`
