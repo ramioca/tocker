@@ -159,13 +159,14 @@ export async function tickMarks(limit = 100, now: Date = new Date()): Promise<Ma
 
   const flatSnapshots = await inBatches(flat, async (agentId) => {
     const portfolio = await getPortfolio(agentId);
-    await snapshotEquity(portfolio);
+    // `false` when a live balance read failed: a gap in the curve, not a zero (W7 H8).
+    const written = await snapshotEquity(portfolio);
     // A flat agent still gets the platform-fee sweep. It does not get a guardian pass
     // (there is nothing to guard), and without this a live agent that closed its last
     // position while owing fees would not be collected from until it opened another.
     // Never throws — see `settleFeesForAgent`.
     await settleFeesForAgent(agentId, now);
-    return true;
+    return written;
   });
 
   return {

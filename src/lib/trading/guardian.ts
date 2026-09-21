@@ -746,8 +746,10 @@ export async function runGuardian(input: RunGuardianInput): Promise<GuardianResu
         try {
           // Re-read after exits so the snapshot reflects them.
           const after = result.exits.some((e) => e.status === "filled") ? await getPortfolio(agent.id) : portfolio;
-          await snapshotEquity(after);
-          result.equityUsd = after.equityUsd;
+          // Null when the snapshot was skipped because a live balance read failed
+          // (W7 H8) — the pass still ran and still took its exits; it just has no
+          // trustworthy equity figure to report or to draw.
+          result.equityUsd = (await snapshotEquity(after)) ? after.equityUsd : null;
         } catch (err) {
           log(agent.id, `equity snapshot failed: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -779,10 +781,14 @@ export async function runGuardian(input: RunGuardianInput): Promise<GuardianResu
     }
 
     // Rescore only when a rule reads a score, and only from the free providers.
+    // In parallel (W7 M4): these are independent read-only provider calls, and a book of
+    // ten holdings was serialising ten round trips inside a cron pass that has a hard
+    // duration cap — the positions at the end of the list were the ones whose stop losses
+    // did not get evaluated. The exits themselves stay sequential; they share state.
     const scores = new Map<string, TokenScore>();
     if (needsRescore(rules)) {
-      for (const p of portfolio.positions) {
-        try {
+      const rescored = await Promise.allSettled(
+        portfolio.positions.map(async (p) => {
           const score = await getTokenScore({
             chain: p.token.chain,
             address: p.token.address,
@@ -791,10 +797,12 @@ export async function runGuardian(input: RunGuardianInput): Promise<GuardianResu
             symbolHint: p.token.symbol,
             // No `deep`, no x402 context: a guardian pass never spends money.
           });
-          scores.set(p.token.id, score);
-        } catch {
-          // No score means the collapse rules simply have no opinion this pass.
-        }
+          return [p.token.id, score] as const;
+        }),
+      );
+      for (const outcome of rescored) {
+        // A rejection means the collapse rules simply have no opinion on that holding.
+        if (outcome.status === "fulfilled") scores.set(outcome.value[0], outcome.value[1]);
       }
       result.rescored = scores.size;
     }
