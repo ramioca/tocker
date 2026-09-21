@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import {
   ChromaFlow,
   CursorRipples,
@@ -8,14 +9,16 @@ import {
   LinearGradient,
   Shader,
 } from "shaders/react";
+import { useTouchPointerBridge } from "./synthetic-pointer";
 
 /**
  * The cursor-trail shader behind the closing CTA, on its own chunk so only
- * devices that can draw it download it. A near-black gradient until the cursor
+ * devices with WebGPU download it. A near-black gradient until the cursor
  * moves, then a twinkling halftone dot trail (DotGrid masks a white
  * LinearGradient, its dots sized by ChromaFlow's cursor field) with chromatic
  * ripple fringes and film grain. Both invisible driver components must stay in
- * the tree; the id linkages are load-bearing.
+ * the tree; the id linkages are load-bearing. On touch devices a finger
+ * dragging over the section is the cursor (see synthetic-pointer.ts).
  */
 export function CursorTrailShader({
   onReady,
@@ -24,8 +27,11 @@ export function CursorTrailShader({
   onReady: () => void;
   onUnavailable: () => void;
 }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useTouchPointerBridge(wrapRef);
+
   return (
-    <div className="ctc-shaderwrap" aria-hidden>
+    <div ref={wrapRef} className="ctc-shaderwrap" aria-hidden>
       <Shader
         style={{ width: "100%", height: "100%", display: "block" }}
         onReady={onReady}

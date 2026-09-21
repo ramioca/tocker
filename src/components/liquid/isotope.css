@@ -103,26 +103,18 @@
     margin-top: -12vh;
   }
 }
-/* On a phone the copy sits under the mark, not at the bottom of a 100dvh void.
+/* On a phone the hero keeps its full height with the shader full-bleed and the
+   copy at the bottom, exactly like desktop; where the shader cannot run the
+   mark occupies the upper half instead of a void.
    (Two-class selectors: the base rules come later in this file.) */
 @media (max-width: 639px) {
-  .iso-hero {
-    min-height: 0;
-  }
-  .iso-hero .iso-static {
-    position: relative;
-    inset: auto;
-    height: clamp(280px, 40dvh, 400px);
-    margin-top: -8px;
-  }
   .iso-hero .iso-static-mark {
-    margin-top: 0;
-    align-self: center;
+    width: min(56vw, 230px);
+    margin-top: 76px;
   }
   .iso-hero .iso-copy {
-    margin-top: 0;
-    padding-top: 8px;
-    padding-bottom: 56px;
+    padding-top: 40px;
+    padding-bottom: 40px;
   }
 }
 
@@ -424,7 +416,8 @@
 .ctc-hint {
   display: none;
 }
-@media (min-width: 640px) {
+/* Only where there is a cursor to move. */
+@media (min-width: 640px) and (hover: hover) and (pointer: fine) {
   .ctc-hint {
     display: block;
   }

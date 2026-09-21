@@ -5,17 +5,18 @@ import { useCallback, useState, useSyncExternalStore } from "react";
 /**
  * Whether a Paper Shaders canvas should mount at all.
  *
- * The two shader pieces are WebGPU-only and every visual driver in them is
- * mouse-based, so on a phone (no fine pointer, and on iOS before 26 no WebGPU
- * either) the canvas paints nothing and the section reads as a black void.
- * The gate decides once after hydration — the server renders the static
- * fallback, which is also what stays when the renderer reports itself
- * unavailable or the visitor prefers reduced motion.
+ * The two shader pieces are WebGPU-only, so where the API does not exist
+ * (iOS before 26, Firefox, older Chrome) there is nothing to draw and the
+ * section keeps its static art. Everywhere else — phones included — the
+ * shader mounts; touch input is bridged into its mouse drivers by the shader
+ * components themselves (see synthetic-pointer.ts). The gate decides once
+ * after hydration, and honours `<Shader onUnavailable>` when the renderer
+ * gives up on a device that advertised WebGPU but cannot provide an adapter.
  *
- *   unknown  → SSR and the hydration pass: static fallback shown
- *   loading  → capable device, shader chunk mounting: fallback stays underneath
+ *   unknown  → SSR and the hydration pass: static art shown
+ *   loading  → WebGPU present, shader chunk mounting: art stays underneath
  *   on       → the renderer is ready and drawing
- *   off      → not capable, or the renderer gave up: fallback for good
+ *   off      → no WebGPU, reduced motion, data saver, or the renderer gave up
  */
 export type ShaderState = "unknown" | "loading" | "on" | "off";
 
@@ -27,7 +28,6 @@ function getClientSnapshot(): "loading" | "off" {
     const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
     const capable =
       "gpu" in navigator &&
-      !window.matchMedia("(pointer: coarse)").matches &&
       !window.matchMedia("(prefers-reduced-motion: reduce)").matches &&
       !nav.connection?.saveData;
     capability = capable ? "loading" : "off";

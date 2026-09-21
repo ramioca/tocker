@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   Circle,
   Exposure,
@@ -13,15 +13,20 @@ import {
   Text,
   TimeTrail,
 } from "shaders/react";
+import { dispatchPointer, isCoarsePointer, useTouchPointerBridge } from "./synthetic-pointer";
 
 /**
- * The Isotope hero's shader tree, on its own so the 700 KB WebGPU runtime is
- * only downloaded by devices that will draw it (see use-shader-gate.ts). The
+ * The Isotope hero's shader tree, on its own so the WebGPU runtime is only
+ * downloaded by devices that will draw it (see use-shader-gate.ts). The
  * headline lives inside the shader: two Text layers burn bright (Exposure), a
  * GradientMap-monochromed cluster of 14 jitter-scattered circles
  * (TimeTrail → Repeater → Circle) smears trails that chase the cursor, and a
  * mouse-following LensDistortion warps and fringes the type. Tree order is
  * load-bearing.
+ *
+ * Every driver in the tree is mouse-based, so the component feeds it input
+ * itself where there is none: a priming sweep on load (all devices), and on
+ * touch devices a slow idle drift that yields to the finger.
  */
 export function IsotopeShader({
   textVisible,
@@ -33,54 +38,86 @@ export function IsotopeShader({
   onUnavailable: () => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
+  const lastTouch = useRef(0);
+  const readyRef = useRef(false);
+  const onTouch = useCallback((at: number) => {
+    lastTouch.current = at;
+  }, []);
+  useTouchPointerBridge(wrapRef, onTouch);
+
+  const handleReady = useCallback(() => {
+    readyRef.current = true;
+    onReady();
+  }, [onReady]);
 
   // The shader's mouse-position / mouse drivers are uninitialized until the
   // first pointer event, so on load the hero renders pure black and the
   // headline is invisible. Prime the drivers with a short synthetic pointer
   // sweep to a resting anchor so the type reads immediately and the molten
-  // cluster settles as an accent; the real cursor takes over from there.
+  // cluster settles as an accent. On a mouse the real cursor takes over from
+  // there; on touch an idle drift keeps the cluster alive between touches.
+  //
+  // The sweep waits for `onReady`: events sent before the renderer has
+  // registered its uniforms are lost, which is how a cold load ends up black.
   useEffect(() => {
+    const coarse = isCoarsePointer();
     let raf = 0;
     let userMoved = false;
     // Only a real cursor (isTrusted) cancels the seed — our own synthetic
-    // pointermoves below have isTrusted === false and must not trip this.
+    // pointermoves below have isTrusted === false and must not trip this. A
+    // move before the renderer is ready does not count either: it was lost.
     const onUser = (e: PointerEvent) => {
-      if (e.isTrusted) userMoved = true;
+      if (e.isTrusted && e.pointerType === "mouse" && readyRef.current) userMoved = true;
     };
     window.addEventListener("pointermove", onUser);
 
-    const start = performance.now();
+    let start = -1;
     const DURATION = 900;
     // Resting anchor (fraction of canvas): parks the melt upper-right so the
     // big "sleep." stays legible. Traced from an off-canvas point for a trail.
     const from = { x: 0.5, y: 1.05 };
     const to = { x: 0.62, y: 0.4 };
     const ease = (t: number) => 1 - Math.pow(1 - t, 3);
+    // Idle drift (touch only): a slow figure around the anchor, paused for a
+    // couple of seconds after the user's last touch so it never fights them.
+    const IDLE_PAUSE = 2200;
+    const drift = (t: number) => ({
+      x: to.x + 0.11 * Math.sin(t * 0.00042),
+      y: to.y + 0.09 * Math.sin(t * 0.00029 + 1.3),
+    });
 
     const tick = (now: number) => {
       const canvas = wrapRef.current?.querySelector("canvas");
-      if (!canvas) {
-        if (now - start < 3000) raf = requestAnimationFrame(tick);
+      if (!readyRef.current || !canvas) {
+        // Not drawing yet — keep waiting; unmount cancels the loop.
+        raf = requestAnimationFrame(tick);
         return;
       }
+      if (start < 0) start = now;
       if (userMoved) return;
-      const p = Math.min((now - start) / DURATION, 1);
-      const e = ease(p);
       const r = canvas.getBoundingClientRect();
-      const cx = r.left + r.width * (from.x + (to.x - from.x) * e);
-      const cy = r.top + r.height * (from.y + (to.y - from.y) * e);
-      for (const type of ["pointermove", "mousemove"] as const) {
-        const ev = new PointerEvent(type, {
-          clientX: cx,
-          clientY: cy,
-          bubbles: true,
-          pointerId: 1,
-          pointerType: "mouse",
-        });
-        canvas.dispatchEvent(ev);
-        window.dispatchEvent(ev);
+      const p = Math.min((now - start) / DURATION, 1);
+      let fx: number;
+      let fy: number;
+      let done = false;
+      if (p < 1) {
+        const e = ease(p);
+        fx = from.x + (to.x - from.x) * e;
+        fy = from.y + (to.y - from.y) * e;
+      } else if (coarse) {
+        if (now - lastTouch.current < IDLE_PAUSE) {
+          raf = requestAnimationFrame(tick);
+          return;
+        }
+        ({ x: fx, y: fy } = drift(now - start));
+      } else {
+        // Mouse: land exactly on the anchor, then hand over to the real cursor.
+        fx = to.x;
+        fy = to.y;
+        done = true;
       }
-      if (p < 1) raf = requestAnimationFrame(tick);
+      dispatchPointer(canvas, r.left + r.width * fx, r.top + r.height * fy);
+      if (!done) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => {
@@ -94,7 +131,7 @@ export function IsotopeShader({
       <Shader
         toneMapping="aces"
         style={{ width: "100%", height: "100%", display: "block" }}
-        onReady={onReady}
+        onReady={handleReady}
         onUnavailable={onUnavailable}
       >
         <SolidColor color="#050029" />
