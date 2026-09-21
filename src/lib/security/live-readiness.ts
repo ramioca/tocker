@@ -20,6 +20,14 @@ import type { Chain } from "@/server/types";
  * *checked* and passed. "We could not tell" is `fail`, never `pass`. The one
  * concession is `warn`, for things that are worth seeing but cannot sensibly
  * block (a Privy wallet policy we can read but not safely write, say).
+ *
+ * W7 spends that concession twice more, both times on a balance we could not read rather
+ * than a balance we read and disliked. That distinction did not exist before — the
+ * platform balance reader answered zero for both — and it matters because an empty wallet
+ * and an unreachable Privy endpoint want opposite treatment: the first must block a live
+ * trade, and blocking one over the second costs the operator their test to save them a
+ * failed data call that would have named the wallet to top up anyway. See
+ * `checkPlatformDataWallets` and `readPlatformBalance`.
  */
 
 /**

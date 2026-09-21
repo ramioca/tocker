@@ -14,7 +14,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Db } from "@/db";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { newBudget, type AgentWalletRef, type X402Context } from "@/lib/x402/types";
-import { getDataSource } from "./registry";
+import { DATA_SOURCES, getDataSource } from "./registry";
 import { parseGate402Launches } from "./gate402";
 import { parseSolEnrichLaunches } from "./solenrich";
 import type { DataSource, NormalizedResult } from "./normalize";
@@ -51,6 +51,11 @@ beforeEach(async () => {
 });
 
 describe("registry entries", () => {
+  /**
+   * Price and network per source, as returned by a live 402 probe (no payment header)
+   * on 2026-09-21. These are not decorative: `priceUsd` is what mock mode bills against
+   * the run budget, and `network` is what picks the platform wallet that pays.
+   */
   const expected = [
     ["dripmetrics-summary", "eip155:8453", 0.25, false],
     ["dripmetrics-metric", "eip155:8453", 0.05, false],
@@ -59,6 +64,12 @@ describe("registry entries", () => {
     ["plexa-pretrade", "eip155:8453", 0.05, false],
     ["solenrich-launches", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", 0.012, true],
     ["otto-pulse", "eip155:8453", 0.001, true],
+    // W7: the vendor raised this from $0.005; the 402 says `amount: "6000"`.
+    ["x-search", "eip155:8453", 0.006, false],
+    ["deepnets-token-safety", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", 0.01, false],
+    // Experimental until one payment to it settles — its 402 advertises the wrong
+    // EIP-712 domain name and `paidFetch`'s correction is unproven against the facilitator.
+    ["sentimentalpha", "eip155:8453", 0.01, true],
   ] as const;
 
   it.each(expected)("registers %s on %s at $%s", (id, network, priceUsd, experimental) => {
@@ -66,6 +77,20 @@ describe("registry entries", () => {
     expect(s.network).toBe(network);
     expect(s.priceUsd).toBe(priceUsd);
     expect(s.experimental).toBe(experimental);
+  });
+
+  /**
+   * Three entries shipped a fixture against an endpoint that no longer answers, which is
+   * indistinguishable from data once `X402_MOCK` is off. Re-probed 2026-09-21:
+   * token-intel-sol 503, rugmunch 404, xquik-search 404.
+   */
+  it.each(["token-intel-sol", "rugmunch", "xquik-search"])("no longer registers %s", (id) => {
+    expect(getDataSource(id)).toBeUndefined();
+  });
+
+  /** Nothing may claim to return a fixture: that is only true under X402_MOCK=1. */
+  it("does not describe any source as returning a fixture", () => {
+    for (const s of DATA_SOURCES) expect(s.description.toLowerCase()).not.toContain("fixture");
   });
 });
 
