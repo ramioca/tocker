@@ -297,16 +297,22 @@ async function loadProposal(tradeId: string): Promise<ProposalRowJoin | null> {
   return row ?? null;
 }
 
-function alreadyDecided(status: TradeStatus): string {
+/**
+ * The row is already out of `proposed`. For a failed or guard-rejected one the stored
+ * reason is the whole point: a second tap (or the client's retry after a slow first
+ * attempt) must show why the venue said no, not just that it did.
+ */
+function alreadyDecided(status: TradeStatus, error?: string | null): string {
+  const reason = error?.trim() ? ` ${error.trim()}` : "";
   switch (status) {
     case "filled":
       return "This proposal was already approved and filled.";
     case "rejected":
-      return "This proposal was already rejected.";
+      return `This proposal was already rejected.${reason}`;
     case "expired":
       return "This proposal expired before it was decided.";
     case "failed":
-      return "This proposal was approved but the trade failed.";
+      return `This proposal was approved but the trade failed.${reason}`;
     default:
       return `This proposal is already ${status}.`;
   }
@@ -336,7 +342,7 @@ export async function decideProposal(input: {
     return { ok: false, error: "You do not own this agent." };
   }
   if (row.trade.status !== "proposed") {
-    return { ok: false, error: alreadyDecided(row.trade.status), status: row.trade.status };
+    return { ok: false, error: alreadyDecided(row.trade.status, row.trade.error), status: row.trade.status };
   }
 
   const proposedAt = row.trade.proposedAt ?? row.trade.createdAt;
@@ -350,7 +356,7 @@ export async function decideProposal(input: {
       .returning({ id: trades.id });
     if (rejected.length === 0) {
       const fresh = await loadProposal(input.tradeId);
-      return { ok: false, error: alreadyDecided(fresh?.trade.status ?? "rejected") };
+      return { ok: false, error: alreadyDecided(fresh?.trade.status ?? "rejected", fresh?.trade.error) };
     }
     return {
       ok: true,
@@ -387,7 +393,7 @@ export async function decideProposal(input: {
     .returning({ id: trades.id });
   if (claimed.length === 0) {
     const fresh = await loadProposal(input.tradeId);
-    return { ok: false, error: alreadyDecided(fresh?.trade.status ?? "filled"), status: fresh?.trade.status };
+    return { ok: false, error: alreadyDecided(fresh?.trade.status ?? "filled", fresh?.trade.error), status: fresh?.trade.status };
   }
 
   const config: AgentConfig = row.agent.config;

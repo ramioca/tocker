@@ -194,7 +194,7 @@ export function AddKeyInline({ onAdded }: { onAdded: (key: LlmKeyRow) => void })
       {provider === "anthropic" ? (
         <Input
           value={workspaceId}
-          placeholder="Workspace ID — only for an organization-level key (wrkspc_…)"
+          placeholder="Workspace ID (optional — detected automatically)"
           autoComplete="off"
           spellCheck={false}
           onChange={(event) => setWorkspaceId(event.target.value)}
@@ -204,7 +204,7 @@ export function AddKeyInline({ onAdded }: { onAdded: (key: LlmKeyRow) => void })
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         Encrypted at rest and decrypted only inside the run loop. It never reaches the browser again.
         {provider === "anthropic"
-          ? " A key created inside an Anthropic workspace needs no workspace ID; an organization-level key does."
+          ? " Organization-level Anthropic keys get their workspace detected automatically."
           : ""}
       </p>
       <button

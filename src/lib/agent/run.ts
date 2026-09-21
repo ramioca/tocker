@@ -22,6 +22,7 @@
  *     treated as dead — {@link reapStaleRuns} marks it `failed`, and `claimRun` ignores
  *     it when deciding whether the agent is busy.
  */
+import { discoverAnthropicWorkspace, isWorkspaceScopeError, needsWorkspaceHeader } from "./anthropic-workspace";
 import { nanoid } from "nanoid";
 import { after } from "next/server";
 import { generateText, hasToolCall, stepCountIs, type LanguageModel } from "ai";
@@ -72,7 +73,11 @@ export async function resolveModel(agent: { llmKeyId: string | null; config: Age
       const { createAnthropic } = await import("@ai-sdk/anthropic");
       // An organization-level key must name the workspace it acts in; a key created
       // inside a workspace must not (Anthropic rejects the header on those).
-      const headers = row.workspaceId ? { "anthropic-workspace-id": row.workspaceId } : undefined;
+      // Unknown yet? One free request tells whether the key needs the header, and the
+      // Admin API (which such a key may call) says which workspace; it is saved on the
+      // key so this happens once.
+      const workspaceId = row.workspaceId ?? (await ensureAnthropicWorkspace(row.id, apiKey));
+      const headers = workspaceId ? { "anthropic-workspace-id": workspaceId } : undefined;
       return createAnthropic({ apiKey, ...(headers ? { headers } : {}) })(modelId);
     }
     case "openai": {
@@ -92,9 +97,34 @@ export async function resolveModel(agent: { llmKeyId: string | null; config: Age
  */
 export function explainProviderError(message: string): string {
   if (/anthropic-workspace-id/i.test(message)) {
-    return `${message} — This Anthropic key is an organization-level key. Under Settings → LLM API keys, add it again with its Workspace ID (Anthropic Console → Workspaces), or create a key inside a workspace instead; then select the new key on the agent.`;
+    return `${message} — This Anthropic key is organization-level and Tocker could not find a workspace it may act in. Under Settings → LLM API keys, add it again with a Workspace ID (Anthropic Console → Settings → Workspaces), or create the key inside a workspace; then select it on the agent.`;
   }
   return message;
+}
+
+async function saveDiscoveredWorkspace(keyId: string, apiKey: string): Promise<string | null> {
+  const found = await discoverAnthropicWorkspace(apiKey);
+  if (found.kind !== "found") {
+    console.warn(`[run] anthropic workspace for key ${keyId}: ${found.kind}${found.kind === "unknown" ? ` — ${found.reason}` : ""}`);
+    return null;
+  }
+  const db = await getDb();
+  await db.update(llmKeys).set({ workspaceId: found.workspaceId }).where(eq(llmKeys.id, keyId));
+  return found.workspaceId;
+}
+
+/** Before the first call on a key with no saved workspace: does it need one, and which. */
+async function ensureAnthropicWorkspace(keyId: string, apiKey: string): Promise<string | null> {
+  if ((await needsWorkspaceHeader(apiKey)) !== true) return null;
+  return saveDiscoveredWorkspace(keyId, apiKey);
+}
+
+/** After a run failed for want of the header anyway: find it, save it, report it. */
+async function recoverAnthropicWorkspace(llmKeyId: string): Promise<string | null> {
+  const db = await getDb();
+  const [row] = await db.select().from(llmKeys).where(eq(llmKeys.id, llmKeyId)).limit(1);
+  if (!row || row.provider !== "anthropic" || row.workspaceId) return null;
+  return saveDiscoveredWorkspace(llmKeyId, decryptSecret(row.encryptedKey));
 }
 
 async function loadRecentTrades(agentId: string, limit = 10): Promise<RecentTrade[]> {
@@ -410,7 +440,17 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
 
     return { runId, status: "succeeded", summary: summary ?? undefined };
   } catch (err) {
-    const message = explainProviderError(err instanceof Error ? err.message : String(err));
+    const raw = err instanceof Error ? err.message : String(err);
+    // A multi-workspace key that still failed for want of the header: find the
+    // workspace now, save it on the key, and make the agent due again so the next tick
+    // simply works.
+    const recovered =
+      isWorkspaceScopeError(raw) && agentRow.llmKeyId
+        ? await recoverAnthropicWorkspace(agentRow.llmKeyId).catch(() => null)
+        : null;
+    const message = recovered
+      ? `${raw} — Tocker found this key's workspace (${recovered}) and saved it on the key. The agent runs again on the next tick.`
+      : explainProviderError(raw);
     await logger.log({ kind: "error", payload: { error: message } });
     await logger.flush();
 
@@ -427,7 +467,7 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
 
     await db
       .update(agents)
-      .set({ lastRunAt: finishedAt, nextRunAt: nextRunAt(config, finishedAt), updatedAt: finishedAt })
+      .set({ lastRunAt: finishedAt, nextRunAt: recovered ? finishedAt : nextRunAt(config, finishedAt), updatedAt: finishedAt })
       .where(eq(agents.id, input.agentId));
 
     await db.insert(notifications).values({

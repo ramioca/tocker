@@ -136,7 +136,7 @@ export function AddLlmKeyForm({
         <div>
           <FloatingLabelInput
             id={`${uid}-workspace`}
-            label="Workspace ID (organization-level keys only)"
+            label="Workspace ID (optional)"
             value={workspaceId}
             autoComplete="off"
             spellCheck={false}
@@ -144,9 +144,8 @@ export function AddLlmKeyForm({
             className="font-mono"
           />
           <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">
-            Only for a key made at the organization level: Anthropic needs the workspace it should act in
-            (Console → Workspaces, e.g. wrkspc_…). A key created inside a workspace already knows — leave
-            this empty.
+            Leave empty: Tocker detects the workspace for an organization-level key on its own. Set it only
+            to force a specific one (Console → Settings → Workspaces, wrkspc_…).
           </p>
         </div>
       ) : null}

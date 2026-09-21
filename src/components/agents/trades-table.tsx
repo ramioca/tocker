@@ -144,6 +144,11 @@ export function TradesTable({
                             </span>
                           ) : null}
                         </span>
+                        {failed && trade.error ? (
+                          <span className="mt-1 block max-w-[28rem] text-[11px] leading-snug text-muted-foreground">
+                            {trade.error}
+                          </span>
+                        ) : null}
                       </TableCell>
                       <TableCell>
                         <Link

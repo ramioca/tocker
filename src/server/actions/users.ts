@@ -1,4 +1,5 @@
 "use server";
+import { discoverAnthropicWorkspace, needsWorkspaceHeader } from "@/lib/agent/anthropic-workspace";
 import { revalidatePath } from "next/cache";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { agents, getDb, llmKeys, notifications, users } from "@/db";
@@ -75,6 +76,20 @@ export async function addLlmKey(input: {
   if (!key || key.length < 16) return fail("That does not look like an API key");
   if (!["anthropic", "openai", "openrouter"].includes(input.provider)) return fail("Unknown provider");
 
+  // An Anthropic key made at the organization level must name a workspace on every
+  // request. Nobody should have to know that: one free request says whether this key
+  // needs one, and the Admin API says which — the id is saved with the key.
+  let workspaceId = input.provider === "anthropic" && input.workspaceId?.trim() ? input.workspaceId.trim().slice(0, 80) : null;
+  if (input.provider === "anthropic" && !workspaceId && (await needsWorkspaceHeader(key)) === true) {
+    const found = await discoverAnthropicWorkspace(key);
+    if (found.kind === "found") workspaceId = found.workspaceId;
+    else if (found.kind === "unknown") {
+      return fail(
+        "This is an organization-level Anthropic key and Tocker could not find a workspace it may act in. Paste a Workspace ID (Anthropic Console → Settings → Workspaces), or create the key inside a workspace.",
+      );
+    }
+  }
+
   const db = await getDb();
   const id = newId("key");
   try {
@@ -85,7 +100,7 @@ export async function addLlmKey(input: {
       label: input.label?.trim() || null,
       encryptedKey: encryptSecret(key),
       last4: last4(key),
-      workspaceId: input.provider === "anthropic" && input.workspaceId?.trim() ? input.workspaceId.trim().slice(0, 80) : null,
+      workspaceId,
     });
   } catch (err) {
     // Message only: the raw error can echo bound query params near the encrypted
