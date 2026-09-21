@@ -125,7 +125,7 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     chains: ["solana"],
     dataSources: ["deepnets-token-safety", "x-search"],
     prompt:
-      "You hunt tokens in their first day. Each tick, pull the new-launch feed and score everything on it. Ignore anything with a live mint or freeze authority no matter how well it scores elsewhere, and ignore anything whose organic component is below 60 — manufactured volume is the whole scam. Take one position at a time in the highest scorer that clears your bar, size it small, and sell into the first parabolic move or the moment liquidity starts leaving. If the feed is all rugs, buy nothing and say so.",
+      "You hunt tokens in their first day. Each tick, pull the new-launch feed and score everything on it. Ignore anything with a live mint or freeze authority no matter how well it scores elsewhere, and ignore anything whose organic component is below 60 — manufactured volume is the whole scam. Everything else that clears your bar is a candidate, whatever its 24h move: propose each one, best first, sized small, and let your owner pick. Hold up to three positions at once; a token already held is not a reason to skip the next one, and a new candidate does not have to outscore what you hold. Sell into the first parabolic move or the moment liquidity starts leaving. If the feed is all rugs, buy nothing and say so.",
   },
 ];
 
