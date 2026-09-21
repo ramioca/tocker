@@ -7,6 +7,7 @@ import { CashLegend, CashTotal, ChainBreakdown } from "@/components/wallets/cash
 import { DepositSheet } from "@/components/wallets/deposit-sheet";
 import { useUserWallets } from "@/components/wallets/use-cash";
 import { useSession } from "@/hooks/use-session";
+import { preferredDepositChain } from "@/lib/wallets/funding";
 import { cn } from "@/lib/utils";
 import { WithdrawModal } from "./withdraw-modal";
 import type { Chain } from "@/server/types";
@@ -27,7 +28,9 @@ export function WalletChip() {
   const { ready, session } = useSession();
   const { data } = useUserWallets(Boolean(ready && session));
   const [depositOpen, setDepositOpen] = useState(false);
-  const [depositChain, setDepositChain] = useState<Chain>("base");
+  // Overwritten by `openDeposit` before the sheet is ever shown; Solana only decides
+  // the first render, and it is the better default of the two (see preferredDepositChain).
+  const [depositChain, setDepositChain] = useState<Chain>("solana");
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
 
@@ -78,7 +81,7 @@ export function WalletChip() {
           <div className="flex gap-2 pt-1">
             <button
               type="button"
-              onClick={() => openDeposit("base")}
+              onClick={() => openDeposit(preferredDepositChain(data?.cash))}
               className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Plus aria-hidden className="size-4" />

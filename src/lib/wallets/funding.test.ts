@@ -10,6 +10,7 @@ import {
   gasBlockerFor,
   nativePriceFor,
   planFunding,
+  preferredDepositChain,
   splitProportional,
   transfersFor,
   unifiedCash,
@@ -332,6 +333,28 @@ describe("defaultSplit", () => {
       { chain: "base", amount: 10 },
       { chain: "solana", amount: 90 },
     ]);
+  });
+});
+
+describe("preferredDepositChain", () => {
+  it("opens on the chain the user already keeps cash on", () => {
+    expect(preferredDepositChain(unifiedCash([wallet("solana", 10, 0), wallet("base", 0, 0)]))).toBe(
+      "solana",
+    );
+    expect(preferredDepositChain(unifiedCash([wallet("solana", 0, 0), wallet("base", 10, 0)]))).toBe(
+      "base",
+    );
+  });
+
+  it("defaults to Solana for a user with nothing anywhere — that is where agents trade", () => {
+    expect(preferredDepositChain(unifiedCash([]))).toBe("solana");
+    expect(preferredDepositChain(undefined)).toBe("solana");
+  });
+
+  it("breaks a tie towards Solana rather than Base", () => {
+    expect(preferredDepositChain(unifiedCash([wallet("solana", 5, 0), wallet("base", 5, 0)]))).toBe(
+      "solana",
+    );
   });
 });
 

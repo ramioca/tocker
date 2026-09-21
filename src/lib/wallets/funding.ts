@@ -171,6 +171,24 @@ export function cashOn(cash: UnifiedCash, chain: Chain): ChainCash {
   return cash.perChain.find((c) => c.chain === chain) ?? emptyChainCash(chain);
 }
 
+/**
+ * Which chain a Deposit button should open on.
+ *
+ * The chain the user already keeps cash on, because that is almost always where the
+ * next deposit is going too. Defaulting to Base regardless meant a Solana-only user
+ * opened the sheet on the wrong network every single time — and picking the wrong
+ * network on a deposit is the one mistake in this product that loses the money.
+ *
+ * Ties (including "nothing anywhere") go to Solana: it is the cheaper chain, and it is
+ * where the agent actually trades.
+ */
+export function preferredDepositChain(cash: UnifiedCash | undefined): Chain {
+  if (!cash) return "solana";
+  const base = cashOn(cash, "base").usdc;
+  const solana = cashOn(cash, "solana").usdc;
+  return base > solana ? "base" : "solana";
+}
+
 /** Price we will quote gas at: the user's own balance if we can see it, else a stale constant. */
 export function nativePriceFor(cash: UnifiedCash, chain: Chain): { price: number; derived: boolean } {
   const price = cashOn(cash, chain).nativePriceUsd;

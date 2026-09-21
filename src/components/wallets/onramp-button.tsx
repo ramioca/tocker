@@ -21,10 +21,16 @@ import type { Chain } from "@/server/types";
  * @experimental. Until then these two are the stable, typed path and they
  * already cover card and exchange funding on both chains.
  *
- * Whether any of it works at all depends on funding being switched on in the
- * Privy dashboard for this app. We cannot see that from here, so the button
- * always renders and a rejection is explained rather than swallowed: the
- * Receive panel below it is the path that never needs configuration.
+ * ## W7 H13 — this is off by default
+ *
+ * Funding is **not** enabled on this Privy app: the public app config reports
+ * `fiat_on_ramp_enabled: false` and carries no `funding_config` (probed 2026-09-21),
+ * and the bundle throws "Wallet funding is not enabled" before a modal ever opens. A
+ * primary button that always fails is worse than no button, so the onramp now hides
+ * behind `NEXT_PUBLIC_ONRAMP_ENABLED=1` and sits *below* Receive, which needs no
+ * configuration and is how the operator will actually deposit.
+ *
+ * Turn the flag on only after enabling funding in the Privy dashboard.
  */
 
 interface OnrampProps {
@@ -110,26 +116,20 @@ function PrivyOnramp({ chain, address, amountUsd, className }: OnrampProps) {
   );
 }
 
-function UnavailableOnramp({ chain, className }: OnrampProps) {
-  return (
-    <Shell
-      disabled
-      onClick={() => undefined}
-      className={cn("bg-muted text-muted-foreground hover:bg-muted", className)}
-    >
-      Card onramp needs Privy configured
-      <span className="sr-only">for {chainLabelFor(chain)}</span>
-    </Shell>
-  );
-}
+/**
+ * Card/exchange funding is on for this deployment.
+ *
+ * Two gates, both needed: Privy has to exist at all, and the operator has to have
+ * turned funding on in the Privy dashboard and said so here. There is no way to read
+ * the second from the browser, which is exactly why it is a flag.
+ */
+export const ONRAMP_AVAILABLE =
+  Boolean(PRIVY_APP_ID) && process.env.NEXT_PUBLIC_ONRAMP_ENABLED === "1";
 
-// Picked once at module load: the env var cannot change at runtime, and Privy's
+// Picked once at module load: the env vars cannot change at runtime, and Privy's
 // hooks throw outside a PrivyProvider, which is exactly what renders when this
 // app has no app id.
-const OnrampImpl = PRIVY_APP_ID ? PrivyOnramp : UnavailableOnramp;
-
 export function OnrampButton(props: OnrampProps) {
-  return <OnrampImpl {...props} />;
+  if (!ONRAMP_AVAILABLE) return null;
+  return <PrivyOnramp {...props} />;
 }
-
-export const ONRAMP_AVAILABLE = Boolean(PRIVY_APP_ID);

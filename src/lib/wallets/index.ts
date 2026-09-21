@@ -185,6 +185,70 @@ export async function getUserWalletBalances(userId: string): Promise<WalletBalan
   );
 }
 
+/**
+ * Record the user's Privy **embedded** wallets in `wallets` (kind `user_embedded`) and
+ * return what is on record afterwards.
+ *
+ * The list is read from Privy server-side, never from a request body, so nobody can
+ * register an address they do not control. Idempotent, and it never throws: a Privy
+ * outage means the funding UI does not learn about a wallet this second, not that the
+ * page 500s.
+ *
+ * Shared by `POST /api/me/sync` (called at login) and by `GET /api/me/wallets`, which
+ * calls it to self-heal when a chain is missing — Privy creates the two embedded
+ * wallets asynchronously after authentication, so the login-time sync can genuinely be
+ * too early (W7 M5).
+ */
+export async function syncUserEmbeddedWallets(
+  userId: string,
+): Promise<Array<{ id: string; chain: Chain; address: string }>> {
+  if (!isPrivyConfigured()) return [];
+  const db = await getDb();
+
+  const stored = async () => {
+    const rows = await db
+      .select({ id: wallets.id, chain: wallets.chain, address: wallets.address })
+      .from(wallets)
+      .where(and(eq(wallets.userId, userId), eq(wallets.kind, "user_embedded")));
+    return rows.map((r) => ({ id: r.id, chain: r.chain as Chain, address: r.address }));
+  };
+
+  try {
+    const user = await privy().users()._get(userId);
+    const found: Array<{ id: string; chain: Chain; address: string }> = [];
+    for (const account of user.linked_accounts ?? []) {
+      if (account.type !== "wallet") continue;
+      if (!("connector_type" in account) || account.connector_type !== "embedded") continue;
+      const chain: Chain | null =
+        account.chain_type === "solana" ? "solana" : account.chain_type === "ethereum" ? "base" : null;
+      if (!chain) continue;
+      const id = ("id" in account ? account.id : null) ?? `${chain}:${account.address}`;
+      found.push({ id, chain, address: account.address });
+    }
+
+    if (found.length > 0) {
+      await db
+        .insert(wallets)
+        .values(
+          found.map((w) => ({
+            id: w.id,
+            kind: "user_embedded" as const,
+            chain: w.chain,
+            address: w.address,
+            userId,
+            agentId: null,
+          })),
+        )
+        .onConflictDoNothing();
+    }
+    // An address can only belong to one user — report what the table actually holds.
+    return stored();
+  } catch (err) {
+    console.error("[wallets] embedded wallet sync failed:", err instanceof Error ? err.message : err);
+    return stored().catch(() => []);
+  }
+}
+
 export interface WithdrawInput {
   agentId: string;
   chain: Chain;

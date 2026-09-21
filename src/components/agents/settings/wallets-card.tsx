@@ -127,8 +127,8 @@ export function WalletsCard({
         ) : null}
       </div>
       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-        The agent signs its own trades and x402 payments from these. Funding them is what makes live
-        mode possible.
+        The agent signs its own trades from these, and USDC is all it needs to hold. Tocker&rsquo;s
+        own wallet pays for its data and keeps a little SOL here for network fees.
       </p>
 
       {isPending ? (

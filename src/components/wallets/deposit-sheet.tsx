@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, Fuel, RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/sheet";
 import { Address } from "@/components/common/address";
 import { ChainBadge } from "@/components/common/chain-badge";
-import { formatTokenAmount, formatUsd } from "@/components/common/format";
+import { formatUsd } from "@/components/common/format";
 import {
   NATIVE_SYMBOL,
   NETWORK_WORDING,
@@ -22,7 +22,7 @@ import {
 } from "@/lib/wallets/funding";
 import { cn } from "@/lib/utils";
 import { CashTotal, ChainBreakdown } from "./cash-summary";
-import { OnrampButton } from "./onramp-button";
+import { ONRAMP_AVAILABLE, OnrampButton } from "./onramp-button";
 import { QrCode } from "./qr-code";
 import { useSyncWallets } from "./use-cash";
 import type { Chain, WalletBalance } from "@/server/types";
@@ -144,15 +144,6 @@ export function DepositSheet({
             </span>
           </div>
 
-          <OnrampButton
-            chain={chain}
-            address={chainCash.address ?? ""}
-            amountUsd={25}
-          />
-          <p className="-mt-2 text-center text-[11px] text-muted-foreground">
-            Card or exchange, through Privy. Settles in a few minutes.
-          </p>
-
           <div className="glass space-y-3 rounded-2xl border border-border/60 p-4">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-medium">Receive</h3>
@@ -197,6 +188,35 @@ export function DepositSheet({
                   <span>{wording.warning}</span>
                 </p>
 
+                {/*
+                  The recipe, because "send USDC here" is not actually the hard part —
+                  picking the right network in an exchange's withdraw screen is, and
+                  picking the wrong one loses the money.
+                */}
+                <details className="group border-t border-border/50 pt-3">
+                  <summary className="cursor-pointer list-none text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    Sending from Coinbase, Kraken or Binance?
+                  </summary>
+                  <ol className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                    <li>
+                      <span className="text-foreground">1.</span> Open Withdraw (or Send) and pick{" "}
+                      <span className="text-foreground">USDC</span>. Not USDT, not USDbC.
+                    </li>
+                    <li>
+                      <span className="text-foreground">2.</span> Set the network to{" "}
+                      <span className="text-foreground">{wording.network}</span>. This is the step
+                      that loses money if you get it wrong.
+                    </li>
+                    <li>
+                      <span className="text-foreground">3.</span> Paste the address above and send a
+                      small test amount first if this is your first time.
+                    </li>
+                    <li>
+                      <span className="text-foreground">4.</span> It lands in a minute or two. Your
+                      cash here updates on its own.
+                    </li>
+                  </ol>
+                </details>
               </>
             ) : (
               <div className="space-y-3 text-sm text-muted-foreground">
@@ -216,6 +236,15 @@ export function DepositSheet({
               </div>
             )}
           </div>
+
+          {ONRAMP_AVAILABLE ? (
+            <div className="space-y-1.5">
+              <OnrampButton chain={chain} address={chainCash.address ?? ""} amountUsd={25} />
+              <p className="text-center text-[11px] text-muted-foreground">
+                Card or exchange, through Privy. Settles in a few minutes.
+              </p>
+            </div>
+          ) : null}
 
           <div className="space-y-2">
             <h3 className="text-xs font-medium text-muted-foreground">Where your cash sits</h3>
