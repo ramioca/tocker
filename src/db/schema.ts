@@ -478,7 +478,9 @@ export const notifications = pgTable(
   {
     id: text("id").primaryKey(),
     userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    // "trade" | "exit" | "proposal" | "run_failed" | "follow" | "like" | "comment".
+    // "trade" | "exit" | "proposal" | "run_failed" | "follow" | "like" | "comment",
+    // plus (W7) "exit_failed" (a stop/target fired and the sell did not fill) and
+    // "trade_unsettled" (a transaction confirmed on chain but its fill was never recorded).
     // "exit" is the owner-only notification the exit engine writes when a rule closed a
     // position (src/lib/trading/guardian.ts); followers get the usual "trade".
     // "proposal" goes to the owner and is actionable: its href is

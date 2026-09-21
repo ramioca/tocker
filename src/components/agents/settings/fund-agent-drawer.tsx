@@ -344,7 +344,7 @@ export function FundAgentDrawer({
         <SheetHeader>
           <SheetTitle className="text-sm">Fund {agentName}</SheetTitle>
           <SheetDescription className="text-xs">
-            The agent pays for its own data and trades from these wallets.
+            The agent trades from these wallets. Its data is paid for by Tocker&apos;s platform wallet and charged to its data budget.
           </SheetDescription>
         </SheetHeader>
         <div className="px-4 pb-6">

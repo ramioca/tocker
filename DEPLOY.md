@@ -72,7 +72,7 @@ Two of these are not optional for a deployment that holds money.
 
 | Where | What | Why |
 |---|---|---|
-| Authentication → Advanced → **Multi-factor authentication** | Enable at least one of **TOTP** or **Passkey** | Tocker refuses to switch an agent to live mode or process a withdrawal for an account with no enrolled second factor. With no method enabled at the app level there is nothing to enrol in, and *nobody on the deployment can ever go live*. `pnpm preflight` fails on this, and Settings → Security prints the exact path instead of showing a dead button. |
+| Authentication → Advanced → **Multi-factor authentication** | Optional: enable **TOTP** or **Passkey** if you want operators to be able to enrol one | A second factor is **optional** in Tocker: `secondFactorBlock` refuses nothing, and neither go-live nor a withdrawal requires enrolment. Enabling a method here only makes enrolment possible from Settings → Security, where it is recorded and shown. It still protects the Privy account itself. |
 | Wallet infrastructure → **Authorization keys** | Create one, paste it into `PRIVY_AUTHORIZATION_PRIVATE_KEY` | Agent server wallets are created with this key as their owner so the server can sign trades and x402 payments with no user session. `pnpm preflight` proves the whole chain before you fund anything. |
 | Settings → **Allowed origins** | Add the production domain | Logins fail with a CORS error otherwise. |
 
@@ -117,14 +117,13 @@ Readable at Settings → Security. `recordAudit` never throws: losing the record
 that happened is bad, but failing an operator's confirmed withdrawal because an audit insert
 failed is worse.
 
-**MFA gate** — checked server-side against Privy's API (`users()._get(...).mfa_methods`), so
-a browser that claims to be enrolled is still refused. It verifies *enrolment*, not a fresh
-challenge per action: Tocker's agent wallets are signed server-side with the app's
-authorization key, so there is no user-side signing ceremony to attach a step-up to. It
-stops an account protected by an email code alone from ever reaching live mode or a
-withdrawal; it does not stop someone already holding a live session on the operator's
-device. The hardening path is Privy's `mfa.enabled` / `mfa.disabled` webhooks plus a
-per-action step-up.
+**Second factor** — optional, and the code says so: `getMfaStatus` reads enrolment from
+Privy's API (`users()._get(...).mfa_methods`) and Settings → Security shows it, but
+`secondFactorBlock` always returns `null` — neither go-live nor a withdrawal is refused for a
+missing second factor (product decision, 2026-09-16). Enrolling one still protects the Privy
+account. If you ever want a real gate, the path is Privy's `mfa.enabled` / `mfa.disabled`
+webhooks plus a per-action step-up; there is no user-side signing ceremony to attach one to
+today, because agent wallets are signed server-side with the app's authorization key.
 
 **Kill switch** — a per-user `user_security.trading_paused` flag. `findDueAgents` excludes
 every agent whose owner has it on, so `/api/cron/tick` opens nothing new and reports how many
@@ -168,8 +167,7 @@ is opened — but the wizard can only *report* these; you have to do them.
    `fiat_on_ramp_enabled: false`, so the "Buy USDC" button fails instantly no matter what
    the UI offers. Enable it in the dashboard, or deposit by sending USDC to the Receive
    address instead.
-3. **MFA**: at least one method enabled (2a above), and enrolled on your own account.
-   Nothing goes live without it.
+3. **MFA**: optional. Enrol one in Settings → Security if you want it; nothing blocks on it.
 
 ### Money to have in place
 

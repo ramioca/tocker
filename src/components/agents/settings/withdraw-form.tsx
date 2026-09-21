@@ -112,8 +112,8 @@ export function WithdrawForm({
         <h2 className="text-sm font-medium">Withdraw</h2>
       </div>
       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-        Moves funds out of the agent&apos;s wallet. It can only trade with what is left. Requires a second factor
-        on your account and is recorded in your{" "}
+        Moves funds out of the agent&apos;s wallet. It can only trade with what is left. A second factor is optional and never required here; every withdrawal is recorded
+        in your{" "}
         <Link href="/settings/security" className="text-foreground underline underline-offset-2">
           audit log
         </Link>

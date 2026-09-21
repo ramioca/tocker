@@ -40,6 +40,7 @@ import {
   type Quote,
   type TradeExecutor,
   type TradeRequest,
+  type ExecuteHooks,
 } from "./executor";
 import { jupiterHeaders, USDC_SOLANA } from "./tokens";
 
@@ -245,6 +246,23 @@ export function sellBaseUnits(input: {
   return clampToHeld(requested, input.heldBaseUnits);
 }
 
+/**
+ * The transaction id of a signed Solana transaction: its first signature, base58.
+ * Returns null when slot 0 is still unsigned (all zeros — a gasless Ultra order whose
+ * fee payer signs later) or the bytes do not parse. Never throws.
+ */
+export async function signatureOfSignedTransaction(base64: string): Promise<string | null> {
+  try {
+    const [{ VersionedTransaction }, { base58 }] = await Promise.all([import("@solana/web3.js"), import("@scure/base")]);
+    const tx = VersionedTransaction.deserialize(Uint8Array.from(Buffer.from(base64, "base64")));
+    const first = tx.signatures[0];
+    if (!first || first.every((byte) => byte === 0)) return null;
+    return base58.encode(first);
+  } catch {
+    return null;
+  }
+}
+
 export class JupiterExecutor implements TradeExecutor {
   readonly venue = "jupiter" as const;
   readonly isPaper = false;
@@ -378,11 +396,11 @@ export class JupiterExecutor implements TradeExecutor {
     };
   }
 
-  async execute(quote: Quote): Promise<Fill> {
+  async execute(quote: Quote, hooks?: ExecuteHooks): Promise<Fill> {
     const order = quote.handle as UltraOrder;
-    const failed = (error: string): Fill => ({
+    const failed = (error: string, txHash: string | null = null): Fill => ({
       status: "failed",
-      txHash: null,
+      txHash,
       priceUsd: quote.priceUsd,
       amountToken: quote.amountToken,
       amountUsd: quote.amountUsd,
@@ -400,6 +418,20 @@ export class JupiterExecutor implements TradeExecutor {
         authorization_context: authorizationContext(),
       });
 
+    // W7 H2: the transaction id is the fee payer's signature (slot 0) and exists the
+    // moment the transaction is signed. Hand it to the settlement layer *before*
+    // `/execute`, so an invocation frozen after broadcast still leaves a record that can
+    // be checked against the chain. In Ultra's gasless mode Jupiter is the fee payer and
+    // fills slot 0 at `/execute` time; until then the slot is zeros and there is no id yet.
+    const signature = await signatureOfSignedTransaction(signed.signed_transaction);
+    if (signature !== null && hooks?.onSigned) {
+      try {
+        await hooks.onSigned(signature);
+      } catch (err) {
+        console.warn(`[jupiter] onSigned hook failed for ${signature}:`, err instanceof Error ? err.message : err);
+      }
+    }
+
     const res = await fetch(EXECUTE_URL, {
       method: "POST",
       headers: { "content-type": "application/json", ...jupiterHeaders() },
@@ -414,7 +446,7 @@ export class JupiterExecutor implements TradeExecutor {
       body = null;
     }
     if (!res.ok || !body || typeof body !== "object") {
-      return failed(`Jupiter execute failed (HTTP ${res.status}). ${raw.slice(0, 300)}`.trim());
+      return failed(`Jupiter execute failed (HTTP ${res.status}). ${raw.slice(0, 300)}`.trim(), signature);
     }
 
     const b = body as Record<string, unknown>;
@@ -422,7 +454,12 @@ export class JupiterExecutor implements TradeExecutor {
     if (status !== "Success") {
       const code = asNullableNumber(b.code);
       const detail = asString(b.error) ?? `status ${status ?? "unknown"}`;
-      return failed(`Jupiter execute: ${detail}${code === null || code === undefined ? "" : ` (code ${code})`}.`);
+      // Jupiter reports the signature of a transaction that landed but failed; fall back
+      // to the one we computed, so the settlement layer can ask the chain either way.
+      return failed(
+        `Jupiter execute: ${detail}${code === null || code === undefined ? "" : ` (code ${code})`}.`,
+        asString(b.signature) ?? signature,
+      );
     }
 
     const isBuy = quote.request.side === "buy";

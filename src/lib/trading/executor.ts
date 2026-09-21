@@ -59,11 +59,22 @@ export interface Fill {
   error?: string;
 }
 
+/**
+ * Callbacks an executor fires while executing (W7 H2). `onSigned` runs with the
+ * transaction signature the moment a venue holds a signed transaction and *before* it
+ * is broadcast — the settlement layer persists it on the trade row so an invocation
+ * frozen between signing and confirming can still be reconciled against the chain.
+ * Venues that never see a signature before broadcast (paper, Privy swaps) never call it.
+ */
+export interface ExecuteHooks {
+  onSigned?: (signature: string) => Promise<void> | void;
+}
+
 export interface TradeExecutor {
   readonly venue: Quote["venue"];
   readonly isPaper: boolean;
   quote(req: TradeRequest): Promise<Quote>;
-  execute(quote: Quote): Promise<Fill>;
+  execute(quote: Quote, hooks?: ExecuteHooks): Promise<Fill>;
 }
 
 export interface ExecutorAgent {

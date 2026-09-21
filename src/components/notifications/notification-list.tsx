@@ -28,6 +28,10 @@ const ICONS: Record<string, typeof Bell> = {
   mention: AtSign,
   milestone: Trophy,
   run_failed: TriangleAlert,
+  // W7: a stop/target fired and the sell did not fill; a transaction confirmed on chain
+  // but its fill was never recorded. Both are the owner's problem to look at.
+  exit_failed: TriangleAlert,
+  trade_unsettled: TriangleAlert,
   proposal: Gavel,
   data: CircleDollarSign,
   // Owner-only kinds. `fill` is one per executed trade and carries its receipt;

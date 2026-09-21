@@ -170,7 +170,7 @@ export async function executeTrade(input: ExecuteTradeInput): Promise<ExecuteTra
   const attempt = async (quote: Quote): Promise<ExecuteTradeResult> => {
     // Before `/execute`, not after: this is the only moment at which the signature
     // exists and the row is still writable by an invocation that has not died yet.
-    const signature = signatureFromHandle(quote.handle);
+    let signature = signatureFromHandle(quote.handle);
     await db
       .update(trades)
       .set({ status: "submitted", ...(signature === null ? {} : { txHash: signature }) })
@@ -178,7 +178,14 @@ export async function executeTrade(input: ExecuteTradeInput): Promise<ExecuteTra
 
     let fill: Fill;
     try {
-      fill = await input.executor.execute(quote);
+      fill = await input.executor.execute(quote, {
+        // The Solana executor signs inside `execute`, so this is the first moment the
+        // transaction id exists. Persist it before `/execute` broadcasts anything.
+        onSigned: async (sig) => {
+          signature = sig;
+          await db.update(trades).set({ txHash: sig }).where(eq(trades.id, input.tradeId));
+        },
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // A throw is the worst case: the transaction may or may not be on chain. If we
