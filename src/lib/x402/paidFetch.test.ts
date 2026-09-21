@@ -123,6 +123,17 @@ describe("selectPaymentOption", () => {
   it("still picks the cheapest payable option when the preferred network is not offered", () => {
     expect(selectPaymentOption([bsc, sol, base], "eip155:999")?.amountUsd).toBe(0.005);
   });
+  it("prefers an option on a chain the agent trades over the registry's preferred network (W7)", () => {
+    const base = { scheme: "exact", network: "eip155:8453", asset: "usdc", payTo: "0x1", amount: "10000", amountUsd: 0.01 };
+    const sol = { scheme: "exact", network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", asset: "usdc", payTo: "s", amount: "12000", amountUsd: 0.012 };
+    // Registry says Base, the agent trades Solana, the 402 offers both: pay on Solana.
+    expect(selectPaymentOption([base, sol], "eip155:8453", undefined, ["solana"])?.network).toBe(sol.network);
+    // The agent's chain is not offered: fall back to the registry's network.
+    expect(selectPaymentOption([base], "eip155:8453", undefined, ["solana"])?.network).toBe(base.network);
+    // No preference: the registry network wins as before.
+    expect(selectPaymentOption([base, sol], "eip155:8453")?.network).toBe(base.network);
+  });
+
 });
 
 describe("paidFetch in mock mode", () => {

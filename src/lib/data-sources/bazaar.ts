@@ -26,6 +26,8 @@ export const bazaar = defineSource({
     "Call any x402 resource discovered via search_data_sources. Price is read from the resource's own 402 response and charged against the run's data budget.",
   category: "other",
   network: "eip155:8453",
+  // Dynamic: whichever network the discovered resource prices on. Both platform wallets qualify.
+  networks: ["eip155:8453", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"],
   priceUsd: null,
   url: "https://x402.org/bazaar",
   experimental: true,

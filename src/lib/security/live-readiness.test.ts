@@ -193,12 +193,15 @@ describe("simulateFirstTrade", () => {
 describe("dataChainsFor", () => {
   it("returns Solana for a Solana-priced source", () => {
     expect(dataChainsFor(["deepnets-token-safety"])).toEqual(["solana"]);
-    expect(dataChainsFor(["solenrich-launches"])).toEqual(["solana"]);
+    // SolEnrich accepts Base too; for a Solana agent only the Solana wallet has to be funded.
+    expect(dataChainsFor(["solenrich-launches"], ["solana"])).toEqual(["solana"]);
+    expect(dataChainsFor(["solenrich-launches"])).toEqual(["base", "solana"]);
   });
 
   it("returns Base for a Base-priced source", () => {
     expect(dataChainsFor(["x-search"])).toEqual(["base"]);
-    expect(dataChainsFor(["cmc-quotes", "nansen-smart-money"])).toEqual(["base"]);
+    // Nansen accepts Solana too; a Base agent pays it on Base.
+    expect(dataChainsFor(["cmc-quotes", "nansen-smart-money"], ["base"])).toEqual(["base"]);
   });
 
   /** The default list: this is the pair the operator has to fund, and it is not just Base. */

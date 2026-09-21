@@ -12,6 +12,7 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { formatUsd } from "@/components/common/format";
 import { Field, RiskSlider, Toggle } from "@/components/agents/builder/field";
 import { UniverseControls } from "@/components/agents/builder/universe-controls";
+import { DataSourcePicker } from "@/components/agents/data-source-picker";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
 import { ExitRulesFields } from "@/components/agents/exit-rules";
 import { INTERVAL_PRESETS } from "@/components/agents/builder/types";
@@ -24,7 +25,7 @@ import { noteBudgetChangeAction } from "@/server/actions/security";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { cn } from "@/lib/utils";
 import type { AgentConfig } from "@/db/schema";
-import type { AgentDetail } from "@/server/types";
+import type { AgentDetail, DataSourceInfo } from "@/server/types";
 
 /** The four numbers that decide how much money can move. */
 function capsOf(config: AgentConfig) {
@@ -41,7 +42,16 @@ function capsOf(config: AgentConfig) {
  * cannot be built at all without one. The settings route is owner-gated, but
  * the type is the real contract — refuse rather than fabricate a config.
  */
-export function AgentSettingsForm({ agent, config }: { agent: AgentDetail; config?: AgentConfig | null }) {
+export function AgentSettingsForm({
+  agent,
+  config,
+  sources = [],
+}: {
+  agent: AgentDetail;
+  config?: AgentConfig | null;
+  /** The x402 catalogue, for the Data section. Server-fetched by the page. */
+  sources?: DataSourceInfo[];
+}) {
   const resolved = config ?? agent.config;
   if (!resolved) {
     return (
@@ -51,15 +61,17 @@ export function AgentSettingsForm({ agent, config }: { agent: AgentDetail; confi
       />
     );
   }
-  return <SettingsForm agent={agent} initialConfig={resolved} />;
+  return <SettingsForm agent={agent} initialConfig={resolved} sources={sources} />;
 }
 
 function SettingsForm({
   agent,
   initialConfig,
+  sources,
 }: {
   agent: AgentDetail;
   initialConfig: AgentConfig;
+  sources: DataSourceInfo[];
 }) {
   const router = useRouter();
   const [name, setName] = useState(agent.name);
@@ -211,6 +223,22 @@ function SettingsForm({
           onUniverse={(patch) =>
             setConfig((current) => ({ ...current, universe: { ...current.universe, ...patch } }))
           }
+        />
+      </section>
+
+      <section id="data" className="scroll-mt-20 space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
+        <div>
+          <h2 className="text-sm font-medium">Data it buys</h2>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+            Paid over x402 from Tocker&apos;s platform wallet on the chain it trades, charged to its data budget. Only
+            sources payable on this agent&apos;s chains are offered.
+          </p>
+        </div>
+        <DataSourcePicker
+          sources={sources}
+          chains={config.chains}
+          selected={config.dataSources}
+          onChange={(dataSources) => setConfig((current) => ({ ...current, dataSources }))}
         />
       </section>
 

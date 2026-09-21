@@ -103,6 +103,7 @@ export async function getTopDataSources(
     const info: DataSourceInfo = known ?? {
       id: r.sourceId,
       name: r.sourceId,
+      chains: [],
       description: "Used by agents on Tocker",
       category: "other",
       network: r.network ?? "",

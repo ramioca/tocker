@@ -72,6 +72,8 @@ export const plexaPretrade = defineSource({
     "Live sell simulation for a Base (or Polygon/Arbitrum) token at YOUR size: can the position actually be exited, and for how much. Returns avoid only when a trap is proven on-chain at this block — no exit venue, exit liquidity drained, or trading disabled — plus the exit pot in dollars, ownership, concentration and transfer restrictions. A proven 'avoid' raises the cannot_sell hard gate and makes the token unbuyable.",
   category: "onchain",
   network: BASE_NETWORK,
+  // Probed 2026-09-21: the 402 also offers Solana USDC, so a Solana-only agent can pay for it.
+  networks: [BASE_NETWORK, "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"],
   priceUsd: PRICE_USD,
   url: "https://api.getplexa.com/v1/pretrade/check",
   experimental: false,

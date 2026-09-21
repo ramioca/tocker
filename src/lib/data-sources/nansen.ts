@@ -125,6 +125,8 @@ export const nansenSmartMoney = defineSource({
     "Net USD flow into a token from Nansen-labelled smart-money wallets (funds and proven traders), per chain and per window. The tie-breaker signal: it does not tell you a token is safe, it tells you whether wallets with a record are on the same side as you.",
   category: "onchain",
   network: BASE_NETWORK,
+  // Probed 2026-09-21: the 402 also offers Solana USDC, so a Solana-only agent can pay for it.
+  networks: [BASE_NETWORK, "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"],
   priceUsd: PRICE_USD,
   url: ENDPOINTS.netflow,
   experimental: false,

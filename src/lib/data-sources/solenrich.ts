@@ -131,6 +131,8 @@ export const solEnrichLaunches = defineSource({
     "Solana new-launch radar and token due diligence, priced on Solana (the platform pays, not your agent). mode 'launches' returns freshly launched tokens already filtered by liquidity and a 0-1 risk score and ranked safest first; mode 'token' adds top-20 holders, HHI concentration, volatility and slippage for one mint; mode 'ask' routes a plain-English question. EXPERIMENTAL: the request shape is verified live but the response keys are undocumented, so fields may arrive named differently.",
   category: "onchain",
   network: CAIP2_SOLANA,
+  // Probed 2026-09-21: the 402 also offers Base USDC.
+  networks: [CAIP2_SOLANA, "eip155:8453"],
   priceUsd: MODES.launches.priceUsd,
   url: "https://api.solenrich.com/entrypoints/new-tokens/invoke",
   experimental: true,

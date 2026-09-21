@@ -4,6 +4,7 @@
  */
 import { searchX402Resources } from "@coinbase/cdp-sdk";
 import type { DataSourceInfo } from "@/server/types";
+import { chainForNetwork } from "./types";
 
 export interface DiscoveredResource {
   /** Stable id for the registry: `bazaar:<url>`. */
@@ -98,6 +99,10 @@ export function toDataSourceInfo(r: DiscoveredResource): DataSourceInfo {
     description: r.description,
     category: "other",
     network: r.network,
+    chains: (() => {
+      const chain = chainForNetwork(r.network);
+      return chain ? [chain] : [];
+    })(),
     priceUsd: r.priceUsd,
     url: r.resource,
     experimental: true,

@@ -32,7 +32,6 @@
  */
 import type { Chain } from "@/server/types";
 import type { DataSourceInfo } from "@/server/types";
-import { chainForNetwork } from "@/lib/x402/types";
 import { agentData } from "./agentdata";
 import { bazaar } from "./bazaar";
 import { cmcDexSearch, cmcQuotes } from "./coinmarketcap";
@@ -94,13 +93,35 @@ export function resolveDataSources(ids: readonly string[]): DataSource[] {
  * `bazaar` is deliberately no signal — the chain depends on whichever resource the model
  * picks at runtime, so its registry `network` is a default, not a fact.
  */
-export function dataChainsFor(ids: readonly string[]): Chain[] {
+export function dataChainsFor(ids: readonly string[], agentChains?: readonly Chain[]): Chain[] {
   const out: Chain[] = [];
   for (const source of resolveDataSources(ids)) {
-    const chain = chainForNetwork(source.network);
-    if (chain && !out.includes(chain)) out.push(chain);
+    if (source.id === "bazaar") continue;
+    // A source payable on several chains is paid on one the agent trades when it can
+    // be (`selectPaymentOption` prefers the same), so only that wallet has to be funded.
+    const onAgentChains = agentChains ? source.chains.filter((chain) => agentChains.includes(chain)) : [];
+    for (const chain of onAgentChains.length > 0 ? onAgentChains : source.chains) {
+      if (!out.includes(chain)) out.push(chain);
+    }
   }
   return out.sort();
+}
+
+/**
+ * Sources an agent could not pay for on any chain it trades (W7). `bazaar` is never
+ * listed: the chain depends on the resource picked at runtime.
+ */
+export function unpayableSources(ids: readonly string[], agentChains: readonly Chain[]): DataSourceInfo[] {
+  return resolveDataSources(ids)
+    .filter((source) => source.id !== "bazaar" && !source.chains.some((chain) => agentChains.includes(chain)))
+    .map(toDataSourceInfo);
+}
+
+/** Registry entries payable on at least one of these chains — what the picker offers. */
+export function sourcesPayableOn(chains: readonly Chain[]): DataSourceInfo[] {
+  return DATA_SOURCES.filter((source) => source.id === "bazaar" || source.chains.some((chain) => chains.includes(chain))).map(
+    toDataSourceInfo,
+  );
 }
 
 export function toDataSourceInfo(source: DataSource): DataSourceInfo {
@@ -110,6 +131,7 @@ export function toDataSourceInfo(source: DataSource): DataSourceInfo {
     description: source.description,
     category: source.category,
     network: source.network,
+    chains: source.chains,
     priceUsd: source.priceUsd,
     url: source.url,
     experimental: source.experimental,

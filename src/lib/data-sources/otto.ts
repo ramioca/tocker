@@ -105,6 +105,8 @@ export const ottoPulse = defineSource({
     "The cheapest read in your kit. mode 'pulse' ($0.001) is a crypto-Twitter pulse check — breaking news, trending narratives and sentiment shifts at a glance; mode 'recap' ($0.003) is a 4-6 sentence market recap with the ranked stories behind it. Market-wide context, not a per-token signal: use it to decide what kind of tick this is, not which token to buy. EXPERIMENTAL: the response envelope is verified but its inner keys are undocumented.",
   category: "news",
   network: BASE_NETWORK,
+  // Probed 2026-09-21: the 402 also offers Solana USDC, so a Solana-only agent can pay for it.
+  networks: [BASE_NETWORK, "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"],
   priceUsd: MODES.pulse.priceUsd,
   url: "https://x402.ottoai.services/twitter-summary",
   experimental: true,

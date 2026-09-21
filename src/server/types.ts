@@ -394,7 +394,13 @@ export interface DataSourceInfo {
   name: string;
   description: string;
   category: "sentiment" | "prices" | "onchain" | "news" | "social" | "other";
-  network: string; // CAIP-2
+  network: string; // CAIP-2, the network the registry prefers to pay on
+  /**
+   * Every chain the platform can pay this source on, derived from all the networks
+   * its 402 accepts (W7). The builder only offers a source when one of these is a
+   * chain the agent trades, so a Solana-only agent never depends on the Base wallet.
+   */
+  chains: Chain[];
   priceUsd: number | null;
   url: string;
   experimental: boolean;

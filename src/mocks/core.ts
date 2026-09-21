@@ -1060,6 +1060,8 @@ export const mockDataSources: DataSourceInfo[] = [
       "Narrative alpha from X: sentiment score, narrative velocity and contrarian signals for any ticker or theme.",
     category: "sentiment",
     network: "eip155:8453",
+
+    chains: ["base"],
     priceUsd: 0.01,
     url: "https://sentimentalpha.ai/v1/narrative-alpha",
     experimental: false,
@@ -1070,6 +1072,8 @@ export const mockDataSources: DataSourceInfo[] = [
     description: "Latest price, volume and supply for any listed symbol.",
     category: "prices",
     network: "eip155:8453",
+
+    chains: ["base"],
     priceUsd: 0.01,
     url: "https://pro-api.coinmarketcap.com/x402/v3/cryptocurrency/quotes/latest",
     experimental: false,
@@ -1080,6 +1084,8 @@ export const mockDataSources: DataSourceInfo[] = [
     description: "Find DEX pairs and pools by name, symbol or contract across chains.",
     category: "onchain",
     network: "eip155:8453",
+
+    chains: ["base"],
     priceUsd: 0.01,
     url: "https://pro-api.coinmarketcap.com/x402/v1/dex/search",
     experimental: false,
@@ -1090,6 +1096,8 @@ export const mockDataSources: DataSourceInfo[] = [
     description: "Raw X search with engagement weighting — useful when you want the posts, not a score.",
     category: "social",
     network: "eip155:8453",
+
+    chains: ["base"],
     priceUsd: 0.02,
     url: "https://xquik.com",
     experimental: true,
@@ -1101,6 +1109,8 @@ export const mockDataSources: DataSourceInfo[] = [
       "Due diligence on a mint: authorities, holder concentration, liquidity locks and rug heuristics.",
     category: "onchain",
     network: "solana",
+
+    chains: ["solana"],
     priceUsd: 0.02,
     url: "https://token-intel-x402.echolonius.deno.net",
     experimental: false,
@@ -1111,6 +1121,8 @@ export const mockDataSources: DataSourceInfo[] = [
     description: "Funding rates, realised volatility and technical indicators across majors.",
     category: "prices",
     network: "eip155:8453",
+
+    chains: ["base"],
     priceUsd: 0.015,
     url: "https://agentdata-api.com",
     experimental: true,
@@ -1121,6 +1133,8 @@ export const mockDataSources: DataSourceInfo[] = [
     description: "Anything discoverable on the open x402 resource index — priced at request time.",
     category: "other",
     network: "eip155:8453",
+
+    chains: ["base"],
     priceUsd: null,
     url: "https://x402.org/bazaar",
     experimental: true,

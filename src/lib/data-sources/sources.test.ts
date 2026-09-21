@@ -244,3 +244,34 @@ describe("otto-pulse", () => {
     expect(c.budget.spentUsd).toBeCloseTo(0.004, 9);
   });
 });
+
+describe("payable chains (W7)", () => {
+  it("derives every chain a source can be paid on from its probed networks", async () => {
+    const { getDataSource, dataChainsFor, unpayableSources, sourcesPayableOn } = await import("./registry");
+    expect(getDataSource("deepnets-token-safety")?.chains).toEqual(["solana"]);
+    expect(getDataSource("x-search")?.chains).toEqual(["base"]);
+    expect(getDataSource("cmc-quotes")?.chains).toEqual(["base"]);
+    for (const id of ["nansen-smart-money", "otto-pulse", "plexa-pretrade", "solenrich-launches", "bazaar"]) {
+      expect(getDataSource(id)?.chains, id).toEqual(["base", "solana"]);
+    }
+
+    // A Solana-only agent with a Base-and-Solana source needs only the Solana wallet.
+    expect(dataChainsFor(["plexa-pretrade", "deepnets-token-safety"], ["solana"])).toEqual(["solana"]);
+    // A Base-only source stays a Base wallet requirement whatever the agent trades.
+    expect(dataChainsFor(["x-search"], ["solana"])).toEqual(["base"]);
+    // Without agent chains, every chain a source could be paid on counts.
+    expect(dataChainsFor(["plexa-pretrade"])).toEqual(["base", "solana"]);
+
+    expect(unpayableSources(["x-search", "deepnets-token-safety", "bazaar"], ["solana"]).map((s) => s.id)).toEqual([
+      "x-search",
+    ]);
+    expect(unpayableSources(["x-search"], ["base", "solana"])).toEqual([]);
+
+    const solanaOnly = sourcesPayableOn(["solana"]).map((s) => s.id);
+    expect(solanaOnly).toContain("deepnets-token-safety");
+    expect(solanaOnly).toContain("plexa-pretrade");
+    expect(solanaOnly).toContain("bazaar");
+    expect(solanaOnly).not.toContain("x-search");
+    expect(solanaOnly).not.toContain("cmc-quotes");
+  });
+});

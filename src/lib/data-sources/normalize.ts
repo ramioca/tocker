@@ -4,7 +4,18 @@
  */
 import { z } from "zod";
 import type { DataSourceInfo } from "@/server/types";
-import type { X402Context } from "@/lib/x402/types";
+import { chainForNetwork, type X402Context } from "@/lib/x402/types";
+import type { Chain } from "@/server/types";
+
+/** The platform's chains among a list of CAIP-2 networks, deduplicated, stable order. */
+export function chainsForNetworks(networks: readonly string[]): Chain[] {
+  const out: Chain[] = [];
+  for (const network of networks) {
+    const chain = chainForNetwork(network);
+    if (chain && !out.includes(chain)) out.push(chain);
+  }
+  return out.sort();
+}
 
 export interface Signals {
   /** -1 (max bearish) .. 1 (max bullish). */
@@ -67,6 +78,12 @@ export function defineSource<S extends z.ZodType>(def: {
   description: string;
   category: DataSourceInfo["category"];
   network: string;
+  /**
+   * Every CAIP-2 network the source's 402 accepts, when it accepts more than
+   * `network`. Probed live; keep it in the file header's probe notes. Defaults to
+   * `[network]`.
+   */
+  networks?: string[];
   priceUsd: number | null;
   url: string;
   experimental: boolean;
@@ -79,6 +96,7 @@ export function defineSource<S extends z.ZodType>(def: {
     description: def.description,
     category: def.category,
     network: def.network,
+    chains: chainsForNetworks(def.networks ?? [def.network]),
     priceUsd: def.priceUsd,
     url: def.url,
     experimental: def.experimental,

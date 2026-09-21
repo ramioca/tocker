@@ -265,12 +265,22 @@ export function selectPaymentOption(
   options: ParsedPaymentOption[],
   preferredNetwork: string,
   payable: ReadonlyArray<{ chain: Chain }> = PAYABLE_CHAINS,
+  /**
+   * The chains the agent trades (W7). When the 402 offers one of them, pay there: an
+   * operator who funded the Solana platform wallet for a Solana agent should never see
+   * a source fail because the Base wallet is empty.
+   */
+  preferChains: ReadonlyArray<Chain> = [],
 ): ParsedPaymentOption | null {
   const affordable = options.filter((o) => {
     const chain = chainForNetwork(o.network);
     return chain !== null && payable.some((w) => w.chain === chain);
   });
-  const pool = affordable.length > 0 ? affordable : options;
+  const onAgentChains = affordable.filter((o) => {
+    const chain = chainForNetwork(o.network);
+    return chain !== null && preferChains.includes(chain);
+  });
+  const pool = onAgentChains.length > 0 ? onAgentChains : affordable.length > 0 ? affordable : options;
   if (pool.length === 0) return null;
   const exact = pool.filter((o) => o.network === preferredNetwork);
   const ranked = (exact.length > 0 ? exact : pool).slice().sort((a, b) => a.amountUsd - b.amountUsd);
@@ -550,7 +560,12 @@ export async function paidFetch(ctx: X402Context, req: PaidRequest): Promise<Pai
       }
 
       const options = await parsePaymentOptions(probe);
-      const option = selectPaymentOption(options, req.network);
+      const option = selectPaymentOption(
+        options,
+        req.network,
+        PAYABLE_CHAINS,
+        ctx.wallets.map((w) => w.chain),
+      );
       if (!option) throw new X402RequestError(`${req.sourceId} returned a 402 we cannot parse or pay`, 402);
 
       const remaining = ctx.budget.maxUsd - ctx.budget.spentUsd;

@@ -762,7 +762,7 @@ const PLATFORM_CARD = {
 
 /** One sentence naming which wallet pays for what, for the passing case. */
 function dataWalletSummary(config: AgentConfig): string {
-  const chains = dataChainsFor(config.dataSources);
+  const chains = dataChainsFor(config.dataSources, config.chains);
   if (chains.length === 0) return "";
   return chains.length === 1
     ? `They all price on ${chains[0]}, and the platform's ${chains[0]} wallet is funded to pay for them.`
@@ -780,7 +780,7 @@ function dataWalletSummary(config: AgentConfig): string {
  * green checklist over an empty Solana wallet meant the failure surfaced as a 402 in the
  * first run's log — exactly the class of surprise this screen exists to prevent.
  *
- * So the chains come from the registry, `dataChainsFor(config.dataSources)`, and every
+ * So the chains come from the registry, `dataChainsFor(config.dataSources, config.chains)`, and every
  * one of them is checked and named with its address.
  *
  * "Could not read it" is a `warn`, not a `fail`. That is the one place this screen bends
@@ -796,7 +796,7 @@ function dataWalletSummary(config: AgentConfig): string {
 async function checkPlatformDataWallets(
   config: AgentConfig,
 ): Promise<{ detail: string; state: "fail" | "warn" } | null> {
-  const chains = dataChainsFor(config.dataSources);
+  const chains = dataChainsFor(config.dataSources, config.chains);
   if (chains.length === 0) return null;
 
   try {

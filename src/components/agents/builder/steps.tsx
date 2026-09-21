@@ -13,6 +13,7 @@ import { formatTokenAmount, formatUsd } from "@/components/common/format";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { addLlmKeyAction } from "@/components/agents/agent-actions";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
+import { DataSourcePicker } from "@/components/agents/data-source-picker";
 import { ExitRulesFields } from "@/components/agents/exit-rules";
 import { CashTotal } from "@/components/wallets/cash-summary";
 import { DepositSheet } from "@/components/wallets/deposit-sheet";
@@ -412,18 +413,6 @@ export function DataStep({
     [sources, draft.config.dataSources],
   );
 
-  const toggle = (id: string) => {
-    const next = selected.has(id)
-      ? draft.config.dataSources.filter((value) => value !== id)
-      : [...draft.config.dataSources, id];
-    if (next.length > 12) {
-      toast.error("Twelve sources is the cap", {
-        description: "More than that and a single run costs more than most trades make.",
-      });
-      return;
-    }
-    updateConfig({ dataSources: next });
-  };
 
   return (
     <div className="space-y-5">
@@ -434,54 +423,12 @@ export function DataStep({
         />
       )}
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        {sources.map((source) => {
-          const active = selected.has(source.id);
-          return (
-            <button
-              key={source.id}
-              type="button"
-              role="checkbox"
-              aria-checked={active}
-              onClick={() => toggle(source.id)}
-              className={cn(
-                "flex flex-col gap-1.5 rounded-xl border p-3 text-left",
-                "transition-[border-color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.99]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                active
-                  ? "border-primary/50 bg-primary/8"
-                  : "border-border/70 bg-card/30 hover:border-border hover:bg-card/60",
-              )}
-            >
-              <span className="flex items-center gap-2">
-                <span className="text-sm font-medium">{source.name}</span>
-                {active ? (
-                  <Check aria-hidden className="size-3.5 text-primary" />
-                ) : null}
-                <span className="tnum ml-auto font-mono text-[11px] text-muted-foreground">
-                  {source.priceUsd === null ? "dynamic" : `$${source.priceUsd.toFixed(3)}`}
-                </span>
-              </span>
-              <span className="text-xs leading-relaxed text-muted-foreground">
-                {source.description}
-              </span>
-              <span className="flex flex-wrap items-center gap-1.5">
-                <span className="rounded border border-border bg-muted/40 px-1.5 py-px font-mono text-[10px] text-muted-foreground">
-                  {source.network}
-                </span>
-                <span className="rounded border border-border bg-muted/40 px-1.5 py-px text-[10px] capitalize text-muted-foreground">
-                  {source.category}
-                </span>
-                {source.experimental ? (
-                  <span className="rounded border border-border px-1.5 py-px text-[10px] uppercase text-muted-foreground">
-                    experimental
-                  </span>
-                ) : null}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+      <DataSourcePicker
+        sources={sources}
+        chains={draft.config.chains as Chain[]}
+        selected={draft.config.dataSources}
+        onChange={(dataSources) => updateConfig({ dataSources })}
+      />
 
       <div className="flex items-center justify-between rounded-xl border border-border/70 bg-card/40 px-3 py-2.5">
         <p className="text-sm">
