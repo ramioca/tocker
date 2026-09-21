@@ -1,7 +1,7 @@
 /**
- * Deterministic identicon-ish avatar derived from a seed string, so every agent and
- * user has a stable face before anyone uploads one. Pure CSS, server-renderable.
- * OWNER: ui-social — dedupe with UI-CORE's equivalent at merge if one exists.
+ * Deterministic identicon-ish avatar for people (profile header, profile form):
+ * initials on a hashed gradient. Agents use the marble blob in
+ * `@/components/common/agent-avatar` — do not use this one for agents.
  */
 import { cn } from "@/lib/utils";
 

@@ -13,7 +13,7 @@ import { ArrowUpRight, Trophy } from "lucide-react";
 import { EmptyState } from "@/components/common/empty-state";
 import type { LeaderboardRow, LeaderboardWindow } from "@/server/types";
 import { NumberTicker } from "@/components/spectrumui/number-ticker";
-import { AgentAvatar } from "@/components/social-common/agent-avatar";
+import { AgentAvatar } from "@/components/common/agent-avatar";
 import { ChainBadges, ModelChip } from "@/components/social-common/chain-badge";
 import { Sparkline } from "@/components/social-common/sparkline";
 import { pnlColor } from "@/components/social-common/pnl-text";
@@ -106,7 +106,7 @@ function Row({ row, window: win }: { row: LeaderboardRow; window: LeaderboardWin
         {row.rank}
       </span>
 
-      <AgentAvatar seed={agent.avatarSeed ?? agent.slug} label={agent.name} size="sm" />
+      <AgentAvatar seed={agent.avatarSeed ?? agent.slug} name={agent.name} size="sm" />
 
       <div className="min-w-0 flex-1 basis-40">
         <Link

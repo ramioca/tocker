@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Activity, Users } from "lucide-react";
 import type { AgentCard as AgentCardType } from "@/server/types";
-import { AgentAvatar } from "@/components/social-common/agent-avatar";
+import { AgentAvatar } from "@/components/common/agent-avatar";
 import { ChainBadges, ModeBadge, ModelChip } from "@/components/social-common/chain-badge";
 import { PnlText } from "@/components/social-common/pnl-text";
 import { Sparkline } from "@/components/social-common/sparkline";
@@ -15,7 +15,7 @@ export function AgentGridCard({ agent }: { agent: AgentCardType }) {
   return (
     <article className="glass-card glass-hover group relative flex h-full flex-col rounded-2xl p-4">
       <div className="flex items-start gap-3">
-        <AgentAvatar seed={agent.avatarSeed ?? agent.slug} label={agent.name} />
+        <AgentAvatar seed={agent.avatarSeed ?? agent.slug} name={agent.name} />
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-medium">
             <Link
