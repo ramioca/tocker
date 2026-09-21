@@ -22,6 +22,8 @@ import type { TradeReceiptData } from "@/db/schema";
 import type { AgentDetail, RunDetail } from "@/server/types";
 import { Checklist } from "./checklist";
 import { FirstFillPanel } from "./trade-receipt";
+import { ProposalPanel } from "./proposal-panel";
+import { deriveRunOutcome } from "./run-outcome";
 import { cn } from "@/lib/utils";
 
 /** How often to poll the run while it is in flight. */
@@ -164,8 +166,29 @@ export function LiveWizard({
     router.refresh();
   }, [agent.id, agent.name, router]);
 
-  const fill = run?.trades.find((t) => !t.isPaper) ?? run?.trades[0] ?? null;
+  /** Re-reads the run once, off the polling loop — used after a proposal is decided. */
+  const refreshRun = useCallback(async () => {
+    if (!run) return;
+    try {
+      const res = await fetch(`/api/agents/${agent.id}/runs/${run.id}`, { cache: "no-store" });
+      if (res.ok) setRun((await res.json()) as RunDetail);
+    } catch {
+      // The agent page is one tap away and shows the same thing; a failed refresh is
+      // not worth an error toast on top of the one the decision already produced.
+    }
+  }, [agent.id, run]);
+
+  // What actually happened this tick — a fill, a question, a refusal, or nothing. The
+  // derivation is pure and unit-tested (`./run-outcome.ts`): getting this wrong is how
+  // a proposal used to be rendered as a completed buy.
+  const outcome = deriveRunOutcome(run);
+  const fill = outcome.state === "filled" || outcome.state === "failed" || outcome.state === "pending"
+    ? outcome.trade
+    : null;
   const live = mode === "live";
+  /** Owner-only page, so `config` is never null here; the fallback is the product default. */
+  const executionMode = agent.config?.execution?.mode ?? "approve";
+  const proposalTtlMinutes = agent.config?.execution?.proposalTtlMinutes ?? 60;
 
   // The execution receipt is written by the executor as the fill settles, so it can
   // trail the trade row by a moment. Fetch it once the trade id appears and leave it
@@ -197,9 +220,9 @@ export function LiveWizard({
           <ModeBadge mode={mode} />
         </div>
         <p className="mt-1.5 max-w-prose text-sm leading-6 text-muted-foreground">
-          Nine things have to be true before {agent.name} signs a real transaction. Each one is checked on the
-          server, and each red one links to the screen that fixes it. Then you hold to go live, run a single tick,
-          and read the receipt.
+          {readiness.steps.length} things have to be true before {agent.name} signs a real transaction. Each one is
+          checked on the server, and each red one links to the screen that fixes it. Then you hold to go live, run
+          a single tick, and read {executionMode === "approve" ? "what it wants to do" : "the receipt"}.
         </p>
       </header>
 
@@ -254,17 +277,30 @@ export function LiveWizard({
 
         {live ? (
           <p className="text-sm leading-6 text-muted-foreground">
-            {agent.name} is live. Its risk caps — {formatUsd(readiness.caps.maxTradeUsd)} a trade,{" "}
-            {readiness.caps.maxDailyTrades} a day on {readiness.caps.chains.join(" and ")} — are enforced in code
-            before the executor, not by the prompt.
+            {agent.name} is live and is in{" "}
+            {executionMode === "approve" ? "ask-before-trading mode" : "trade-on-its-own mode"}:{" "}
+            {executionMode === "approve"
+              ? "every order it wants to place comes to you as a proposal first, and nothing is signed until you approve one."
+              : "it signs each order itself, without asking."}{" "}
+            Its risk caps — {formatUsd(readiness.caps.maxTradeUsd)} a trade, {readiness.caps.maxDailyTrades} a day
+            on {readiness.caps.chains.join(" and ")} — are enforced in code before the executor, not by the prompt.
           </p>
         ) : (
           <>
+            {/*
+              This sentence used to read "with no approval step" whatever the agent's
+              execution mode was, and the product default is `approve`. It is the last
+              thing an operator reads before spending real money, so it says what this
+              agent will actually do.
+            */}
             <p className="text-sm leading-6 text-muted-foreground">
-              Holding this switches {agent.name} to live mode. From then on it signs real transactions from its
-              own wallet with no approval step, up to {formatUsd(readiness.caps.maxTradeUsd)} per trade and{" "}
-              {readiness.caps.maxDailyTrades} per day on {readiness.caps.chains.join(" and ") || "no chain"}. The
-              server re-checks every item above before it agrees.
+              Holding this switches {agent.name} to live mode.{" "}
+              {executionMode === "approve"
+                ? "It is set to ask before it trades: each order becomes a proposal you approve, and the moment you approve one it signs a real transaction from its own wallet."
+                : "From then on it signs real transactions from its own wallet without asking you first."}{" "}
+              Up to {formatUsd(readiness.caps.maxTradeUsd)} per trade and {readiness.caps.maxDailyTrades} per day
+              on {readiness.caps.chains.join(" and ") || "no chain"}. The server re-checks every item above before
+              it agrees.
             </p>
             {readiness.ready ? (
               <HoldToConfirmButton
@@ -343,13 +379,54 @@ export function LiveWizard({
                 />
                 {run.summary ? <p className="text-sm leading-6">{run.summary}</p> : null}
                 {run.error ? <p className="font-mono text-xs text-destructive">{run.error}</p> : null}
-                {run.status !== "running" && run.status !== "queued" && run.trades.length === 0 ? (
+
+                {/*
+                  A refusal is not silence. `place_trade` returns `{ok: false, reason}`
+                  rather than throwing, so a trade the risk guard rejected leaves no
+                  `trades` row at all and the reason exists only in the transcript — which
+                  is why this screen used to call a rejected tick "a normal outcome".
+                */}
+                {outcome.refusals.map((refusal, i) => (
+                  <p
+                    key={`${refusal.reason}-${i}`}
+                    role="alert"
+                    className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm leading-6 text-muted-foreground"
+                  >
+                    <span className="font-medium text-destructive">
+                      {refusal.byGuard ? "Rejected by the risk guard" : "The trade could not be placed"}
+                      {refusal.symbol ? ` · ${refusal.symbol}` : ""}
+                    </span>
+                    <br />
+                    {refusal.reason}
+                  </p>
+                ))}
+
+                {outcome.finishedWithoutTrading ? (
                   <p className="text-sm text-muted-foreground">
                     The run finished without trading. That is a normal outcome — nothing cleared the bar this
                     tick. Run it again later, or loosen the universe rules if it never does.
                   </p>
                 ) : null}
               </div>
+            ) : null}
+
+            {outcome.state === "proposed" && outcome.trade ? (
+              <ProposalPanel
+                trade={outcome.trade}
+                agentName={agent.name}
+                ttlMinutes={proposalTtlMinutes}
+                onDecided={() => {
+                  void refreshRun();
+                  router.refresh();
+                }}
+              >
+                <Link
+                  href={`/agents/${agent.slug}`}
+                  className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+                >
+                  Decide it on the agent page instead
+                </Link>
+              </ProposalPanel>
             ) : null}
 
             {fill ? (
