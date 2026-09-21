@@ -7,7 +7,7 @@ import { ArrowUpRight, ChevronDown, Plus } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CashLegend, CashTotal, ChainBreakdown } from "@/components/wallets/cash-summary";
 import { DepositSheet } from "@/components/wallets/deposit-sheet";
-import { useUserWallets } from "@/components/wallets/use-cash";
+import { ME_WALLETS_QUERY_KEY, useUserWallets } from "@/components/wallets/use-cash";
 import { useSession } from "@/hooks/use-session";
 import { preferredDepositChain } from "@/lib/wallets/funding";
 import { cn } from "@/lib/utils";
