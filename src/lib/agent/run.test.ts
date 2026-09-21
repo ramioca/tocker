@@ -73,11 +73,16 @@ describe("runAgent with the scripted mock model", () => {
       .filter((s) => s.kind === "tool_call")
       .map((s) => s.toolName)
       .filter((name) => name !== "review_positions");
-    expect(calls).toEqual(["get_portfolio", "discover_tokens", "score_token", "place_trade", "finish"]);
+    // The core loop, then `finish` — once, or twice when the runtime sent the model back
+    // for the fresh candidates it did not score (the script scores one, so it is sent
+    // back once and finishes again, as a real model does).
+    expect(calls.slice(0, 4)).toEqual(["get_portfolio", "discover_tokens", "score_token", "place_trade"]);
+    expect(calls.slice(4).length).toBeGreaterThanOrEqual(1);
+    expect(calls.slice(4).every((name) => name === "finish")).toBe(true);
     const results = steps.filter(
       (s) => s.kind === "tool_result" && s.toolName !== "review_positions" && s.toolName !== "guardian",
     );
-    expect(results).toHaveLength(5);
+    expect(results).toHaveLength(calls.length);
     expect(results.every((s) => typeof s.durationMs === "number")).toBe(true);
     expect(steps.some((s) => s.kind === "message")).toBe(true);
     expect(steps.map((s) => s.seq)).toEqual(steps.map((_, i) => i));
