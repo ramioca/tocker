@@ -295,7 +295,14 @@ export async function goLiveAction(input: {
     return fail(`Not ready: ${failing.join(", ")}. Re-check the list.`);
   }
 
-  await db.update(agents).set({ mode: "live", updatedAt: new Date() }).where(eq(agents.id, agent.id));
+  // An agent created "real money only" has had its schedule parked since creation so it
+  // never took a paper tick; the switch is what starts the clock.
+  const interval = agent.config.schedule.intervalMinutes;
+  const startSchedule = agent.status === "active" && agent.nextRunAt === null && interval > 0;
+  await db
+    .update(agents)
+    .set({ mode: "live", updatedAt: new Date(), ...(startSchedule ? { nextRunAt: new Date() } : {}) })
+    .where(eq(agents.id, agent.id));
 
   await recordAudit({
     userId: session.userId,

@@ -23,6 +23,12 @@ export interface CreateAgentInput {
   paperStartingUsd?: number;
   /** Skip the draft step: go straight to `active` with a run scheduled now. */
   activate?: boolean;
+  /**
+   * Active, but with no run scheduled until the agent goes live (W7). A funded agent
+   * on its way to the live checklist must not take paper ticks in the meantime;
+   * `goLiveAction` starts the schedule when the switch is thrown.
+   */
+  holdSchedule?: boolean;
 }
 
 function fail(error: string): { ok: false; error: string } {
@@ -90,7 +96,7 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
       llmKeyId: input.llmKeyId,
       config,
       paperStartingUsd: paperStartingUsd.toFixed(2),
-      nextRunAt: activate ? new Date() : null,
+      nextRunAt: activate && input.holdSchedule !== true ? new Date() : null,
     });
 
     await createAgentWallets({ agentId: id, userId: session.userId, name, chains: config.chains });

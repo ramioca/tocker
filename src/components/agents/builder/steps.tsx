@@ -665,6 +665,15 @@ export function ScheduleStep({ draft, update, updateConfig, hideHeading }: StepP
         </div>
       </Field>
 
+      {draft.funding.mode === "fund" ? (
+        <div className="rounded-xl border border-border/70 bg-card/30 p-3">
+          <p className="text-sm font-medium">Real money only</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            No paper balance. This agent trades the {formatUsd(draft.funding.amountUsd)} USDC you fund it with, and
+            it takes no paper ticks in the meantime — its schedule starts the moment you switch it live.
+          </p>
+        </div>
+      ) : (
       <Field label="Paper starting balance" hint="Fake money, real prices, real fills at real quotes.">
         <div className="flex flex-wrap gap-2">
           {PAPER_BALANCES.map((amount) => {
@@ -690,6 +699,7 @@ export function ScheduleStep({ draft, update, updateConfig, hideHeading }: StepP
           })}
         </div>
       </Field>
+      )}
 
       <Field
         label="Execution"
@@ -705,11 +715,14 @@ export function ScheduleStep({ draft, update, updateConfig, hideHeading }: StepP
       <div className="rounded-xl border border-border/70 bg-card/30 p-3">
         <p className="flex items-center gap-2 text-sm font-medium">
           Mode
-          <ModeBadge mode="paper" />
+          <ModeBadge mode={draft.funding.mode === "fund" && draft.goLive ? "live" : "paper"} />
+          {draft.funding.mode === "fund" && draft.goLive ? (
+            <span className="text-xs font-normal text-muted-foreground">after the checklist</span>
+          ) : null}
         </p>
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
           {draft.funding.mode === "fund" && draft.goLive
-            ? "It is created on paper and funded in the same step; you then land on the live checklist, where a hold-to-confirm switches it to real money. No paper phase unless you want one."
+            ? "Real money only. It is funded on create and you land straight on the live checklist, where a hold-to-confirm switches it on. It never trades paper: nothing runs until that switch."
             : "It starts on paper. Going live is a checklist plus a hold-to-confirm on its settings page — fund it there whenever you are ready, or turn on \"Go live after creating\" under Funding to skip straight to it."}
         </p>
       </div>

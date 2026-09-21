@@ -308,8 +308,12 @@ export function AgentBuilder({
       avatarSeed: draft.avatarSeed,
       isPublic: draft.isPublic,
       llmKeyId: draft.llmKeyId,
-      paperStartingUsd: draft.paperStartingUsd,
+      // A funded agent has no paper book worth pretending about: its paper balance is
+      // the money it is actually given, and when it is headed for the live checklist its
+      // schedule stays parked until the switch — no paper ticks in between.
+      paperStartingUsd: draft.funding.mode === "fund" ? draft.funding.amountUsd : draft.paperStartingUsd,
       activate: draft.activate,
+      holdSchedule: draft.funding.mode === "fund" && draft.goLive,
       config: draft.config,
     });
 
@@ -343,7 +347,7 @@ export function AgentBuilder({
           : `${transfersFor(fundingPlan!).map(transferLabel).join(", ")} on the way. Balances update once they confirm.`,
       });
     } else {
-      toast.success(`${draft.name.trim()} is live on paper`, {
+      toast.success(draft.funding.mode === "fund" ? `${draft.name.trim()} is created` : `${draft.name.trim()} is live on paper`, {
         description: draft.activate
           ? "It will take its first tick on schedule. You can also run it now from its page."
           : "It is paused. Activate it from settings when you are ready.",
@@ -459,7 +463,11 @@ export function AgentBuilder({
 
           <RuleCard
             title="Schedule & mode"
-            summary={`${intervalLabel(interval)} · ${formatUsd(draft.paperStartingUsd)} paper balance · ${draft.activate ? "starts active" : "starts paused"}`}
+            summary={
+              draft.funding.mode === "fund"
+                ? `${intervalLabel(interval)} · real money only · ${draft.goLive ? "live after the checklist" : "paper until you go live"}`
+                : `${intervalLabel(interval)} · ${formatUsd(draft.paperStartingUsd)} paper balance · ${draft.activate ? "starts active" : "starts paused"}`
+            }
             open={open.has("schedule")}
             onToggle={() => toggle("schedule")}
             hasError={attempted && RULE_ERROR_KEYS.schedule.some((key) => errors[key])}
