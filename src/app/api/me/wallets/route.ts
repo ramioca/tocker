@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getUserWalletBalances } from "@/lib/wallets";
-import { unifiedCash } from "@/lib/wallets/funding";
+import { getUserWalletBalances, syncUserEmbeddedWallets } from "@/lib/wallets";
+import { CHAINS, unifiedCash } from "@/lib/wallets/funding";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +19,19 @@ export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
 
-  const wallets = await getUserWalletBalances(session.userId);
-  const cash = unifiedCash(wallets);
+  let wallets = await getUserWalletBalances(session.userId);
 
+  // Self-heal (W7 M5). Privy creates the two embedded wallets *after* authentication
+  // resolves, so a `/api/me/sync` that ran a moment too early recorded one of them, or
+  // neither — and nothing ever asked again. Rather than leave the user staring at a
+  // deposit sheet with no Solana address, re-read the wallet list from Privy here, once,
+  // whenever a chain is missing. `syncUserEmbeddedWallets` is idempotent and never
+  // throws, so the worst case is the same answer we already had.
+  if (wallets.length < CHAINS.length) {
+    const recorded = await syncUserEmbeddedWallets(session.userId);
+    if (recorded.length > wallets.length) wallets = await getUserWalletBalances(session.userId);
+  }
+
+  const cash = unifiedCash(wallets);
   return NextResponse.json({ wallets, cash, cashUsd: cash.totalUsd });
 }

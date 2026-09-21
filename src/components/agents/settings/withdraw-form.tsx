@@ -8,6 +8,8 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
 import { truncateAddress } from "@/components/common/format";
+import { useUserWallets } from "@/components/wallets/use-cash";
+import { useSession } from "@/hooks/use-session";
 import { secureWithdrawAction } from "@/server/actions/security";
 import { isValidAddressForChain, addressHintForChain } from "@/lib/wallet-address";
 import { cn } from "@/lib/utils";
@@ -30,12 +32,21 @@ export function WithdrawForm({
   balances?: WalletBalance[];
 }) {
   const router = useRouter();
+  const { ready, session } = useSession();
+  // Already warm on this page — the wallet chip in the top bar uses the same query key.
+  const { data: mine } = useUserWallets(Boolean(ready && session));
   const [chain, setChain] = useState<Chain>(agent.chains[0] ?? "base");
   const [asset, setAsset] = useState<"usdc" | "native">("usdc");
   const [amount, setAmount] = useState("");
   const [toAddress, setToAddress] = useState("");
   const [pending, setPending] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+
+  /** The user's own embedded wallet on this chain — where a withdrawal normally goes. */
+  const myWallet = useMemo(
+    () => (mine?.wallets ?? []).find((wallet) => wallet.chain === chain && wallet.address),
+    [mine, chain],
+  );
 
   const assetLabel = asset === "usdc" ? "USDC" : chain === "solana" ? "SOL" : "ETH";
   const available = useMemo(() => assetAmount(balances, chain, asset), [balances, chain, asset]);
@@ -72,7 +83,22 @@ export function WithdrawForm({
       toast.error("Withdrawal failed", { description: result.error });
       return;
     }
-    toast.success("Withdrawal sent", { description: truncateAddress(result.data.txHash, 8, 6) });
+
+    // W7 H12: `txHash` is null until a step broadcasts, and `pending` is not `sent`.
+    // The action id used to be printed here as if it were a signature — it is not one,
+    // and no explorer will find it.
+    const { txHash, status } = result.data;
+    if (status === "succeeded") {
+      toast.success("Withdrawal confirmed", {
+        description: txHash ? truncateAddress(txHash, 8, 6) : "It landed on chain.",
+      });
+    } else {
+      toast.message("Withdrawal submitted", {
+        description: txHash
+          ? `${truncateAddress(txHash, 8, 6)} — waiting for it to confirm.`
+          : "Privy has it and is broadcasting. Balances update once it confirms.",
+      });
+    }
     setAmount("");
     setToAddress("");
     setReviewing(false);
@@ -206,9 +232,20 @@ export function WithdrawForm({
           </div>
 
           <div>
-            <label htmlFor="withdraw-to" className="mb-1 block text-xs text-muted-foreground">
-              Destination address
-            </label>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label htmlFor="withdraw-to" className="block text-xs text-muted-foreground">
+                Destination address
+              </label>
+              {myWallet ? (
+                <button
+                  type="button"
+                  onClick={() => setToAddress(myWallet.address ?? "")}
+                  className="rounded text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  To my wallet · {truncateAddress(myWallet.address ?? "", 4, 4)}
+                </button>
+              ) : null}
+            </div>
             <Input
               id="withdraw-to"
               value={toAddress}

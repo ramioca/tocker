@@ -19,6 +19,13 @@ import {
 } from "@solana/web3.js";
 
 export const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+/**
+ * Token-2022. A growing share of newly minted Solana tokens use it, and its associated
+ * token accounts are derived from *this* program id — deriving them from the legacy one
+ * gives an address that simply does not exist, which is why any balance read has to try
+ * both before concluding the wallet holds nothing.
+ */
+export const TOKEN_2022_PROGRAM_ID = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 export const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 /** Circle's USDC on Solana mainnet. Not USDT, not a wrapped variant. */
 export const SOLANA_USDC_MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
@@ -44,10 +51,20 @@ export function toBaseUnits(amount: number, decimals: number): bigint {
   return BigInt(digits);
 }
 
-/** The associated token account for `owner` holding `mint`. */
-export function associatedTokenAddress(owner: PublicKey, mint: PublicKey): PublicKey {
+/**
+ * The associated token account for `owner` holding `mint`.
+ *
+ * `tokenProgram` defaults to the legacy SPL Token program, which is what USDC uses.
+ * Pass {@link TOKEN_2022_PROGRAM_ID} for a Token-2022 mint — the derivation includes
+ * the program id, so the two give different addresses for the same owner and mint.
+ */
+export function associatedTokenAddress(
+  owner: PublicKey,
+  mint: PublicKey,
+  tokenProgram: PublicKey = TOKEN_PROGRAM_ID,
+): PublicKey {
   const [address] = PublicKey.findProgramAddressSync(
-    [owner.toBytes(), TOKEN_PROGRAM_ID.toBytes(), mint.toBytes()],
+    [owner.toBytes(), tokenProgram.toBytes(), mint.toBytes()],
     ASSOCIATED_TOKEN_PROGRAM_ID,
   );
   return address;
@@ -192,6 +209,31 @@ export async function buildSolanaTransfer(input: {
     payerKey: from,
     recentBlockhash: blockhash,
     instructions,
+  }).compileToV0Message();
+
+  return new VersionedTransaction(message).serialize();
+}
+
+/**
+ * A transaction that creates `owner`'s USDC associated token account, paid for by
+ * `payer`. Built for the *platform* wallet to sign: the rent (~0.00204 SOL) is the
+ * platform's cost of making an agent fundable, never the user's.
+ *
+ * Idempotent on chain, so it is safe to send even if the account appeared between the
+ * check and the send.
+ */
+export async function buildCreateUsdcAtaTransaction(input: {
+  payer: string;
+  owner: string;
+  rpcUrl?: string;
+}): Promise<Uint8Array> {
+  const payer = new PublicKey(input.payer);
+  const owner = new PublicKey(input.owner);
+  const blockhash = await latestBlockhash(input.rpcUrl);
+  const message = new TransactionMessage({
+    payerKey: payer,
+    recentBlockhash: blockhash,
+    instructions: [createAtaIdempotentInstruction({ payer, owner, mint: SOLANA_USDC_MINT })],
   }).compileToV0Message();
 
   return new VersionedTransaction(message).serialize();

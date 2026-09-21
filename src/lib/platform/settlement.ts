@@ -159,7 +159,35 @@ type Withdraw = (input: {
   asset: "usdc" | "native";
   amount: number;
   toAddress: string;
-}) => Promise<{ txHash: string }>;
+}) => Promise<{ txHash: string | null; status?: "pending" | "succeeded" | "rejected" | "failed" }>;
+
+/**
+ * Pure: may these fee rows be marked settled against this transfer? (W7 H12)
+ *
+ * Privy's `transfer` returns a wallet *action*, which starts `pending` with no hash.
+ * Settling against that marked the platform's fees collected on money that had not
+ * moved — and if the action then failed, the platform could never collect it and the
+ * operator could never account for it. Anything short of a confirmed transfer with a
+ * real signature leaves the rows accrued, and the next pass sweeps the same money.
+ */
+export function settlementOutcome(transfer: {
+  txHash: string | null;
+  status?: "pending" | "succeeded" | "rejected" | "failed";
+}): { settle: boolean; txHash: string | null; error: string | null } {
+  // A caller that reports no status at all (the older shape, and the test doubles) is
+  // trusted on its hash alone — it had no action to poll.
+  if (transfer.status !== undefined && transfer.status !== "succeeded") {
+    return {
+      settle: false,
+      txHash: transfer.txHash,
+      error: `transfer is ${transfer.status} — fees stay accrued until it confirms`,
+    };
+  }
+  if (!transfer.txHash) {
+    return { settle: false, txHash: null, error: "the transfer returned no signature — fees stay accrued" };
+  }
+  return { settle: true, txHash: transfer.txHash, error: null };
+}
 
 async function settleBatch(
   batch: SettlementBatch,
@@ -170,7 +198,7 @@ async function settleBatch(
   const base = { chain: batch.chain, amountUsd: batch.amountUsd, feeIds: batch.feeIds };
   try {
     const platform = await ensurePlatformWallet(batch.chain);
-    const { txHash } = await withdrawFromAgent({
+    const transfer = await withdrawFromAgent({
       agentId: input.agentId,
       chain: batch.chain,
       asset: "usdc",
@@ -178,8 +206,12 @@ async function settleBatch(
       toAddress: platform.address,
     });
 
-    // Only now. A row marked settled against a transfer that did not happen is money
-    // the platform can never collect and the operator can never account for.
+    // Only now, and only on a confirmed transfer. See `settlementOutcome`.
+    const outcome = settlementOutcome(transfer);
+    if (!outcome.settle || outcome.txHash === null) {
+      return { ...base, txHash: outcome.txHash, error: outcome.error };
+    }
+    const txHash = outcome.txHash;
     await markFeesSettled(batch.feeIds, txHash, now);
     await audit(input, batch, platform.address, txHash);
     return { ...base, txHash, error: null };

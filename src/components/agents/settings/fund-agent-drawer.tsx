@@ -28,6 +28,7 @@ import {
   cashOn,
   chainLabelFor,
   floorTo,
+  gasBlockerFor,
 } from "@/lib/wallets/funding";
 import {
   recordFundingIntents,
@@ -59,10 +60,18 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
   const { ready, session } = useSession();
   const { data } = useUserWallets(Boolean(ready && session));
   const [chain, setChain] = useState<Chain>(wallets[0]?.chain ?? "base");
-  const [asset, setAsset] = useState<"usdc" | "native">("usdc");
+  // USDC only. Gas on both legs is somebody else's job now — Privy's sponsor pays the
+  // user→agent transfer (B1) and the platform Solana wallet pays the agent's trades
+  // (B2) — so the "SOL · gas" toggle that used to sit here only ever queued a transfer
+  // nobody needed. Anyone who really wants to hand the agent gas can send it to the
+  // address on the Wallets card.
+  const asset = "usdc" as const;
   const [amount, setAmount] = useState("");
   const [pending, setPending] = useState(false);
   const [depositOpen, setDepositOpen] = useState(false);
+  const [depositAsset, setDepositAsset] = useState<"usdc" | "native">("usdc");
+  /** Set when the transfer failed because nobody could pay the network fee. */
+  const [gasBlocked, setGasBlocked] = useState<string | null>(null);
   const { send, available } = useTransfer();
   const refresh = useRefreshCash();
 
@@ -81,7 +90,7 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
   const summary = useMemo(
     () => [
       { label: "Network", value: NETWORK_WORDING[chain].network },
-      { label: "Network fee", value: "paid from your wallet" },
+      { label: "Network fee", value: "sponsored — Tocker pays it" },
       {
         label: "Agent receives",
         value: positive ? `${parsed} ${assetSymbol}` : `— ${assetSymbol}`,
@@ -94,6 +103,7 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
   const confirm = async () => {
     if (!valid || !target || pending) return;
     setPending(true);
+    setGasBlocked(null);
 
     const recorded = await recordFundingIntents({
       agentId,
@@ -113,10 +123,14 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
       void refresh();
       void refresh(12_000);
     } catch (error) {
+      // `useTransfer` has already turned an SDK failure into a sentence; all that is
+      // left is to decide whether the fix is a deposit (no gas) or nothing (cancelled).
       const message = error instanceof Error ? error.message : "Your wallet rejected the request.";
       if (intentId) {
         void settleFundingIntent({ id: intentId, status: "failed", error: message });
       }
+      const needsGas = /network fee|sponsorship|SOL|ETH/i.test(message) && !/cancelled/i.test(message);
+      if (needsGas) setGasBlocked(message);
       toast.error("Transfer failed", { description: message });
     } finally {
       setPending(false);
@@ -138,51 +152,25 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <span className="mb-1 block text-xs text-muted-foreground">Chain</span>
-          <div className="grid grid-cols-2 gap-1 rounded-xl border border-border/60 bg-muted/20 p-1">
-            {wallets.map((wallet) => (
-              <button
-                key={wallet.chain}
-                type="button"
-                aria-pressed={wallet.chain === chain}
-                onClick={() => setChain(wallet.chain)}
-                className={cn(
-                  "h-8 rounded-lg text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  wallet.chain === chain
-                    ? "bg-card text-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {chainLabelFor(wallet.chain)}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <span className="mb-1 block text-xs text-muted-foreground">Asset</span>
-          <div className="grid grid-cols-2 gap-1 rounded-xl border border-border/60 bg-muted/20 p-1">
-            {(["usdc", "native"] as const).map((entry) => (
-              <button
-                key={entry}
-                type="button"
-                aria-pressed={entry === asset}
-                onClick={() => {
-                  setAsset(entry);
-                  setAmount("");
-                }}
-                className={cn(
-                  "h-8 rounded-lg text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  entry === asset
-                    ? "bg-card text-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {entry === "usdc" ? "USDC" : `${nativeSymbol} · gas`}
-              </button>
-            ))}
-          </div>
+      <div>
+        <span className="mb-1 block text-xs text-muted-foreground">Chain</span>
+        <div className="grid grid-cols-2 gap-1 rounded-xl border border-border/60 bg-muted/20 p-1">
+          {wallets.map((wallet) => (
+            <button
+              key={wallet.chain}
+              type="button"
+              aria-pressed={wallet.chain === chain}
+              onClick={() => setChain(wallet.chain)}
+              className={cn(
+                "h-8 rounded-lg text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                wallet.chain === chain
+                  ? "bg-card text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {chainLabelFor(wallet.chain)}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -233,11 +221,37 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
           </p>
           <button
             type="button"
-            onClick={() => setDepositOpen(true)}
+            onClick={() => {
+              setDepositAsset("usdc");
+              setDepositOpen(true);
+            }}
             className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium transition-colors duration-150 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Plus aria-hidden className="size-3.5" />
-            Deposit {asset === "usdc" ? "USDC" : nativeSymbol} on {chainLabelFor(chain)}
+            Deposit USDC on {chainLabelFor(chain)}
+          </button>
+        </div>
+      ) : null}
+
+      {gasBlocked ? (
+        <div className="space-y-2 rounded-xl border border-destructive/25 bg-destructive/8 p-3">
+          <p className="flex gap-2 text-xs leading-relaxed text-muted-foreground">
+            <AlertTriangle aria-hidden className="mt-px size-3.5 shrink-0 text-destructive" />
+            <span>{gasBlocked}</span>
+          </p>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            {gasBlockerFor(chain).message}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setDepositAsset("native");
+              setDepositOpen(true);
+            }}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium transition-colors duration-150 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Plus aria-hidden className="size-3.5" />
+            Deposit {nativeSymbol} on {chainLabelFor(chain)}
           </button>
         </div>
       ) : null}
@@ -270,7 +284,7 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
         wallets={data?.wallets ?? []}
         cash={data?.cash}
         initialChain={chain}
-        initialAsset={asset}
+        initialAsset={depositAsset}
       />
     </div>
   );

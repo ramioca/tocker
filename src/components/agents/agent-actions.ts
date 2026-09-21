@@ -28,6 +28,7 @@ import {
 } from "@/server/actions/agents";
 import { addLlmKey } from "@/server/actions/users";
 import { withdrawFromAgent } from "@/server/actions/wallets";
+import type { WithdrawResult } from "@/lib/wallets";
 import { MOCK_AGENT_SLUG, MOCK_RUN_ID } from "@/mocks/core";
 import type {
   ActionResult,
@@ -167,13 +168,22 @@ export async function withdrawAction(input: {
   asset: "usdc" | "native";
   amount: number;
   toAddress: string;
-}): Promise<ActionResult<{ txHash: string }>> {
+  // W7 H12 (workstream A): a Privy transfer is a wallet action — it can be `pending`
+  // with no hash yet, so the result carries the status and the action id too.
+}): Promise<ActionResult<WithdrawResult>> {
   if (!(input.amount > 0)) return { ok: false, error: "Enter an amount greater than zero." };
   if (!isValidAddressForChain(input.chain, input.toAddress)) {
     return { ok: false, error: addressHintForChain(input.chain) };
   }
   return withMock(
     () => withdrawFromAgent(input),
-    () => ({ ok: true as const, data: { txHash: "0xmocked000withdrawal000hash" } }),
+    () => ({
+      ok: true as const,
+      data: {
+        txHash: "0xmocked000withdrawal000hash",
+        actionId: "action_mocked",
+        status: "succeeded" as const,
+      },
+    }),
   );
 }

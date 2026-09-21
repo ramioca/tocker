@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PRIVY_APP_ID } from "@/components/providers/privy-provider";
+import { ME_WALLETS_QUERY_KEY } from "@/components/wallets/use-cash";
 import type { Session } from "@/server/types";
 
 export interface UseSession {
@@ -51,6 +52,20 @@ function useSessionQuery() {
   });
 }
 
+/**
+ * How many Privy embedded wallets this user has right now.
+ *
+ * Privy creates the Ethereum and Solana embedded wallets *after* authentication
+ * resolves, one at a time. Keying the sync on `authenticated` alone therefore ran it
+ * against a user with zero or one wallet and never again — which is how a signed-in
+ * person ended up with a Deposit sheet that had no Solana address in it (W7 M5).
+ */
+function embeddedWalletCount(user: ReturnType<typeof usePrivy>["user"]): number {
+  return (user?.linkedAccounts ?? []).filter(
+    (account) => account.type === "wallet" && account.connectorType === "embedded",
+  ).length;
+}
+
 /** With Privy configured: Privy auth state + our `users` row. */
 function usePrivySession(): UseSession {
   const privy = usePrivy();
@@ -58,33 +73,44 @@ function usePrivySession(): UseSession {
   const query = useSessionQuery();
   const router = useRouter();
   const pathname = usePathname();
+  /** `${userId}:${walletCount}` of the last sync, so a new wallet re-runs it. */
   const syncedFor = useRef<string | null>(null);
   /** Set by `login()`, consumed once the session exists. */
   const pendingRedirect = useRef<string | null>(null);
 
   const userId = privy.user?.id ?? null;
+  const walletCount = embeddedWalletCount(privy.user);
 
   useEffect(() => {
     if (!privy.ready || !privy.authenticated || !userId) return;
-    if (syncedFor.current === userId) return;
-    syncedFor.current = userId;
+    // Re-sync whenever the wallet count changes, not only on the first authentication.
+    const key = `${userId}:${walletCount}`;
+    if (syncedFor.current === key) return;
+    const firstSync = syncedFor.current === null;
+    syncedFor.current = key;
     void (async () => {
       await queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
       await syncWallets();
       await queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
+      // The balances query reads the rows /api/me/sync just wrote. Invalidating only
+      // the session key left the wallet chip and the deposit sheet on a cached,
+      // wallet-less answer for a full 30-second staleTime.
+      await queryClient.invalidateQueries({ queryKey: ME_WALLETS_QUERY_KEY });
       // Server components rendered this page signed out; re-render them with the
-      // session, then go where the sign-in was meant to go.
+      // session, then go where the sign-in was meant to go. Only on the first pass:
+      // a wallet appearing later must not yank the user off the page they are on.
       const target = pendingRedirect.current;
       pendingRedirect.current = null;
       router.refresh();
-      if (target && target !== pathname) router.push(target);
+      if (firstSync && target && target !== pathname) router.push(target);
     })();
-  }, [privy.ready, privy.authenticated, userId, queryClient, router, pathname]);
+  }, [privy.ready, privy.authenticated, userId, walletCount, queryClient, router, pathname]);
 
   useEffect(() => {
     if (privy.ready && !privy.authenticated && syncedFor.current) {
       syncedFor.current = null;
       queryClient.setQueryData(SESSION_QUERY_KEY, null);
+      queryClient.setQueryData(ME_WALLETS_QUERY_KEY, undefined);
     }
   }, [privy.ready, privy.authenticated, queryClient]);
 

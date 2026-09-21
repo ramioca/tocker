@@ -96,6 +96,18 @@ export async function createAgentWallets(input: {
     )
     .onConflictDoNothing();
 
+  // The platform pays the ~0.00204 SOL rent for the agent's USDC account, so the person
+  // funding it never has to hold SOL (W7 B1). Best effort by design: a failure here
+  // costs the funder the rent, it does not cost them the agent.
+  // Awaited rather than fired and forgotten: on Vercel the function freezes when the
+  // response is sent, and a dropped promise here is a user paying rent they were told
+  // they would not.
+  const solana = rows.find((w) => w.chain === "solana");
+  if (solana && configured) {
+    const { ensureAgentUsdcAta } = await import("./gas");
+    await ensureAgentUsdcAta({ agentId: input.agentId, address: solana.address });
+  }
+
   return rows;
 }
 
@@ -173,6 +185,70 @@ export async function getUserWalletBalances(userId: string): Promise<WalletBalan
   );
 }
 
+/**
+ * Record the user's Privy **embedded** wallets in `wallets` (kind `user_embedded`) and
+ * return what is on record afterwards.
+ *
+ * The list is read from Privy server-side, never from a request body, so nobody can
+ * register an address they do not control. Idempotent, and it never throws: a Privy
+ * outage means the funding UI does not learn about a wallet this second, not that the
+ * page 500s.
+ *
+ * Shared by `POST /api/me/sync` (called at login) and by `GET /api/me/wallets`, which
+ * calls it to self-heal when a chain is missing — Privy creates the two embedded
+ * wallets asynchronously after authentication, so the login-time sync can genuinely be
+ * too early (W7 M5).
+ */
+export async function syncUserEmbeddedWallets(
+  userId: string,
+): Promise<Array<{ id: string; chain: Chain; address: string }>> {
+  if (!isPrivyConfigured()) return [];
+  const db = await getDb();
+
+  const stored = async () => {
+    const rows = await db
+      .select({ id: wallets.id, chain: wallets.chain, address: wallets.address })
+      .from(wallets)
+      .where(and(eq(wallets.userId, userId), eq(wallets.kind, "user_embedded")));
+    return rows.map((r) => ({ id: r.id, chain: r.chain as Chain, address: r.address }));
+  };
+
+  try {
+    const user = await privy().users()._get(userId);
+    const found: Array<{ id: string; chain: Chain; address: string }> = [];
+    for (const account of user.linked_accounts ?? []) {
+      if (account.type !== "wallet") continue;
+      if (!("connector_type" in account) || account.connector_type !== "embedded") continue;
+      const chain: Chain | null =
+        account.chain_type === "solana" ? "solana" : account.chain_type === "ethereum" ? "base" : null;
+      if (!chain) continue;
+      const id = ("id" in account ? account.id : null) ?? `${chain}:${account.address}`;
+      found.push({ id, chain, address: account.address });
+    }
+
+    if (found.length > 0) {
+      await db
+        .insert(wallets)
+        .values(
+          found.map((w) => ({
+            id: w.id,
+            kind: "user_embedded" as const,
+            chain: w.chain,
+            address: w.address,
+            userId,
+            agentId: null,
+          })),
+        )
+        .onConflictDoNothing();
+    }
+    // An address can only belong to one user — report what the table actually holds.
+    return stored();
+  } catch (err) {
+    console.error("[wallets] embedded wallet sync failed:", err instanceof Error ? err.message : err);
+    return stored().catch(() => []);
+  }
+}
+
 export interface WithdrawInput {
   agentId: string;
   chain: Chain;
@@ -182,11 +258,48 @@ export interface WithdrawInput {
   toAddress: string;
 }
 
+export interface WithdrawResult {
+  /** The real on-chain hash/signature. `null` while the action is still pending. */
+  txHash: string | null;
+  /** Privy's wallet-action id — an audit handle, never a block explorer link. */
+  actionId: string;
+  /** `succeeded` is the only status that means the money moved. */
+  status: "pending" | "succeeded" | "rejected" | "failed";
+}
+
+/** A step of a wallet action, on either chain. Privy names the hash differently per VM. */
+function stepHash(step: unknown): string | null {
+  if (!step || typeof step !== "object") return null;
+  const s = step as { transaction_hash?: string | null; transaction_signature?: string | null };
+  return s.transaction_signature ?? s.transaction_hash ?? null;
+}
+
+/** The first failure reason on the action or any of its steps, as one sentence. */
+function failureText(action: {
+  failure_reason?: { message?: string };
+  steps?: Array<{ failure_reason?: { message?: string } }>;
+}): string | null {
+  const own = action.failure_reason?.message;
+  if (own) return own;
+  for (const step of action.steps ?? []) {
+    const message = step.failure_reason?.message;
+    if (message) return message;
+  }
+  return null;
+}
+
 /**
  * Send funds out of an agent server wallet, signed server-side with the app's
  * authorization key. Callers must have already checked ownership.
+ *
+ * W7 H12: a `transfer` returns a **wallet action**, not a transaction. It comes back
+ * `pending` with no hash, and its `id` is not a signature — reporting it as one put a
+ * string in the UI that no explorer has ever heard of, and let `settlement.ts` mark
+ * platform fees collected against a transfer that had not happened yet. So: poll the
+ * action with `?include=steps` until it reaches a terminal status, throw on
+ * `rejected`/`failed` with Privy's own reason, and return the step's real signature.
  */
-export async function withdrawFromAgent(input: WithdrawInput): Promise<{ txHash: string }> {
+export async function withdrawFromAgent(input: WithdrawInput): Promise<WithdrawResult> {
   if (!isPrivyConfigured()) throw new Error("Privy is not configured — withdrawals are unavailable");
   if (!(input.amount > 0)) throw new Error("Amount must be greater than zero");
 
@@ -195,7 +308,7 @@ export async function withdrawFromAgent(input: WithdrawInput): Promise<{ txHash:
   if (isPaperWallet(wallet.id)) throw new Error("Paper wallets hold no real funds");
 
   const asset = input.asset === "usdc" ? "usdc" : NATIVE_ASSET[input.chain];
-  const action = await privy()
+  const created = await privy()
     .wallets()
     .transfer(wallet.id, {
       source: { asset, chain: CHAIN_NAME[input.chain] },
@@ -204,9 +317,49 @@ export async function withdrawFromAgent(input: WithdrawInput): Promise<{ txHash:
       authorization_context: authorizationContext(),
     });
 
-  const hash =
-    action.steps?.map((s) => (s as { transaction_hash?: string | null }).transaction_hash).find(Boolean) ?? action.id;
-  return { txHash: String(hash) };
+  return pollWithdrawal(wallet.id, created.id, created);
+}
+
+/** Poll one wallet action to a terminal status. Exported for the fee-settlement path. */
+export async function pollWithdrawal(
+  walletId: string,
+  actionId: string,
+  first?: { status?: string; steps?: unknown[]; failure_reason?: { message?: string } },
+  options: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<WithdrawResult> {
+  const timeoutMs = options.timeoutMs ?? 25_000;
+  const intervalMs = options.intervalMs ?? 1_500;
+  const deadline = Date.now() + timeoutMs;
+
+  let action = first as
+    | { status?: string; steps?: unknown[]; failure_reason?: { message?: string } }
+    | undefined;
+  for (;;) {
+    const status = action?.status;
+    if (status === "rejected" || status === "failed") {
+      const reason =
+        failureText(action as Parameters<typeof failureText>[0]) ??
+        "Privy gave no reason. The wallet policy is the usual cause — a policy with no explicit `transfer` rule denies this call.";
+      throw new Error(`The withdrawal was ${status}: ${reason}`);
+    }
+    const hash = (action?.steps ?? []).map(stepHash).find(Boolean) ?? null;
+    if (status === "succeeded") {
+      return { txHash: hash, actionId, status: "succeeded" };
+    }
+    if (Date.now() >= deadline) {
+      // Not an error: a pending transfer is money in flight, and a thrown error here
+      // would tell the operator it failed when it may be about to land.
+      return { txHash: hash, actionId, status: "pending" };
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    try {
+      action = (await privy()
+        .wallets()
+        .actions.get(actionId, { wallet_id: walletId, include: "steps" })) as typeof action;
+    } catch (err) {
+      console.warn(`[wallets] could not read wallet action ${actionId}:`, err instanceof Error ? err.message : err);
+    }
+  }
 }
 
 // ---------- wallet-layer budget (Privy policies) ----------
@@ -232,11 +385,36 @@ const ERC20_TRANSFER_ABI_SCHEMA = [
  * The budget rules for one chain. Order matters — first match wins:
  * over-cap USDC transfers and key exports are denied, everything else
  * (swaps, approvals, x402 payments under the cap) passes through.
+ *
+ * ## What this cap does and does not reach (W7 H9)
+ *
+ * The signing rules below decode **instructions and calldata**, so they fire on a plain
+ * USDC transfer out of the wallet: a withdrawal, or the platform's fee sweep. They do
+ * **not** fire on a swap: a Jupiter Ultra route is ComputeBudget ×2 plus one `JUP6…`
+ * instruction (probe-confirmed), with the token movement happening in inner
+ * instructions the policy engine does not decode. Anything that calls this a hard floor
+ * under the risk config for *trades* is wrong, and the UI copy has been corrected.
+ *
+ * The `transfer` ALLOW below is not decoration. Privy's docs are explicit: *"wallets
+ * that call the transfer endpoint need an explicit `transfer` rule"* — it is evaluated
+ * against `action_request_body` before the transaction is even prepared, so a policy
+ * whose only catch-all is `*` leaves `wallets().transfer()` denied. That is the call
+ * behind both `withdrawFromAgent` and platform-fee settlement.
+ *
+ * No amount condition rides along with it on purpose: the transfer endpoint's `amount`
+ * is a **decimal string in standard units** (`"12.5"`, per `NamedTokenTransferSource`
+ * in `@privy-io/node`), not the base units this cap is expressed in, and a string
+ * comparison against the wrong scale can deny a withdrawal that is well under the cap.
+ * A layer that fails closed on a legitimate withdrawal is worse than one that does not
+ * reach that path at all — the app-level owner check does.
  */
 function budgetRules(chain: Chain, capBaseUnits: string): PolicyCreateParams["rules"] {
   const noExports: PolicyCreateParams["rules"] = [
     { name: "No private key export", method: "exportPrivateKey", action: "DENY", conditions: [] },
     { name: "No seed export", method: "exportSeedPhrase", action: "DENY", conditions: [] },
+  ];
+  const allowTransfers: PolicyCreateParams["rules"] = [
+    { name: "Allow wallet transfers", method: "transfer", action: "ALLOW", conditions: [] },
   ];
   const allowRest: PolicyCreateParams["rules"] = [
     { name: "Allow everything else", method: "*", action: "ALLOW", conditions: [] },
@@ -259,6 +437,7 @@ function budgetRules(chain: Chain, capBaseUnits: string): PolicyCreateParams["ru
         ],
       },
       ...noExports,
+      ...allowTransfers,
       ...allowRest,
     ];
   }
@@ -281,6 +460,7 @@ function budgetRules(chain: Chain, capBaseUnits: string): PolicyCreateParams["ru
       ),
     ),
     ...noExports,
+    ...allowTransfers,
     ...allowRest,
   ];
 }

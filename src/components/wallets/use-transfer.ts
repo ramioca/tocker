@@ -50,6 +50,51 @@ export interface UseTransfer {
 }
 
 /**
+ * Turn a Privy signing failure into a sentence a person can act on.
+ *
+ * Two of these are not really errors in our code at all, they are configuration, and
+ * both look identical from the browser (a rejected signature) unless we name them:
+ *
+ *  - **Sponsorship is off for this app.** The bundle throws "Sponsoring transactions is
+ *    only supported for wallets on the TEE stack" (or a message naming `sponsor`).
+ *    Nothing the user does fixes it.
+ *  - **The wallet is dry and nobody is paying.** With sponsorship off, a Solana wallet
+ *    holding USDC and no SOL fails at simulation with "insufficient lamports" / "0x1".
+ */
+export function transferErrorMessage(err: unknown, chain: Chain): string {
+  const raw = err instanceof Error ? err.message : String(err ?? "");
+  const lower = raw.toLowerCase();
+
+  if (lower.includes("tee stack") || (lower.includes("sponsor") && !lower.includes("sponsored successfully"))) {
+    return "Tocker asked Privy to pay this network fee for you and Privy refused: gas sponsorship is not enabled for this app. Nothing is wrong with your wallet — tell the operator to turn on fee sponsorship in the Privy dashboard.";
+  }
+  if (
+    lower.includes("insufficient lamports") ||
+    lower.includes("insufficient funds for fee") ||
+    lower.includes("attempt to debit an account but found no record of a prior credit") ||
+    lower.includes("0x1 ")
+  ) {
+    return chain === "solana"
+      ? "Your Solana wallet has no SOL for the network fee. Deposit about 0.01 SOL and try again."
+      : "Your Base wallet has no ETH for the network fee. Deposit a little ETH and try again.";
+  }
+  if (lower.includes("user rejected") || lower.includes("rejected the request") || lower.includes("cancel")) {
+    return "You cancelled the signature. Nothing was sent.";
+  }
+  return raw || "The transfer could not be signed.";
+}
+
+/** True when the failure is the wallet being out of gas, not the user changing their mind. */
+export function isNativeGasShortfall(err: unknown): boolean {
+  const lower = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
+  return (
+    lower.includes("insufficient lamports") ||
+    lower.includes("insufficient funds for fee") ||
+    lower.includes("attempt to debit an account but found no record of a prior credit")
+  );
+}
+
+/**
  * One place that knows how to move USDC or gas out of the user's embedded
  * wallet, on either chain.
  *
@@ -80,8 +125,15 @@ function usePrivyTransfer(): UseTransfer {
                   args: [request.to as `0x${string}`, parseUnits(String(request.amount), 6)],
                 }),
               };
-        const result = await sendTransaction({ ...payload, chainId: BASE_CHAIN_ID });
-        return { hash: result.hash };
+        try {
+          // `sponsor` is the *second* argument, not part of the transaction request —
+          // `useSendTransaction(): sendTransaction(input, options?)` in
+          // @privy-io/react-auth/dist/dts/index.d.ts:3417.
+          const result = await sendTransaction({ ...payload, chainId: BASE_CHAIN_ID }, { sponsor: true });
+          return { hash: result.hash };
+        } catch (err) {
+          throw new Error(transferErrorMessage(err, "base"), { cause: err });
+        }
       }
 
       const wallet = solanaWallets[0];
@@ -94,8 +146,19 @@ function usePrivyTransfer(): UseTransfer {
         asset: request.asset,
         amount: request.amount,
       });
-      const { signature } = await signAndSendTransaction({ transaction, wallet });
-      return { hash: base58.encode(signature) };
+      try {
+        // Privy pays the fee. The agent's USDC account is pre-created server-side by the
+        // platform wallet (`ensureAgentUsdcAta`), so the idempotent create instruction
+        // below it is almost always a no-op — sponsorship covers the fee, never the rent.
+        const { signature } = await signAndSendTransaction({
+          transaction,
+          wallet,
+          options: { sponsor: true },
+        });
+        return { hash: base58.encode(signature) };
+      } catch (err) {
+        throw new Error(transferErrorMessage(err, "solana"), { cause: err });
+      }
     },
     [sendTransaction, signAndSendTransaction, solanaWallets],
   );

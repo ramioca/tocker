@@ -1,9 +1,8 @@
 "use client";
 
-import { Fuel } from "lucide-react";
 import { ChainBadge } from "@/components/common/chain-badge";
-import { formatTokenAmount, formatUsd } from "@/components/common/format";
-import { NATIVE_SYMBOL, chainLabelFor, type UnifiedCash } from "@/lib/wallets/funding";
+import { formatUsd } from "@/components/common/format";
+import { chainLabelFor, type UnifiedCash } from "@/lib/wallets/funding";
 import { cn } from "@/lib/utils";
 import type { Chain } from "@/server/types";
 
@@ -83,12 +82,19 @@ export function ChainBreakdown({
   );
 }
 
-/** "Cash" and "gas" said once, in the words the rest of the product uses. */
-export function CashLegend({ cash }: { cash: UnifiedCash }) {
+/**
+ * "Cash" and "gas" said once, in the words the rest of the product uses.
+ *
+ * W7 M2: it now says *who* pays. "Gas is sponsored" left the reader with no idea
+ * whether that was them, and the agent's gas is paid by a different party again — the
+ * platform wallet, not Privy's sponsor.
+ */
+export function CashLegend(_: { cash: UnifiedCash }) {
   return (
     <p className="text-[11px] leading-relaxed text-muted-foreground">
-      Cash is USDC across your wallets on Base and Solana, shown as one balance. Gas is
-      sponsored, so there is nothing else to hold.
+      Cash is USDC across your wallets on Base and Solana, shown as one balance. Network
+      fees are not yours to hold: Privy sponsors the ones you sign, and Tocker&rsquo;s own
+      wallet pays for what your agents sign.
     </p>
   );
 }

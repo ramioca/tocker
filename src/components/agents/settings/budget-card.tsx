@@ -9,9 +9,14 @@ import { setAgentWalletBudget } from "@/server/actions/wallets";
 
 /**
  * The wallet-layer budget. This is not the risk config: those caps live in app
- * code, this one lives in a Privy policy attached to the wallet itself. The
- * wallet refuses to sign an over-cap USDC transfer no matter who asks — the
- * model, a buggy run loop, or a compromised server route.
+ * code, this one lives in a Privy policy attached to the wallet itself.
+ *
+ * W7 H9 — what it actually reaches. The policy decodes instructions and calldata, so
+ * it fires on a plain USDC transfer *out* of the wallet: a withdrawal, or the platform
+ * fee sweep. A swap is a different shape — a Jupiter Ultra route is ComputeBudget plus
+ * one aggregator instruction, with the token movement inside inner instructions the
+ * policy engine does not decode — so this cap is **not** a floor under the risk config
+ * for trades, and the copy no longer says it is. `maxTradeUsd` is what limits a trade.
  */
 export function BudgetCard({
   agentId,
@@ -38,7 +43,7 @@ export function BudgetCard({
       if (result.ok) {
         setApplied(result.data.perTxUsd);
         toast.success("Wallet budget applied", {
-          description: `The wallet now refuses any USDC transfer above ${formatUsd(result.data.perTxUsd)}.`,
+          description: `The wallet now refuses any USDC transfer out above ${formatUsd(result.data.perTxUsd)}.`,
         });
       } else {
         toast.error("Budget not applied", { description: result.error });
@@ -61,9 +66,15 @@ export function BudgetCard({
       </div>
 
       <p className="mt-2 text-xs leading-5 text-muted-foreground">
-        A hard cap enforced by the wallet itself, via a Privy policy: no single USDC
-        transfer above this amount gets signed — independent of the risk config, the
-        model, and this app&rsquo;s code. Key export is always denied.
+        A cap the wallet enforces itself, via a Privy policy: no single USDC{" "}
+        <em className="not-italic text-foreground">transfer</em> above this amount gets signed —
+        a withdrawal, or Tocker&rsquo;s own fee sweep — whatever this app&rsquo;s code says. Key
+        export is always denied.
+      </p>
+      <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+        It does not cap <em className="not-italic text-foreground">trades</em>. A swap route moves
+        tokens inside instructions the policy cannot read, so the size of a trade is set by{" "}
+        <span className="text-foreground">Max per trade</span> in the risk config above.
       </p>
 
       {hasRealWallets ? (
@@ -99,7 +110,7 @@ export function BudgetCard({
 
       {applied ? (
         <p className="tnum mt-2 text-[11px] text-muted-foreground">
-          Current cap: {formatUsd(applied)} per transaction, on every chain this agent
+          Current cap: {formatUsd(applied)} per transfer, on every chain this agent
           trades.
         </p>
       ) : null}
