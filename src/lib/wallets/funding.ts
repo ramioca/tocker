@@ -116,12 +116,15 @@ export interface ChainCash {
   nativePriceUsd: number | null;
 }
 
-/** USDC one of the user's live agents holds in its own wallet, net of fees it owes. */
+/** What one of the user's live agents is worth: its cash (net of fees it owes) plus its open positions at their marks. */
 export interface AgentCash {
   id: string;
   slug: string;
   name: string;
-  usdcUsd: number;
+  /** Cash plus positions — the number that counts toward the top bar. */
+  equityUsd: number;
+  cashUsd: number;
+  positionsUsd: number;
 }
 
 export interface UnifiedCash {
@@ -130,7 +133,7 @@ export interface UnifiedCash {
   /** Native assets, in dollars, shown small and separately. Never counted as cash. */
   gasUsd: number;
   perChain: ChainCash[];
-  /** USDC sitting in the user's live agents' wallets, in dollars. Theirs, but working. */
+  /** The user's live agents' equity — cash plus open positions — in dollars. Theirs, but working. */
   inAgentsUsd: number;
   agents: AgentCash[];
   /** Own wallets plus agents: the number the top bar shows. */
@@ -184,7 +187,7 @@ export function unifiedCash(wallets: WalletBalance[], agents: AgentCash[] = []):
     return wallet ? readChainCash(wallet) : emptyChainCash(chain);
   });
   const totalUsd = round(perChain.reduce((sum, c) => sum + c.usdcUsd, 0), 2);
-  const inAgentsUsd = round(agents.reduce((sum, a) => sum + a.usdcUsd, 0), 2);
+  const inAgentsUsd = round(agents.reduce((sum, a) => sum + a.equityUsd, 0), 2);
   return {
     totalUsd,
     gasUsd: round(perChain.reduce((sum, c) => sum + (c.nativeUsd ?? 0), 0), 2),

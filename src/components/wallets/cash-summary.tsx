@@ -96,9 +96,13 @@ export function ChainBreakdown({
             >
               {agent.name}
             </Link>
-            <p className="text-[11px] text-muted-foreground">in the agent&rsquo;s wallet</p>
+            <p className="tnum text-[11px] text-muted-foreground">
+              {agent.positionsUsd > 0
+                ? `${formatUsd(agent.cashUsd)} cash · ${formatUsd(agent.positionsUsd)} in positions`
+                : "agent equity — all cash"}
+            </p>
           </div>
-          <p className="tnum text-sm font-medium">{formatUsd(agent.usdcUsd)}</p>
+          <p className="tnum text-sm font-medium">{formatUsd(agent.equityUsd)}</p>
         </li>
       ))}
     </ul>
@@ -118,7 +122,7 @@ export function ChainBreakdown({
 export function CashLegend({ cash }: { cash: UnifiedCash }) {
   return (
     <p className="text-[11px] leading-relaxed text-muted-foreground">
-      Cash is USDC across your wallets on Base and Solana{cash.agents.length > 0 ? " and in your live agents' wallets" : ""}, shown as one balance. Network
+      Cash is USDC across your wallets on Base and Solana{cash.agents.length > 0 ? ", plus your live agents' equity (their cash and open positions at today's marks)" : ""}, shown as one balance. Network
       fees are not yours to hold: Tocker&rsquo;s own wallet pays them, both for what you
       sign and for what your agents sign.
     </p>

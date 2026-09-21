@@ -6,9 +6,10 @@ import { getUserWalletBalances, syncUserEmbeddedWallets } from "@/lib/wallets";
 import { CHAINS, unifiedCash, type AgentCash } from "@/lib/wallets/funding";
 
 /**
- * USDC the user's live agents hold, one entry per agent whose wallet could be read.
- * Money the user moved into an agent is still theirs; a top bar that dropped it the
- * moment it was funded read as a loss.
+ * What the user's live agents are worth — cash plus open positions at their marks —
+ * one entry per agent whose wallet could be read. Money the user moved into an agent
+ * is still theirs, whether it sits as USDC or as a position; a top bar that dropped it
+ * the moment it was funded (or the moment it was invested) read as a loss.
  */
 async function liveAgentCash(userId: string): Promise<AgentCash[]> {
   const db = await getDb();
@@ -23,7 +24,9 @@ async function liveAgentCash(userId: string): Promise<AgentCash[]> {
       try {
         const portfolio = await getPortfolio(row.id);
         if (portfolio.cashReadFailed) return null;
-        return { id: row.id, slug: row.slug, name: row.name, usdcUsd: Math.max(0, portfolio.cashUsd) };
+        const cashUsd = Math.max(0, portfolio.cashUsd);
+        const positionsUsd = Math.max(0, portfolio.equityUsd - portfolio.cashUsd);
+        return { id: row.id, slug: row.slug, name: row.name, equityUsd: cashUsd + positionsUsd, cashUsd, positionsUsd };
       } catch {
         return null;
       }
