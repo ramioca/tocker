@@ -467,13 +467,22 @@ const ERC20_TRANSFER_ABI_SCHEMA = [
  * A layer that fails closed on a legitimate withdrawal is worse than one that does not
  * reach that path at all — the app-level owner check does.
  */
-function budgetRules(chain: Chain, capBaseUnits: string): PolicyCreateParams["rules"] {
+export function budgetRules(chain: Chain, capBaseUnits: string): PolicyCreateParams["rules"] {
   const noExports: PolicyCreateParams["rules"] = [
     { name: "No private key export", method: "exportPrivateKey", action: "DENY", conditions: [] },
     { name: "No seed export", method: "exportSeedPhrase", action: "DENY", conditions: [] },
   ];
+  // Privy refuses a `transfer` rule with no conditions ("must have at least one
+  // condition", probed 2026-09-21), and a policy with one invalid rule is rejected
+  // whole — which is how every new agent came to have no wallet budget at all. The
+  // condition is one every transfer from this wallet satisfies: it is on this chain.
   const allowTransfers: PolicyCreateParams["rules"] = [
-    { name: "Allow wallet transfers", method: "transfer", action: "ALLOW", conditions: [] },
+    {
+      name: "Allow wallet transfers",
+      method: "transfer",
+      action: "ALLOW",
+      conditions: [{ field_source: "action_request_body", field: "source.chain", operator: "eq", value: CHAIN_NAME[chain] }],
+    },
   ];
   const allowRest: PolicyCreateParams["rules"] = [
     { name: "Allow everything else", method: "*", action: "ALLOW", conditions: [] },
@@ -489,7 +498,9 @@ function budgetRules(chain: Chain, capBaseUnits: string): PolicyCreateParams["ru
           {
             field_source: "ethereum_calldata",
             abi: ERC20_TRANSFER_ABI_SCHEMA,
-            field: "amount",
+            // "functionName.argumentName" — a bare "amount" is rejected by Privy's validator
+            // (probed 2026-09-21), which meant no Base policy had ever been created.
+            field: "transfer.amount",
             operator: "gt",
             value: capBaseUnits,
           },
