@@ -529,6 +529,8 @@ export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
   // What the book will actually be worth on day one, so the caps can be checked
   // against it here rather than discovered as a refusal on the first tick.
   const fundedUsd = draft.funding.mode === "fund" ? draft.funding.amountUsd : draft.paperStartingUsd;
+  const startsWith =
+    draft.funding.mode === "fund" ? `the ${formatUsd(fundedUsd)} you are funding` : `its ${formatUsd(fundedUsd)} paper balance`;
   const ticketSharePct = fundedUsd > 0 ? Math.ceil((risk.maxTradeUsd / fundedUsd) * 100) : 0;
   const positionCapTooLow = ticketSharePct > 0 && ticketSharePct > risk.maxPositionPct;
 
@@ -552,7 +554,7 @@ export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
           format={(value) => formatUsd(value)}
           meaning={
             fundedUsd > 0 && risk.maxTradeUsd > fundedUsd
-              ? `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)} — but that is more than the ${formatUsd(fundedUsd)} you are funding, so every trade would be refused for lack of cash. Type an exact number in the box.`
+              ? `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)} — but that is more than ${startsWith}, so every trade would be refused for lack of cash. Type an exact number in the box.`
               : `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)}, whatever the model asks for. Click the number to type an exact amount.`
           }
           onChange={(maxTradeUsd) => patch({ maxTradeUsd })}
@@ -578,7 +580,7 @@ export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
           format={(value) => `${Math.round(value)}%`}
           meaning={
             positionCapTooLow
-              ? `A ${formatUsd(risk.maxTradeUsd)} trade on the ${formatUsd(fundedUsd)} it starts with is ${ticketSharePct}% of equity, above this cap — the risk guard would refuse every buy. Set this to at least ${Math.min(100, ticketSharePct)}%, or lower the max per trade.`
+              ? `A ${formatUsd(risk.maxTradeUsd)} trade on ${startsWith} is ${ticketSharePct}% of equity, above this cap — the risk guard would refuse every buy. Set this to at least ${Math.min(100, ticketSharePct)}%, or lower the max per trade.`
               : risk.maxPositionPct >= 50
                 ? "Concentrated. One bad token can take most of the book with it."
                 : `No single token may exceed ${Math.round(risk.maxPositionPct)}% of equity, so it must hold at least ${Math.ceil(100 / risk.maxPositionPct)} names when fully invested.`
