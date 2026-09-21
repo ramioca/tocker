@@ -1,4 +1,8 @@
+"use client";
+
+import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { logoCandidates } from "@/lib/tokens/logo";
 import { avatarGradient } from "./agent-avatar";
 import type { TokenRef } from "@/server/types";
 
@@ -9,9 +13,10 @@ const SIZES = {
 } as const;
 
 /**
- * Token marks come from a registry we do not control, so the logo may be
- * missing. Rather than a broken image or a grey circle, fall back to the
- * symbol on a hue derived from the token id — recognisable and never empty.
+ * Token marks come from a registry we do not control, so the logo may be missing, or
+ * hosted on an IPFS gateway that refuses to serve it. Each candidate URL is tried in
+ * turn (see `logoCandidates`), and when every one fails the mark falls back to the
+ * symbol on a hue derived from the token id — recognisable and never a broken image.
  */
 export function TokenIcon({
   token,
@@ -22,13 +27,20 @@ export function TokenIcon({
   size?: keyof typeof SIZES;
   className?: string;
 }) {
-  if (token.logoUrl) {
+  const candidates = token.logoUrl ? logoCandidates(token.logoUrl) : [];
+  const [attempt, setAttempt] = useState(0);
+  const src = candidates[attempt];
+
+  if (src) {
     return (
       // eslint-disable-next-line @next/next/no-img-element -- token art comes from arbitrary remote hosts
       <img
-        src={token.logoUrl}
+        src={src}
         alt=""
         aria-hidden
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setAttempt((current) => current + 1)}
         className={cn("shrink-0 rounded-full object-cover", SIZES[size], className)}
       />
     );
