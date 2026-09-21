@@ -158,6 +158,11 @@ export function manualSlippageFor(orderSlippageBps: number | undefined, ceilingB
   return orderSlippageBps > ceilingBps ? Math.round(ceilingBps) : null;
 }
 
+/** What a manual-mode order's priority fee has measured at (86k lamports live, 2026-09-21), rounded up. */
+const MANUAL_PRIORITY_FEE_LAMPORTS = 150_000;
+/** Rent on a new token account, for the error message only (the real constant lives in gas.ts). */
+const ATA_RENT_HINT_LAMPORTS = 2_039_280;
+
 /** True when the *taker* (not Jupiter, not a relayer) has to pay this order's fees. */
 export function takerPaysGas(order: UltraOrder, taker: string): boolean {
   if (order.gasless === true) return false;
@@ -185,7 +190,8 @@ export function isTransientOrderFailure(status: number, body: string): boolean {
   return status === 400 && /failed to get quotes/i.test(body);
 }
 
-const ORDER_RETRY_DELAY_MS = 900;
+/** Backoff between `/order` attempts; the keyless tier needs the second pause more often than not. */
+const ORDER_RETRY_DELAYS_MS = [900, 2_500];
 
 /**
  * One `/order` call, retried once on a transient failure. Throws {@link JupiterError}
@@ -198,9 +204,9 @@ async function fetchOrder(params: Record<string, string>, attempt = 0): Promise<
   try {
     res = await fetch(url, { headers: jupiterHeaders(), signal: AbortSignal.timeout(12_000) });
   } catch (err) {
-    if (attempt === 0) {
-      await new Promise((resolve) => setTimeout(resolve, ORDER_RETRY_DELAY_MS));
-      return fetchOrder(params, 1);
+    if (attempt < ORDER_RETRY_DELAYS_MS.length) {
+      await new Promise((resolve) => setTimeout(resolve, ORDER_RETRY_DELAYS_MS[attempt]));
+      return fetchOrder(params, attempt + 1);
     }
     throw new JupiterError(
       `Jupiter Ultra did not answer: ${err instanceof Error ? err.message : String(err)}`,
@@ -209,14 +215,16 @@ async function fetchOrder(params: Record<string, string>, attempt = 0): Promise<
 
   const raw = await res.text().catch(() => "");
   if (!res.ok) {
-    if (attempt === 0 && isTransientOrderFailure(res.status, raw)) {
-      await new Promise((resolve) => setTimeout(resolve, ORDER_RETRY_DELAY_MS));
-      return fetchOrder(params, 1);
+    if (attempt < ORDER_RETRY_DELAYS_MS.length && isTransientOrderFailure(res.status, raw)) {
+      await new Promise((resolve) => setTimeout(resolve, ORDER_RETRY_DELAYS_MS[attempt]));
+      return fetchOrder(params, attempt + 1);
     }
     const hint =
       res.status === 429
         ? " Ultra is rate-limiting this app — set JUPITER_API_KEY."
-        : "";
+        : /failed to get quotes/i.test(raw)
+          ? ` Jupiter's routers had no quote for this pool three times in a row — usually a keyless-tier hiccup that clears within a minute; a JUPITER_API_KEY makes it rare.`
+          : "";
     throw new JupiterError(
       `Jupiter Ultra /order failed (HTTP ${res.status}).${hint} ${raw.slice(0, 300)}`.trim(),
       { httpStatus: res.status },
@@ -375,6 +383,22 @@ export class JupiterExecutor implements TradeExecutor {
       }
     }
 
+    // A wallet with USDC and no SOL cannot fill anything: Ultra's gasless mode pays the
+    // signature, not the rent on the token account a first buy creates, and answers
+    // `errorCode 1 "Insufficient funds"` for a taker holding thousands of USDC and zero
+    // SOL (probed live 2026-09-21 against real gasless takers). A fresh Privy wallet is
+    // exactly that wallet, so top it up first — a no-op once it holds a little SOL.
+    if (this.agentId) {
+      const { ensureAgentGas, ATA_RENT_LAMPORTS, SIGNATURE_FEE_LAMPORTS } = await import("@/lib/wallets/gas");
+      await ensureAgentGas({
+        agentId: this.agentId,
+        chain: "solana",
+        walletId: this.wallet.walletId,
+        address: this.wallet.address,
+        requiredLamports: ATA_RENT_LAMPORTS + SIGNATURE_FEE_LAMPORTS + MANUAL_PRIORITY_FEE_LAMPORTS,
+      });
+    }
+
     // No `slippageBps` first: see the module comment. `req.slippageBps` is the ceiling.
     const params: Record<string, string> = { inputMint, outputMint, amount, taker: this.wallet.address };
     let order = await fetchOrder(params);
@@ -402,8 +426,14 @@ export class JupiterExecutor implements TradeExecutor {
     }
 
     if (order.errorCode !== null && order.errorCode !== undefined) {
+      const why =
+        order.errorCode === 1
+          ? ` The agent wallet (${this.wallet.address}) must hold the USDC for this order plus about ${(
+              ATA_RENT_HINT_LAMPORTS / 1e9
+            ).toFixed(4)} SOL for the token account; Tocker tops the SOL up from the platform Solana wallet when that wallet has any.`
+          : "";
       throw new JupiterError(
-        `Jupiter: ${order.errorMessage ?? "the taker cannot fill this order"} (code ${order.errorCode}).`,
+        `Jupiter: ${order.errorMessage ?? "the taker cannot fill this order"} (code ${order.errorCode}).${why}`,
         { errorCode: order.errorCode },
       );
     }
