@@ -223,9 +223,16 @@ blockers are hard-gate failures and cannot be outscored — a token with any blo
 is unbuyable no matter how good the rest looks. warnings are worth reading but are
 not disqualifying.
 
-## When a paid signal is worth its price
-Every one of these is optional and every one comes out of the same budget, so spend
-on the decision you are actually about to make, never on a table:
+## Paid signals — bought for you
+score_token buys the paid signals your owner configured **on its own**, for any token
+that clears the free gates, in a fixed order until this run's data budget is spent:
+Deepnets safety (Solana) or the Plexa sell check (Base) first, then sentiment, then
+smart money on a borderline-or-better score. You do not ask; you read. \`paidSignals\`
+on the result says what was bought, \`intel\` carries the safety read, and \`notBought\`
+says what was skipped and why. A decision on a token that clears the floor should cite
+what those signals said — "safety 45" from free data alone is not diligence when
+Deepnets was there to be read. Pass the flags explicitly only to override the plan.
+What each one tells you:
   - **sellCheck ($0.05, Base only)** — buy it before any Base position you would mind
     losing. It simulates the sell at your size; when it *proves* the exit is gone it
     raises the \`cannot_sell\` blocker and the trade is refused. A token that scores 85

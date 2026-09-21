@@ -7,6 +7,7 @@
  * the run — the model gets to read the reason and try something else.
  */
 import { MAX_PROPOSALS_PER_TICK } from "./limits";
+import { INTEL_SOURCE, planEnrichment, type EnrichmentPlan } from "./enrichment";
 import { nanoid } from "nanoid";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
@@ -168,6 +169,8 @@ export function buildTools(ctx: RunContext): ToolSet {
   /** Tokens scored this tick that clear the bar — the shortlist `finish` holds the model to, once. */
   const shortlistThisTick = new Map<string, { symbol: string; total: number }>();
   let finishNudged = false;
+  /** Tokens whose paid signals were already bought this tick — the score cache holds them. */
+  const enrichedThisTick = new Set<string>();
 
   /** Scores a token for this agent. Returns `null` only when scoring itself blew up. */
   const scoreFor = async (
@@ -270,7 +273,7 @@ export function buildTools(ctx: RunContext): ToolSet {
 
     score_token: tool({
       description:
-        "The full safety + quality score for one token: a 0-100 composite, a verdict, five free components, hard-gate blockers and warnings. Free by default. Three optional paid add-ons, each charged to your per-run data budget and each folded into the same score: deep (X sentiment, ~$0.01 — reweights the rest), smartMoney (Nansen tracked-wallet netflow, $0.05 — worth it on a 60-79 candidate you cannot decide about, useless on one that already fails a gate), sellCheck (Plexa live sell simulation, $0.05, BASE ONLY — buy it before any meaningful Base position: a proven failure raises the cannot_sell blocker and makes the token unbuyable, which is far cheaper than discovering it with your own money).",
+        "The full safety + quality score for one token: a 0-100 composite, a verdict, the free components, hard-gate blockers and warnings — and, for any token that clears the free gates, the paid signals your owner configured, bought automatically from your per-run data budget in this order: Deepnets safety on Solana ($0.01, returned as `intel`: mint/freeze flags, bundling, network concentration, critical risks), Plexa sell simulation on Base ($0.05, a proven failure raises cannot_sell), X sentiment (~$0.01, folded in as a component), Nansen smart-money netflow ($0.05, folded in, only on borderline-or-better scores). `paidSignals` says what was bought and `notBought` says what was not and why. A hard-blocked token buys nothing. Pass deep / smartMoney / sellCheck only to override that plan.",
       inputSchema: z.object({
         chain: chainSchema,
         address: z.string().min(3).describe("Mint (Solana) or contract address (Base)"),
@@ -298,12 +301,55 @@ export function buildTools(ctx: RunContext): ToolSet {
           })
           .parse(input);
         const token = await resolveToken(parsed.chain, parsed.address);
-        const score = await scoreFor(parsed.chain, token.address, {
-          ...(parsed.deep === true ? { deep: true } : {}),
-          ...(parsed.smartMoney === true ? { smartMoney: true } : {}),
-          ...(parsed.sellCheck === true ? { sellCheck: true } : {}),
-        });
-        if (!score) return fail(`Could not score ${token.symbol} — every data provider failed. Do not buy it.`);
+        const explicit = parsed.deep !== undefined || parsed.smartMoney !== undefined || parsed.sellCheck !== undefined;
+
+        // Free first, always: the gates decide whether paying for more is worth anything.
+        const free = await scoreFor(parsed.chain, token.address);
+        if (!free) return fail(`Could not score ${token.symbol} — every data provider failed. Do not buy it.`);
+
+        // Then the paid signals — planned, not asked for. See ./enrichment.
+        const plan: EnrichmentPlan = explicit
+          ? {
+              intel: false,
+              deep: parsed.deep === true,
+              smartMoney: parsed.smartMoney === true,
+              sellCheck: parsed.sellCheck === true,
+              skipped: [],
+              plannedUsd: 0,
+            }
+          : planEnrichment({
+              free,
+              chain: parsed.chain,
+              sources: allowedSources,
+              remainingUsd: Math.max(0, ctx.budget.maxUsd - ctx.budget.spentUsd),
+              minScore: universe.minScore,
+              already: enrichedThisTick.has(token.id),
+            });
+
+        let score = free;
+        if (plan.deep || plan.smartMoney || plan.sellCheck) {
+          score =
+            (await scoreFor(parsed.chain, token.address, {
+              deep: plan.deep,
+              smartMoney: plan.smartMoney,
+              sellCheck: plan.sellCheck,
+            })) ?? free;
+        }
+
+        let intel: { summary: string; signals: unknown } | null = null;
+        if (plan.intel) {
+          const source = getDataSource(INTEL_SOURCE);
+          if (source) {
+            try {
+              const result = await source.query(ctx.x402, { mint: token.address });
+              intel = { summary: result.summary, signals: result.signals ?? null };
+            } catch (err) {
+              plan.skipped.push(`intel: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+        }
+        if (plan.plannedUsd > 0 || plan.deep || plan.smartMoney || plan.sellCheck) enrichedThisTick.add(token.id);
+
         const meetsMinScore = score.blockers.length === 0 && score.verdict !== "avoid" && score.total >= universe.minScore;
         if (meetsMinScore) shortlistThisTick.set(token.id, { symbol: token.symbol, total: score.total });
         else shortlistThisTick.delete(token.id);
@@ -311,6 +357,14 @@ export function buildTools(ctx: RunContext): ToolSet {
           ...scorePayload(score),
           minScore: universe.minScore,
           meetsMinScore,
+          paidSignals: {
+            intel: intel !== null,
+            sentiment: score.components.sentiment !== null,
+            smartMoney: score.components.smartMoney !== null,
+            sellCheck: plan.sellCheck,
+          },
+          intel,
+          notBought: plan.skipped,
           dataBudgetRemainingUsd: Math.max(0, ctx.budget.maxUsd - ctx.budget.spentUsd),
         };
       }),
