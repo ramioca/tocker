@@ -33,6 +33,55 @@ export const LAMPORTS_PER_SOL = 1_000_000_000;
 /** CAIP-2 id of Solana mainnet-beta, as Privy's RPC endpoint wants it. */
 export const CAIP2_SOLANA_MAINNET = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
 
+// ------------------------------------------------------ what one transfer costs
+
+/** One signature on Solana. Two signers on one transaction still cost 5000 each. */
+export const SIGNATURE_FEE_LAMPORTS = 5_000;
+/** {@link ATA_RENT_SOL} in lamports — the rent-exempt minimum for a token account. */
+export const ATA_RENT_LAMPORTS = 2_039_280;
+/**
+ * The cushion on the platform's "can I sponsor this?" check: 0.001 SOL.
+ *
+ * Generous on purpose. A wallet that holds exactly the fee is a wallet that answers
+ * "yes" and then fails at broadcast against a busier block, and the failure the operator
+ * sees would be an RPC error rather than the honest "top the platform wallet up".
+ */
+export const SPONSOR_MARGIN_LAMPORTS = 1_000_000;
+/**
+ * The cushion on a drip taken *before* an agent wallet signs a transfer: 10_000 lamports.
+ *
+ * Small on purpose, and for the opposite reason: the drip itself already rounds up to
+ * {@link GAS_DRIP_SOL}, so this only has to stop a rounding edge from deciding the
+ * wallet is exactly covered when it is one lamport short.
+ */
+export const TRANSFER_MARGIN_LAMPORTS = 10_000;
+
+/**
+ * Pure: what the **platform** wallet must hold to fee-pay one user→agent USDC funding
+ * transfer — the signature, the destination token account's rent when it does not exist
+ * yet, and a margin.
+ *
+ * Note which rent this is. The platform is the `payer` on the idempotent
+ * create-associated-token-account instruction, so on a first funding it pays ~0.00204
+ * SOL out of its own pocket; on every funding after that the instruction is a no-op and
+ * the whole thing costs one signature.
+ */
+export function sponsoredFundingLamports(input: { ataExists: boolean }): number {
+  return SIGNATURE_FEE_LAMPORTS + (input.ataExists ? 0 : ATA_RENT_LAMPORTS) + SPONSOR_MARGIN_LAMPORTS;
+}
+
+/**
+ * Pure: what an **agent's own** Solana wallet must hold to sign one USDC transfer out of
+ * itself — a withdrawal to the owner, or a platform-fee sweep.
+ *
+ * The agent is the fee payer there, and it is the payer on the destination's token
+ * account too when that account does not exist yet. A USDC-only agent wallet holds no
+ * SOL at all, which is exactly why `ensureAgentGas` runs before either call.
+ */
+export function agentTransferLamports(input: { ataExists: boolean }): number {
+  return SIGNATURE_FEE_LAMPORTS + (input.ataExists ? 0 : ATA_RENT_LAMPORTS) + TRANSFER_MARGIN_LAMPORTS;
+}
+
 /** Pure: how much SOL (whole units) a wallet is short of covering an order's fees. */
 export function gasShortfallSol(input: {
   balanceSol: number;

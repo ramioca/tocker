@@ -8,6 +8,11 @@
  * Instruction encoding is hand-rolled rather than pulled from `@solana/spl-token`,
  * which is not a dependency of this app. Both instructions we need are tiny and
  * frozen by their programs, and both are covered by tests.
+ *
+ * The *sponsored* funding path — the one an operator's SOL-less wallet actually uses,
+ * where Tocker's platform wallet is the fee payer — lives in `./solana-sponsored.ts`.
+ * It reuses the encoders below but is `server-only`, because verifying the user's
+ * signature needs `node:crypto` and this module is in the client bundle.
  */
 import {
   Connection,
