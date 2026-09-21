@@ -932,6 +932,7 @@ export function mockAgentDetail(slug: string): AgentDetail | null {
     ],
     nextRunAt: card.status === "active" ? iso(-8 * MINUTE) : null,
     llmKeyLabel: isOwner ? "Personal Anthropic key" : null,
+    llmKeyId: isOwner ? "key_mock" : null,
     stats: {
       winRate: card.tradeCount === 0 ? null : round(0.42 + rand() * 0.24, 3),
       realizedPnlUsd: realized,

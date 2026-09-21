@@ -202,6 +202,7 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
     wallets: walletRows.map((w) => ({ chain: w.chain as Chain, address: w.address, walletId: w.id })),
     nextRunAt: iso(agent.nextRunAt),
     llmKeyLabel: isOwner && key ? (key.label ?? `${key.provider} ····${key.last4}`) : null,
+    llmKeyId: isOwner ? agent.llmKeyId : null,
     stats: {
       winRate: wr.rate,
       realizedPnlUsd: wr.realizedPnlUsd,

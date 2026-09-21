@@ -12,6 +12,9 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { formatUsd } from "@/components/common/format";
 import { Field, RiskSlider, Toggle } from "@/components/agents/builder/field";
 import { UniverseControls } from "@/components/agents/builder/universe-controls";
+import { AddKeyInline } from "@/components/agents/builder/steps";
+import { SimpleSelect } from "@/components/agents/builder/simple-select";
+import { DEFAULT_MODELS } from "@/lib/agent/config";
 import { DataSourcePicker } from "@/components/agents/data-source-picker";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
 import { ExitRulesFields } from "@/components/agents/exit-rules";
@@ -25,7 +28,7 @@ import { noteBudgetChangeAction } from "@/server/actions/security";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { cn } from "@/lib/utils";
 import type { AgentConfig } from "@/db/schema";
-import type { AgentDetail, DataSourceInfo } from "@/server/types";
+import type { AgentDetail, DataSourceInfo, LlmKeyRow } from "@/server/types";
 
 /** The four numbers that decide how much money can move. */
 function capsOf(config: AgentConfig) {
@@ -46,11 +49,14 @@ export function AgentSettingsForm({
   agent,
   config,
   sources = [],
+  llmKeys = [],
 }: {
   agent: AgentDetail;
   config?: AgentConfig | null;
   /** The x402 catalogue, for the Data section. Server-fetched by the page. */
   sources?: DataSourceInfo[];
+  /** The owner's API keys, for the Brain section. Server-fetched by the page. */
+  llmKeys?: LlmKeyRow[];
 }) {
   const resolved = config ?? agent.config;
   if (!resolved) {
@@ -61,28 +67,34 @@ export function AgentSettingsForm({
       />
     );
   }
-  return <SettingsForm agent={agent} initialConfig={resolved} sources={sources} />;
+  return <SettingsForm agent={agent} initialConfig={resolved} sources={sources} llmKeys={llmKeys} />;
 }
 
 function SettingsForm({
   agent,
   initialConfig,
   sources,
+  llmKeys,
 }: {
   agent: AgentDetail;
   initialConfig: AgentConfig;
   sources: DataSourceInfo[];
+  llmKeys: LlmKeyRow[];
 }) {
   const router = useRouter();
   const [name, setName] = useState(agent.name);
   const [tagline, setTagline] = useState(agent.tagline ?? "");
   const [isPublic, setIsPublic] = useState(agent.isPublic);
   const [config, setConfig] = useState<AgentConfig>(initialConfig);
+  const [llmKeyId, setLlmKeyId] = useState<string | null>(agent.llmKeyId);
+  const [keys, setKeys] = useState<LlmKeyRow[]>(llmKeys);
+  const keysForProvider = keys.filter((key) => key.provider === config.llm.provider);
 
   const dirty =
     name !== agent.name ||
     tagline !== (agent.tagline ?? "") ||
     isPublic !== agent.isPublic ||
+    llmKeyId !== agent.llmKeyId ||
     JSON.stringify(config) !== JSON.stringify(initialConfig);
 
   const save = async () => {
@@ -94,6 +106,7 @@ function SettingsForm({
       name: name.trim(),
       tagline: tagline.trim() || undefined,
       isPublic,
+      llmKeyId,
       config,
     });
     if (!result.ok) {
@@ -206,6 +219,77 @@ function SettingsForm({
           className="font-mono text-xs leading-relaxed"
           aria-label="Strategy prompt"
         />
+      </section>
+
+      <section id="brain" className="scroll-mt-20 space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
+        <div>
+          <h2 className="text-sm font-medium">Brain</h2>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+            The key it thinks with and the model it runs. Changing the key here is how a run that failed on its
+            key gets a working one — adding a key under Settings does not switch an existing agent by itself.
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label htmlFor="settings-llm-provider" className="mb-1 block text-xs text-muted-foreground">
+              Provider
+            </label>
+            <SimpleSelect
+              id="settings-llm-provider"
+              value={config.llm.provider}
+              options={[
+                { value: "anthropic", label: "Anthropic" },
+                { value: "openai", label: "OpenAI" },
+                { value: "openrouter", label: "OpenRouter" },
+              ]}
+              onChange={(next) => {
+                const provider = next as AgentConfig["llm"]["provider"];
+                setConfig((current) => ({
+                  ...current,
+                  llm: { ...current.llm, provider, model: DEFAULT_MODELS[provider][0].id },
+                }));
+                setLlmKeyId(null);
+              }}
+            />
+          </div>
+          <div>
+            <label htmlFor="settings-llm-model" className="mb-1 block text-xs text-muted-foreground">
+              Model
+            </label>
+            <SimpleSelect
+              id="settings-llm-model"
+              value={config.llm.model}
+              options={DEFAULT_MODELS[config.llm.provider].map((model) => ({ value: model.id, label: model.label }))}
+              onChange={(model) => setConfig((current) => ({ ...current, llm: { ...current.llm, model } }))}
+            />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <span className="block text-xs text-muted-foreground">API key</span>
+          {keysForProvider.length > 0 ? (
+            <SimpleSelect
+              value={llmKeyId}
+              placeholder="Choose a key"
+              options={keysForProvider.map((key) => ({
+                value: key.id,
+                label: key.label ?? `${key.provider} key`,
+                hint: `••••${key.last4}`,
+              }))}
+              onChange={(next) => setLlmKeyId(next)}
+            />
+          ) : (
+            <p className="text-xs text-muted-foreground">No {config.llm.provider} key on file yet.</p>
+          )}
+          <AddKeyInline
+            onAdded={(key) => {
+              setKeys((current) => [key, ...current]);
+              setLlmKeyId(key.id);
+            }}
+          />
+          {llmKeyId === null ? (
+            <p className="text-xs text-destructive">No key attached: every run will fail until one is chosen.</p>
+          ) : null}
+        </div>
       </section>
 
       <section className="space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">

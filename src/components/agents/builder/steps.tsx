@@ -134,7 +134,7 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
 
 // --------------------------------------------------------------------- brain
 
-function AddKeyInline({ onAdded }: { onAdded: (key: LlmKeyRow) => void }) {
+export function AddKeyInline({ onAdded }: { onAdded: (key: LlmKeyRow) => void }) {
   const [open, setOpen] = useState(false);
   const [provider, setProvider] = useState<"anthropic" | "openai" | "openrouter">("anthropic");
   const [value, setValue] = useState("");

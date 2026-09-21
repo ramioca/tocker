@@ -149,6 +149,8 @@ export interface AgentDetail extends AgentCard {
   wallets: Array<{ chain: Chain; address: string; walletId: string }>;
   nextRunAt: string | null;
   llmKeyLabel: string | null; // owner only
+  /** The attached key's id, so settings can switch it. Owner only. */
+  llmKeyId: string | null;
   stats: {
     winRate: number | null; // 0..1
     realizedPnlUsd: number;
