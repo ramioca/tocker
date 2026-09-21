@@ -6,8 +6,9 @@
  * Tools return structured failures instead of throwing, so one bad call does not kill
  * the run — the model gets to read the reason and try something else.
  */
+import { loadCachedScores } from "@/lib/trading/score-cache";
 import { platformFeeUsd as flatFeeUsd } from "@/lib/platform/fee";
-import { MAX_PROPOSALS_PER_TICK } from "./limits";
+import { MAX_PROPOSALS_PER_TICK, MIN_SCORED_PER_TICK, SEEN_WINDOW_MS } from "./limits";
 import { INTEL_SOURCE, planEnrichment, type EnrichmentPlan } from "./enrichment";
 import { nanoid } from "nanoid";
 import { tool, type ToolSet } from "ai";
@@ -29,6 +30,7 @@ import { notifyFill } from "@/lib/notifications";
 import {
   createProposal,
   openProposalsUsd,
+  pendingProposalTokenIds,
   expireAgentProposals,
   hasPendingProposal,
   indicativePrice,
@@ -173,6 +175,10 @@ export function buildTools(ctx: RunContext): ToolSet {
   let finishNudged = false;
   /** Tokens whose paid signals were already bought this tick — the score cache holds them. */
   const enrichedThisTick = new Set<string>();
+  /** Every token scored this tick, and the fresh candidates discovery surfaced — `finish` compares the two, once. */
+  const scoredThisTick = new Set<string>();
+  const freshThisTick = new Map<string, string>();
+  let researchNudged = false;
 
   /** Scores a token for this agent. Returns `null` only when scoring itself blew up. */
   const scoreFor = async (
@@ -244,31 +250,65 @@ export function buildTools(ctx: RunContext): ToolSet {
           x402: ctx.x402,
           dataSources: allowedSources,
           ...(parsed.feeds ? { feeds: parsed.feeds } : {}),
-          ...(parsed.limit === undefined ? {} : { limit: parsed.limit }),
+          // Wider than the old 20 by default: the fresh part of the table is what
+          // matters, and a held, proposed or recently scored name takes a slot otherwise.
+          limit: parsed.limit ?? 30,
           ...(parsed.minLiquidityUsd === undefined ? {} : { minLiquidityUsd: parsed.minLiquidityUsd }),
           ...(parsed.maxAgeHours === undefined ? {} : { maxAgeHours: parsed.maxAgeHours }),
         });
+
+        // What the agent has already dealt with: held, proposed and undecided, or scored
+        // within the seen window. Those stay visible, flagged and at the bottom, so the
+        // top of the table is research the agent has not done yet — the same three names
+        // re-scored every five minutes was the whole complaint.
+        const ids = candidates.map((c) => c.token.id);
+        const [portfolio, proposed, cached] = await Promise.all([
+          getPortfolio(agent.id),
+          pendingProposalTokenIds(agent.id),
+          loadCachedScores(ids),
+        ]);
+        const heldIds = new Set(portfolio.positions.map((p) => p.token.id));
+        const seenReason = (tokenId: string): string | null => {
+          if (heldIds.has(tokenId)) return "held";
+          if (proposed.has(tokenId)) return "proposed, awaiting your owner";
+          const row = cached.get(tokenId);
+          if (row && Date.now() - row.scoredAt.getTime() < SEEN_WINDOW_MS) {
+            return `scored ${Math.max(1, Math.round((Date.now() - row.scoredAt.getTime()) / 60_000))}m ago at ${Math.round(row.total)}`;
+          }
+          return null;
+        };
+        const fresh = candidates.filter((c) => seenReason(c.token.id) === null);
+        const seen = candidates.filter((c) => seenReason(c.token.id) !== null);
+        for (const c of fresh) freshThisTick.set(c.token.id, c.token.symbol);
+
+        const row = (c: (typeof candidates)[number]) => ({
+          symbol: c.token.symbol,
+          chain: c.token.chain,
+          address: c.token.address,
+          origin: c.origin,
+          quickScore: c.quickScore,
+          liquidityUsd: c.liquidityUsd,
+          volume24hUsd: c.volume24hUsd,
+          marketCapUsd: c.marketCapUsd,
+          holderCount: c.holderCount,
+          ageHours: c.ageHours,
+          priceChange24hPct: c.priceChange24hPct,
+          seen: seenReason(c.token.id),
+        });
+        const seenLine =
+          seen.length === 0
+            ? ""
+            : `\n\nAlready seen (not fresh research): ${seen.map((c) => `${c.token.symbol} (${seenReason(c.token.id)})`).join(", ")}`;
 
         return {
           ok: true,
           chains,
           feeds: parsed.feeds ?? universe.discovery,
           count: candidates.length,
-          candidates: candidates.map((c) => ({
-            symbol: c.token.symbol,
-            chain: c.token.chain,
-            address: c.token.address,
-            origin: c.origin,
-            quickScore: c.quickScore,
-            liquidityUsd: c.liquidityUsd,
-            volume24hUsd: c.volume24hUsd,
-            marketCapUsd: c.marketCapUsd,
-            holderCount: c.holderCount,
-            ageHours: c.ageHours,
-            priceChange24hPct: c.priceChange24hPct,
-          })),
-          rendered: renderCandidates(candidates),
-          note: "quickScore is a cheap pre-rank, not the real score. Call score_token before you act on any of these.",
+          freshCount: fresh.length,
+          candidates: [...fresh, ...seen].map(row),
+          rendered: `${renderCandidates(fresh)}${seenLine}`,
+          note: `quickScore is a cheap pre-rank, not the real score. Score at least ${MIN_SCORED_PER_TICK} of the fresh candidates before deciding — widen with maxAgeHours or minLiquidityUsd, or a different feed, when fewer than ${MIN_SCORED_PER_TICK} are fresh.`,
         };
       }),
     }),
@@ -352,6 +392,7 @@ export function buildTools(ctx: RunContext): ToolSet {
         }
         if (plan.plannedUsd > 0 || plan.deep || plan.smartMoney || plan.sellCheck) enrichedThisTick.add(token.id);
 
+        scoredThisTick.add(token.id);
         const meetsMinScore = score.blockers.length === 0 && score.verdict !== "avoid" && score.total >= universe.minScore;
         if (meetsMinScore) shortlistThisTick.set(token.id, { symbol: token.symbol, total: score.total });
         else shortlistThisTick.delete(token.id);
@@ -917,6 +958,22 @@ export function buildTools(ctx: RunContext): ToolSet {
       inputSchema: z.object({ summary: z.string().min(5).max(1000) }),
       execute: logged(ctx, "finish", async (input) => {
         const parsed = z.object({ summary: z.string() }).parse(input);
+        // Once per tick: a model that scored two names off the top of the table has not
+        // researched the tick. Send it back for the rest of the fresh candidates.
+        if (!researchNudged && scoredThisTick.size < MIN_SCORED_PER_TICK) {
+          const unscored = [...freshThisTick.entries()].filter(([tokenId]) => !scoredThisTick.has(tokenId));
+          if (unscored.length > 0) {
+            researchNudged = true;
+            const want = Math.min(unscored.length, MIN_SCORED_PER_TICK - scoredThisTick.size);
+            return fail(
+              `Not yet. You scored ${scoredThisTick.size} token${scoredThisTick.size === 1 ? "" : "s"} this tick and discovery surfaced ${unscored.length} fresh candidate${unscored.length === 1 ? "" : "s"} you have not looked at: ${unscored
+                .slice(0, 8)
+                .map(([, symbol]) => symbol)
+                .join(", ")}. Score at least ${want} more (score_token is free and buys the paid signals for you), then decide and call finish again.`,
+              { nudged: true, unscored: unscored.map(([, symbol]) => symbol) },
+            );
+          }
+        }
         // Approval mode, once per tick: a model that scored two or three tokens above the
         // bar and proposed one has not given its owner the shortlist they asked for. Send
         // it back for the rest — or for a sentence on why each one is not worth proposing.

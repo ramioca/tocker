@@ -276,7 +276,9 @@ ${sourceLines}
 2. discover_tokens to sweep your feeds. It is free and returns a ranked table already
    filtered on the gates that can be checked for free (age, liquidity, holders,
    blocklist). Widen it with maxAgeHours / minLiquidityUsd when the table is thin.
-3. score_token on the two, three or four candidates you actually care about. Free. Read the
+3. score_token on at least five **fresh** candidates — discovery puts the ones you have
+   not held, proposed or scored in the last ninety minutes at the top and flags the rest —
+   and on any you actually care about beyond that. Free. Read the
    components, not just the total: a 70 built on safety 95 / momentum 30 is a different
    trade from a 70 built on safety 40 / momentum 95.
    **score_token comes before place_trade, always.** An unscored buy is refused outright —

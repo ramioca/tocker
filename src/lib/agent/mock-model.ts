@@ -188,6 +188,26 @@ export const MOCK_SCRIPT = [
   { text: "Done for this tick.", call: { name: "finish", input: {} } },
 ] as const;
 
+/** True when the newest `finish` result in the transcript was refused (a once-per-tick nudge). */
+function lastFinishRefused(options: MockGenerateOptions): boolean {
+  let refused = false;
+  for (const message of options.prompt) {
+    const content: unknown = (message as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const raw of content) {
+      if (!raw || typeof raw !== "object") continue;
+      const part = raw as Record<string, unknown>;
+      if (part.type !== "tool-result" || part.toolName !== "finish") continue;
+      let value: unknown = part.output ?? part.result;
+      if (value && typeof value === "object" && "value" in (value as Record<string, unknown>)) {
+        value = (value as Record<string, unknown>).value;
+      }
+      refused = Boolean(value && typeof value === "object" && (value as Record<string, unknown>).ok === false);
+    }
+  }
+  return refused;
+}
+
 export function isLlmMock(): boolean {
   return process.env.LLM_MOCK === "1";
 }
@@ -206,7 +226,18 @@ export function createMockModel(): LanguageModel {
       );
       const entry = script[index];
       index += 1;
-      if (!entry) return step("Nothing further this tick.", null, `mock-${index}`);
+      if (!entry) {
+        // The runtime sends a model back once for an unscored shortlist or an
+        // unproposed candidate; a real model answers, the script simply finishes again.
+        if (lastFinishRefused(options)) {
+          return step(
+            "Noted; nothing more I would act on this tick.",
+            { name: "finish", input: { summary: summaryFrom(lastScore(options)) } },
+            `mock-${index}`,
+          );
+        }
+        return step("Nothing further this tick.", null, `mock-${index}`);
+      }
 
       const input: Record<string, unknown> = { ...entry.call.input };
       if (entry.call.name === "place_trade") {

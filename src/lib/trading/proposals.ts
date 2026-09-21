@@ -255,6 +255,16 @@ export async function expireProposals(now: Date = new Date(), opts?: { agentId?:
   return updated.length;
 }
 
+/** Tokens this agent has proposed and the owner has not yet decided on. */
+export async function pendingProposalTokenIds(agentId: string): Promise<Set<string>> {
+  const db = await getDb();
+  const rows = await db
+    .select({ tokenId: trades.tokenId })
+    .from(trades)
+    .where(and(eq(trades.agentId, agentId), eq(trades.status, "proposed")));
+  return new Set(rows.map((r) => r.tokenId));
+}
+
 /** USD this agent's undecided proposals ask for — money the next proposal cannot count on. */
 export async function openProposalsUsd(agentId: string): Promise<number> {
   const db = await getDb();
