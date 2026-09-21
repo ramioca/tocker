@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { ReactLenis } from "lenis/react";
 import { CursorTrailContact } from "./cursor-trail-contact";
 import { IsotopeHero } from "./isotope-hero";
+import { ShaderDebug } from "./shader-debug";
 import { WaitlistProvider } from "./waitlist";
 
 /**
@@ -134,6 +135,7 @@ export function LiquidLanding() {
           <Mechanics />
           <CursorTrailContact />
           <Grain />
+          <ShaderDebug />
         </main>
       </WaitlistProvider>
     </ReactLenis>

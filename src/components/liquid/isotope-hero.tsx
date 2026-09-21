@@ -44,7 +44,7 @@ export function IsotopeHero() {
   const showStatic = shader.state !== "on";
 
   return (
-    <section className="iso-hero" data-shader={shader.state}>
+    <section className="iso-hero" data-shader={shader.state} data-shader-reason={shader.reason || undefined}>
       {mountShader ? (
         <IsotopeShader
           textVisible={textVisible}

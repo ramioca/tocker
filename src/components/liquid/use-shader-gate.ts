@@ -17,36 +17,67 @@ import { useCallback, useState, useSyncExternalStore } from "react";
  *   loading  → WebGPU present, shader chunk mounting: art stays underneath
  *   on       → the renderer is ready and drawing
  *   off      → no WebGPU, reduced motion, data saver, or the renderer gave up
+ *
+ * `reason` says why it is off (or what the renderer reported), for the
+ * `?shaderdebug` overlay — see shader-debug.tsx.
  */
 export type ShaderState = "unknown" | "loading" | "on" | "off";
 
-let capability: "loading" | "off" | null = null;
+type Capability = { state: "loading" | "off"; reason: string };
+let capability: Capability | null = null;
 
 /** Computed once per page; the snapshot must be referentially stable. */
-function getClientSnapshot(): "loading" | "off" {
+function getClientSnapshot(): Capability {
   if (capability === null) {
     const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
-    const capable =
-      "gpu" in navigator &&
-      !window.matchMedia("(prefers-reduced-motion: reduce)").matches &&
-      !nav.connection?.saveData;
-    capability = capable ? "loading" : "off";
+    const reasons: string[] = [];
+    if (!("gpu" in navigator)) reasons.push("no-webgpu");
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) reasons.push("reduced-motion");
+    if (nav.connection?.saveData) reasons.push("save-data");
+    capability =
+      reasons.length === 0 ? { state: "loading", reason: "" } : { state: "off", reason: reasons.join("+") };
   }
   return capability;
 }
-const getServerSnapshot = (): "unknown" => "unknown";
+const SERVER: Capability = { state: "loading", reason: "" };
+const getServerSnapshot = (): Capability => SERVER;
 const subscribeNever = () => () => {};
 
 export function useShaderGate() {
-  // Server and hydration render "unknown"; the first client render after
-  // hydration switches to the real capability without a state update in an
-  // effect (and without a hydration mismatch).
-  const base = useSyncExternalStore(subscribeNever, getClientSnapshot, getServerSnapshot);
-  const [outcome, setOutcome] = useState<"on" | "off" | null>(null);
+  // Server and hydration render as "unknown" (see below); the first client
+  // render after hydration switches to the real capability without a state
+  // update in an effect (and without a hydration mismatch).
+  const cap = useSyncExternalStore(subscribeNever, getClientSnapshot, getServerSnapshot);
+  const hydrated = useSyncExternalStore(
+    subscribeNever,
+    () => true,
+    () => false,
+  );
+  const [outcome, setOutcome] = useState<{ state: "on" | "off"; reason: string } | null>(null);
 
-  const ready = useCallback(() => setOutcome((o) => (o === "off" ? o : "on")), []);
-  const unavailable = useCallback(() => setOutcome("off"), []);
+  const ready = useCallback(
+    () => setOutcome((o) => (o?.state === "off" ? o : { state: "on", reason: "" })),
+    [],
+  );
+  const unavailable = useCallback(
+    (reason?: unknown) => setOutcome({ state: "off", reason: typeof reason === "string" ? reason : "unavailable" }),
+    [],
+  );
 
-  const state: ShaderState = base === "off" ? "off" : (outcome ?? base);
-  return { state, ready, unavailable };
+  let state: ShaderState;
+  let reason: string;
+  if (!hydrated) {
+    state = "unknown";
+    reason = "";
+  } else if (cap.state === "off") {
+    state = "off";
+    reason = cap.reason;
+  } else if (outcome) {
+    state = outcome.state;
+    reason = outcome.reason;
+  } else {
+    state = "loading";
+    reason = "";
+  }
+  return { state, reason, ready, unavailable };
 }

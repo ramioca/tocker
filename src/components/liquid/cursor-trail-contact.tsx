@@ -24,7 +24,7 @@ export function CursorTrailContact() {
   const mountShader = shader.state === "loading" || shader.state === "on";
 
   return (
-    <section id="contact" className="ctc" data-shader={shader.state}>
+    <section id="contact" className="ctc" data-shader={shader.state} data-shader-reason={shader.reason || undefined}>
       {mountShader ? (
         <CursorTrailShader onReady={shader.ready} onUnavailable={shader.unavailable} />
       ) : null}
