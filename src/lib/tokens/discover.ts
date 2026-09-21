@@ -16,6 +16,7 @@
  * | `trending`     | Jupiter `/tokens/v2/toptraded/24h`      | DexScreener `/token-boosts/top/v1`      |
  * | `top_organic`  | Jupiter `/tokens/v2/toporganicscore/24h`| n/a — falls back to `trending`          |
  * | `momentum`     | derived from `stats1h`/`stats24h`       | derived from `priceChange` + `volume`   |
+ * | `gecko_launches` | GeckoTerminal `new_pools` p1-2 + `trending_pools` p1, kept only when GeckoTerminal's own GT Score rates the token ≥ 50 — same two endpoints on both chains |
  *
  * And one feed that is **not** free, off by default, and only runs when the agent
  * turned it on *and* the caller passed an x402 context:
@@ -30,7 +31,14 @@ import type { Chain, DiscoveryFeed, TokenCandidate, TokenRef } from "@/server/ty
 import type { PaidLaunch } from "@/lib/data-sources/normalize";
 import type { X402Context } from "@/lib/x402/types";
 import { getDexScreenerTokens, getLatestTokenProfiles, getTopBoostedTokens } from "./providers/dexscreener";
-import { getGeckoPoolTokens } from "./providers/geckoterminal";
+import {
+  getGeckoPools,
+  getGeckoPoolTokens,
+  getGeckoTokenInfo,
+  type GeckoPool,
+  type GeckoTokenInfo,
+} from "./providers/geckoterminal";
+import { mapLimit } from "./providers/http";
 import { getJupiterRecent, getJupiterTopOrganic, getJupiterTopTraded } from "./providers/jupiter";
 import { hardGates, toFacts, type Universe } from "./score";
 import type { DexScreenerToken, JupiterToken, TokenFacts } from "./types";
@@ -102,6 +110,8 @@ function candidateFrom(
   origin: DiscoveryFeed,
   organicScore: number | null,
   volume24hUsd: number | null,
+  /** Pre-rank override for feeds that know something `quickScore` cannot read. */
+  preRank?: number,
 ): TokenCandidate {
   return {
     token: tokenRefFor(facts),
@@ -112,7 +122,7 @@ function candidateFrom(
     holderCount: facts.holderCount,
     ageHours: facts.ageHours === null ? null : Math.round(facts.ageHours * 100) / 100,
     priceChange24hPct: facts.priceChange24hPct,
-    quickScore: quickScore(facts, organicScore),
+    quickScore: preRank ?? quickScore(facts, organicScore),
   };
 }
 
@@ -266,6 +276,225 @@ async function sweepPaidLaunches(
   }
 }
 
+// ---------- the GeckoTerminal launch sweep (`gecko_launches`) ----------
+
+/**
+ * `gecko_launches` is the only feed that asks a second provider "and what do *you*
+ * think of this token" before it emits a candidate.
+ *
+ * The pool pages are cheap (three requests a chain) and full of noise: a `new_pools`
+ * page on Solana is mostly pump.fun mints seconds old with a $0 reserve and two
+ * wallets in them. So the pages are filtered on what the page itself says — age,
+ * reserve, and *distinct buyers in the last hour* — and only the best
+ * {@link GECKO_INFO_LOOKUPS_PER_SWEEP} survivors across every chain are worth a
+ * `/info` lookup. That lookup is the actual point of the feed: it returns
+ * GeckoTerminal's GT Score, and a token GeckoTerminal has not really assessed
+ * (`gt_score_details.creation === 0`) or rates under
+ * {@link GECKO_MIN_GT_SCORE} never becomes a candidate.
+ *
+ * The lookup budget is per *sweep*, not per chain, because the rate limit is per
+ * process: 3 pages × 2 chains + 15 lookups = 21 requests, inside the free tier's
+ * ~30/min even before the provider's caches and limiter get involved.
+ */
+/** Distinct buying wallets in the last hour a pool needs before it is worth a lookup. */
+export const GECKO_MIN_BUYERS_H1 = 5;
+/** GT Score a token needs to be emitted as a candidate. */
+export const GECKO_MIN_GT_SCORE = 50;
+/** Hard ceiling on `/info` lookups for one sweep, across every chain. */
+export const GECKO_INFO_LOOKUPS_PER_SWEEP = 15;
+
+export interface GeckoPoolFilter {
+  pools: readonly GeckoPool[];
+  now: number;
+  minLiquidityUsd: number;
+  maxAgeHours: number | null;
+}
+
+/**
+ * Which survivors get the lookup, best first: real buyers dominate, depth breaks
+ * ties, and the reserve only gets a log's worth of influence so a $40k pool with two
+ * wallets in it never outranks a $5k pool with forty.
+ */
+export function geckoPoolRank(pool: GeckoPool): number {
+  const buyers = Math.max(0, pool.buyersH1 ?? 0);
+  const reserve = Math.max(0, pool.reserveUsd ?? 0);
+  return Math.log10(1 + buyers) * 2 + Math.log10(1 + reserve);
+}
+
+/**
+ * The free half of the `gecko_launches` filter — everything the pool page can answer
+ * without a second request. Deduped by base token (one token often has several fresh
+ * pools; the best-ranked one wins) and returned best-first.
+ *
+ * An unknown is rejected here rather than deferred, unlike the other feeds: a pool
+ * with no `reserve_in_usd` and no `pool_created_at` is a pool GeckoTerminal has not
+ * caught up with yet, and the next page will have twenty more.
+ */
+export function filterGeckoPools(input: GeckoPoolFilter): GeckoPool[] {
+  const best = new Map<string, GeckoPool>();
+
+  for (const pool of input.pools) {
+    const buyers = pool.buyersH1;
+    if (buyers === null || buyers < GECKO_MIN_BUYERS_H1) continue;
+
+    if (input.minLiquidityUsd > 0) {
+      if (pool.reserveUsd === null || pool.reserveUsd < input.minLiquidityUsd) continue;
+    }
+
+    if (input.maxAgeHours !== null) {
+      if (pool.createdAtMs === null) continue;
+      const ageHours = Math.max(0, (input.now - pool.createdAtMs) / 3_600_000);
+      if (ageHours > input.maxAgeHours) continue;
+    }
+
+    const existing = best.get(pool.token.address);
+    if (!existing || geckoPoolRank(pool) > geckoPoolRank(existing)) best.set(pool.token.address, pool);
+  }
+
+  return Array.from(best.values()).sort((a, b) => {
+    const delta = geckoPoolRank(b) - geckoPoolRank(a);
+    return delta !== 0 ? delta : (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0);
+  });
+}
+
+/**
+ * Whether GeckoTerminal's own read clears the feed's bar. Both halves matter: the
+ * score says "rated well", and a non-zero `creation` sub-score says the rating is
+ * about a token it actually looked at rather than a default for something it first
+ * saw ninety seconds ago.
+ */
+export function passesGeckoInfo(info: GeckoTokenInfo | null): boolean {
+  if (info === null) return false;
+  // The GT Score alone. A `creation` sub-score of 0 was also required at first, but a
+  // day-old launch GeckoTerminal rates 52 overall (STAMP, 2026-09-21) still carries
+  // creation 0 — that sub-score measures the creator's track record, which a fresh
+  // launch never has, and it is exactly the launch this feed exists to surface. A
+  // minutes-old mint scores 23 overall and fails the bar on its own.
+  return info.gtScore !== null && info.gtScore >= GECKO_MIN_GT_SCORE;
+}
+
+/** Pool page + `/info` → the chain-agnostic facts the pre-rank and the gates read. */
+export function geckoFactsFor(pool: GeckoPool, info: GeckoTokenInfo | null, chain: Chain, now: number): TokenFacts {
+  const ageHours = pool.createdAtMs === null ? null : Math.max(0, (now - pool.createdAtMs) / 3_600_000);
+  return {
+    chain,
+    address: pool.token.address,
+    symbol: pool.token.symbol ?? info?.symbol ?? pool.token.address.slice(0, 6),
+    name: pool.token.name ?? info?.name ?? null,
+    decimals: pool.token.decimals ?? info?.decimals ?? null,
+    logoUrl: pool.token.imageUrl ?? info?.imageUrl ?? null,
+    priceUsd: pool.priceUsd,
+    liquidityUsd: pool.reserveUsd,
+    volume24hUsd: pool.volume24hUsd,
+    marketCapUsd: pool.marketCapUsd ?? pool.fdvUsd,
+    holderCount: info?.holderCount ?? null,
+    ageHours,
+    priceChange1hPct: pool.priceChange1hPct,
+    priceChange6hPct: pool.priceChange6hPct,
+    priceChange24hPct: pool.priceChange24hPct,
+    // GeckoTerminal does report `mint_authority` / `freeze_authority` as "yes"/"no",
+    // but the authority gates are the expensive pass's job (Jupiter's audit, GoPlus)
+    // and a discovery feed must not be the thing that clears a safety gate.
+    mintAuthorityDisabled: null,
+    freezeAuthorityDisabled: null,
+    top10HolderPct: info?.top10HolderPct ?? null,
+    // `developer_holding_percentage` is left alone: "0.24" could be 0.24% or 24%.
+    devBalancePct: null,
+    buyTaxPct: null,
+    sellTaxPct: null,
+    isHoneypot: info?.isHoneypot ?? null,
+    sellable: null,
+  };
+}
+
+/**
+ * The pre-rank for this feed. GT Score is itself a composite of pool depth,
+ * transaction quality, creation and holders, so it stands in for the organic term in
+ * {@link quickScore} *and* takes a further fifth of the pre-rank on its own — a token
+ * GeckoTerminal rates 90 should out-rank one it rates 55 with the same pool.
+ */
+export function geckoQuickScore(facts: TokenFacts, gtScore: number | null): number {
+  const base = quickScore(facts, gtScore);
+  if (gtScore === null) return base;
+  const gt = Math.min(100, Math.max(0, gtScore));
+  return Math.round((base * 0.8 + gt * 0.2) * 10) / 10;
+}
+
+/** One survivor, with GeckoTerminal's read folded into the pre-rank. */
+export function geckoCandidate(
+  pool: GeckoPool,
+  info: GeckoTokenInfo | null,
+  chain: Chain,
+  now: number,
+): TokenCandidate {
+  const facts = geckoFactsFor(pool, info, chain, now);
+  return candidateFrom(
+    facts,
+    "gecko_launches",
+    info?.gtScore ?? null,
+    pool.volume24hUsd,
+    geckoQuickScore(facts, info?.gtScore ?? null),
+  );
+}
+
+/**
+ * Sweeps `gecko_launches` across every requested chain in one pass, so the `/info`
+ * lookup budget is shared rather than multiplied. Never throws: a page that failed
+ * contributes nothing, and a token whose lookup failed is simply not a candidate.
+ */
+async function sweepGeckoLaunches(chains: readonly Chain[], ctx: DiscoveryContext): Promise<TokenCandidate[]> {
+  const pages = await Promise.allSettled(
+    chains.flatMap((chain) =>
+      (
+        [
+          [chain, "new_pools", 1],
+          [chain, "new_pools", 2],
+          [chain, "trending_pools", 1],
+        ] as const
+      ).map(([net, feed, page]) => getGeckoPools(net, feed, page).then((pools) => ({ chain: net, pools }))),
+    ),
+  );
+
+  const byChain = new Map<Chain, GeckoPool[]>();
+  for (const page of pages) {
+    if (page.status !== "fulfilled") continue;
+    const existing = byChain.get(page.value.chain) ?? [];
+    existing.push(...page.value.pools);
+    byChain.set(page.value.chain, existing);
+  }
+
+  // Filter per chain, then re-rank across chains so one busy chain cannot eat the
+  // whole lookup budget.
+  const survivors: Array<{ chain: Chain; pool: GeckoPool }> = [];
+  for (const [chain, pools] of byChain) {
+    for (const pool of filterGeckoPools({
+      pools,
+      now: ctx.now,
+      minLiquidityUsd: ctx.universe.minLiquidityUsd,
+      maxAgeHours: ctx.universe.maxAgeHours,
+    })) {
+      // Before the lookup, not after: `trending_pools` is led by WETH, USDC and
+      // cbBTC on Base, and a lookup spent on something that can never be a candidate
+      // is a lookup the rest of the page does not get.
+      if (!isDiscoveryCandidate({ address: pool.token.address, symbol: pool.token.symbol ?? "" })) continue;
+      survivors.push({ chain, pool });
+    }
+  }
+  survivors.sort((a, b) => geckoPoolRank(b.pool) - geckoPoolRank(a.pool));
+
+  // The provider's own limiter owns the rate, so a *small* fan-out is safe and turns
+  // a ~30s sweep into a ~10s one; the request count is identical either way.
+  const looked = await mapLimit(survivors.slice(0, GECKO_INFO_LOOKUPS_PER_SWEEP), 3, async ({ chain, pool }) => ({
+    chain,
+    pool,
+    info: await getGeckoTokenInfo(chain, pool.token.address),
+  }));
+
+  return looked
+    .filter(({ info }) => passesGeckoInfo(info))
+    .map(({ chain, pool, info }) => geckoCandidate(pool, info, chain, ctx.now));
+}
+
 // ---------- per-chain sweeps ----------
 
 async function sweepSolana(feeds: ReadonlySet<DiscoveryFeed>, ctx: DiscoveryContext): Promise<TokenCandidate[]> {
@@ -405,6 +634,9 @@ export async function discoverCandidates(input: DiscoverInput): Promise<TokenCan
   const jobs: Array<Promise<TokenCandidate[]>> = chains.map((chain) =>
     chain === "solana" ? sweepSolana(feeds, ctx) : sweepBase(feeds, ctx),
   );
+  // One job for every chain, not one per chain: the GeckoTerminal rate limit is per
+  // process, so the `/info` lookup budget has to be shared.
+  if (feeds.has("gecko_launches")) jobs.push(sweepGeckoLaunches(chains, ctx));
   // The one feed that spends money, and only with a wallet in hand.
   const x402 = input.x402;
   if (feeds.has("paid_launches") && x402) {

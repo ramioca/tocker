@@ -136,7 +136,9 @@ export type AgentConfig = {
      * Which candidate feeds run each tick. Every one is free except `paid_launches`,
      * which buys a launch radar per chain per sweep out of the run's data budget.
      */
-    discovery: Array<"new_launches" | "trending" | "top_organic" | "momentum" | "paid_launches">;
+    discovery: Array<
+      "new_launches" | "trending" | "top_organic" | "momentum" | "gecko_launches" | "paid_launches"
+    >;
     /** Composite score (0-100) a token must reach before the agent may buy it. */
     minScore: number;
     minLiquidityUsd: number;
@@ -687,7 +689,7 @@ export type TradeReceiptVenue = "jupiter" | "privy-base" | "paper";
 
 /** One reason a token scored the way it did, in plain words. Public by construction. */
 export interface ReceiptScoreReason {
-  /** Component key: safety | liquidity | organic | distribution | momentum | sentiment | smartMoney. */
+  /** Component key: safety | liquidity | organic | distribution | momentum | gecko | sentiment | smartMoney. */
   key: string;
   label: string;
   value: number;

@@ -188,6 +188,7 @@ export async function simulateFirstTrade(config: AgentConfig, usdc: number): Pro
         organic: 100,
         distribution: 100,
         momentum: 100,
+        gecko: null,
         sentiment: null,
         smartMoney: null,
       },

@@ -12,13 +12,16 @@
  * | `organic`      | 20     | organic buyers vs total buys, buy/sell balance, trader diversity |
  * | `distribution` | 15     | holder count, top-10 share, dev share                        |
  * | `momentum`     | 15     | 1h/6h/24h price trend, volume trend, liquidity trend          |
+ * | `gecko`        | 10*    | GeckoTerminal's GT Score — free, but absent for unrated tokens |
  * | `sentiment`    | 15*    | x402 sentiment, only when the agent chose to pay              |
  * | `smartMoney`   | 10*    | x402 smart-money netflow vs liquidity, only when paid for     |
  *
- * \*The paid components *reweight* the rest rather than adding to them: the five free
- * components are scaled by `(100 − paid weight)/100`, so the total stays 0-100 whether
- * the agent bought neither, one or both (0.85 with sentiment, 0.90 with smart money,
- * 0.75 with both).
+ * \*The three starred components *reweight* the rest rather than adding to them: the
+ * five core components are scaled by `(100 − present starred weight)/100`, so the
+ * total stays 0-100 whatever arrived (0.90 with GT Score alone, 0.85 with sentiment,
+ * 0.90 with smart money, 0.65 with all three). `gecko` is the odd one out in being
+ * free: it is nullable because GeckoTerminal does not rate every token, not because
+ * anyone chose not to buy it.
  *
  * ## Verdict bands
  * `avoid` < 40 · `watch` 40-59 · `candidate` 60-79 · `strong` 80+.
@@ -35,24 +38,49 @@ import type { GoPlusSecurity, JupiterStats, ScoreInput, TokenFacts } from "./typ
 
 export type Universe = AgentConfig["universe"];
 
-/** Component weights before any sentiment reweighting. They sum to 100. */
+/**
+ * The whole weight table.
+ *
+ * The five *core* weights (`safety` … `momentum`) sum to 100 and are always present.
+ * `gecko`, `sentiment` and `smartMoney` are nullable, and each takes its weight *out
+ * of* those five when it is present rather than adding a slice — so the total is on
+ * the same 0-100 scale whichever of them arrived. {@link CORE_WEIGHT_TOTAL} is the
+ * invariant the reweighting relies on.
+ */
 export const WEIGHTS = {
   safety: 30,
   liquidity: 20,
   organic: 20,
   distribution: 15,
   momentum: 15,
+  /** GeckoTerminal's GT Score. Free, but null for a token it has not rated. */
+  gecko: 10,
+  sentiment: 15,
+  smartMoney: 10,
 } as const;
 
+/** The five always-present components sum to this. */
+export const CORE_WEIGHT_TOTAL =
+  WEIGHTS.safety + WEIGHTS.liquidity + WEIGHTS.organic + WEIGHTS.distribution + WEIGHTS.momentum;
+
 /** Weight sentiment takes when the agent paid for it; the rest are scaled by 0.85. */
-export const SENTIMENT_WEIGHT = 15;
+export const SENTIMENT_WEIGHT = WEIGHTS.sentiment;
+
+/**
+ * Weight GeckoTerminal's GT Score takes when there is one. Same size as smart money,
+ * and for the same reason: it is a second opinion on a token, not a thesis about it —
+ * GT Score reads pool depth, transaction quality, creation and holders, which the core
+ * components already read from other providers, so it confirms or contradicts rather
+ * than contributing something nothing else can see.
+ */
+export const GECKO_WEIGHT = WEIGHTS.gecko;
 
 /**
  * Weight smart-money netflow takes when the agent paid for it. Lower than sentiment
  * on purpose: it is a *confirmation* signal — a handful of tracked wallets on the
  * same side of a memecoin is a tie-breaker, not a thesis.
  */
-export const SMART_MONEY_WEIGHT = 10;
+export const SMART_MONEY_WEIGHT = WEIGHTS.smartMoney;
 
 export const VERDICT_BANDS = { watch: 40, candidate: 60, strong: 80 } as const;
 
@@ -158,6 +186,7 @@ export function toFacts(input: ScoreInput): TokenFacts {
   const jup = input.jupiter ?? null;
   const dex = input.dexscreener ?? null;
   const gp = input.goplus ?? null;
+  const gecko = input.gecko ?? null;
 
   const bornMs = jup?.firstPoolCreatedAtMs ?? jup?.createdAtMs ?? dex?.pairCreatedAtMs ?? null;
   const ageHours = bornMs === null ? null : Math.max(0, (now - bornMs) / 3_600_000);
@@ -169,10 +198,10 @@ export function toFacts(input: ScoreInput): TokenFacts {
   return {
     chain: input.chain,
     address: input.address,
-    symbol: jup?.symbol ?? dex?.symbol ?? gp?.symbol ?? input.symbol,
-    name: input.name ?? jup?.name ?? dex?.name ?? gp?.name ?? null,
-    decimals: jup?.decimals ?? (input.chain === "base" ? 18 : null),
-    logoUrl: jup?.icon ?? dex?.imageUrl ?? null,
+    symbol: jup?.symbol ?? dex?.symbol ?? gp?.symbol ?? gecko?.symbol ?? input.symbol,
+    name: input.name ?? jup?.name ?? dex?.name ?? gp?.name ?? gecko?.name ?? null,
+    decimals: jup?.decimals ?? gecko?.decimals ?? (input.chain === "base" ? 18 : null),
+    logoUrl: jup?.icon ?? dex?.imageUrl ?? gecko?.imageUrl ?? null,
     priceUsd: jup?.usdPrice ?? dex?.priceUsd ?? null,
     liquidityUsd: jup?.liquidity ?? dex?.liquidityUsd ?? null,
     volume24hUsd:
@@ -181,7 +210,7 @@ export function toFacts(input: ScoreInput): TokenFacts {
         ? (stats24h.buyVolume ?? 0) + (stats24h.sellVolume ?? 0)
         : null),
     marketCapUsd: jup?.mcap ?? dex?.marketCap ?? jup?.fdv ?? dex?.fdv ?? null,
-    holderCount: jup?.holderCount ?? gp?.holderCount ?? null,
+    holderCount: jup?.holderCount ?? gp?.holderCount ?? gecko?.holderCount ?? null,
     ageHours,
     priceChange1hPct: stats1h?.priceChange ?? dex?.priceChange1hPct ?? null,
     priceChange6hPct: stats6h?.priceChange ?? dex?.priceChange6hPct ?? null,
@@ -192,13 +221,21 @@ export function toFacts(input: ScoreInput): TokenFacts {
     freezeAuthorityDisabled:
       jup?.audit?.freezeAuthorityDisabled ??
       (gp === null ? null : gp.transferPausable === null ? null : !gp.transferPausable),
-    top10HolderPct: jup?.audit?.topHoldersPercentage ?? gp?.top10HolderPct ?? null,
+    // GeckoTerminal is last in the chain for both: `holders.distribution_percentage
+    // .top_10` is unambiguously a percent of supply ("66.2466" for AERO), so it is a
+    // better answer than the `top10_holders_unknown` blocker it replaces. Its
+    // `developer_holding_percentage` is deliberately *not* mapped onto `devBalancePct`
+    // — "0.24" could be 0.24% or 24% and we have not established which.
+    top10HolderPct: jup?.audit?.topHoldersPercentage ?? gp?.top10HolderPct ?? gecko?.top10HolderPct ?? null,
     devBalancePct: jup?.audit?.devBalancePercentage ?? gp?.creatorPercent ?? gp?.ownerPercent ?? null,
     buyTaxPct: gp?.buyTaxPct ?? (input.chain === "solana" ? 0 : null),
     sellTaxPct: gp?.sellTaxPct ?? (input.chain === "solana" ? 0 : null),
-    // Solana has no honeypot equivalent (no transfer hooks in the SPL path we route
-    // through), so this stays null there and the freeze authority carries the weight.
-    isHoneypot: gp?.isHoneypot ?? null,
+    // GoPlus first on Base. GeckoTerminal answers on both chains but is three-valued
+    // there — its `"unknown"` (which is what Solana mints come back as) is already
+    // `null` by the time it reaches here, so only a definite honeypot can raise the
+    // gate. That definite answer is the one thing free providers could not previously
+    // give us on Solana.
+    isHoneypot: gp?.isHoneypot ?? gecko?.isHoneypot ?? null,
     // Free providers cannot simulate a sell, so this is null unless the agent paid
     // for a pre-trade check. `false` means a source proved the exit fails; an
     // inconclusive check arrives as `null` and gates nothing.
@@ -594,6 +631,23 @@ function scoreSmartMoney(input: ScoreInput, facts: TokenFacts): number | null {
   ]);
 }
 
+/**
+ * GeckoTerminal's GT Score, used as-is. It is already a 0-100 composite of pool depth,
+ * transaction quality, token creation, listed info and holder distribution, so there
+ * is nothing to normalise — the value of folding it in is precisely that it was
+ * computed by somebody else from data we do not have.
+ *
+ * `null`, never 50, when GeckoTerminal has no score: an unrated token is unrated, not
+ * average.
+ */
+function scoreGecko(input: ScoreInput, warnings: string[]): number | null {
+  const info = input.gecko ?? null;
+  if (info === null || info.gtScore === null) return null;
+  const score = clamp(info.gtScore);
+  if (score < 40) warnings.push("gt_score_low");
+  return score;
+}
+
 function scoreSentiment(input: ScoreInput): number | null {
   const s = input.sentiment ?? null;
   if (s === null) return null;
@@ -662,10 +716,11 @@ export function scoreToken(input: ScoreInput, universe: Universe): ScoredToken {
   const organic = scoreOrganic(input, warnings);
   const distribution = scoreDistribution(facts, warnings);
   const momentum = scoreMomentum(input, facts, warnings);
+  const gecko = scoreGecko(input, warnings);
   const sentiment = scoreSentiment(input);
   const smartMoney = scoreSmartMoney(input, facts);
 
-  // A component we could not compute scores 0 rather than being dropped: absent
+  // A core component we could not compute scores 0 rather than being dropped: absent
   // safety data is not neutral, it is a reason not to size into something.
   const components: ScoreComponents = {
     safety: round(safety ?? 0),
@@ -673,22 +728,26 @@ export function scoreToken(input: ScoreInput, universe: Universe): ScoredToken {
     organic: round(organic ?? 0),
     distribution: round(distribution ?? 0),
     momentum: round(momentum ?? 0),
+    gecko: gecko === null ? null : round(gecko),
     sentiment: sentiment === null ? null : round(sentiment),
     smartMoney: smartMoney === null ? null : round(smartMoney),
   };
 
-  // Each paid component takes its weight *out of* the free five rather than adding a
-  // sixth slice, so the total is on the same 0-100 scale whatever the agent bought.
-  const paidWeight =
-    (sentiment === null ? 0 : SENTIMENT_WEIGHT) + (smartMoney === null ? 0 : SMART_MONEY_WEIGHT);
-  const freeScale = (100 - paidWeight) / 100;
+  // Each nullable component takes its weight *out of* the core five rather than adding
+  // a slice, so the total is on the same 0-100 scale whatever arrived.
+  const extraWeight =
+    (gecko === null ? 0 : GECKO_WEIGHT) +
+    (sentiment === null ? 0 : SENTIMENT_WEIGHT) +
+    (smartMoney === null ? 0 : SMART_MONEY_WEIGHT);
+  const coreScale = (100 - extraWeight) / 100;
   let total =
     (components.safety * WEIGHTS.safety +
       components.liquidity * WEIGHTS.liquidity +
       components.organic * WEIGHTS.organic +
       components.distribution * WEIGHTS.distribution +
       components.momentum * WEIGHTS.momentum) *
-      (freeScale / 100) +
+      (coreScale / CORE_WEIGHT_TOTAL) +
+    (gecko === null ? 0 : (components.gecko ?? 0) * (GECKO_WEIGHT / 100)) +
     (sentiment === null ? 0 : (components.sentiment ?? 0) * (SENTIMENT_WEIGHT / 100)) +
     (smartMoney === null ? 0 : (components.smartMoney ?? 0) * (SMART_MONEY_WEIGHT / 100));
 
@@ -733,6 +792,7 @@ function sourcesOf(input: ScoreInput): string[] {
   if (input.rugcheck) sources.push("rugcheck");
   if (input.dexscreener) sources.push("dexscreener");
   if (input.goplus) sources.push("goplus");
+  if (input.gecko) sources.push("geckoterminal");
   if (input.sentiment) sources.push(input.sentiment.source);
   if (input.smartMoney) sources.push(input.smartMoney.source);
   if (input.sellCheck) sources.push(input.sellCheck.source);
@@ -744,8 +804,10 @@ export function renderScore(score: TokenScore): string {
   const parts = [
     `${score.symbol} [${score.chain}] score ${score.total.toFixed(1)}/100 — ${score.verdict}`,
     `safety ${score.components.safety} · liquidity ${score.components.liquidity} · organic ${score.components.organic} · distribution ${score.components.distribution} · momentum ${score.components.momentum}${
-      score.components.sentiment === null ? "" : ` · sentiment ${score.components.sentiment}`
-    }${score.components.smartMoney === null ? "" : ` · smart money ${score.components.smartMoney}`}`,
+      score.components.gecko === null ? "" : ` · GT Score ${score.components.gecko}`
+    }${score.components.sentiment === null ? "" : ` · sentiment ${score.components.sentiment}`}${
+      score.components.smartMoney === null ? "" : ` · smart money ${score.components.smartMoney}`
+    }`,
   ];
   if (score.blockers.length > 0) {
     parts.push(`BLOCKED: ${score.blockers.map((b) => `${b} (${explainBlocker(b)})`).join("; ")}`);

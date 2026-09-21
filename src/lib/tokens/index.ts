@@ -20,6 +20,7 @@ import { getDb, tokenScores } from "@/db";
 import type { Chain, TokenScore, TradeScore } from "@/server/types";
 import type { X402Context } from "@/lib/x402/types";
 import { getDexScreenerToken } from "./providers/dexscreener";
+import { getGeckoTokenInfo } from "./providers/geckoterminal";
 import { getGoPlusSecurity } from "./providers/goplus";
 import { getJupiterToken } from "./providers/jupiter";
 import { getRugcheckSummary } from "./providers/rugcheck";
@@ -35,6 +36,8 @@ export {
   scoreToken,
   toFacts,
   verdictFor,
+  CORE_WEIGHT_TOTAL,
+  GECKO_WEIGHT,
   SENTIMENT_WEIGHT,
   SMART_MONEY_WEIGHT,
   VERDICT_BANDS,
@@ -149,6 +152,7 @@ function rowToScore(row: typeof tokenScores.$inferSelect): TokenScore {
       organic: components.organic ?? 0,
       distribution: components.distribution ?? 0,
       momentum: components.momentum ?? 0,
+      gecko: components.gecko ?? null,
       sentiment: components.sentiment ?? null,
       smartMoney: components.smartMoney ?? null,
     },
@@ -337,15 +341,27 @@ async function gather(input: GetTokenScoreInput): Promise<ScoreInput> {
     ...(input.now === undefined ? {} : { now: input.now }),
   };
 
+  // GeckoTerminal is the one free provider that covers both chains, so it is fetched
+  // on both. It is also the one with a per-process rate limit, which its own module
+  // owns: a refused call is indistinguishable from an unrated token here, and both
+  // mean `components.gecko === null` rather than a failed score.
   if (chain === "solana") {
-    const [jupiter, rugcheck] = await Promise.all([getJupiterToken(address), getRugcheckSummary(address)]);
-    return { ...base, jupiter, rugcheck, dexscreener: null, goplus: null };
+    const [jupiter, rugcheck, gecko] = await Promise.all([
+      getJupiterToken(address),
+      getRugcheckSummary(address),
+      getGeckoTokenInfo("solana", address),
+    ]);
+    return { ...base, jupiter, rugcheck, dexscreener: null, goplus: null, gecko };
   }
-  // Native ETH has no contract; DexScreener and GoPlus know it as WETH.
+  // Native ETH has no contract; DexScreener, GoPlus and GeckoTerminal know it as WETH.
   const WETH_BASE = "0x4200000000000000000000000000000000000006";
   const lookup = address.toLowerCase() === "native" ? WETH_BASE : address;
-  const [dexscreener, goplus] = await Promise.all([getDexScreenerToken(lookup), getGoPlusSecurity(lookup)]);
-  return { ...base, jupiter: null, rugcheck: null, dexscreener, goplus };
+  const [dexscreener, goplus, gecko] = await Promise.all([
+    getDexScreenerToken(lookup),
+    getGoPlusSecurity(lookup),
+    getGeckoTokenInfo("base", lookup),
+  ]);
+  return { ...base, jupiter: null, rugcheck: null, dexscreener, goplus, gecko };
 }
 
 /**
@@ -423,15 +439,22 @@ export function toTradeScore(score: TokenScore): TradeScore {
 
 /** Test seam: forget every in-process provider cache. */
 export async function resetTokenCaches(): Promise<void> {
-  const [{ resetJupiterCache }, { resetRugcheckCache }, { resetDexScreenerCache }, { resetGoPlusCache }] =
-    await Promise.all([
-      import("./providers/jupiter"),
-      import("./providers/rugcheck"),
-      import("./providers/dexscreener"),
-      import("./providers/goplus"),
-    ]);
+  const [
+    { resetJupiterCache },
+    { resetRugcheckCache },
+    { resetDexScreenerCache },
+    { resetGoPlusCache },
+    { resetGeckoTerminalCache },
+  ] = await Promise.all([
+    import("./providers/jupiter"),
+    import("./providers/rugcheck"),
+    import("./providers/dexscreener"),
+    import("./providers/goplus"),
+    import("./providers/geckoterminal"),
+  ]);
   resetJupiterCache();
   resetRugcheckCache();
   resetDexScreenerCache();
   resetGoPlusCache();
+  resetGeckoTerminalCache();
 }

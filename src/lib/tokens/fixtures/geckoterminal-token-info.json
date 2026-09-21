@@ -1,0 +1,270 @@
+{
+ "solana:EKtmPPLaCbEEKiwoHHtV7TsRsmPXs5CMGtQtZFSiinsc": {
+  "data": {
+   "id": "solana_EKtmPPLaCbEEKiwoHHtV7TsRsmPXs5CMGtQtZFSiinsc",
+   "type": "token",
+   "attributes": {
+    "address": "EKtmPPLaCbEEKiwoHHtV7TsRsmPXs5CMGtQtZFSiinsc",
+    "name": "Zcash Shielded Assets",
+    "symbol": "Stamp",
+    "decimals": 6,
+    "image_url": "https://coin-images.coingecko.com/coins/images/102178563/large/6m871ep2ayjhr6uzqmw8qzfyv6e6.?1790003326",
+    "banner_image_url": null,
+    "coingecko_coin_id": "zcash-shielded-assets",
+    "websites": [
+     "https://www.zcashstamp.com"
+    ],
+    "discord_url": null,
+    "farcaster_url": null,
+    "zora_url": null,
+    "telegram_handle": null,
+    "twitter_handle": "Zip227",
+    "gt_score": 52.15584415584416,
+    "gt_score_details": {
+     "pool": 48.571,
+     "transaction": 100.0,
+     "creation": 0.0,
+     "info": 100.0,
+     "holders": 61.25
+    },
+    "gt_verified": true,
+    "categories": [
+     "Pump Fun"
+    ],
+    "gt_category_ids": [
+     "pump-fun"
+    ],
+    "holders": {
+     "count": 8534,
+     "distribution_percentage": {
+      "top_10": "25.0481",
+      "11_20": "7.4517",
+      "21_40": "9.8687",
+      "rest": "57.6315"
+     },
+     "last_updated": "2026-09-21T20:25:34Z"
+    },
+    "mint_authority": null,
+    "freeze_authority": null,
+    "is_honeypot": "unknown",
+    "developer_address": "26oK69pYx7R25ULts9hLYF2HpTnZ421jPYMPsds9GtYA",
+    "developer_holding_percentage": "0.24",
+    "launchpad_details": {
+     "graduation_percentage": 100.0,
+     "completed": true,
+     "completed_at": "2026-09-20T18:44:09.000Z",
+     "migrated_destination_pool_address": "Bgf45Fjqeobgd5viMX8P8AfhiydRewEFKPd7nmcFNQRb"
+    }
+   }
+  }
+ },
+ "solana:DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": {
+  "data": {
+   "id": "solana_DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+   "type": "token",
+   "attributes": {
+    "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+    "name": "Bonk",
+    "symbol": "Bonk",
+    "decimals": 5,
+    "image_url": "https://coin-images.coingecko.com/coins/images/28600/large/bonk.jpg?1696527587",
+    "banner_image_url": "https://assets.geckoterminal.com/mtbrza38irdzqv8grql1hhm2zy3f",
+    "coingecko_coin_id": "bonk",
+    "websites": [
+     "https://www.bonkcoin.com"
+    ],
+    "discord_url": "https://discord.gg/ubqvDDFUhf",
+    "farcaster_url": null,
+    "zora_url": null,
+    "telegram_handle": null,
+    "twitter_handle": "bonk_inu",
+    "gt_score": 61.967187690992276,
+    "gt_score_details": {
+     "pool": 62.857,
+     "transaction": 100.0,
+     "creation": 100.0,
+     "info": 100.0,
+     "holders": 68.75
+    },
+    "gt_verified": true,
+    "categories": [
+     "Bonk Flippers",
+     "Charms Character"
+    ],
+    "gt_category_ids": [
+     "bonk-flippers",
+     "charms-character"
+    ],
+    "holders": {
+     "count": 1019571,
+     "distribution_percentage": {
+      "top_10": "38.5432",
+      "11_20": "13.2447",
+      "21_40": "12.0002",
+      "rest": "36.2119"
+     },
+     "last_updated": "2026-09-21T20:04:28Z"
+    },
+    "mint_authority": "no",
+    "freeze_authority": "no",
+    "is_honeypot": "unknown",
+    "developer_address": "ERo5RiMfU5GcuWwmikUr6ZpcCGy79nmMrpmTak6DmDQG",
+    "developer_holding_percentage": "0.0"
+   }
+  }
+ },
+ "solana:13QZa6e5VXei2XFq4wQCEAKD5RDy453KtFBfrQ9mB7wP": {
+  "data": {
+   "id": "solana_13QZa6e5VXei2XFq4wQCEAKD5RDy453KtFBfrQ9mB7wP",
+   "type": "token",
+   "attributes": {
+    "address": "13QZa6e5VXei2XFq4wQCEAKD5RDy453KtFBfrQ9mB7wP",
+    "name": "The Tree Fund",
+    "symbol": "TTF",
+    "decimals": 6,
+    "image_url": "https://assets.geckoterminal.com/cza88ib99yavvuxsdf7edrnhz3tn",
+    "banner_image_url": null,
+    "coingecko_coin_id": null,
+    "websites": [
+     "https://thetree.fund"
+    ],
+    "discord_url": null,
+    "farcaster_url": null,
+    "zora_url": null,
+    "telegram_handle": null,
+    "twitter_handle": "RealTreeFund",
+    "gt_score": 23.812987012987016,
+    "gt_score_details": {
+     "pool": 28.571,
+     "transaction": 16.0,
+     "creation": 0.0,
+     "info": 60.0,
+     "holders": 31.25
+    },
+    "gt_verified": false,
+    "categories": [
+     "Pump Fun"
+    ],
+    "gt_category_ids": [
+     "pump-fun"
+    ],
+    "holders": {
+     "count": null,
+     "distribution_percentage": null,
+     "last_updated": null
+    },
+    "mint_authority": "no",
+    "freeze_authority": "no",
+    "is_honeypot": "unknown",
+    "developer_address": "GSzKJGMGkU7hiwn5Cop6X9dJ6KTUH8zGpxBa1U9sMba3",
+    "developer_holding_percentage": "0.0",
+    "launchpad_details": {
+     "graduation_percentage": 0.0,
+     "completed": false,
+     "completed_at": null,
+     "migrated_destination_pool_address": null
+    }
+   }
+  }
+ },
+ "base:0x940181a94a35a4569e4529a3cdfb74e38fd98631": {
+  "data": {
+   "id": "base_0x940181a94a35a4569e4529a3cdfb74e38fd98631",
+   "type": "token",
+   "attributes": {
+    "address": "0x940181a94a35a4569e4529a3cdfb74e38fd98631",
+    "name": "Aerodrome",
+    "symbol": "AERO",
+    "decimals": 18,
+    "image_url": "https://coin-images.coingecko.com/coins/images/31745/large/token.png?1696530564",
+    "banner_image_url": "https://assets.geckoterminal.com/1advylf3n0k0a7r0fa689oj4s3wx",
+    "coingecko_coin_id": "aerodrome-finance",
+    "websites": [
+     "https://aerodrome.finance"
+    ],
+    "discord_url": "https://discord.gg/aerodrome",
+    "farcaster_url": null,
+    "zora_url": null,
+    "telegram_handle": null,
+    "twitter_handle": "aerodromefi",
+    "gt_score": 91.04477611940298,
+    "gt_score_details": {
+     "pool": 93.333,
+     "transaction": 100.0,
+     "creation": 100.0,
+     "info": 100.0,
+     "holders": 80.0
+    },
+    "gt_verified": true,
+    "categories": [
+     "Defi"
+    ],
+    "gt_category_ids": [
+     "defi"
+    ],
+    "holders": {
+     "count": 751568,
+     "distribution_percentage": {
+      "top_10": "66.2466",
+      "11_30": "12.9558",
+      "31_50": "4.6041",
+      "rest": "16.1935"
+     },
+     "last_updated": "2026-09-21T20:50:40Z"
+    },
+    "mint_authority": null,
+    "freeze_authority": null,
+    "is_honeypot": false,
+    "developer_address": null,
+    "developer_holding_percentage": null
+   }
+  }
+ },
+ "base:0x869b2f0b6bcd22dbdbf9c94f1a1477c347b7907d": {
+  "data": {
+   "id": "base_0x869b2f0b6bcd22dbdbf9c94f1a1477c347b7907d",
+   "type": "token",
+   "attributes": {
+    "address": "0x869b2f0b6bcd22dbdbf9c94f1a1477c347b7907d",
+    "name": "LAPTOP",
+    "symbol": "LAPTOP",
+    "decimals": 18,
+    "image_url": null,
+    "banner_image_url": null,
+    "coingecko_coin_id": null,
+    "websites": [],
+    "discord_url": null,
+    "farcaster_url": null,
+    "zora_url": null,
+    "telegram_handle": null,
+    "twitter_handle": null,
+    "gt_score": 23.88059701492537,
+    "gt_score_details": {
+     "pool": 40.0,
+     "transaction": 0.0,
+     "creation": 0.0,
+     "info": 0.0,
+     "holders": 20.0
+    },
+    "gt_verified": false,
+    "categories": [],
+    "gt_category_ids": [],
+    "holders": {
+     "count": 9,
+     "distribution_percentage": {
+      "top_10": "99.3818",
+      "11_30": "0.6183",
+      "31_50": null,
+      "rest": "-0.0001"
+     },
+     "last_updated": "2026-09-21T21:50:57Z"
+    },
+    "mint_authority": null,
+    "freeze_authority": null,
+    "is_honeypot": false,
+    "developer_address": null,
+    "developer_holding_percentage": null
+   }
+  }
+ }
+}

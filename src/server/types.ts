@@ -226,6 +226,11 @@ export type DiscoveryFeed =
   | "trending"
   | "top_organic"
   | "momentum"
+  /**
+   * GeckoTerminal's new + trending pools on either chain, kept only when
+   * GeckoTerminal's own GT Score rates the token well. Free, but rate limited.
+   */
+  | "gecko_launches"
   /** The only feed that costs money: paid launch radars (SolEnrich on Solana, gate402 on Base). */
   | "paid_launches"
   | "manual";
@@ -233,8 +238,10 @@ export type DiscoveryFeed =
 /**
  * Sub-scores, each 0-100. `sentiment` and `smartMoney` are null unless the agent paid
  * an x402 source for them — scoring must stay free by default so an agent can sweep
- * hundreds of tokens. Both *reweight* the five free components rather than adding to
- * them, so the total stays 0-100 however many were bought.
+ * hundreds of tokens. `gecko` is free but still nullable, because GeckoTerminal has
+ * no GT Score for a token it has not assessed. All three *reweight* the five core
+ * components rather than adding to them, so the total stays 0-100 however many are
+ * present.
  */
 export interface ScoreComponents {
   safety: number;
@@ -244,6 +251,8 @@ export interface ScoreComponents {
   organic: number;
   /** How evenly the supply is held. */
   distribution: number;
+  /** GeckoTerminal's own GT Score (0-100). Free, but absent for unrated tokens. */
+  gecko: number | null;
   sentiment: number | null;
   /** Tracked smart-money net flow, weighed against the token's own liquidity. */
   smartMoney: number | null;

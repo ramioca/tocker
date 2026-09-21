@@ -44,8 +44,9 @@ function components(
   momentum: number,
   sentiment: number | null = null,
   smartMoney: number | null = null,
+  gecko: number | null = null,
 ): ScoreComponents {
-  return { safety, liquidity, organic, distribution, momentum, sentiment, smartMoney };
+  return { safety, liquidity, organic, distribution, momentum, gecko, sentiment, smartMoney };
 }
 
 interface ScoreSeed {

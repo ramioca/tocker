@@ -499,6 +499,7 @@ function scoreFor(seed: number, side: "buy" | "sell", scoredAt: string): TradeSc
       momentum: jitter(30),
       organic: jitter(20),
       distribution: jitter(16),
+      gecko: jitter(14),
       sentiment: rand() > 0.4 ? jitter(26) : null,
     },
     blockers: [],

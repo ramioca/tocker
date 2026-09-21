@@ -46,7 +46,7 @@ export const agentConfigSchema = z.object({
     // `paid_launches` is the only feed that costs money; it runs a paid launch radar
     // per chain per sweep and is skipped when the run has no wallet or no budget.
     discovery: z
-      .array(z.enum(["new_launches", "trending", "top_organic", "momentum", "paid_launches"]))
+      .array(z.enum(["new_launches", "trending", "top_organic", "momentum", "gecko_launches", "paid_launches"]))
       .min(1, "Pick at least one way to find tokens"),
     minScore: z.number().min(0).max(100),
     minLiquidityUsd: z.number().min(0).max(100_000_000),
@@ -116,7 +116,9 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigWithSizing = {
     maxTradeUsd: 100,
     maxDailyTrades: 10,
     maxPositionPct: 25,
-    maxDataSpendUsdPerRun: 0.25,
+    // $1: five scored tokens with safety, sentiment and smart money bought for each is
+    // about $0.35 on Solana; $0.25 covered three and silently starved the rest.
+    maxDataSpendUsdPerRun: 1,
     stopLossPct: 15,
     takeProfitPct: 40,
     // 3%: Jupiter Ultra itself picks 300-500 bps on the launch-day tokens this product

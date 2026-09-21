@@ -47,6 +47,7 @@ function scoreWith(overrides: Partial<TokenScore> = {}): TokenScore {
     organic: 80,
     distribution: 85,
     momentum: 60,
+    gecko: null,
     sentiment: null,
     smartMoney: null,
     ...overrides.components,

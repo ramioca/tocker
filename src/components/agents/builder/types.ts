@@ -166,6 +166,14 @@ export const DISCOVERY_FEEDS: DiscoveryFeedMeta[] = [
     caveat: "Derived from the other feeds, so it inherits their blind spots.",
   },
   {
+    id: "gecko_launches",
+    label: "Gecko-rated launches",
+    description:
+      "New and trending pools on GeckoTerminal, kept only when GeckoTerminal's own GT Score rates the token 50 or better.",
+    caveat:
+      "Free but rate limited to ~30 calls a minute, so a sweep checks at most 15 pools; a token minutes old has no GT Score yet and is skipped.",
+  },
+  {
     id: "paid_launches",
     label: "Paid launch radar",
     description: "A pre-screened launch feed bought each sweep — SolEnrich on Solana, gate402 on Base.",

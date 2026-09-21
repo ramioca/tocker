@@ -11,6 +11,9 @@
  * `@/server/types` and are re-exported here so consumers only need one import.
  */
 import type { Chain } from "@/server/types";
+import type { GeckoTokenInfo } from "./providers/geckoterminal";
+
+export type { GeckoPool, GeckoTokenInfo } from "./providers/geckoterminal";
 
 export type {
   Chain,
@@ -236,6 +239,11 @@ export interface ScoreInput {
   rugcheck?: RugcheckSummary | null;
   dexscreener?: DexScreenerToken | null;
   goplus?: GoPlusSecurity | null;
+  /**
+   * Free: GeckoTerminal's own read on the token (GT Score, holders, honeypot flag).
+   * Null when GeckoTerminal has no record of it, or when the call failed.
+   */
+  gecko?: GeckoTokenInfo | null;
   sentiment?: SentimentInput | null;
   /** Paid: tracked smart-money flow. Present only when the agent bought it. */
   smartMoney?: SmartMoneyInput | null;

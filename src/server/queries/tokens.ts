@@ -51,6 +51,7 @@ async function cachedScore(db: Db, id: string): Promise<TokenScore | null> {
       organic: c.organic ?? 0,
       distribution: c.distribution ?? 0,
       momentum: c.momentum ?? 0,
+      gecko: c.gecko ?? null,
       sentiment: c.sentiment ?? null,
       smartMoney: c.smartMoney ?? null,
     },

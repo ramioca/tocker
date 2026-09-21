@@ -122,6 +122,7 @@ Each tick: **discover → gate → score → size**. Discovery and scoring are f
 | `trending` | `GET https://api.jup.ag/tokens/v2/toptraded/24h` | DexScreener search / boosts |
 | `top_organic` | `GET https://api.jup.ag/tokens/v2/toporganicscore/24h` | n/a — fall back to `trending` |
 | `momentum` | derived from `stats1h`/`stats24h` on the above | derived from `priceChange` + `volume` |
+| `gecko_launches` | GeckoTerminal `new_pools` pages 1-2 + `trending_pools` page 1, kept only when the token's own GT Score is ≥ 50 with a non-zero `creation` sub-score | same two endpoints, same bar |
 
 **Jupiter Token API v2 is the backbone on Solana.** One record carries nearly every scoring input, verified live:
 `audit.mintAuthorityDisabled`, `audit.freezeAuthorityDisabled`, `audit.topHoldersPercentage`, `audit.devBalancePercentage`, `organicScore` (0-100) and `organicScoreLabel`, `isVerified`, `tags`, `holderCount`, `liquidity`, `mcap`, `fdv`, `usdPrice`, `firstPool.createdAt` (age), and `stats5m|1h|6h|24h` with `priceChange`, `holderChange`, `liquidityChange`, `numBuys`, `numSells`, `numTraders`, `numOrganicBuyers`, `buyOrganicVolume`. The organic fields are the wash-trading detector: volume with few `numOrganicBuyers` is manufactured.
@@ -130,6 +131,7 @@ Each tick: **discover → gate → score → size**. Discovery and scoring are f
 - Solana: Jupiter `audit` first (free, already fetched); RugCheck `GET https://api.rugcheck.xyz/v1/tokens/<mint>/report/summary` for `score_normalised` (lower is safer), `risks[]` and `lpLockedPct` — verified live, free.
 - Base: GoPlus `GET https://api.gopluslabs.io/api/v1/token_security/8453?contract_addresses=<addr>` — verified live, free. Gives `is_honeypot`, `buy_tax`, `sell_tax`, `is_mintable`, `can_take_back_ownership`, `hidden_owner`, `transfer_pausable`, `owner_percent`, `creator_percent`, `lp_holder_count`, `holder_count`.
 - Optional paid deep-dive, only on request: the existing x402 sources (`deepnets-token-safety`, `token-intel-sol`).
+- Both chains: GeckoTerminal `GET https://api.geckoterminal.com/api/v2/networks/<net>/tokens/<addr>/info` — free, keyless, verified live. Gives `gt_score` (the `gecko` component), `gt_score_details`, `holders.count`, `holders.distribution_percentage.top_10` and `is_honeypot` (a definite `true` raises the existing honeypot gate, including on Solana). **Every request must send `accept: application/json;version=20230302`**, and the free tier is ~30 requests a minute *per process*, so `src/lib/tokens/providers/geckoterminal.ts` owns a rate limiter as well as a cache: a refused call is a `null` component, never a failed score.
 
 **Hard gates** run before scoring and cannot be outscored. Any failure sets `verdict: "avoid"` and records a blocker string: mint authority live (when `requireMintRevoked`), freeze authority live, honeypot, buy or sell tax above `maxBuyTaxPct`, liquidity under `minLiquidityUsd`, holders under `minHolderCount`, age under `minAgeMinutes` or over `maxAgeHours`, top-10 holders above `maxTop10HolderPct`, address on the blocklist.
 
@@ -142,6 +144,7 @@ Each tick: **discover → gate → score → size**. Discovery and scoring are f
 | `organic` | 20 | organic buyers vs total buys, buy/sell balance, holder growth |
 | `distribution` | 15 | holder count, top-10 share, dev share |
 | `momentum` | 15 | 1h/6h/24h price and volume trend, liquidity trend |
+| `gecko` | 10, reweights the five above | GeckoTerminal's GT Score, free, `null` for a token it has not rated |
 | `sentiment` | reweights the rest when present | x402 sentiment sources, only when the agent chooses to pay |
 
 Verdict bands: `avoid` < 40, `watch` 40-59, `candidate` 60-79, `strong` 80+. Scores are cached in `token_scores` keyed by `chain:address` with a 10-minute TTL and shared across agents. The score at the moment of a trade is frozen onto `trades.scoreSnapshot` so the record cannot be rewritten by later re-scoring.

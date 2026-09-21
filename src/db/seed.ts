@@ -453,6 +453,8 @@ function buildScore(
       momentum: jitter(30),
       organic: jitter(20),
       distribution: jitter(16),
+      // Free, so it is present on essentially every token GeckoTerminal has rated.
+      gecko: jitter(14),
       sentiment: paid.sentiment ? jitter(26) : null,
       smartMoney: paid.smartMoney ? jitter(22) : null,
     },
@@ -605,6 +607,7 @@ async function seed() {
             momentum: Math.round(clamp(rounded + (rand() - 0.5) * 34, 5, 100)),
             organic: Math.round(clamp(rounded + (rand() - 0.5) * 20, 5, 100)),
             distribution: Math.round(clamp(rounded + (rand() - 0.5) * 16, 5, 100)),
+            gecko: Math.round(clamp(rounded + (rand() - 0.5) * 14, 5, 100)),
             sentiment: null,
           },
           // Below the "avoid" band the gate that usually did it is depth.

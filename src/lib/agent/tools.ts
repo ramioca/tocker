@@ -10,6 +10,9 @@ import { loadCachedScores } from "@/lib/trading/score-cache";
 import { platformFeeUsd as flatFeeUsd } from "@/lib/platform/fee";
 import { MAX_PROPOSALS_PER_TICK, MIN_SCORED_PER_TICK, SEEN_WINDOW_MS } from "./limits";
 import { INTEL_SOURCE, planEnrichment, type EnrichmentPlan } from "./enrichment";
+
+/** The x402 launch radars; configuring one means the `paid_launches` feed runs. */
+const PAID_LAUNCH_SOURCE_IDS = ["solenrich-launches", "gate402-base-radar"] as const;
 import { nanoid } from "nanoid";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
@@ -134,7 +137,14 @@ async function fetchBaseIntel(address: string): Promise<ToolOutcome> {
   };
 }
 
-const discoveryFeedSchema = z.enum(["new_launches", "trending", "top_organic", "momentum", "paid_launches"]);
+const discoveryFeedSchema = z.enum([
+  "new_launches",
+  "trending",
+  "top_organic",
+  "momentum",
+  "gecko_launches",
+  "paid_launches",
+]);
 
 /** Shrinks a score to the fields worth spending the model's context on. */
 function scorePayload(score: TokenScore): ToolOutcome {
@@ -214,13 +224,13 @@ export function buildTools(ctx: RunContext): ToolSet {
   return {
     discover_tokens: tool({
       description:
-        "Sweep your discovery feeds for tradeable candidates on your chains. Free — with one exception: the `paid_launches` feed buys a pre-screened launch radar per chain (SolEnrich on Solana, gate402 on Base, about $0.02 a chain) and only runs when your config or this call asks for it. Returns a ranked table already filtered on the gates that can be checked for free (age, liquidity, holders, blocklist); safety gates are applied later by score_token.",
+        "Sweep your discovery feeds for tradeable candidates on your chains. Free — with one exception: the `paid_launches` feed buys a pre-screened launch radar per chain (SolEnrich on Solana, gate402 on Base, about $0.02 a chain) and only runs when your config or this call asks for it. `gecko_launches` is free but narrow: it reads GeckoTerminal's new and trending pools on either chain and keeps only the tokens GeckoTerminal's own GT Score rates 50 or better, so it surfaces few names and skips anything minutes old that nobody has rated yet. Returns a ranked table already filtered on the gates that can be checked for free (age, liquidity, holders, blocklist); safety gates are applied later by score_token.",
       inputSchema: z.object({
         chain: chainSchema.optional().describe("Restrict to one chain; omit to sweep every chain you trade"),
         feeds: z
           .array(discoveryFeedSchema)
           .min(1)
-          .max(4)
+          .max(6)
           .optional()
           .describe("Override your configured feeds for this sweep only"),
         maxAgeHours: z.number().positive().max(87_600).optional().describe("Only tokens younger than this"),
@@ -243,13 +253,17 @@ export function buildTools(ctx: RunContext): ToolSet {
           return fail(`Chain ${parsed.chain} is not enabled for this agent.`, { enabled: agent.config.chains });
         }
 
+        // A paid launch radar the owner configured is swept whether or not the feed list
+        // names it: they pay for it to be used (operator's instruction, 2026-09-22).
+        const feeds = new Set<string>(parsed.feeds ?? universe.discovery);
+        if (PAID_LAUNCH_SOURCE_IDS.some((id) => allowedSources.includes(id))) feeds.add("paid_launches");
         const candidates = await discoverCandidates({
           chains,
           universe,
           // Only used by the `paid_launches` feed; every other feed ignores both.
           x402: ctx.x402,
           dataSources: allowedSources,
-          ...(parsed.feeds ? { feeds: parsed.feeds } : {}),
+          feeds: [...feeds] as typeof universe.discovery,
           // Wider than the old 20 by default: the fresh part of the table is what
           // matters, and a held, proposed or recently scored name takes a slot otherwise.
           limit: parsed.limit ?? 30,
@@ -303,7 +317,7 @@ export function buildTools(ctx: RunContext): ToolSet {
         return {
           ok: true,
           chains,
-          feeds: parsed.feeds ?? universe.discovery,
+          feeds: [...feeds],
           count: candidates.length,
           freshCount: fresh.length,
           candidates: [...fresh, ...seen].map(row),

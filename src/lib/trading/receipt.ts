@@ -72,6 +72,7 @@ const COMPONENT_LABELS: Record<string, string> = {
   organic: "Organic demand",
   distribution: "Distribution",
   momentum: "Momentum",
+  gecko: "GT Score",
   sentiment: "Sentiment",
   smartMoney: "Smart money",
 };

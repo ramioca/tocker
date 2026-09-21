@@ -91,8 +91,9 @@ export interface ComponentMeta {
   key: ScoreComponentKey;
   label: string;
   /**
-   * Weight out of 100, per SPEC. The paid components reweight the free five rather
-   * than adding a slice, so their weight is shown as null.
+   * Weight out of 100, per SPEC. The nullable components reweight the core five
+   * rather than adding a slice; the paid ones show no weight at all, because whether
+   * they are there is a spending decision rather than a property of the token.
    */
   weight: number | null;
   /** What the sub-score is actually reading. Shown on hover. */
@@ -132,6 +133,14 @@ export const SCORE_COMPONENTS: ComponentMeta[] = [
     label: "Momentum",
     weight: 15,
     reads: "1h / 6h / 24h price and volume trend, plus whether liquidity is growing or leaving.",
+  },
+  {
+    key: "gecko",
+    label: "GT Score",
+    weight: 10,
+    reads:
+      "GeckoTerminal's own 0-100 rating of the token: pool depth, transaction quality, how much it knows about the token's creation, listed info and holder spread. Free, and it reweights the five above rather than adding a sixth slice.",
+    missingNote: "GeckoTerminal has no rating for this token — usually because it is too new to have one.",
   },
   {
     key: "sentiment",
