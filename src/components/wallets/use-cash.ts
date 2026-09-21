@@ -34,8 +34,11 @@ export function useUserWallets(enabled: boolean) {
     queryKey: ME_WALLETS_QUERY_KEY,
     queryFn: fetchWallets,
     enabled,
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
+    // Short: the number now includes agents' positions at live marks, and a chip that
+    // says $14.56 above a page that says $14.36 reads as a bug, not as a memecoin
+    // moving between two fetches. Route changes refetch it too (see WalletChip).
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
   });
 }
 

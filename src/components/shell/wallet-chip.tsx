@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, ChevronDown, Plus } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CashLegend, CashTotal, ChainBreakdown } from "@/components/wallets/cash-summary";
@@ -27,6 +29,13 @@ export type { MeWallets } from "@/components/wallets/use-cash";
 export function WalletChip() {
   const { ready, session } = useSession();
   const { data } = useUserWallets(Boolean(ready && session));
+  // Land on the same mark as the page: every navigation re-reads the balance, so the
+  // chip and an agent page rendered a moment later agree to the cent.
+  const pathname = usePathname();
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: ME_WALLETS_QUERY_KEY });
+  }, [pathname, queryClient]);
   const [depositOpen, setDepositOpen] = useState(false);
   // Overwritten by `openDeposit` before the sheet is ever shown; Solana only decides
   // the first render, and it is the better default of the two (see preferredDepositChain).
