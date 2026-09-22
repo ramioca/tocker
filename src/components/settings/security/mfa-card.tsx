@@ -56,7 +56,7 @@ export function MfaCard({ initial }: { initial: MfaStatus }) {
 
   const enrol = useCallback(() => {
     if (!ready || !authenticated) {
-      toast.error("Sign in with Privy first");
+      toast.error("Sign in first");
       return;
     }
     showMfaEnrollmentModal();
@@ -107,7 +107,7 @@ export function MfaCard({ initial }: { initial: MfaStatus }) {
               </>
             ) : (
               (status.blockedReason ??
-              "Nothing in Tocker is blocked without one. Enrol a second factor to protect the Privy account that holds your money.")
+              "Nothing in Tocker is blocked without one. Enrol a second factor to protect the account that holds your money.")
             )}
           </p>
         </div>
@@ -134,7 +134,7 @@ export function MfaCard({ initial }: { initial: MfaStatus }) {
           disabled={pending}
           className="inline-flex h-9 items-center rounded-lg px-3 text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {pending ? "Checking…" : "Re-check with Privy"}
+          {pending ? "Checking…" : "Re-check"}
         </button>
       </div>
 

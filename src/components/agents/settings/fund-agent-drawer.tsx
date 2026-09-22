@@ -273,7 +273,7 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
             ? "Waiting for your wallet to confirm…"
             : available
               ? `Send ${assetSymbol}`
-              : "Privy is not configured"
+              : "Wallets are not available in this environment"
         }
         onConfirm={() => void confirm()}
         className={cn(!valid && "opacity-90")}

@@ -1,5 +1,6 @@
 "use client";
 
+import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -16,7 +17,6 @@ import { useRefreshCash } from "@/components/wallets/use-cash";
 import { useTransfer } from "@/components/wallets/use-transfer";
 import { addressHintForChain, isValidAddressForChain } from "@/lib/wallet-address";
 import { NETWORK_WORDING, cashOn, chainLabelFor, unifiedCash } from "@/lib/wallets/funding";
-import { cn } from "@/lib/utils";
 import type { Chain, WalletBalance } from "@/server/types";
 
 const PERCENT_CHIPS = [
@@ -175,27 +175,21 @@ export function WithdrawModal({
 
           {available ? null : (
             <p className="rounded-xl border border-border/70 bg-muted/20 p-3 text-xs leading-relaxed text-muted-foreground">
-              In-app withdrawals need Privy configured. Export your embedded wallet from Settings
-              and send from any wallet for now.
+              In-app withdrawals are not available in this environment. Export your wallet from
+              Settings and send from any wallet for now.
             </p>
           )}
 
-          <button
-            type="button"
-            onClick={() => void confirm()}
+          {/* A hold, not a click: the signature is silent now (no wallet popup), so this
+              gesture is the confirmation, and money leaving the app deserves one. */}
+          <HoldToConfirmButton
+            duration={1_400}
             disabled={!validAmount || !destinationOk || pending || !available}
-            className={cn(
-              "flex h-10 w-full items-center justify-center rounded-xl bg-primary text-sm font-medium text-primary-foreground",
-              "transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.98]",
-              "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50 disabled:active:scale-100",
-            )}
-          >
-            {pending
-              ? "Waiting for your wallet to confirm…"
-              : summary
-                ? `Send ${summary}`
-                : "Continue"}
-          </button>
+            label={pending ? "Sending…" : summary ? `Hold to send ${summary}` : "Hold to send"}
+            confirmedLabel="Sent"
+            onConfirm={() => void confirm()}
+            className="h-10 w-full justify-center rounded-xl border-primary/40 bg-primary/10 text-sm font-medium text-foreground hover:bg-primary/15 dark:border-primary/40 dark:bg-primary/10 dark:text-foreground dark:hover:bg-primary/15"
+          />
         </div>
       </DialogContent>
     </Dialog>

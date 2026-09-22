@@ -96,7 +96,7 @@ export function WithdrawForm({
       toast.message("Withdrawal submitted", {
         description: txHash
           ? `${truncateAddress(txHash, 8, 6)} — waiting for it to confirm.`
-          : "Privy has it and is broadcasting. Balances update once it confirms.",
+          : "It is broadcasting. Balances update once it confirms.",
       });
     }
     setAmount("");

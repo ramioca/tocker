@@ -325,7 +325,7 @@ function checkPrivy(): ReadinessStep {
   if (!configured) {
     return {
       id: "privy",
-      title: "Privy configured",
+      title: "Wallet infrastructure",
       state: "fail",
       detail: "NEXT_PUBLIC_PRIVY_APP_ID and PRIVY_APP_SECRET are not both set, so there are no real wallets to trade from.",
       fix: null,
@@ -334,7 +334,7 @@ function checkPrivy(): ReadinessStep {
   if (!hasAuthKey) {
     return {
       id: "privy",
-      title: "Privy configured",
+      title: "Wallet infrastructure",
       state: "fail",
       detail:
         "PRIVY_AUTHORIZATION_PRIVATE_KEY is missing. The server owns agent wallets with that key; without it it cannot sign a trade.",
@@ -343,9 +343,9 @@ function checkPrivy(): ReadinessStep {
   }
   return {
     id: "privy",
-    title: "Privy configured",
+    title: "Wallet infrastructure",
     state: "pass",
-    detail: "App credentials and the wallet authorization key are present. `pnpm preflight` proves they actually sign.",
+    detail: "Wallet credentials and the signing key are present; agent wallets can sign.",
     fix: null,
   };
 }
@@ -357,7 +357,7 @@ async function checkMfa(ownerId: string): Promise<ReadinessStep> {
       id: "mfa",
       title: "Second factor enrolled",
       state: "pass",
-      detail: `Privy reports ${status.userMethods.join(", ")} enrolled on your account.`,
+      detail: `${status.userMethods.join(", ")} enrolled on your account.`,
       fix: null,
     };
   }
@@ -417,14 +417,14 @@ async function checkWallets(
             id: "wallets",
             title: "Real agent wallets",
             state: "fail",
-            detail: `${paper.map((w) => w.chain).join(" and ")} still has a \`paper_\` placeholder wallet, created because Privy was unconfigured when the agent was made. It holds nothing and can sign nothing.`,
+            detail: `${paper.map((w) => w.chain).join(" and ")} still has a \`paper_\` placeholder wallet, created before wallets were available in this environment. It holds nothing and can sign nothing.`,
             fix: { label: "Agent settings → Wallets", href: `${settings}#wallets` },
           }
         : {
             id: "wallets",
             title: "Real agent wallets",
             state: "pass",
-            detail: `Privy server wallets on ${relevant.map((w) => w.chain).join(" and ")}, owned by the app's authorization key.`,
+            detail: `Tocker-managed wallets on ${relevant.map((w) => w.chain).join(" and ")}, signed only by the app's own authorization key.`,
             fix: null,
           };
 
@@ -660,7 +660,7 @@ function checkBudget(
       id: "budget",
       title: "Spend caps applied",
       state: "warn",
-      detail: `${appLayer} ${ceiling} No Privy wallet policy is attached — optional; one would make the wallet itself refuse an over-cap transfer as a second layer.`,
+      detail: `${appLayer} ${ceiling} No wallet-level budget is attached — optional; one would make the wallet itself refuse an over-cap transfer as a second layer.`,
       fix: { label: "Agent settings → Wallet budget", href: `${settings}#budget` },
     };
   }
@@ -677,7 +677,7 @@ function checkBudget(
     id: "budget",
     title: "Spend caps applied",
     state: "pass",
-    detail: `${appLayer} Underneath it, a Privy policy makes the wallet itself refuse any USDC transfer above $${walletBudget.perTxUsd} — enforced when it signs, whatever this app asks for.`,
+    detail: `${appLayer} Underneath it, a wallet-level budget makes the wallet itself refuse any USDC transfer above $${walletBudget.perTxUsd} — enforced when it signs, whatever this app asks for.`,
     fix: null,
   };
 }

@@ -76,7 +76,7 @@ export function transferErrorMessage(err: unknown, chain: Chain): string {
   if (lower.includes("platform solana wallet") || lower.includes("platform wallet")) return raw;
 
   if (lower.includes("tee stack") || (lower.includes("sponsor") && !lower.includes("sponsored successfully"))) {
-    return "Tocker asked Privy to pay this network fee for you and Privy refused: gas sponsorship is not enabled for this app. Nothing is wrong with your wallet — tell the operator to turn on fee sponsorship in the Privy dashboard.";
+    return "Tocker could not cover this network fee for you: fee sponsorship is not enabled for this app. Nothing is wrong with your wallet — tell the operator to turn fee sponsorship on.";
   }
   if (
     lower.includes("insufficient lamports") ||
@@ -263,7 +263,7 @@ function usePrivyTransfer(): UseTransfer {
 
 function useUnavailableTransfer(): UseTransfer {
   const send = useCallback(async (): Promise<TransferResult> => {
-    throw new Error("In-app transfers need Privy configured. Copy the address and send from any wallet.");
+    throw new Error("In-app transfers are not available in this environment. Copy the address and send from any wallet.");
   }, []);
   return { send, available: false };
 }

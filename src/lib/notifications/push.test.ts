@@ -76,7 +76,13 @@ describe("signDecision / verifyDecision", () => {
 
   it("refuses a mangled signature", () => {
     const token = push.signDecision(CLAIMS);
-    const flipped = `${token.slice(0, -1)}${token.endsWith("A") ? "B" : "A"}`;
+    // Flip a character in the *middle* of the signature, never the last one: base64url
+    // drops the unused low bits of the final character, so "…A" and "…B" can decode to
+    // the same bytes and the "mangled" token verifies — this test was flaky that way.
+    const dot = token.lastIndexOf(".");
+    const at = dot + 4;
+    const flipped = `${token.slice(0, at)}${token[at] === "A" ? "B" : "A"}${token.slice(at + 1)}`;
+    expect(flipped).not.toBe(token);
     expect(push.verifyDecision(flipped, BEFORE_EXPIRY).ok).toBe(false);
   });
 

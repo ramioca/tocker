@@ -1,9 +1,11 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
 import { useSession } from "@/hooks/use-session";
+import { signInHref } from "./login-helpers";
 
 function initials(handle: string, displayName: string | null): string {
   const source = (displayName ?? handle).trim();
@@ -12,9 +14,10 @@ function initials(handle: string, displayName: string | null): string {
   return letters.toUpperCase();
 }
 
-/** Opens the Privy login modal; shows an avatar menu when logged in. */
+/** Sends the visitor to Tocker's sign-in page; shows an avatar menu when logged in. */
 export function LoginButton({ className }: { className?: string }) {
-  const { ready, session, login, logout } = useSession();
+  const { ready, session, logout } = useSession();
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -39,8 +42,11 @@ export function LoginButton({ className }: { className?: string }) {
   }
 
   if (!session) {
+    // A link, not a handler: sign-in is a page now, so it should be openable in a new
+    // tab, prefetchable, and announced as a link. `next` carries the visitor back to
+    // whatever they were looking at when they pressed it.
     return (
-      <Button type="button" className={className} onClick={() => login()}>
+      <Button className={className} render={<Link href={signInHref(pathname)} />}>
         Sign in
       </Button>
     );

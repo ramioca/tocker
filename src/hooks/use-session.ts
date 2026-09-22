@@ -16,8 +16,23 @@ export interface UseSession {
    * are synced, server-rendered pages are refreshed and the browser is sent to
    * `redirectTo` — by default `/home` when signing in from the landing page, and
    * the current page everywhere else, which then re-renders signed in.
+   *
+   * Sign-in proper is `/login`, which is headless. This modal is what is left of
+   * Privy's own UI: the external-wallet connector behind "Use a crypto wallet
+   * instead".
    */
   login: (options?: { redirectTo?: string }) => void;
+  /**
+   * Arm the same post-auth redirect `login()` arms, for a sign-in that does not go
+   * through the modal. Call it immediately before starting a headless flow (send an
+   * email code, hand off to an OAuth provider, prompt for a passkey): whichever of
+   * them completes, the effect below still syncs the wallets, refreshes the
+   * server-rendered tree and sends the browser to `target`.
+   *
+   * Omit `target` for the default: `/home` from the landing page, and stay put
+   * everywhere else.
+   */
+  prepareRedirect: (target?: string) => void;
   logout: () => Promise<void>;
 }
 
@@ -75,7 +90,7 @@ function usePrivySession(): UseSession {
   const pathname = usePathname();
   /** `${userId}:${walletCount}` of the last sync, so a new wallet re-runs it. */
   const syncedFor = useRef<string | null>(null);
-  /** Set by `login()`, consumed once the session exists. */
+  /** Set by `login()` / `prepareRedirect()`, consumed once the session exists. */
   const pendingRedirect = useRef<string | null>(null);
 
   const userId = privy.user?.id ?? null;
@@ -120,18 +135,26 @@ function usePrivySession(): UseSession {
     await queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
   }, [privy, queryClient]);
 
+  const prepareRedirect = useCallback(
+    (target?: string) => {
+      pendingRedirect.current = target ?? (pathname === "/" ? POST_LOGIN_HOME : null);
+    },
+    [pathname],
+  );
+
   const login = useCallback(
     (options?: { redirectTo?: string }) => {
-      pendingRedirect.current = options?.redirectTo ?? (pathname === "/" ? POST_LOGIN_HOME : null);
+      prepareRedirect(options?.redirectTo);
       privy.login();
     },
-    [privy, pathname],
+    [privy, prepareRedirect],
   );
 
   return {
     ready: privy.ready && !query.isPending,
     session: query.data ?? null,
     login,
+    prepareRedirect,
     logout,
   };
 }
@@ -152,7 +175,11 @@ function useFallbackSession(): UseSession {
     console.warn("[useSession] NEXT_PUBLIC_PRIVY_APP_ID is not set — login is unavailable in this environment.");
   }, []);
 
-  return { ready: !query.isPending, session: query.data ?? null, login, logout };
+  // Nothing to arm: there is no authentication event coming, so there is nothing
+  // for a post-auth redirect to hang off.
+  const prepareRedirect = useCallback(() => {}, []);
+
+  return { ready: !query.isPending, session: query.data ?? null, login, prepareRedirect, logout };
 }
 
 // Chosen once at module load: the env var cannot change at runtime, so the hook

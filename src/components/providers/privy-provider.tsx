@@ -50,6 +50,12 @@ export function AppPrivyProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // Privy renders the logo inside its own modal, so it wants an absolute URL.
+  const logoUrl = useMemo(
+    () => (typeof window === "undefined" ? "https://tocker.xyz/icon.svg" : `${window.location.origin}/icon.svg`),
+    [],
+  );
+
   if (!PRIVY_APP_ID) return <>{children}</>;
 
   return (
@@ -57,10 +63,16 @@ export function AppPrivyProvider({ children }: { children: ReactNode }) {
       appId={PRIVY_APP_ID}
       config={{
         solana: { rpcs: solanaRpcs },
+        // Privy's own surfaces are the fallback, not the product: sign-in is Tocker's
+        // page (headless hooks), and signing is silent. Whatever Privy still has to show
+        // itself — the external-wallet connector, MFA enrolment, recovery — wears
+        // Tocker's mark and copy.
         appearance: {
           theme: "dark",
           accentColor: "#a78bfa",
+          logo: logoUrl,
           walletChainType: "ethereum-and-solana",
+          showWalletLoginFirst: false,
           landingHeader: "Sign in to Tocker",
           loginMessage: "Build agents that trade for you.",
         },
@@ -68,7 +80,11 @@ export function AppPrivyProvider({ children }: { children: ReactNode }) {
         embeddedWallets: {
           ethereum: { createOnLogin: "users-without-wallets" },
           solana: { createOnLogin: "users-without-wallets" },
-          showWalletUIs: true,
+          // No confirmation popups from Privy on signatures: every signature in Tocker
+          // sits behind an explicit action of ours — the Create button, the fund
+          // drawer, a hold-to-confirm on withdraw — and a second, foreign-looking
+          // modal on top of that was the thing operators asked to see gone.
+          showWalletUIs: false,
         },
       }}
     >
