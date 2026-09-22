@@ -134,6 +134,14 @@ export async function readWalletBalances(w: AgentWalletRow): Promise<WalletBalan
   if (!isPrivyConfigured() || isPaperWallet(w.id)) {
     return { chain: w.chain, address: w.address, walletId: w.id, balances: empty };
   }
+  // Solana straight from the chain. Privy's balance endpoint is an indexer that trails a
+  // transfer by minutes, and a live checklist that reads it says "0.00 USDC" over a
+  // funding that confirmed thirty seconds ago (2026-09-22). The RPC has no such lag;
+  // Privy stays the fallback when the RPC cannot answer.
+  if (w.chain === "solana") {
+    const onChain = await readSolanaBalancesOnChain(w.address);
+    if (onChain) return { chain: w.chain, address: w.address, walletId: w.id, balances: onChain };
+  }
   try {
     // One call per asset. The SDK's types accept an `asset` array, but it serialises
     // one as a single comma-joined query value ("usdc,sol") and the API rejects that
@@ -156,6 +164,28 @@ export async function readWalletBalances(w: AgentWalletRow): Promise<WalletBalan
   } catch (err) {
     console.warn(`[wallets] balance lookup failed for ${w.id}:`, err instanceof Error ? err.message : err);
     return { chain: w.chain, address: w.address, walletId: w.id, balances: empty };
+  }
+}
+
+/** SOL and USDC for one Solana address from the RPC, or null when it could not be read. */
+async function readSolanaBalancesOnChain(address: string): Promise<WalletBalance["balances"] | null> {
+  try {
+    const [{ PublicKey }, { associatedTokenAddress, SOLANA_USDC_DECIMALS, SOLANA_USDC_MINT }, { getSolBalance, getTokenAccountBalance }] =
+      await Promise.all([import("@solana/web3.js"), import("./solana-transfer"), import("./solana-rpc")]);
+    const owner = new PublicKey(address);
+    const [sol, usdcRaw] = await Promise.all([
+      getSolBalance(address),
+      getTokenAccountBalance(associatedTokenAddress(owner, SOLANA_USDC_MINT).toBase58()),
+    ]);
+    const usdc = usdcRaw === null ? 0 : Number(usdcRaw) / 10 ** SOLANA_USDC_DECIMALS;
+    return [
+      // A dollar is a dollar: USDC is shown at face value.
+      { asset: "usdc", amount: usdc, usd: usdc },
+      { asset: NATIVE_ASSET.solana, amount: sol, usd: null },
+    ];
+  } catch (err) {
+    console.warn(`[wallets] on-chain balance read failed for ${address}:`, err instanceof Error ? err.message : err);
+    return null;
   }
 }
 

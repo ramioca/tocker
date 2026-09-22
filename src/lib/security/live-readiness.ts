@@ -269,7 +269,9 @@ export async function evaluateLiveReadiness(input: ReadinessInput): Promise<Live
     agentId: input.agentId,
     slug: input.slug,
     steps,
-    ready: steps.every((s) => s.state !== "fail"),
+    // A transfer still confirming is not a failure, but it is not "ready" either: the
+    // switch waits for the money to land.
+    ready: steps.every((s) => s.state !== "fail") && !steps.some((step) => step.pending),
     minUsdc: MIN_USDC,
     caps: {
       maxTradeUsd: input.config.risk.maxTradeUsd,
@@ -442,6 +444,7 @@ async function checkWallets(
   // a retry. The $50 case that prompted this failed because the fee wallet was dry.
   let intentNote = "";
   let fixLabel = "Fund this agent";
+  let pendingFunding = false;
   if (!fundedUsdc && walletsStep.state !== "fail") {
     try {
       const db = await getDb();
@@ -459,7 +462,11 @@ async function checkWallets(
           intentNote = ` The ${label} funding you set up at creation did not go through${why}. Tocker's fee wallet now refuels itself, so a retry should land.`;
           fixLabel = `Retry the ${label} funding`;
         } else if (intent.status === "pending" || intent.status === "sent") {
-          intentNote = ` The ${label} funding from creation is ${intent.status === "sent" ? "confirming on chain" : "still pending"} — reload in a minute.`;
+          const ageMs = Date.now() - intent.createdAt.getTime();
+          pendingFunding = ageMs < 10 * 60_000;
+          intentNote = pendingFunding
+            ? ` The ${label} funding is ${intent.status === "sent" ? "confirming on chain" : "being sent"} — this page re-checks by itself.`
+            : ` The ${label} funding from creation was sent ${Math.round(ageMs / 60_000)} minutes ago and has not arrived; check the transaction, or fund again.`;
         }
       }
     } catch {
@@ -470,12 +477,13 @@ async function checkWallets(
   const fundingStep: ReadinessStep = {
     id: "funding",
     title: "Funded above the minimum",
-    state: walletsStep.state === "fail" ? "fail" : fundedUsdc ? "pass" : "fail",
+    state: walletsStep.state === "fail" ? "fail" : fundedUsdc ? "pass" : pendingFunding ? "warn" : "fail",
     detail:
       walletsStep.state === "fail"
         ? "Cannot check a balance until the agent has real wallets."
         : `${usdc.toFixed(2)} USDC (need ${MIN_USDC.toFixed(2)}).${intentNote}`,
-    fix: fundedUsdc ? null : { label: fixLabel, href: `${settings}#wallets` },
+    fix: fundedUsdc || pendingFunding ? null : { label: fixLabel, href: `${settings}#wallets` },
+    ...(pendingFunding ? { pending: true } : {}),
   };
 
   return { walletsStep, fundingStep, usdc: walletsStep.state === "fail" ? null : usdc, agentSol };

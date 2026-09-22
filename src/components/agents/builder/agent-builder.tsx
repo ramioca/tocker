@@ -36,6 +36,15 @@ import {
   settleFundingIntent,
 } from "@/server/actions/wallets";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { AgentConfig } from "@/db/schema";
 import type { Chain, DataSourceInfo, LlmKeyRow } from "@/server/types";
 
@@ -239,6 +248,8 @@ export function AgentBuilder({
   const { draft, update, updateConfig, clear, restored } = useDraft();
   const [keys, setKeys] = useState(initialKeys);
   const [attempted, setAttempted] = useState(false);
+  /** An agent that exists whose funding did not go through: offered the signature again, here. */
+  const [fundingRetry, setFundingRetry] = useState<FundingRetry | null>(null);
   const [open, setOpen] = useState<Set<RuleId>>(new Set());
   const rulesRef = useRef<HTMLDivElement>(null);
 
@@ -331,16 +342,25 @@ export function AgentBuilder({
       void refreshCash(12_000);
     }
 
+    if (funding?.firstError) {
+      // The agent exists; the money did not move. Stay on this page and offer the
+      // signature again, rather than sending the owner to a red checklist to find out.
+      setFundingRetry({
+        agentId: result.data.id,
+        slug: result.data.slug,
+        name: draft.name.trim(),
+        plan: fundingPlan!,
+        sent: funding.sent,
+        total: funding.total,
+        error: funding.firstError,
+        busy: false,
+      });
+      return;
+    }
+
     clear();
 
-    if (funding?.firstError) {
-      toast.warning(`${draft.name.trim()} was created, but it is not fully funded`, {
-        description:
-          funding.sent > 0
-            ? `${funding.sent} of ${funding.total} transfers went through. ${funding.firstError} Finish funding from its settings page.`
-            : `${funding.firstError} The agent is on paper until you fund it from its settings page.`,
-      });
-    } else if (funding && funding.sent > 0) {
+    if (funding && funding.sent > 0) {
       toast.success(`${draft.name.trim()} is funded`, {
         description: draft.goLive
           ? `${transfersFor(fundingPlan!).map(transferLabel).join(", ")} on the way. Next: the live checklist — hold to switch it to real money once every check is green.`
@@ -360,7 +380,41 @@ export function AgentBuilder({
     router.push(fundedAndWantsLive ? `/agents/${result.data.slug}/live` : `/agents/${result.data.slug}`);
   };
 
+  const retryFunding = async () => {
+    if (!fundingRetry || fundingRetry.busy) return;
+    setFundingRetry({ ...fundingRetry, busy: true });
+    const again = await runFundingPlan({ agentId: fundingRetry.agentId, plan: fundingRetry.plan, send });
+    void refreshCash();
+    void refreshCash(12_000);
+    if (again.firstError) {
+      setFundingRetry({ ...fundingRetry, error: again.firstError, sent: again.sent, total: again.total, busy: false });
+      return;
+    }
+    clear();
+    toast.success(`${fundingRetry.name} is funded`, {
+      description: draft.goLive ? "Next: the live checklist." : "Balances update as the transfer confirms.",
+    });
+    const slug = fundingRetry.slug;
+    setFundingRetry(null);
+    router.push(draft.goLive ? `/agents/${slug}/live` : `/agents/${slug}`);
+  };
+
+  const skipFunding = () => {
+    if (!fundingRetry) return;
+    clear();
+    toast.warning(`${fundingRetry.name} is on paper until it is funded`, {
+      description: "Fund it any time from its settings page.",
+    });
+    const slug = fundingRetry.slug;
+    setFundingRetry(null);
+    router.push(`/agents/${slug}`);
+  };
+
   return (
+    <>
+    {fundingRetry ? (
+      <FundingRetryDialog retry={fundingRetry} onRetry={retryFunding} onSkip={skipFunding} />
+    ) : null}
     <div className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-lg font-semibold tracking-tight">New agent</h1>
@@ -511,5 +565,58 @@ export function AgentBuilder({
         </LiquidMetal>
       </div>
     </div>
+    </>
+  );
+}
+
+interface FundingRetry {
+  agentId: string;
+  slug: string;
+  name: string;
+  plan: FundingPlan;
+  sent: number;
+  total: number;
+  error: string;
+  busy: boolean;
+}
+
+/**
+ * The agent was created and the funding was not signed, or did not land. The owner
+ * asked for a funded agent, so the question is asked again right here — one tap —
+ * instead of being deferred to a red row on the live checklist.
+ */
+function FundingRetryDialog({
+  retry,
+  onRetry,
+  onSkip,
+}: {
+  retry: FundingRetry;
+  onRetry: () => void;
+  onSkip: () => void;
+}) {
+  const partial = retry.sent > 0;
+  return (
+    <Dialog open onOpenChange={(next) => (next ? null : onSkip())}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{retry.name} is created — the funding did not go through</DialogTitle>
+          <DialogDescription>
+            {partial
+              ? `${retry.sent} of ${retry.total} transfers landed. ${retry.error} Finish the rest from the agent's settings page.`
+              : `${retry.error} Nothing moved. Sign the transfer again and the agent starts funded; skip, and it stays on paper until you fund it from its settings page.`}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onSkip} disabled={retry.busy}>
+            {partial ? "Go to the agent" : "Skip for now"}
+          </Button>
+          {partial ? null : (
+            <Button onClick={onRetry} disabled={retry.busy}>
+              {retry.busy ? "Waiting for your signature…" : "Sign the funding again"}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

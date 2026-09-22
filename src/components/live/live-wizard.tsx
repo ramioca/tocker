@@ -78,6 +78,23 @@ export function LiveWizard({
     });
   }, [agent.id, cap]);
 
+  // A step that is waiting on the chain (a funding transfer confirming) re-checks itself
+  // every few seconds for up to three minutes, so the operator never has to reload to
+  // watch a red row turn green.
+  const pendingSteps = readiness.steps.filter((step) => step.pending).length;
+  useEffect(() => {
+    if (pendingSteps === 0) return;
+    const startedAt = Date.now();
+    const id = setInterval(() => {
+      if (Date.now() - startedAt > 3 * 60_000) {
+        clearInterval(id);
+        return;
+      }
+      recheck();
+    }, 6_000);
+    return () => clearInterval(id);
+  }, [pendingSteps, recheck]);
+
   const applyPreset = useCallback(() => {
     startChecking(async () => {
       const result = await applyFirstTradePresetAction(agent.id);

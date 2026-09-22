@@ -69,6 +69,8 @@ export interface ReadinessStep {
   detail: string;
   /** Where to go to fix it. `null` when there is nothing to fix. */
   fix: { label: string; href: string } | null;
+  /** Waiting on the chain, not on the operator — the checklist re-checks itself while this is set. */
+  pending?: boolean;
 }
 
 export interface LiveReadiness {
