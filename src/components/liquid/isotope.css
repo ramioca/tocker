@@ -55,14 +55,16 @@
   background: linear-gradient(to top, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.3) 50%, transparent);
 }
 
-/* The shader canvas fades in over the static art once the renderer is ready,
-   so a capable desktop goes mark → shader rather than mark → black → shader. */
-.iso-hero[data-shader="loading"] .iso-shaderwrap {
-  opacity: 0;
+/* The static art sits BENEATH the canvas and the canvas is never hidden. The
+   shader tree starts with an opaque SolidColor, so the moment it draws it
+   covers the mark; until then, or if the renderer never draws (a transparent
+   canvas is the library's silent failure mode), the mark shows through.
+   Nothing about what the visitor sees depends on a callback firing. */
+.iso-hero .iso-static {
+  z-index: 0;
 }
-.iso-hero[data-shader="on"] .iso-shaderwrap {
-  opacity: 1;
-  transition: opacity 0.6s ease-out;
+.iso-hero .iso-shaderwrap {
+  z-index: 1;
 }
 
 /* Static hero art: the Ticker Knot as a lit object on the same near-black
@@ -319,13 +321,8 @@
   background: linear-gradient(45deg, #1e1e1f 0%, #070708 100%);
   color: #fff;
 }
-.ctc[data-shader="loading"] .ctc-shaderwrap {
-  opacity: 0;
-}
-.ctc[data-shader="on"] .ctc-shaderwrap {
-  opacity: 1;
-  transition: opacity 0.6s ease-out;
-}
+/* Same idea as the hero: the CSS gradient is the floor, the canvas draws over
+   it when it can, and nothing is hidden waiting for a callback. */
 @media (max-width: 639px) {
   .ctc {
     min-height: 70dvh;

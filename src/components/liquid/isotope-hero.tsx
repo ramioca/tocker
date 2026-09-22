@@ -39,9 +39,9 @@ export function IsotopeHero() {
   }, []);
 
   const mountShader = shader.state === "loading" || shader.state === "on";
-  // The static art stays underneath until the renderer reports ready, so the
-  // desktop hero fades from the mark into the shader instead of through black.
-  const showStatic = shader.state !== "on";
+  // The static art is always there, beneath the canvas (see isotope.css): the
+  // shader covers it when it draws, and it is what remains when it cannot.
+  const showStatic = true;
 
   return (
     <section className="iso-hero" data-shader={shader.state} data-shader-reason={shader.reason || undefined}>

@@ -15,6 +15,7 @@ type Probe = {
   adapter: string;
   device: string;
   maxUniform: string;
+  library: string;
   reducedMotion: boolean;
   coarse: boolean;
   ua: string;
@@ -48,6 +49,7 @@ function Overlay() {
         adapter: "—",
         device: "—",
         maxUniform: "—",
+        library: "—",
         reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
         coarse: window.matchMedia("(pointer: coarse)").matches,
         ua: navigator.userAgent.replace(/^Mozilla\/5\.0 /, "").slice(0, 120),
@@ -70,6 +72,14 @@ function Overlay() {
         } catch (e) {
           p.adapter = `threw: ${e instanceof Error ? e.message : String(e)}`.slice(0, 120);
         }
+        // The library's own verdict — the one the renderer acts on.
+        try {
+          const { getWebGPUSupport } = await import("shaders/react");
+          const s = await getWebGPUSupport();
+          p.library = s.supported ? "supported" : `unsupported (${s.reason ?? "?"})`;
+        } catch (e) {
+          p.library = `probe threw: ${e instanceof Error ? e.message : String(e)}`.slice(0, 120);
+        }
       }
       if (!cancelled) setProbe(p);
     })();
@@ -87,6 +97,7 @@ function Overlay() {
           `${label}: ${el.dataset.shader ?? "?"}${el.dataset.shaderReason ? ` (${el.dataset.shaderReason})` : ""} · canvas ${canvas ? `${canvas.width}×${canvas.height}` : "none"}`,
         );
       }
+      parts.unshift(`t+${Math.round(performance.now() / 1000)}s`);
       setSections(parts.join("\n"));
     };
     read();
@@ -124,6 +135,7 @@ function Overlay() {
             `adapter: ${probe.adapter}`,
             `device: ${probe.device}`,
             `maxUniformBufferBindingSize: ${probe.maxUniform}`,
+            `library: ${probe.library}`,
             `reduced-motion: ${probe.reducedMotion ? "YES" : "no"} · coarse: ${probe.coarse ? "yes" : "no"}`,
             sections,
           ].join("\n")
