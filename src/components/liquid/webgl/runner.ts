@@ -261,6 +261,10 @@ export function createRunner(canvas: HTMLCanvasElement, opts: RunnerOptions): Ru
   let running = false;
   let visible = true;
   let last = -1;
+  // Off-screen → paused. Background tabs need no handling of their own: the
+  // browser stops delivering animation frames there. (Deliberately not gated
+  // on document.visibilityState — embedded and preview surfaces report
+  // "hidden" while still compositing, and the page would never paint.)
   const io = new IntersectionObserver(
     (entries) => {
       visible = entries.some((e) => e.isIntersecting);
@@ -269,8 +273,6 @@ export function createRunner(canvas: HTMLCanvasElement, opts: RunnerOptions): Ru
     { rootMargin: "128px", threshold: 0 },
   );
   io.observe(canvas);
-  const onVisibility = () => schedule();
-  document.addEventListener("visibilitychange", onVisibility);
 
   // Real context loss (GPU reset, memory pressure): stop, let the browser
   // restore, rebuild everything, resume. Programs and textures do not survive.
@@ -348,7 +350,7 @@ export function createRunner(canvas: HTMLCanvasElement, opts: RunnerOptions): Ru
   };
 
   const schedule = () => {
-    const should = visible && document.visibilityState !== "hidden";
+    const should = visible;
     if (should && !running) {
       running = true;
       last = -1;
@@ -367,7 +369,6 @@ export function createRunner(canvas: HTMLCanvasElement, opts: RunnerOptions): Ru
       if (raf) cancelAnimationFrame(raf);
       ro.disconnect();
       io.disconnect();
-      document.removeEventListener("visibilitychange", onVisibility);
       canvas.removeEventListener("webglcontextlost", onContextLost);
       canvas.removeEventListener("webglcontextrestored", onContextRestored);
       window.removeEventListener("pointermove", onPointerMove);
