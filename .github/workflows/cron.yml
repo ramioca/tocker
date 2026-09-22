@@ -1,4 +1,7 @@
-# Free alternative to Vercel Cron (Hobby plans are limited to once-daily schedules).
+# Fallback scheduler. The primary is Vercel Cron (vercel.json `crons`, every five
+# minutes on the Pro plan). GitHub's `*/5` schedule fired four times in eleven hours on
+# 2026-09-21/22 — GitHub throttles scheduled workflows without saying so — so this stays
+# only as a second pair of hands; both loops are idempotent (run claims, exit guards).
 # Set repo secrets: APP_URL (https://tocker.xyz) and CRON_SECRET.
 #
 # The run commands are block scalars on purpose: an unquoted `Authorization: Bearer`
