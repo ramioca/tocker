@@ -415,8 +415,10 @@ function describeScore(r: Record<string, unknown>): string {
     if (n !== null) parts.push(`${label} ${round(n)}`);
   };
   push("safety", components.safety);
+  push("liquidity", components.liquidity);
   push("organic", components.organic);
   push("distribution", components.distribution);
+  push("momentum", components.momentum);
   push("GT", components.gecko);
   push("sentiment", components.sentiment);
   push("smart money", components.smartMoney);

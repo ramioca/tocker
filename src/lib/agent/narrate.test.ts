@@ -200,7 +200,7 @@ describe("describeCall", () => {
 describe("describeResult", () => {
   it("leads a score with the number, then the components, then the floor", () => {
     expect(describeResult("score_token", SCORE_DOVE)).toBe(
-      "DOVE 71 · candidate · safety 50, organic 79, distribution 91, GT 41 · Deepnets ok, sentiment bought · notBought: smartMoney (budget) · clears the 55 floor",
+      "DOVE 71 · candidate · safety 50, liquidity 62, organic 79, distribution 91, momentum 58, GT 41 · Deepnets ok, sentiment bought · notBought: smartMoney (budget) · clears the 55 floor",
     );
   });
 

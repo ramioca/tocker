@@ -213,6 +213,9 @@ candidate 60-79, strong 80+), built from five free components:
   - organic (20) — real buyers versus manufactured volume; heavy volume with almost no organic buyers is wash trading
   - distribution (15) — holder count, top-10 share, dev share
   - momentum (15) — 1h/6h/24h price, volume and liquidity trend
+  Momentum, sentiment and smart money are *centred*: 50 is flat or neutral, above is
+  positive, below is negative. A rule that says "positive" means above 50; asking for 70
+  on a token moving one percent an hour is asking for a token that does not exist.
 Three more components are nullable, and each *reweights* the five above rather than
 adding a slice, so the total stays 0-100 whichever of them arrived:
   - gecko (10) — GeckoTerminal's own GT Score, free and fetched for every token it has
