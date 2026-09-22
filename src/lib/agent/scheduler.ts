@@ -147,6 +147,15 @@ export async function tickMarks(limit = 100, now: Date = new Date()): Promise<Ma
   // The marks loop runs on the same five-minute clock as the tick loop and is the one
   // that keeps running when the tick loop is wedged, so it reaps too.
   const reaped = await reapStaleRuns(undefined, now);
+  // Platform maintenance on the same clock: the Solana wallet that pays every network
+  // fee tops itself up from its own USDC when it runs short, so a funding transfer or
+  // a gas drip never finds it dry. Never throws; throttled to once a minute.
+  try {
+    const { ensurePlatformSol } = await import("@/lib/platform/sol");
+    await ensurePlatformSol("the marks tick");
+  } catch {
+    // Maintenance must never take the marks loop down with it.
+  }
   // And trades left on `submitted` by the same frozen invocations. `submitted` lasts
   // milliseconds in the happy case; two minutes later it means nobody is coming back to
   // finish the row, and a book that says nothing happened when money may have moved is

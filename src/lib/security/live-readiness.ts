@@ -1,10 +1,10 @@
 import "server-only";
-import { sql } from "drizzle-orm";
-import { getDb, isPglite } from "@/db";
+import { desc, eq, sql } from "drizzle-orm";
+import { agentFundingIntents, getDb, isPglite } from "@/db";
 import { isPrivyConfigured } from "@/lib/privy";
 import { getAgentWalletBalances, isPaperWallet } from "@/lib/wallets";
 // Constants and the pure helper only — the effectful half of `gas.ts` is workstream A's.
-import { ATA_RENT_SOL, GAS_DRIP_SOL, MIN_AGENT_SOL, MIN_PLATFORM_SOL } from "@/lib/wallets/gas";
+import { MIN_AGENT_SOL, MIN_PLATFORM_SOL } from "@/lib/wallets/gas";
 import { dataChainsFor, getDataSource } from "@/lib/data-sources/registry";
 import { isMockMode } from "@/lib/x402/paidFetch";
 import { getMfaStatus } from "./mfa";
@@ -437,6 +437,36 @@ async function checkWallets(
 
   const fundedUsdc = usdc >= MIN_USDC;
 
+  // An unfunded agent whose owner already asked for funding at creation deserves the
+  // story, not a fresh "Fund this agent": what they asked for, why it did not land, and
+  // a retry. The $50 case that prompted this failed because the fee wallet was dry.
+  let intentNote = "";
+  let fixLabel = "Fund this agent";
+  if (!fundedUsdc && walletsStep.state !== "fail") {
+    try {
+      const db = await getDb();
+      const [intent] = await db
+        .select()
+        .from(agentFundingIntents)
+        .where(eq(agentFundingIntents.agentId, agentId))
+        .orderBy(desc(agentFundingIntents.createdAt))
+        .limit(1);
+      if (intent) {
+        const amount = Number(intent.amountUsd ?? intent.amount);
+        const label = Number.isFinite(amount) && amount > 0 ? `$${amount.toFixed(2)}` : "your";
+        if (intent.status === "failed") {
+          const why = intent.error ? ` — ${intent.error.split(". ")[0].slice(0, 220)}` : "";
+          intentNote = ` The ${label} funding you set up at creation did not go through${why}. Tocker's fee wallet now refuels itself, so a retry should land.`;
+          fixLabel = `Retry the ${label} funding`;
+        } else if (intent.status === "pending" || intent.status === "sent") {
+          intentNote = ` The ${label} funding from creation is ${intent.status === "sent" ? "confirming on chain" : "still pending"} — reload in a minute.`;
+        }
+      }
+    } catch {
+      // The balance is the answer; the intent is context.
+    }
+  }
+
   const fundingStep: ReadinessStep = {
     id: "funding",
     title: "Funded above the minimum",
@@ -444,8 +474,8 @@ async function checkWallets(
     detail:
       walletsStep.state === "fail"
         ? "Cannot check a balance until the agent has real wallets."
-        : `${usdc.toFixed(2)} USDC (need ${MIN_USDC.toFixed(2)}). Network fees are a separate question — see the gas step.`,
-    fix: fundedUsdc ? null : { label: "Fund this agent", href: `${settings}#wallets` },
+        : `${usdc.toFixed(2)} USDC (need ${MIN_USDC.toFixed(2)}).${intentNote}`,
+    fix: fundedUsdc ? null : { label: fixLabel, href: `${settings}#wallets` },
   };
 
   return { walletsStep, fundingStep, usdc: walletsStep.state === "fail" ? null : usdc, agentSol };
@@ -479,7 +509,7 @@ async function checkWallets(
  * balance, and a step that reports on a chain the agent does not trade is noise.
  */
 async function checkGas(config: AgentConfig, agentSol: number): Promise<ReadinessStep> {
-  const title = "Gas for the first signature";
+  const title = "Network fees";
   if (!config.chains.includes("solana")) {
     return {
       id: "gas",
@@ -510,6 +540,32 @@ async function checkGas(config: AgentConfig, agentSol: number): Promise<Readines
     platformError = err instanceof Error ? err.message : String(err);
   }
 
+  // Short: let the wallet refuel itself from its own USDC before saying anything, but
+  // give it eight seconds — this runs while a page renders. A swap that is still in
+  // flight is reported as such and finished on the next tick.
+  let refuelNote = "";
+  if (platformSol !== null && platformSol < MIN_PLATFORM_SOL && platformAddress) {
+    try {
+      const { ensurePlatformSol } = await import("@/lib/platform/sol");
+      const outcome = await Promise.race([
+        ensurePlatformSol("the live checklist"),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000)),
+      ]);
+      if (outcome === null) {
+        refuelNote = " It is converting a little of its USDC to SOL right now — reload in a minute.";
+      } else if (outcome.refueled) {
+        const { getPlatformWallet, readPlatformBalance } = await import("@/lib/platform/wallets");
+        const wallet = await getPlatformWallet("solana");
+        platformSol = wallet ? (await readPlatformBalance(wallet)).native : platformSol;
+        refuelNote = ` It just converted $${(outcome.usdc ?? 0).toFixed(2)} of its USDC to SOL.`;
+      } else {
+        refuelNote = ` It refuels itself from its own USDC, but ${outcome.reason}.`;
+      }
+    } catch {
+      // The checklist reports; it must not fail because a refuel did.
+    }
+  }
+
   const platformOk = platformSol !== null && platformSol >= MIN_PLATFORM_SOL;
   const platformSays =
     platformSol !== null
@@ -517,57 +573,30 @@ async function checkGas(config: AgentConfig, agentSol: number): Promise<Readines
       : `an unreadable balance${platformError ? ` — ${platformError}` : ""}`;
   const agentSays = `${agentSol.toFixed(4)} SOL`;
 
-  if (!agentOk && !platformOk) {
-    return {
-      id: "gas",
-      title,
-      state: "fail",
-      detail:
-        `The agent holds ${agentSays}, under the ${MIN_AGENT_SOL} SOL it needs to sign for itself, and the ` +
-        `platform Solana wallet holds ${platformSays}, under the ${MIN_PLATFORM_SOL} SOL it needs to top the ` +
-        `agent up. Nothing here can pay a signature fee or the ~${ATA_RENT_SOL.toFixed(5)} SOL rent for the ` +
-        `token account the first buy has to open — and the platform wallet is the fee payer on your own funding ` +
-        `transfer too, so you cannot get USDC in until it holds SOL. Fund the platform wallet — it pays that fee ` +
-        `and drips to the agent automatically — or send the agent ${GAS_DRIP_SOL} SOL directly.`,
-      fix: { label: "Settings → Admin → Platform wallets", href: PLATFORM_CARD.href },
-    };
-  }
   if (!platformOk) {
-    // A fail rather than a warning, and it stays a fail however much SOL the agent
-    // holds: the platform wallet is the fee payer on the operator's funding transfer,
-    // so an empty one means no money can get in, and none can be withdrawn or swept
-    // back out either. The agent's own SOL only covers its trades.
+    // A fail however much SOL the agent holds: this wallet pays the fee on the
+    // operator's funding transfer and on every drip, withdrawal and sweep. It refuels
+    // itself from its own USDC; when even that cannot happen, the one thing to do is
+    // send it USDC or SOL — said once, plainly, without the mechanics.
     return {
       id: "gas",
       title,
       state: "fail",
       detail:
-        `The agent holds ${agentSays}. The platform Solana wallet holds ${platformSays}, under the ` +
-        `${MIN_PLATFORM_SOL} SOL it needs. That wallet pays the network fee on your funding transfer — your own ` +
-        `Solana wallet holds USDC and no SOL, so it cannot pay for itself — and it is what tops the agent up for ` +
-        `a withdrawal, a fee sweep, or a trade Jupiter does not make gasless. Fund it before going live.`,
+        `Tocker's Solana wallet pays every network fee for you — on your funding transfer and on the agent's ` +
+        `trades — and it holds ${platformSays}, under the ${MIN_PLATFORM_SOL} SOL it keeps.${refuelNote}`,
       fix: { label: "Settings → Admin → Platform wallets", href: PLATFORM_CARD.href },
-    };
-  }
-  if (!agentOk) {
-    return {
-      id: "gas",
-      title,
-      state: "pass",
-      detail:
-        `The agent holds ${agentSays}. That is fine: Jupiter Ultra goes gasless for a taker this empty, and when ` +
-        `it does not, the platform Solana wallet (${platformSays}) drips ${GAS_DRIP_SOL} SOL before the order is ` +
-        `signed. The same wallet pays the fee on your funding transfer and on the agent's first token account.`,
-      fix: null,
     };
   }
   return {
     id: "gas",
     title,
     state: "pass",
-    detail:
-      `The agent holds ${agentSays}, and the platform Solana wallet holds ${platformSays} — enough to pay the fee ` +
-      `on your funding transfer and to top the agent up.`,
+    detail: agentOk
+      ? `Covered. The agent holds ${agentSays} and Tocker's Solana wallet holds ${platformSays}; you never fund SOL yourself.`
+      : `Covered. Tocker's Solana wallet (${platformSays}) pays the fees and tops the agent up when a trade needs it${
+          refuelNote.trim() ? ` —${refuelNote}` : ""
+        }; you never fund SOL yourself.`,
     fix: null,
   };
 }

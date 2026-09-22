@@ -221,6 +221,12 @@ export async function prepareSponsoredFunding(input: {
   const needLamports = sponsoredFundingLamports({ ataExists });
   const needSol = needLamports / LAMPORTS_PER_SOL;
 
+  // The platform wallet pays this fee, and it refuels itself from its own USDC when it
+  // is short — so a dry wallet is a swap away from paying, not a blocker for the
+  // operator. A new agent's $50 funding used to fail right here (2026-09-22).
+  const { ensurePlatformSol } = await import("@/lib/platform/sol");
+  const refuel = await ensurePlatformSol("a sponsored funding transfer");
+
   let platformSol: number;
   try {
     platformSol = await getSolBalance(platform.address);
@@ -237,7 +243,8 @@ export async function prepareSponsoredFunding(input: {
       `Tocker's platform Solana wallet (${platform.address}) holds ${platformSol.toFixed(6)} SOL and needs at least ` +
         `${needSol.toFixed(6)} SOL to pay the network fee${
           ataExists ? "" : " and the token-account rent"
-        } on this funding transfer. Send that wallet at least ${MIN_PLATFORM_SOL} SOL and try again.`,
+        } on this funding transfer. It refuels itself from its own USDC, but this time ${refuel.reason}. ` +
+        `Send that wallet a little USDC or ${MIN_PLATFORM_SOL} SOL and try again.`,
     );
   }
 

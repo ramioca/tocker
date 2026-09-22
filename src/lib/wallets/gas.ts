@@ -184,14 +184,22 @@ export async function ensureAgentGas(input: EnsureGasInput): Promise<EnsureGasRe
   if (!plan.drip) return { dripped: false, signature: null, balanceSol };
 
   const platform = await ensurePlatformWallet("solana");
-  const platformSol = await getSolBalance(platform.address).catch(() => 0);
+  let platformSol = await getSolBalance(platform.address).catch(() => 0);
+  let refuelReason: string | null = null;
+  if (platformSol < plan.amountSol + 0.000_01) {
+    // Short: the platform wallet converts its own USDC to SOL before this drip gives up.
+    const { ensurePlatformSol } = await import("@/lib/platform/sol");
+    const refuel = await ensurePlatformSol("a gas drip to an agent");
+    refuelReason = refuel.reason;
+    platformSol = await getSolBalance(platform.address).catch(() => platformSol);
+  }
   if (platformSol < plan.amountSol + 0.000_01) {
     throw new PlatformWalletError(
       `The agent's Solana wallet holds ${balanceSol.toFixed(6)} SOL and this trade needs ${(
         input.requiredLamports / LAMPORTS_PER_SOL
       ).toFixed(6)} SOL, but the platform Solana wallet (${platform.address}) holds only ${platformSol.toFixed(
         6,
-      )} SOL and cannot top it up. Send at least ${MIN_PLATFORM_SOL} SOL to that address.`,
+      )} SOL and cannot top it up. It refuels itself from its own USDC, but ${refuelReason ?? "that did not happen"}. Send a little USDC or ${MIN_PLATFORM_SOL} SOL to that address.`,
       "solana",
       platform.address,
     );
