@@ -6,6 +6,7 @@
  * Tools return structured failures instead of throwing, so one bad call does not kill
  * the run — the model gets to read the reason and try something else.
  */
+import { getScoreHistory, scoreTrend } from "@/lib/tokens/history";
 import { loadCachedScores } from "@/lib/trading/score-cache";
 import { platformFeeUsd as flatFeeUsd } from "@/lib/platform/fee";
 import { MAX_PROPOSALS_PER_TICK, MIN_SCORED_PER_TICK, SEEN_WINDOW_MS } from "./limits";
@@ -414,10 +415,20 @@ export function buildTools(ctx: RunContext): ToolSet {
         const meetsMinScore = score.blockers.length === 0 && score.verdict !== "avoid" && score.total >= universe.minScore;
         if (meetsMinScore) shortlistThisTick.set(token.id, { symbol: token.symbol, total: score.total });
         else shortlistThisTick.delete(token.id);
+        // Cross-tick memory: what this token looked like the last time the agent scored
+        // it, so a rule about velocity or consecutive ticks is a fact, not a guess.
+        const history = await getScoreHistory(token.id, { days: 1, limit: 60 }).catch(() => []);
+        const trend = scoreTrend(history, {
+          total: score.total,
+          priceUsd: score.priceUsd,
+          holderCount: score.holderCount,
+          liquidityUsd: score.liquidityUsd,
+        });
         return {
           ...scorePayload(score),
           minScore: universe.minScore,
           meetsMinScore,
+          trend,
           paidSignals: {
             intel: intel !== null,
             sentiment: score.components.sentiment !== null,

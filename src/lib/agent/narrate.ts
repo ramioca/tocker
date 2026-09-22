@@ -428,6 +428,26 @@ function describeScore(r: Record<string, unknown>): string {
   const notBought = strings(r.notBought).map(shortSkip);
   if (notBought.length > 0) segments.push(`notBought: ${commaList(notBought, 3)}`);
 
+  // Cross-tick memory: what moved since the agent last scored it, and the velocity verdict.
+  const trend = obj(r.trend);
+  const velocity = str(trend.velocity);
+  if (velocity === "first_look") segments.push("first look");
+  else if (velocity !== null) {
+    const previous = obj(trend.previous);
+    const moves: string[] = [];
+    const pricePct = num(previous.pricePct);
+    if (pricePct !== null) moves.push(`price ${pricePct > 0 ? "+" : ""}${round(pricePct)}%`);
+    const holders = num(previous.holdersDelta);
+    if (holders !== null) moves.push(`holders ${holders > 0 ? "+" : ""}${round(holders)}`);
+    const rises = num(trend.consecutiveRises);
+    const ago = num(previous.minutesAgo);
+    segments.push(
+      `${velocity}${rises !== null && rises >= 2 ? ` ×${round(rises)}` : ""}${
+        moves.length > 0 ? ` (${moves.join(", ")}${ago !== null ? ` vs ${round(ago)}m ago` : ""})` : ""
+      }`,
+    );
+  }
+
   if (typeof r.meetsMinScore === "boolean") {
     const floor = num(r.minScore);
     const where = floor === null ? "floor" : `${round(floor)} floor`;

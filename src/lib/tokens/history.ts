@@ -121,3 +121,81 @@ export async function getScoreHistory(
     return [];
   }
 }
+
+/** What changed since the agent last scored this token — the cross-tick memory a rule like "rising for two ticks" needs. */
+export interface ScoreTrend {
+  /** Readings from earlier ticks, newest first, at most three. Empty when this is the first look. */
+  readings: Array<{ minutesAgo: number; total: number; priceUsd: number | null; holderCount: number | null; liquidityUsd: number | null }>;
+  /** Against the most recent earlier reading. Null when there is none. */
+  previous: {
+    minutesAgo: number;
+    totalDelta: number;
+    pricePct: number | null;
+    liquidityPct: number | null;
+    holdersDelta: number | null;
+  } | null;
+  /** "rising" when price and holders both grew since the last reading, "falling" when both shrank, else "flat"; "first_look" with no history. */
+  velocity: "rising" | "falling" | "flat" | "first_look";
+  /** How many consecutive earlier readings the price rose across, newest backwards (0–2). */
+  consecutiveRises: number;
+}
+
+/** The reading written by this very scoring is not "previous": anything this recent is skipped. */
+const SAME_TICK_MS = 3 * 60_000;
+
+/**
+ * Pure: the previous-tick view of a token from its score history (oldest first, as
+ * `getScoreHistory` returns it), relative to `current`. A strategy that says "enter when
+ * velocity has risen for two consecutive ticks" was unevaluable before this — the agent
+ * had no memory between ticks and declined every candidate (2026-09-22).
+ */
+export function scoreTrend(
+  history: readonly ScoreHistoryPoint[],
+  current: { total: number; priceUsd: number | null; holderCount: number | null; liquidityUsd: number | null },
+  now: number = Date.now(),
+): ScoreTrend {
+  const earlier = history
+    .filter((p) => now - new Date(p.at).getTime() > SAME_TICK_MS)
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  const readings = earlier.slice(0, 3).map((p) => ({
+    minutesAgo: Math.max(1, Math.round((now - new Date(p.at).getTime()) / 60_000)),
+    total: p.total,
+    priceUsd: p.priceUsd,
+    holderCount: p.holderCount,
+    liquidityUsd: p.liquidityUsd,
+  }));
+  const last = earlier[0];
+  if (!last) return { readings, previous: null, velocity: "first_look", consecutiveRises: 0 };
+
+  const pct = (a: number | null, b: number | null) => (a === null || b === null || b === 0 ? null : ((a - b) / b) * 100);
+  const pricePct = pct(current.priceUsd, last.priceUsd);
+  const holdersDelta = current.holderCount === null || last.holderCount === null ? null : current.holderCount - last.holderCount;
+  const velocity: ScoreTrend["velocity"] =
+    pricePct !== null && holdersDelta !== null && pricePct > 0 && holdersDelta > 0
+      ? "rising"
+      : pricePct !== null && holdersDelta !== null && pricePct < 0 && holdersDelta <= 0
+        ? "falling"
+        : "flat";
+
+  // Price rises across consecutive readings: current > last, last > the one before.
+  const chain = [current.priceUsd, ...earlier.slice(0, 2).map((p) => p.priceUsd)];
+  let consecutiveRises = 0;
+  for (let i = 0; i + 1 < chain.length; i += 1) {
+    const a = chain[i], b = chain[i + 1];
+    if (a === null || b === null || !(a > b)) break;
+    consecutiveRises += 1;
+  }
+
+  return {
+    readings,
+    previous: {
+      minutesAgo: readings[0]?.minutesAgo ?? 0,
+      totalDelta: Math.round((current.total - last.total) * 10) / 10,
+      pricePct: pricePct === null ? null : Math.round(pricePct * 10) / 10,
+      liquidityPct: (() => { const v = pct(current.liquidityUsd, last.liquidityUsd); return v === null ? null : Math.round(v * 10) / 10; })(),
+      holdersDelta,
+    },
+    velocity,
+    consecutiveRises,
+  };
+}

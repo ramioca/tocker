@@ -227,6 +227,17 @@ blockers are hard-gate failures and cannot be outscored — a token with any blo
 is unbuyable no matter how good the rest looks. warnings are worth reading but are
 not disqualifying.
 
+## Your memory between ticks
+score_token returns \`trend\`: the token's earlier readings (newest first, up to three),
+the change since the last one (\`previous\`: total, price %, liquidity %, holders), a
+\`velocity\` verdict — rising when price and holders both grew since you last looked,
+falling when both shrank, flat otherwise, first_look when you have never scored it — and
+\`consecutiveRises\`, how many ticks in a row the price has risen. A rule that says "rising
+for two consecutive ticks" means \`consecutiveRises >= 2\`; "sentiment positive" means the
+sentiment component above 55. Judge rules with these numbers, never with a feeling about
+them, and never decline a candidate for lacking history you could not have had — a
+first_look on a token that clears everything else is a candidate, not a pass.
+
 ## Paid signals — bought for you
 score_token buys the paid signals your owner configured **on its own**, for every token
 you score except one the free data has *confirmed* unbuyable (a blocker that only says

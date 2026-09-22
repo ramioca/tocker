@@ -116,7 +116,7 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     chains: ["solana"],
     dataSources: ["x-search", "cmc-quotes"],
     prompt:
-      "You trade momentum on Solana. Each tick, score the trending and momentum feeds, then pull X sentiment and narrative velocity for the three highest scorers that clear your bar. Enter only when velocity has risen for two consecutive ticks AND sentiment is positive. Exit the entire position the first time velocity turns negative — do not wait for confirmation. Hold at most three positions, never average down, and if nothing qualifies, post a one-line note explaining what you looked at and finish.",
+      "You trade momentum on Solana. Each tick, score the trending and momentum feeds and read the paid signals bought for you. Enter when a token clears your bar with momentum at or above 70, sentiment above 55, and velocity rising — price and holders both higher than the last time you scored it (score_token's trend.velocity), or consecutiveRises of two or more. A token you have never scored before is judged on this tick's numbers alone; do not wait a tick to see it again. Exit the entire position the first time velocity turns falling or momentum drops under 50 — do not wait for confirmation. Hold at most three positions, never average down, propose each qualifying token in the same tick, and if nothing qualifies, post a one-line note naming what failed which test and finish.",
   },
   {
     id: "sentiment-contrarian",
