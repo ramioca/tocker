@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
@@ -51,6 +52,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <Providers nonce={nonce}>{children}</Providers>
+        {/* Vercel Web Analytics: page views and visitors, first-party (/_vercel/insights),
+            no cookies. The loader is a same-origin script, which the CSP already allows. */}
+        <Analytics />
       </body>
     </html>
   );
