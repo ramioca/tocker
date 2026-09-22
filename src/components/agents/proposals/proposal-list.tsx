@@ -8,6 +8,14 @@
  * is empty it renders nothing at all — an approval queue that advertises its own
  * emptiness is noise on every page load.
  *
+ * **Two or more open proposals turn the list into a compare view.** A tick can put three
+ * launch-day tokens in front of an operator at once, and stacked cards force them to be
+ * judged one at a time from memory. Side by side, with the stat strips on the same
+ * baseline, the comparison is the layout: age against age, buyers against buyers. The
+ * order is newest first, because the newest token is the one the agent just found and
+ * the oldest is the one about to expire at the bottom of the screen where the header
+ * already warns about it.
+ *
  * `?proposal=<id>` (the deep link in the owner's notification) scrolls that card into
  * view and rings it for a moment.
  */
@@ -15,6 +23,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Gavel } from "lucide-react";
 import { ProposalCard } from "./proposal-card";
+import { byNewestFirst, formatCountdownCoarse, soonestExpiry } from "./proposal-stats";
+import { useCoarseNow } from "@/hooks/use-now";
+import { cn } from "@/lib/utils";
 import type { ProposalRow } from "@/server/types";
 
 /** How long a decided card stays on screen before the list drops it. */
@@ -34,10 +45,16 @@ export function ProposalList({
   const router = useRouter();
   const params = useSearchParams();
   const deepLink = params.get("proposal");
+  // The header's "expires in" moves in minutes, so it rides the coarse clock — the
+  // per-card countdowns are the ones that need a second hand.
+  const now = useCoarseNow();
   const [decided, setDecided] = useState<Record<string, true>>({});
   const [dropped, setDropped] = useState<Record<string, true>>({});
 
-  const visible = useMemo(() => proposals.filter((p) => !dropped[p.id]), [proposals, dropped]);
+  const visible = useMemo(
+    () => byNewestFirst(proposals.filter((p) => !dropped[p.id])),
+    [proposals, dropped],
+  );
 
   // Scroll the deep-linked card into view once it is on screen.
   useEffect(() => {
@@ -65,16 +82,41 @@ export function ProposalList({
   if (visible.length === 0) return null;
 
   const count = visible.length;
+  const compare = count > 1;
+  const soonest = soonestExpiry(visible, now);
 
   return (
     <section aria-labelledby="proposals-heading" className={className}>
-      <header className="mb-2 flex items-center gap-2">
+      <header className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         <Gavel aria-hidden className="size-3.5 text-[oklch(0.8_0.15_75)]" />
         <h2 id="proposals-heading" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           {heading ?? `${count} trade${count === 1 ? "" : "s"} awaiting your approval`}
         </h2>
+        {compare ? (
+          <p className="tnum text-[11px] text-muted-foreground/80">
+            <span aria-hidden className="mr-2">
+              ·
+            </span>
+            newest first
+            {soonest === null ? null : (
+              <>
+                <span aria-hidden className="mx-2">
+                  ·
+                </span>
+                {soonest <= 0 ? "one has expired" : `first expires in ${formatCountdownCoarse(soonest)}`}
+              </>
+            )}
+          </p>
+        ) : null}
       </header>
-      <div className="space-y-2.5">
+
+      <div
+        className={cn(
+          compare
+            ? "grid grid-cols-1 items-stretch gap-3 md:grid-cols-2 xl:grid-cols-3"
+            : "space-y-2.5",
+        )}
+      >
         {visible.map((proposal) => (
           <ProposalCard
             key={proposal.id}

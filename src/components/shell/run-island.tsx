@@ -10,6 +10,7 @@ import { DynamicIsland, DynamicIslandView } from "@/components/motion/dynamic-is
 import { useRunStatus } from "@/components/providers/run-status";
 import { useNow } from "@/hooks/use-now";
 import { AgentAvatar } from "@/components/common/agent-avatar";
+import { usePushSubscription } from "@/components/wallets/use-push";
 
 /**
  * Which thought-orb animation plays for each run tool. The orb is the island's
@@ -163,23 +164,45 @@ function notifyPermissionChanged(): void {
   for (const listener of permissionListeners) listener();
 }
 
+const ALERT_PILL =
+  "ml-2 flex shrink-0 items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-white/20 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60";
+
 /**
- * The one place the browser-alert permission is asked for, and only while there is
- * actually something waiting: a permission prompt makes sense next to "1 trade
- * awaiting approval" and nowhere else. It disappears for good once granted — and
- * never renders at all if the browser cannot do notifications, or if the user already
- * said no (the browser will not re-ask, so offering again would be a dead button).
+ * The one place the alert permission is asked for, and only while there is actually
+ * something waiting: a permission prompt makes sense next to "1 trade awaiting
+ * approval" and nowhere else. It disappears for good once alerts are on — and never
+ * renders at all if the browser cannot do notifications, or if the user already said
+ * no (the browser will not re-ask, so offering again would be a dead button).
  *
- * Deliberately no service worker and no push server: alerts arrive while a tab is
- * open, which is the whole promise.
+ * **What "alerts" means depends on the browser, and the difference matters.** Where
+ * there is a service worker, a push service and a VAPID key, this subscribes to Web
+ * Push: the notification arrives with every tab closed and the phone in a pocket,
+ * which is the only version of this feature that keeps a five-minute TTL honest, and
+ * it carries Approve and Reject on the notification itself. Where any of that is
+ * missing the old behaviour is still here — a plain `Notification` that fires from an
+ * open tab — because a degraded alert beats none.
  */
 function EnableAlertsButton() {
+  const push = usePushSubscription();
+
   // `Notification.permission` is browser state, not React state, so it is read through
   // useSyncExternalStore: the server snapshot is "unsupported" (there is no
   // Notification object there), which renders nothing and cannot mismatch on hydration.
-  const permission = useSyncExternalStore(subscribePermission, readPermission, serverPermission);
+  // Only the fallback path uses it; the push hook tracks its own.
+  const tabPermission = useSyncExternalStore(subscribePermission, readPermission, serverPermission);
 
-  if (permission !== "default") return null;
+  if (push.supported) {
+    // Already reachable, or the browser was told no and will not ask again.
+    if (push.subscribed || push.permission === "denied") return null;
+    return (
+      <button type="button" disabled={push.busy} onClick={() => void push.enable()} className={ALERT_PILL}>
+        <Bell aria-hidden className="size-3" />
+        {push.busy ? "Enabling…" : "Enable alerts"}
+      </button>
+    );
+  }
+
+  if (tabPermission !== "default") return null;
 
   return (
     <button
@@ -192,7 +215,7 @@ function EnableAlertsButton() {
           notifyPermissionChanged();
         }
       }}
-      className="ml-2 flex shrink-0 items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-white/20 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      className={ALERT_PILL}
     >
       <Bell aria-hidden className="size-3" />
       Enable alerts

@@ -12,6 +12,7 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { formatUsd } from "@/components/common/format";
 import { Field, RiskSlider, Toggle } from "@/components/agents/builder/field";
 import { UniverseControls } from "@/components/agents/builder/universe-controls";
+import { UniversePreview } from "@/components/agents/settings/universe-preview";
 import { AddKeyInline } from "@/components/agents/builder/steps";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
 import { DEFAULT_MODELS } from "@/lib/agent/config";
@@ -321,6 +322,9 @@ function SettingsForm({
             setConfig((current) => ({ ...current, universe: { ...current.universe, ...patch } }))
           }
         />
+        {/* Under the sliders, not above them: it is the consequence of what was just
+            moved. Debounced and non-blocking — Save never waits on it. */}
+        <UniversePreview agentId={agent.id} universe={config.universe} chains={config.chains} />
       </section>
 
       <section id="data" className="scroll-mt-20 space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">

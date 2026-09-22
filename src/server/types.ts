@@ -473,7 +473,55 @@ export interface AgentAnalytics {
   dataSpendUsd: number;
 }
 
-export interface ProposalRow extends TradeRow {
+/**
+ * The safety read on a proposal, derived from the score snapshot the agent pulled the
+ * trigger on — never from a fresh lookup, because the operator is judging the decision
+ * the agent actually made. Every field is allowed to be absent: a token nobody has
+ * assessed must read as "unknown" and never as "clean".
+ */
+export interface ProposalSafety {
+  /** True only when a safety provider answered *and* no authority gate failed. */
+  authoritiesRevoked: boolean | null;
+  /** Percent of supply held by the top 10 wallets. */
+  top10Pct: number | null;
+  /** Hard gates the token failed, as machine codes. Empty is the good case. */
+  blockers: string[];
+  /** Worth showing, not disqualifying. */
+  warnings: string[];
+  /** Sub-scores, 0 when the snapshot carried none. */
+  safety: number;
+  organic: number;
+  distribution: number;
+}
+
+/**
+ * What a launch-day proposal looks like *right now*, next to the frozen score it was
+ * proposed on. Every field is null-safe on purpose: these come from free providers
+ * behind a rate limiter, and a refused call must cost a dash, never the card.
+ */
+export interface ProposalStats {
+  /** Age of the token itself, from its earliest pool. */
+  ageMinutes: number | null;
+  /** Distinct buying wallets in the last five minutes, from the deepest pool. */
+  buyers5m: number | null;
+  buyersH1: number | null;
+  /** The deepest pool's liquidity. */
+  reserveUsd: number | null;
+  /**
+   * Five-minute price change. `GeckoPool` does not carry `m5` today (the payload has
+   * it, `parseGeckoPools` maps h1/h6/h24 only), so this is null until that lands and
+   * the card falls back to {@link ProposalStats.priceChangeH1Pct}.
+   */
+  priceChangeM5Pct: number | null;
+  priceChangeH1Pct: number | null;
+  /** GeckoTerminal's own 0-100, from the snapshot when it has one. */
+  gtScore: number | null;
+  /** Up to 24 recorded prices, oldest first. Fewer than two means no line. */
+  sparkline: number[];
+  safety: ProposalSafety;
+}
+
+export interface ProposalRow extends TradeRow, ProposalStats {
   expiresAt: string;
   /** Live re-check at read time: would the risk guard still allow it? */
   stillValid: boolean;

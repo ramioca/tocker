@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { AgentConfigSummary } from "@/components/agents/agent-config-summary";
 import { AgentHeader } from "@/components/agents/agent-header";
 import { AgentStats } from "@/components/agents/agent-stats";
+import { AgentStatusBanner } from "@/components/agents/agent-status-banner";
 import { AgentTabs } from "@/components/agents/agent-tabs";
 import { PositionsTable } from "@/components/agents/positions-table";
 import { PrivateStrategyPanel } from "@/components/agents/private-strategy";
@@ -13,6 +14,7 @@ import { TradesTable } from "@/components/agents/trades-table";
 import { PerformancePanel } from "@/components/agents/analytics";
 import { EquityChart } from "@/components/charts/equity-chart";
 import { agentBySlug, equitySeries, viewerSession } from "@/components/common/data-access";
+import { getAgentStatus } from "@/server/queries/agent-status";
 import { listProposals } from "@/server/queries/proposals";
 import { getAgentAnalyticsWindows } from "@/server/queries/analytics";
 import type { AgentDetail, EquityPoint } from "@/server/types";
@@ -51,12 +53,15 @@ export default async function AgentPage({ params }: Params) {
   const agent = await agentBySlug(slug, session?.userId ?? null);
   if (!agent) notFound();
 
-  const [equity, analytics, proposals] = await Promise.all([
+  const [equity, analytics, proposals, status] = await Promise.all([
     equitySeries(agent.id, "all"),
     // The record is public, so a provider hiccup here must cost the tab, not the page.
     getAgentAnalyticsWindows(agent.id).catch(() => null),
     // Owner-gated inside the query too — this is the second lock, not the only one.
     agent.isOwner ? listProposals(agent.id, session?.userId ?? null) : Promise.resolve([]),
+    // Same shape of lock: `getAgentStatus` returns [] for anyone but the owner, because
+    // a blocker quotes the agent's own thresholds, which are strategy.
+    agent.isOwner ? getAgentStatus(agent.id, session?.userId ?? null) : Promise.resolve([]),
   ]);
 
   return (
@@ -64,6 +69,10 @@ export default async function AgentPage({ params }: Params) {
       <AgentHeader agent={agent} />
 
       <div className="mt-6 space-y-6">
+        {/* Why it is not trading, above everything it is not trading with. Renders
+            nothing at all when there is nothing to say. */}
+        <AgentStatusBanner items={status} />
+
         {/* Above the tabs on purpose: a proposal has a clock on it. */}
         {proposals.length > 0 ? (
           <Suspense fallback={null}>

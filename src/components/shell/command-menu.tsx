@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Banknote,
   Bell,
   Bot,
   Coins,
@@ -110,6 +111,15 @@ export function CommandMenu({
         shortcut: ["G", "A"],
         icon: <Bot className="h-4 w-4" />,
         action: go("/agents"),
+      },
+      {
+        id: "nav-money",
+        title: "Money",
+        description: "Equity, P&L by day, and what the fees, data and tokens cost",
+        category: "Go to",
+        shortcut: ["G", "M"],
+        icon: <Banknote className="h-4 w-4" />,
+        action: go("/money"),
       },
       {
         id: "nav-leaderboard",

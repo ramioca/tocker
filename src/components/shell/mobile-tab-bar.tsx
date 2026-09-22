@@ -15,6 +15,11 @@ import { NAV_ITEMS, isActivePath } from "./nav-items";
  *
  * Tapped dozens of times a session, so there is no motion beyond a 100ms colour
  * change and the press scale — anything longer reads as lag, not polish.
+ *
+ * The tabs are whatever `NAV_ITEMS` marks `mobile`, and five is the ceiling —
+ * see the note there for why Money holds a slot and Notifications does not. The
+ * unread badge below stays wired to `/notifications` rather than being deleted:
+ * the tab list is data, and the day it comes back the count comes back with it.
  */
 export function MobileTabBar({ unreadCount }: { unreadCount: number }) {
   const pathname = usePathname();

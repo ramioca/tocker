@@ -967,3 +967,56 @@ export const platformFeesRelations = relations(platformFees, ({ one }) => ({
   trade: one(trades, { fields: [platformFees.tradeId], references: [trades.id] }),
 }));
 // ---- /W5 ----
+
+// ---- W8: web push ----
+/**
+ * One row per browser (or installed PWA) that asked to be told about a proposal.
+ *
+ * A proposal on a five-minute TTL cannot wait for the operator to have a tab open, so
+ * the decision has to reach a phone that is in a pocket. The Web Push endpoint IS the
+ * identity of a subscription — the browser mints it, it is unguessable, and re-calling
+ * `pushManager.subscribe()` on the same device returns the same one — so `endpoint` is
+ * the unique key and a re-subscribe is an upsert, not a duplicate.
+ *
+ * `p256dh` and `auth` are the subscriber's public key material: they encrypt the
+ * payload so the push *service* (Apple, Google, Mozilla) relays ciphertext it cannot
+ * read. They are not secrets of ours and they are useless without the endpoint, but
+ * they are still per-user data and never leave the server.
+ *
+ * `disabledAt` rather than a delete: a push service answers 404/410 for an endpoint it
+ * has dropped (app uninstalled, permission revoked, subscription rotated), and keeping
+ * the tombstone means a device that vanished stops costing a request per proposal
+ * without erasing the fact that it was once there. A fresh subscribe on the same
+ * endpoint clears it.
+ */
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The push service URL the browser handed us. Unique: it is the device's identity. */
+    endpoint: text("endpoint").notNull(),
+    /** Subscriber public key (base64url), from `subscription.keys.p256dh`. */
+    p256dh: text("p256dh").notNull(),
+    /** Subscriber auth secret (base64url), from `subscription.keys.auth`. */
+    auth: text("auth").notNull(),
+    /** For the operator's own "which device is this?" list. Never parsed. */
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    /** Bumped on every successful send, so a stale device is visible without a delete. */
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    /** Set when the push service answered 404/410. Null means active. */
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("push_subscriptions_endpoint_idx").on(t.endpoint),
+    index("push_subscriptions_user_idx").on(t.userId, t.disabledAt),
+  ],
+);
+
+export const pushSubscriptionsRelations = relations(pushSubscriptions, ({ one }) => ({
+  user: one(users, { fields: [pushSubscriptions.userId], references: [users.id] }),
+}));
+// ---- /W8 ----

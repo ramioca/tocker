@@ -97,7 +97,14 @@ export function contentSecurityPolicy({ nonce, isDev }: CspOptions): string {
       ["'self'", ...PRIVY_HOSTS, ...WALLET_HOSTS, ...solanaHosts(), ...(isDev ? ["ws:", "http://localhost:*"] : [])],
     ],
     ["frame-src", ["'self'", ...PRIVY_HOSTS, "https://challenges.cloudflare.com"]],
+    // `/sw.js` is the push service worker, served from public/ on this origin. It would
+    // already be covered by `default-src`, but this policy enumerates every directive it
+    // cares about, and a worker silently refused by a CSP nobody wrote down is a bad
+    // hour. `blob:` is the landing shader, which spawns its workers from object URLs.
     ["worker-src", ["'self'", "blob:"]],
+    // The PWA manifest, for the same reason: iOS only delivers push to an installed web
+    // app, and an installed web app needs a manifest the browser is allowed to fetch.
+    ["manifest-src", ["'self'"]],
     ["media-src", ["'self'", "data:", "blob:"]],
     ["object-src", ["'none'"]],
     ["base-uri", ["'self'"]],

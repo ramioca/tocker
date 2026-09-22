@@ -15,24 +15,31 @@
  * button — refusing to trade is never the dangerous direction.
  */
 import { GeckoTerminalLink } from "@/components/common/chart-link";
-import { useState } from "react";
-import { ArrowDownRight, ArrowUpRight, Clock, HelpCircle } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ArrowDownRight, ArrowUpRight, HelpCircle } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { MorphButton } from "@/components/spectrumui/morph-button";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { formatUsd } from "@/components/common/format";
-import { formatCountdown } from "@/components/agents/proposals/proposal-card";
+import {
+  CountdownPill,
+  PriceLine,
+  ProposalStatStrip,
+  SafetyBadges,
+} from "@/components/agents/proposals/stat-strip";
+import { statsFromSnapshot } from "@/components/agents/proposals/proposal-stats";
 import { decideProposalAction } from "@/server/actions/trading";
 import { useNow } from "@/hooks/use-now";
-import type { TradeRow } from "@/server/types";
+import type { ProposalStats, TradeRow } from "@/server/types";
 import { cn } from "@/lib/utils";
 
 export function ProposalPanel({
   trade,
   agentName,
   ttlMinutes,
+  stats,
   onDecided,
   children,
 }: {
@@ -40,6 +47,12 @@ export function ProposalPanel({
   agentName: string;
   /** From the agent's own `execution.proposalTtlMinutes`. */
   ttlMinutes: number;
+  /**
+   * The live market read, when the caller has one (it comes with a `ProposalRow`).
+   * Without it the strip is filled from the trade's own score snapshot, which on this
+   * screen is seconds old.
+   */
+  stats?: ProposalStats | null;
   /** Called after the server settles it, so the wizard can re-read the run. */
   onDecided?: () => void;
   children?: React.ReactNode;
@@ -49,11 +62,15 @@ export function ProposalPanel({
   const [pending, setPending] = useState(false);
 
   const proposedAt = trade.proposedAt ?? trade.createdAt;
-  const expiresAt = new Date(proposedAt).getTime() + ttlMinutes * 60_000;
+  const ttlMs = ttlMinutes * 60_000;
+  const expiresAt = new Date(proposedAt).getTime() + ttlMs;
   const remaining = expiresAt - now;
   const expired = remaining <= 0;
   const requestedUsd = trade.requestedUsd ?? trade.amountUsd;
   const buying = trade.side === "buy";
+  // Same five cells and the same badges as the agent page's card: one decision, one
+  // vocabulary, whichever screen the operator happens to be standing on.
+  const strip = useMemo(() => stats ?? statsFromSnapshot(trade.score), [stats, trade.score]);
 
   const decide = async (decision: "approve" | "reject") => {
     setPending(true);
@@ -101,22 +118,19 @@ export function ProposalPanel({
           {buying ? <ArrowUpRight aria-hidden className="size-3" /> : <ArrowDownRight aria-hidden className="size-3" />}
           {trade.side}
         </span>
-        {trade.priceUsd > 0 ? (
-          <span className="tnum font-mono text-xs text-muted-foreground">
-            quoted {formatUsd(trade.priceUsd)} / {trade.token.symbol}
-          </span>
-        ) : null}
-        <span
-          className={cn(
-            "tnum ml-auto inline-flex items-center gap-1.5 font-mono text-xs",
-            expired ? "text-destructive" : remaining < 120_000 ? "text-[oklch(0.8_0.15_75)]" : "text-muted-foreground",
-          )}
-          title={`Expires ${new Date(expiresAt).toLocaleString()}`}
-        >
-          <Clock aria-hidden className="size-3.5" />
-          {formatCountdown(remaining)}
-        </span>
+        <CountdownPill msRemaining={remaining} ttlMs={ttlMs} className="ml-auto" />
       </div>
+
+      <ProposalStatStrip stats={strip} score={trade.score} className="mt-3.5" />
+
+      <PriceLine
+        priceUsd={trade.priceUsd > 0 ? trade.priceUsd : null}
+        symbol={trade.token.symbol}
+        sparkline={strip.sparkline}
+        className="mt-3"
+      />
+
+      <SafetyBadges safety={strip.safety} className="mt-3" />
 
       {trade.rationale ? (
         <p className="mt-3 border-l-2 border-border/70 pl-3 text-sm leading-6 text-muted-foreground">

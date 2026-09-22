@@ -22,6 +22,12 @@ export const metadata: Metadata = {
   description:
     "Build an autonomous trading agent, give it a wallet, and watch it trade Solana and Base in public. Your strategy stays yours.",
   icons: { icon: "/icon.svg" },
+  // Emits `<link rel="manifest" href="/manifest.webmanifest">`. It is here for one
+  // concrete reason: iOS delivers Web Push only to a web app that has been added to
+  // the home screen, and a browser will not offer "Add to Home Screen" as an app
+  // without an installable manifest. `start_url` is `/notifications` — someone
+  // installing Tocker on a phone is doing it to answer proposals.
+  manifest: "/manifest.webmanifest",
 };
 
 export const viewport: Viewport = {

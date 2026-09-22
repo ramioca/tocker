@@ -34,6 +34,7 @@ import { chargePlatformFee } from "@/lib/platform/fees";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { toNum } from "@/lib/money";
 import { notifyFill } from "@/lib/notifications";
+import { sendProposalPush } from "@/lib/notifications/push";
 import type { Chain, TokenScore, TradeStatus } from "@/server/types";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "./executor";
 import { applyFill, heldAmountToken, sellAmountToken } from "./positions";
@@ -195,6 +196,31 @@ export async function createProposal(input: CreateProposalInput): Promise<Create
     body: input.rationale,
     href: `/agents/${input.agent.slug}?proposal=${tradeId}`,
   });
+
+  // The notification row above is only visible to someone who opens the app. A TTL of
+  // five minutes does not wait for that, so the same question also goes out over Web
+  // Push, with Approve and Reject on the notification itself.
+  //
+  // Awaited on purpose, inside its own try: on serverless a floating promise is
+  // routinely frozen with the invocation, which would make the feature silently not
+  // work in exactly the deployment it exists for. `sendProposalPush` does not throw,
+  // does nothing at all without VAPID keys, and bounds itself with a socket timeout —
+  // so the cost here is one parallel round trip per registered device, and a failure
+  // can never reach the proposal.
+  try {
+    await sendProposalPush(input.agent.ownerId, {
+      tradeId,
+      agentName: input.agent.name,
+      agentSlug: input.agent.slug,
+      side: input.side,
+      requestedUsd: input.requestedUsd,
+      symbol: input.token.symbol,
+      rationale: input.rationale,
+      expiresAt,
+    });
+  } catch (err) {
+    console.warn(`[proposals] push for ${tradeId} failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   return {
     tradeId,
