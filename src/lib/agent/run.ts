@@ -402,6 +402,12 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
       prompt,
       tools: buildTools(ctx),
       temperature: config.llm.temperature,
+      // Anthropic prompt caching, automatic mode: a top-level `cache_control` asks the
+      // API to cache the whole prefix on every step, so a 20-step tick re-reads its
+      // tools, system prompt and growing transcript at a tenth of the input price
+      // instead of paying full price for them twenty times. A 113k-input-token run
+      // measured before this was mostly that repetition. Other providers ignore the key.
+      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
       // The route is allowed 300s. Cut the model off at 240 so the remaining minute is
       // ours: the catch below still gets to write `failed` + the reason on the run row,
       // which is the difference between "the model stalled" and a row stuck on `running`
