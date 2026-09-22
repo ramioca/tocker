@@ -12,6 +12,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
  */
 type Probe = {
   gpu: boolean;
+  webgl2: boolean;
   adapter: string;
   device: string;
   maxUniform: string;
@@ -44,8 +45,15 @@ function Overlay() {
           >;
         };
       };
+      let webgl2 = false;
+      try {
+        webgl2 = !!document.createElement("canvas").getContext("webgl2");
+      } catch {
+        webgl2 = false;
+      }
       const p: Probe = {
         gpu: !!nav.gpu,
+        webgl2,
         adapter: "—",
         device: "—",
         maxUniform: "—",
@@ -131,7 +139,7 @@ function Overlay() {
       {probe
         ? [
             `ua: ${probe.ua}`,
-            `navigator.gpu: ${probe.gpu ? "yes" : "NO"}`,
+            `navigator.gpu: ${probe.gpu ? "yes" : "NO"} · webgl2: ${probe.webgl2 ? "yes" : "NO"}`,
             `adapter: ${probe.adapter}`,
             `device: ${probe.device}`,
             `maxUniformBufferBindingSize: ${probe.maxUniform}`,

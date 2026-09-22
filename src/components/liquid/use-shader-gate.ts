@@ -1,41 +1,53 @@
 "use client";
 
 import { useCallback, useState, useSyncExternalStore } from "react";
+import { isWebGL2Available } from "./webgl/runner";
 
 /**
- * Whether a Paper Shaders canvas should mount at all.
+ * Which renderer a shader section should use.
  *
- * The two shader pieces are WebGPU-only, so where the API does not exist
- * (iOS before 26, Firefox, older Chrome) there is nothing to draw and the
- * section keeps its static art. Everywhere else — phones included — the
- * shader mounts; touch input is bridged into its mouse drivers by the shader
- * components themselves (see synthetic-pointer.ts). The gate decides once
- * after hydration, and honours `<Shader onUnavailable>` when the renderer
- * gives up on a device that advertised WebGPU but cannot provide an adapter.
+ * The Paper Shaders pieces are WebGPU-only. Where WebGPU exists the shader
+ * mounts (phones included; touch input is bridged into its mouse drivers by
+ * the shader components themselves, see synthetic-pointer.ts). Where it does
+ * not — iOS before 26, Firefox, older Chrome — the same effect is drawn by a
+ * WebGL2 rendition (./webgl). Only with neither, or with reduced motion or a
+ * data saver, does the section keep its static art. The gate decides once
+ * after hydration and honours `<Shader onUnavailable>` when a renderer that
+ * advertised itself cannot actually start.
  *
  *   unknown  → SSR and the hydration pass: static art shown
  *   loading  → WebGPU present, shader chunk mounting: art stays underneath
- *   on       → the renderer is ready and drawing
- *   off      → no WebGPU, reduced motion, data saver, or the renderer gave up
+ *   on       → the WebGPU renderer is ready and drawing
+ *   webgl    → no WebGPU; the WebGL2 rendition is mounted
+ *   off      → nothing can draw, or the visitor asked for no motion
  *
+ * `?forcewebgl` in the URL takes the WebGL path on a WebGPU device, for QA.
  * `reason` says why it is off (or what the renderer reported), for the
  * `?shaderdebug` overlay — see shader-debug.tsx.
  */
-export type ShaderState = "unknown" | "loading" | "on" | "off";
+export type ShaderState = "unknown" | "loading" | "on" | "webgl" | "off";
 
-type Capability = { state: "loading" | "off"; reason: string };
+type Capability = { state: "loading" | "webgl" | "off"; reason: string };
 let capability: Capability | null = null;
 
 /** Computed once per page; the snapshot must be referentially stable. */
 function getClientSnapshot(): Capability {
   if (capability === null) {
     const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
-    const reasons: string[] = [];
-    if (!("gpu" in navigator)) reasons.push("no-webgpu");
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) reasons.push("reduced-motion");
-    if (nav.connection?.saveData) reasons.push("save-data");
-    capability =
-      reasons.length === 0 ? { state: "loading", reason: "" } : { state: "off", reason: reasons.join("+") };
+    const blockers: string[] = [];
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) blockers.push("reduced-motion");
+    if (nav.connection?.saveData) blockers.push("save-data");
+    const forceWebgl = /[?&]forcewebgl(?:[=&]|$)/.test(window.location.search);
+    const hasGpu = "gpu" in navigator && !forceWebgl;
+    if (blockers.length > 0) {
+      capability = { state: "off", reason: blockers.join("+") };
+    } else if (hasGpu) {
+      capability = { state: "loading", reason: "" };
+    } else if (isWebGL2Available()) {
+      capability = { state: "webgl", reason: forceWebgl ? "forced" : "no-webgpu" };
+    } else {
+      capability = { state: "off", reason: "no-webgpu+no-webgl2" };
+    }
   }
   return capability;
 }
@@ -76,8 +88,8 @@ export function useShaderGate() {
     state = outcome.state;
     reason = outcome.reason;
   } else {
-    state = "loading";
-    reason = "";
+    state = cap.state;
+    reason = cap.reason;
   }
   return { state, reason, ready, unavailable };
 }

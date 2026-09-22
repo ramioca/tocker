@@ -17,6 +17,10 @@ const CursorTrailShader = dynamic(
   () => import("./cursor-trail-shader").then((m) => m.CursorTrailShader),
   { ssr: false },
 );
+const CursorTrailWebGL = dynamic(
+  () => import("./webgl/cursor-trail-webgl").then((m) => m.CursorTrailWebGL),
+  { ssr: false },
+);
 
 export function CursorTrailContact() {
   const shader = useShaderGate();
@@ -28,6 +32,7 @@ export function CursorTrailContact() {
       {mountShader ? (
         <CursorTrailShader onReady={shader.ready} onUnavailable={shader.unavailable} />
       ) : null}
+      {shader.state === "webgl" ? <CursorTrailWebGL onUnavailable={shader.unavailable} /> : null}
 
       <div className="ctc-invite">
         <h2 className="reveal ctc-kicker" style={{ "--reveal-delay": "0.1s" } as CSSProperties}>
@@ -45,7 +50,9 @@ export function CursorTrailContact() {
           <a href="#" data-cursor="magnetic">Docs</a>
           <a href="#" data-cursor="magnetic">GitHub</a>
         </div>
-        {shader.state === "on" ? <p className="ctc-hint">( move your cursor )</p> : null}
+        {shader.state === "on" || shader.state === "webgl" ? (
+          <p className="ctc-hint">( move your cursor )</p>
+        ) : null}
       </footer>
     </section>
   );

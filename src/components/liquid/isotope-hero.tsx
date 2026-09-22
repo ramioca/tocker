@@ -11,17 +11,21 @@ import "./isotope.css";
 
 /**
  * Isotope Hero. The copy, nav and CTAs are ordinary DOM and server-rendered;
- * the Paper Shaders tree (isotope-shader.tsx) is a client-only chunk that only
- * mounts on a device that can draw it — WebGPU, a fine pointer, no reduced
- * motion. Everywhere else (phones, iOS before 26, Firefox, reduced motion) the
- * hero shows the Ticker Knot mark as a lit object over the same near-black
- * ground, and the DOM headline is the headline.
+ * the Paper Shaders tree (isotope-shader.tsx) is a client-only chunk that
+ * mounts where WebGPU exists, and a WebGL2 rendition of the same effect
+ * (webgl/isotope-webgl.tsx) mounts where it does not. Only with neither, or
+ * with reduced motion, does the hero rest on the Ticker Knot mark as a lit
+ * object over the same near-black ground — which also sits beneath every
+ * canvas, so nothing the visitor sees depends on a renderer starting.
  *
  * Below 640px the in-shader text hides and the DOM <h1> takes over; at or above
  * it the <h1> is visually hidden only once the shader is actually drawing
  * (`data-shader="on"`), so a blank canvas can never take the headline with it.
  */
 const IsotopeShader = dynamic(() => import("./isotope-shader").then((m) => m.IsotopeShader), {
+  ssr: false,
+});
+const IsotopeWebGL = dynamic(() => import("./webgl/isotope-webgl").then((m) => m.IsotopeWebGL), {
   ssr: false,
 });
 
@@ -52,6 +56,7 @@ export function IsotopeHero() {
           onUnavailable={shader.unavailable}
         />
       ) : null}
+      {shader.state === "webgl" ? <IsotopeWebGL onUnavailable={shader.unavailable} /> : null}
 
       <div className="iso-scrim" aria-hidden />
 
