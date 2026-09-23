@@ -195,6 +195,11 @@ export interface PlaceManualTradeInput {
   tokenAddress: string;
   amountUsd: number;
   note?: string;
+  /**
+   * Sell every token held, whatever `amountUsd` says. A dollar figure is a reading of
+   * the position a mark or two old; "everything" is not a dollar figure.
+   */
+  sellAll?: boolean;
 }
 
 export interface ManualTradeResult {
@@ -241,13 +246,19 @@ export async function placeManualTrade(
   }
 
   const portfolio = await getPortfolio(agent.id);
+  // The balance from the row, not from the book: the book hides dust, and "sell all"
+  // on a position the owner can still see must empty the wallet of it either way.
+  const heldToken = input.side === "sell" ? await heldAmountToken(agent.id, token.id) : 0;
+  const sellAll = input.side === "sell" && input.sellAll === true && heldToken > 0;
+  const heldPosition = portfolio.positions.find((p) => p.token.id === token.id) ?? null;
+  const sizedUsd = sellAll && heldPosition?.valueUsd ? Math.max(amountUsd, heldPosition.valueUsd) : amountUsd;
   const order: OrderIntent = {
     chain: input.chain,
     side: input.side,
     tokenId: token.id,
     tokenAddress: token.address,
     symbol: token.symbol,
-    amountUsd,
+    amountUsd: sizedUsd,
     rangePct: input.side === "buy" ? await recentRangePct(token.id) : null,
   };
   const verdict = riskGuard({ id: agent.id, mode: agent.mode, config }, toRiskPortfolio(portfolio), order, score);
@@ -260,8 +271,9 @@ export async function placeManualTrade(
     wallets: await getAgentWallets(agent.id),
   };
   // W7 H1: the owner's own sell is sized from the position too — the venue is told how
-  // many tokens to send, not a dollar figure to convert at a price that has moved.
-  const heldPosition = portfolio.positions.find((p) => p.token.id === token.id) ?? null;
+  // many tokens to send, not a dollar figure to convert at a price that has moved. And
+  // "sell all" is the whole balance, full stop; the venue clamps to what the wallet
+  // really holds and retries once on an over-ask.
   const request: TradeRequest = {
     chain: input.chain,
     side: input.side,
@@ -269,17 +281,19 @@ export async function placeManualTrade(
     tokenAddress: token.address,
     symbol: token.symbol,
     decimals: token.decimals,
-    amountUsd,
-    ...(input.side === "sell" && heldPosition
-      ? {
-          amountToken: sellAmountToken({
-            heldToken: heldPosition.amountToken,
-            positionValueUsd: heldPosition.valueUsd,
-            requestedUsd: amountUsd,
-            decimals: token.decimals,
-          }),
-        }
-      : {}),
+    amountUsd: sizedUsd,
+    ...(sellAll
+      ? { amountToken: heldToken }
+      : input.side === "sell" && heldPosition
+        ? {
+            amountToken: sellAmountToken({
+              heldToken: heldPosition.amountToken,
+              positionValueUsd: heldPosition.valueUsd,
+              requestedUsd: amountUsd,
+              decimals: token.decimals,
+            }),
+          }
+        : {}),
     slippageBps: config.risk.slippageBps,
   };
 

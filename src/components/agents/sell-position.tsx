@@ -68,6 +68,9 @@ function SellPositionDialog({
   const amountUsd = Number(amountText);
   const valid = Number.isFinite(amountUsd) && amountUsd > 0 && amountUsd <= valueUsd * 1.0001;
   const pct = valueUsd > 0 && valid ? Math.min(100, (amountUsd / valueUsd) * 100) : 0;
+  // Asking for the whole value is asking for everything. The server is told so
+  // explicitly and sells the balance, not a dollar figure that the mark has outrun.
+  const sellAll = valid && amountUsd >= valueUsd - 0.01;
 
   const current = preview !== null && preview.forUsd === amountUsd ? preview : null;
 
@@ -104,7 +107,10 @@ function SellPositionDialog({
         side: "sell",
         tokenAddress: position.token.address,
         amountUsd,
-        note: `Manual sell from the positions table (${pct.toFixed(0)}% of the position).`,
+        sellAll,
+        note: sellAll
+          ? "Manual sell from the positions table (everything)."
+          : `Manual sell from the positions table (${pct.toFixed(0)}% of the position).`,
       });
       if (!result.ok) {
         toast.error(`${position.token.symbol} not sold`, { description: result.error });
@@ -173,7 +179,7 @@ function SellPositionDialog({
                 : !current?.data
                   ? "Checking with the guard and Jupiter…"
                   : current.data.allowed
-                    ? `${pct.toFixed(0)}% of the position${current.data.priceUsd !== null ? `, quoted at ${formatPriceUsd(current.data.priceUsd)}` : ""}.${current.data.requiresApproval ? " This agent is in approval mode, so this becomes a proposal you then approve." : ""}`
+                    ? `${sellAll ? "Everything" : `${pct.toFixed(0)}% of the position`}${current.data.priceUsd !== null ? `, quoted at ${formatPriceUsd(current.data.priceUsd)}` : ""}. Sells right away — your click is the approval.`
                     : `Not allowed: ${current.data.reason ?? "the guard refused this size"}`}
           </p>
         </div>
@@ -187,7 +193,7 @@ function SellPositionDialog({
             onClick={sell}
             disabled={pending || !valid || !current?.data || !current.data.allowed}
           >
-            {pending ? "Selling…" : `Sell ${valid ? formatUsd(amountUsd) : ""}`}
+            {pending ? "Selling…" : sellAll ? "Sell everything" : `Sell ${valid ? formatUsd(amountUsd) : ""}`}
           </Button>
         </DialogFooter>
       </DialogContent>
