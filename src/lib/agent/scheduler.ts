@@ -115,7 +115,33 @@ export interface MarksTickResult {
   reaped: number;
   /** `trades` rows stuck on `submitted` and settled against the chain (W7 H2). */
   settled: number;
+  /** Empty token accounts closed this pass, their rent back in the platform wallet (W8). */
+  recycled: number;
   results: GuardianResult[];
+}
+
+/** Wall-clock budget for rent recycling in one marks pass; agents past it wait for the next. */
+const RENT_RECYCLE_BUDGET_MS = 45_000;
+
+/**
+ * Maintenance: close agents' empty token accounts so the rent the platform fronted for
+ * them comes back (see `src/lib/wallets/rent-recycle.ts`). A few accounts per agent, in
+ * the same batches of five as everything else, inside {@link RENT_RECYCLE_BUDGET_MS}.
+ * Never throws — and it runs after every mark, exit and snapshot is written, so it
+ * cannot delay one.
+ */
+async function recycleRent(agentIds: readonly string[], now: Date): Promise<number> {
+  if (agentIds.length === 0) return 0;
+  try {
+    const { recycleAgentRent } = await import("@/lib/wallets/rent-recycle");
+    const deadline = Date.now() + RENT_RECYCLE_BUDGET_MS;
+    const outcomes = await inBatches(agentIds, (agentId) =>
+      Date.now() > deadline ? Promise.resolve(null) : recycleAgentRent(agentId, { now }),
+    );
+    return outcomes.reduce((n, outcome) => n + (outcome?.closed ?? 0), 0);
+  } catch {
+    return 0;
+  }
 }
 
 /** Active agents, split by whether they are holding anything right now. */
@@ -178,6 +204,9 @@ export async function tickMarks(limit = 100, now: Date = new Date()): Promise<Ma
     return written;
   });
 
+  // Last, and bounded: return the rent on emptied token accounts to the platform.
+  const recycled = await recycleRent([...holding, ...flat], now);
+
   return {
     active: holding.length + flat.length,
     guarded: results.length,
@@ -185,6 +214,7 @@ export async function tickMarks(limit = 100, now: Date = new Date()): Promise<Ma
     snapshots: results.filter((r) => r.equityUsd !== null).length + flatSnapshots.filter(Boolean).length,
     reaped,
     settled,
+    recycled,
     results,
   };
 }

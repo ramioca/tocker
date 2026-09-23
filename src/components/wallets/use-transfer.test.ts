@@ -32,18 +32,34 @@ describe("transferErrorMessage", () => {
     expect(message).not.toMatch(/0\.01 SOL/);
   });
 
-  it("turns a dry Solana wallet into an amount of SOL to deposit", () => {
+  it("never asks the user for SOL when a sponsored USDC transfer is short of fee", () => {
+    // Every USDC transfer on Solana is paid by Tocker's fee wallet: a shortfall is
+    // Tocker's, and the only honest advice is to try again.
     const message = transferErrorMessage(
       new Error("Transaction simulation failed: Insufficient lamports 0, need 5000"),
       "solana",
     );
-    expect(message).toMatch(/0\.01 SOL/);
+    expect(message).toMatch(/try again/i);
+    expect(message).not.toMatch(/SOL\b|deposit/i);
   });
 
-  it("says ETH on Base, not SOL", () => {
+  it("never asks the user for ETH when a sponsored Base USDC transfer is short of fee", () => {
     const message = transferErrorMessage(new Error("insufficient funds for fee"), "base");
-    expect(message).toMatch(/ETH/);
-    expect(message).not.toMatch(/SOL/);
+    expect(message).not.toMatch(/ETH|SOL\b|deposit/i);
+  });
+
+  it("tells someone sending native SOL or ETH to send less, not to deposit", () => {
+    const sol = transferErrorMessage(new Error("Insufficient lamports 0, need 5000"), "solana", "native");
+    expect(sol).toMatch(/smaller amount/);
+    expect(sol).not.toMatch(/deposit/i);
+    const eth = transferErrorMessage(new Error("insufficient funds for fee"), "base", "native");
+    expect(eth).toMatch(/ETH/);
+    expect(eth).not.toMatch(/SOL\b|deposit/i);
+  });
+
+  it("passes the refilling sentence through word for word", () => {
+    const raw = "Tocker's fee wallet is refilling — try again in a minute.";
+    expect(transferErrorMessage(new Error(raw), "solana")).toBe(raw);
   });
 
   it("does not dress a cancelled signature up as a problem", () => {

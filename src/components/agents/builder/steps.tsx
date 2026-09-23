@@ -9,7 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { AgentAvatar } from "@/components/common/agent-avatar";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { ModeBadge } from "@/components/common/mode-badge";
-import { formatTokenAmount, formatUsd } from "@/components/common/format";
+import { FeesCovered } from "@/components/common/fees-covered";
+import { formatUsd } from "@/components/common/format";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { addLlmKeyAction } from "@/components/agents/agent-actions";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
@@ -21,7 +22,6 @@ import { useFundingPlan } from "@/components/wallets/use-funding-plan";
 import {
   FUND_PRESETS,
   MIN_FUND_USD,
-  NATIVE_SYMBOL,
   cashOn,
   chainLabelFor,
   depositTargets,
@@ -759,19 +759,19 @@ function SegmentedChoice({
  * The rule the whole card is built around: never silently fund less than asked.
  * A shortfall on one chain blocks with a deposit CTA, rather than quietly
  * shrinking the number the user typed.
+ *
+ * USDC is the only thing it ever asks for. There is no gas field and no gas line:
+ * network fees are Tocker's, and the plan summary says so once, quietly.
  */
 export function FundingStep({ draft, update, hideHeading }: StepProps) {
   const funding = draft.funding;
   const chains = draft.config.chains as Chain[];
-  const [depositFor, setDepositFor] = useState<{ chain: Chain; asset: "usdc" | "native" } | null>(
-    null,
-  );
+  const [depositFor, setDepositFor] = useState<Chain | null>(null);
   const [customAmount, setCustomAmount] = useState("");
 
   const { plan, cash, wallets, loading } = useFundingPlan({
     mode: funding.mode,
     amountUsd: funding.amountUsd,
-    gasUsd: funding.gasUsd,
     chains,
     split: funding.split,
   });
@@ -850,9 +850,6 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
                     <li key={chain} className="flex items-center gap-1.5 text-xs">
                       <ChainBadge chain={chain} />
                       <span className="tnum">{formatUsd(chainCash.usdcUsd)}</span>
-                      <span className="tnum text-muted-foreground">
-                        · {formatTokenAmount(chainCash.native)} {NATIVE_SYMBOL[chain]}
-                      </span>
                     </li>
                   );
                 })}
@@ -976,14 +973,13 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
               <div className="flex flex-wrap gap-2 pt-0.5">
                 {depositTargets(plan).map((target) => (
                   <button
-                    key={`${target.chain}-${target.asset}`}
+                    key={target.chain}
                     type="button"
-                    onClick={() => setDepositFor(target)}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium transition-colors duration-150 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() => setDepositFor(target.chain)}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <Plus aria-hidden className="size-3.5" />
-                    Deposit {target.asset === "usdc" ? "USDC" : NATIVE_SYMBOL[target.chain]} on{" "}
-                    {chainLabelFor(target.chain)}
+                    Deposit USDC on {chainLabelFor(target.chain)}
                   </button>
                 ))}
               </div>
@@ -1005,6 +1001,7 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
                   its settings page. You can finish from there.
                 </li>
               </ol>
+              <FeesCovered className="mt-2" />
             </div>
           ) : null}
 
@@ -1015,8 +1012,7 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
             }}
             wallets={wallets}
             cash={cash}
-            initialChain={depositFor?.chain ?? "base"}
-            initialAsset={depositFor?.asset ?? "usdc"}
+            initialChain={depositFor ?? "base"}
           />
         </>
       )}

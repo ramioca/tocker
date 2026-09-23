@@ -7,7 +7,8 @@
  *
  * The product idea in one line: a user has *one* balance — USDC — and the chain
  * it happens to sit on is an implementation detail we show on expand. Native
- * assets (ETH on Base, SOL on Solana) are not cash; they are gas.
+ * assets (ETH on Base, SOL on Solana) are not cash, and they are not the user's
+ * problem either: every network fee is Tocker's (see {@link FEES_COVERED}).
  *
  * There is no bridging in v1. An onramp lands on one chain and stays there, so
  * every number below is per-chain underneath the single total. (A later step is
@@ -28,17 +29,32 @@ export const USDC_MINT: Record<Chain, string> = {
   solana: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
 };
 
+/**
+ * Who pays the network fee, said the same way everywhere: a fee row's value, and the
+ * quiet line under anything that moves money (`<FeesCovered />`).
+ *
+ * True on both chains, by different mechanisms. On Base, Privy sponsors the gas
+ * (`sponsor: true`). On Solana there is no sponsor service, so Tocker's own platform
+ * wallet is the fee payer — and the rent payer when an account has to be opened — on
+ * every transaction a user or an agent makes, and it refuels itself from its own USDC.
+ * Either way the user holds USDC and nothing else.
+ */
+export const FEES_COVERED = "Covered by Tocker";
+export const FEES_COVERED_SENTENCE = "Network fees are covered by Tocker.";
+
 /** The exact words a person needs before they send money to an address. */
-export const NETWORK_WORDING: Record<Chain, { network: string; asset: string; warning: string }> = {
+export const NETWORK_WORDING: Record<Chain, { network: string; asset: string; warning: string; fees: string }> = {
   base: {
     network: "Base (Ethereum L2, chain id 8453)",
     asset: "USDC — the native Circle token, not USDbC",
     warning: "Anything sent on Ethereum mainnet, Arbitrum or any other network is lost.",
+    fees: FEES_COVERED,
   },
   solana: {
     network: "Solana mainnet",
     asset: "USDC — the SPL token EPjFWdd5…TDt1v",
     warning: "Anything sent on another network, or any other SPL token, is lost.",
+    fees: FEES_COVERED,
   },
 };
 
@@ -49,42 +65,201 @@ export const DEFAULT_FUND_USD = 10;
 export const FUND_PRESETS = [10, 25, 50, 100] as const;
 
 /**
- * Somebody other than the user pays the network fee on a funding transfer, so funding
- * never sends native tokens and never blocks on them. The gas fields below survive for
- * the types and for the day this flips back; with it on, every leg's `native` is 0 and
- * `chain-short-native` never fires.
+ * Funding is USDC and nothing else — unconditionally.
  *
- * **Who "somebody" is differs by chain, and that matters.**
+ * There used to be a `GAS_SPONSORED` flag here, with a gas allowance, a per-chain
+ * "self-paid fee" and a fallback SOL price behind it "for the day this flips back". It
+ * is not flipping back: nobody funds an agent with gas, because nobody pays gas in this
+ * product except Tocker (see {@link FEES_COVERED}). So a plan has no native legs, there
+ * is no native transfer to queue, and no blocker ever asks for SOL or ETH.
  *
- *  - **Solana: Tocker's own platform wallet pays it.** It is the fee payer on the
- *    transaction (`prepareSponsoredFunding` builds it with `payerKey` set to that
- *    wallet, the user signs, the server co-signs and broadcasts), and it pays the rent
- *    on the agent's USDC account too. Nothing in Privy's dashboard is involved, so this
- *    is checkable ahead of time — and it is checked, both by the live-readiness gas step
- *    and by `prepareSponsoredFunding` itself, which refuses with a sentence naming the
- *    platform wallet and the SOL it is short of rather than letting a signature fail.
- *  - **Base: Privy sponsors it**, via `sponsor: true` on `sendTransaction`. That still
- *    depends on **fee sponsorship being enabled for this app in the Privy dashboard**,
- *    which no client can check ahead of time: the only signal is the signature failing
- *    with a message about the TEE stack. That case (and a dry wallet with sponsorship
- *    off) becomes {@link gasBlockerFor} at the point of failure, so the user is told
- *    what to deposit rather than shown a raw SDK error.
+ * When a transfer does fail on a fee anyway — the platform's fee wallet caught mid-refuel,
+ * or Base sponsorship refusing — that is Tocker's problem, and {@link gasBlockerFor} says
+ * so in one sentence instead of sending the user to buy gas.
  */
-export const GAS_SPONSORED = true;
-
-/** What a Solana wallet needs to pay for one transfer itself: fee plus a little slack. */
-export const SELF_PAID_FEE_NATIVE: Record<Chain, number> = { base: 0.0005, solana: 0.01 };
-
-/** A tank, not a budget: enough gas for a few dozen trades — only used when gas is not sponsored. */
-export const DEFAULT_GAS_USD = 1;
-export const MAX_GAS_USD = 25;
 
 /**
- * Only used to *describe* a gas allowance when the user holds none of that asset,
- * so Privy quotes no USD value and we cannot derive a price from their balance.
- * Never used for anything that moves money — the transfer is in native units.
+ * Below this much of a native asset an agent's wallet holds nothing worth withdrawing:
+ * the withdraw form only offers "Leftover SOL/ETH" above it.
  */
-export const FALLBACK_NATIVE_USD: Record<Chain, number> = { base: 3_000, solana: 150 };
+export const LEFTOVER_NATIVE_MIN = 0.001;
+
+/** Pure: is there enough leftover SOL/ETH in a wallet to be worth offering as a withdrawal? */
+export function hasLeftoverNative(amount: number | null | undefined): boolean {
+  return typeof amount === "number" && Number.isFinite(amount) && amount > LEFTOVER_NATIVE_MIN;
+}
+
+/**
+ * SOL the withdraw form never offers out of an agent's Solana wallet, because it may be
+ * Tocker's rather than the owner's.
+ *
+ * An agent that signs and pays for its own transaction (the Privy `transfer` withdrawal,
+ * the agent-paid swap fallback) is first topped up from the platform wallet by
+ * `ensureAgentGas`. A drip lands only when the wallet is below that transaction's
+ * requirement `r`, and sends `max(GAS_DRIP_SOL, r − balance + MIN_AGENT_SOL)`, so right
+ * after any drip the wallet holds less than `r + GAS_DRIP_SOL`. The largest `r` in the
+ * tree is the 0.006 SOL pre-quote top-up in `trading/jupiter.ts`; one drip is 0.01. So
+ * without the owner sending SOL of their own, an agent never holds 0.016 SOL — and
+ * offering anything below it as "leftover" would hand Tocker's fee money to whoever
+ * clicks withdraw, once per drip. Above it, the owner gets what they put in.
+ *
+ * Kept as a number here rather than imported from `./gas`: this module is bundled into
+ * the client, and `funding.test.ts` pins it against the real drip policy instead.
+ */
+export const AGENT_SOL_KEPT = 0.016;
+
+/**
+ * The smallest SOL withdrawal the form accepts. Solana refuses to credit a new System
+ * account with less than its rent-exempt minimum (890,880 lamports), so anything smaller
+ * sent to a fresh address fails on chain.
+ */
+export const MIN_SOL_SEND = 0.001;
+
+/** Pure: how much of a native asset the form keeps back in an agent's wallet on this chain. */
+export function nativeKeptBack(chain: Chain): number {
+  // Base fees are sponsored by Privy and nothing ever drips ETH into an agent, so all of
+  // it is the owner's.
+  return chain === "solana" ? AGENT_SOL_KEPT : 0;
+}
+
+/**
+ * Pure: the leftover SOL/ETH an owner may withdraw from an agent — its balance less
+ * {@link nativeKeptBack}, never negative. SOL is worked out in whole lamports so the
+ * number the Max button fills in is exact.
+ */
+export function withdrawableNative(chain: Chain, balance: number | null | undefined): number {
+  if (typeof balance !== "number" || !Number.isFinite(balance) || balance <= 0) return 0;
+  if (chain === "solana") {
+    const lamports = Math.floor(balance * 1e9 + 1e-6) - Math.round(AGENT_SOL_KEPT * 1e9);
+    return lamports > 0 ? lamports / 1e9 : 0;
+  }
+  return balance;
+}
+
+// ------------------------------------------------------------ stranded funds
+
+/**
+ * USDC at or above this in an agent's wallet blocks deleting the agent. A cent is
+ * withdrawable, so anything from a cent up is the owner's to take out first.
+ */
+export const STRANDED_USDC_MIN = 0.01;
+/**
+ * A token holding worth at least this blocks deleting the agent. Below it is dust: the
+ * positions table hides anything under a quarter, and a sell would close it as residue.
+ */
+export const STRANDED_TOKEN_MIN_USD = 1;
+
+export interface StrandedWalletInput {
+  chain: Chain;
+  /** Human USDC units, read from the chain wherever that is possible. */
+  usdc: number;
+  /** Human native units (SOL / ETH), before anything is kept back. */
+  native: number;
+}
+
+export interface StrandedTokenInput {
+  chain: Chain;
+  symbol: string;
+  /** Whole token units actually held. */
+  amountToken: number;
+  /** At the current mark. Null when there is no price at all — which is not "worthless". */
+  valueUsd: number | null;
+}
+
+export type StrandedHolding =
+  | { kind: "usdc"; chain: Chain; amount: number }
+  | { kind: "native"; chain: Chain; symbol: "ETH" | "SOL"; amount: number }
+  | { kind: "token"; chain: Chain; symbol: string; amount: number; valueUsd: number | null };
+
+/**
+ * Pure: what deleting an agent would leave stranded in its wallets.
+ *
+ * Deleting is irreversible and nothing in Tocker can reach a deleted agent's wallet, so
+ * each of these blocks it — and each has a path out in the app:
+ *  - USDC from a cent up (the withdraw form);
+ *  - SOL or ETH the withdraw form offers — {@link withdrawableNative}. On Solana that is
+ *    the balance above {@link AGENT_SOL_KEPT}, which may be Tocker's own fee money and is
+ *    never the owner's to take, so it cannot hold a deletion up either. Counted by
+ *    amount, not by a dollar quote: a Solana wallet read reports SOL with no USD value,
+ *    and "$0" is how a wallet with 5 SOL in it used to pass this check;
+ *  - tokens the agent bought with real money, worth {@link STRANDED_TOKEN_MIN_USD} or
+ *    more, or with no price to say otherwise (the position's Sell).
+ *
+ * The caller decides which tokens count (see `readStrandedHoldings`): tokens someone
+ * airdropped to the wallet never do, or anyone could make an agent undeletable.
+ */
+export function strandedHoldings(input: {
+  wallets: readonly StrandedWalletInput[];
+  tokens: readonly StrandedTokenInput[];
+}): StrandedHolding[] {
+  const out: StrandedHolding[] = [];
+  for (const wallet of input.wallets) {
+    if (Number.isFinite(wallet.usdc) && wallet.usdc >= STRANDED_USDC_MIN) {
+      out.push({ kind: "usdc", chain: wallet.chain, amount: wallet.usdc });
+    }
+    const leftover = withdrawableNative(wallet.chain, wallet.native);
+    if (hasLeftoverNative(leftover)) {
+      out.push({ kind: "native", chain: wallet.chain, symbol: NATIVE_SYMBOL[wallet.chain], amount: leftover });
+    }
+  }
+  for (const token of input.tokens) {
+    if (!Number.isFinite(token.amountToken) || token.amountToken <= 0) continue;
+    const value = token.valueUsd;
+    const priced = typeof value === "number" && Number.isFinite(value);
+    if (priced && value < STRANDED_TOKEN_MIN_USD) continue;
+    out.push({
+      kind: "token",
+      chain: token.chain,
+      symbol: token.symbol,
+      amount: token.amountToken,
+      valueUsd: priced ? value : null,
+    });
+  }
+  return out;
+}
+
+function listPhrase(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? "";
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+/**
+ * Pure: the sentence that refuses a deletion, naming what is still there and what to do
+ * about it. Null when nothing would be stranded.
+ */
+export function describeStranded(holdings: readonly StrandedHolding[]): string | null {
+  if (holdings.length === 0) return null;
+  const parts: string[] = [];
+
+  const usdc = holdings.reduce((sum, h) => (h.kind === "usdc" ? sum + h.amount : sum), 0);
+  if (usdc > 0) parts.push(`${floorTo(usdc, 2).toFixed(2)} USDC`);
+  for (const h of holdings) {
+    if (h.kind === "native") parts.push(`${floorTo(h.amount, 4).toFixed(4)} ${h.symbol}`);
+  }
+
+  // Most valuable first; an unpriced holding is named before a priced one, since nothing
+  // says it is small.
+  const tokens = holdings
+    .filter((h): h is Extract<StrandedHolding, { kind: "token" }> => h.kind === "token")
+    .sort((a, b) => {
+      if (a.valueUsd === null || b.valueUsd === null) return (a.valueUsd === null ? 0 : 1) - (b.valueUsd === null ? 0 : 1);
+      return b.valueUsd - a.valueUsd;
+    });
+  for (const t of tokens.slice(0, 2)) {
+    parts.push(t.valueUsd === null ? t.symbol : `${t.symbol} (about $${t.valueUsd.toFixed(2)})`);
+  }
+  const more = tokens.length - 2;
+  if (more > 0) parts.push(`${more} more token${more === 1 ? "" : "s"}`);
+
+  const sells = tokens.length > 0;
+  const withdraws = holdings.some((h) => h.kind !== "token");
+  const fix = sells && withdraws
+    ? "Sell its positions and withdraw the rest first"
+    : sells
+      ? `Sell ${tokens.length === 1 ? "it" : "them"} first`
+      : `Withdraw ${parts.length === 1 ? "it" : "them"} first`;
+  return `This agent still holds ${listPhrase(parts)}. ${fix} — once the agent is deleted, Tocker can't reach its wallet.`;
+}
 
 export function round(value: number, digits: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -109,7 +284,7 @@ export interface ChainCash {
   usdc: number;
   /** USD value of that USDC. A dollar is a dollar, so this is face value unless Privy disagrees. */
   usdcUsd: number;
-  /** Human native units (ETH / SOL). */
+  /** Human native units (ETH / SOL) — leftovers at most. Nothing ever asks the user to hold any. */
   native: number;
   nativeUsd: number | null;
   /** Derived from the user's own balance when both sides are known; null otherwise. */
@@ -130,7 +305,7 @@ export interface AgentCash {
 export interface UnifiedCash {
   /** USDC across the user's own embedded wallets, in dollars — what they can deposit into an agent. */
   totalUsd: number;
-  /** Native assets, in dollars, shown small and separately. Never counted as cash. */
+  /** Leftover native assets (ETH, SOL), in dollars. Never counted as cash, never asked for. */
   gasUsd: number;
   perChain: ChainCash[];
   /** The user's live agents' equity — cash plus open positions — in dollars. Theirs, but working. */
@@ -220,23 +395,6 @@ export function preferredDepositChain(cash: UnifiedCash | undefined): Chain {
   return base > solana ? "base" : "solana";
 }
 
-/** Price we will quote gas at: the user's own balance if we can see it, else a stale constant. */
-export function nativePriceFor(cash: UnifiedCash, chain: Chain): { price: number; derived: boolean } {
-  const price = cashOn(cash, chain).nativePriceUsd;
-  return price && price > 0
-    ? { price, derived: true }
-    : { price: FALLBACK_NATIVE_USD[chain], derived: false };
-}
-
-/**
- * Native units for a dollar allowance. Kept to 6 significant-ish digits so the
- * number a user sees is the number that gets transferred.
- */
-export function gasAllowanceNative(usd: number, price: number): number {
-  if (!(usd > 0) || !(price > 0)) return 0;
-  return round(usd / price, 6);
-}
-
 // ------------------------------------------------------------------- splits
 
 export interface SplitLeg {
@@ -282,26 +440,28 @@ export type BlockerKind =
   | "over-available"
   | "no-wallet"
   | "chain-short-usdc"
-  | "chain-short-native";
+  /** A transfer failed on its network fee. Tocker's to fix, never the user's: no deposit CTA. */
+  | "fee-wallet";
+
+/** The only thing a blocker ever asks the user to deposit. */
+export interface DepositTarget {
+  chain: Chain;
+  asset: "usdc";
+}
 
 export interface FundingBlocker {
   kind: BlockerKind;
   chain: Chain | null;
   /** One sentence, written for the person who has to fix it. */
   message: string;
-  /** When set, the step shows a "Deposit … on <chain>" button that opens the deposit sheet. */
-  deposit: { chain: Chain; asset: "usdc" | "native" } | null;
+  /** When set, the step shows a "Deposit USDC on <chain>" button that opens the deposit sheet. */
+  deposit: DepositTarget | null;
 }
 
 export interface FundingLeg {
   chain: Chain;
   /** Human USDC units to send from the user's embedded wallet to the agent wallet. */
   usdc: number;
-  /** Human native units to send as gas. */
-  native: number;
-  /** What that gas is worth, at the price we quoted it. */
-  nativeUsd: number;
-  nativePriceDerived: boolean;
 }
 
 export interface FundingPlan {
@@ -309,7 +469,6 @@ export interface FundingPlan {
   paper: boolean;
   legs: FundingLeg[];
   totalUsdc: number;
-  totalGasUsd: number;
   blockers: FundingBlocker[];
   /** Safe to create-and-fund. A paper plan is always ready. */
   ready: boolean;
@@ -319,8 +478,6 @@ export interface FundingRequest {
   mode: "paper" | "fund";
   /** Total USDC the agent should end up with, in dollars. */
   amountUsd: number;
-  /** Dollar value of gas to send per funded chain. */
-  gasUsd: number;
   chains: Chain[];
   cash: UnifiedCash;
   /**
@@ -344,16 +501,18 @@ export function defaultSplit(amountUsd: number, chains: Chain[], cash: UnifiedCa
  * Everything the funding step needs to render: the transfers to make, and the
  * exact reasons it cannot. Never silently funds less than asked — a shortfall
  * is a blocker with a deposit CTA, not a quietly smaller number.
+ *
+ * USDC only. A plan never carries a native leg and never blocks on the user's SOL or
+ * ETH, whatever they hold: network fees are Tocker's.
  */
 export function planFunding(request: FundingRequest): FundingPlan {
   const { mode, chains, cash } = request;
   if (mode === "paper") {
-    return { paper: true, legs: [], totalUsdc: 0, totalGasUsd: 0, blockers: [], ready: true };
+    return { paper: true, legs: [], totalUsdc: 0, blockers: [], ready: true };
   }
 
   const blockers: FundingBlocker[] = [];
   const amountUsd = round(request.amountUsd, 2);
-  const gasUsd = GAS_SPONSORED ? 0 : round(request.gasUsd, 2);
 
   if (chains.length === 0) {
     blockers.push({
@@ -362,7 +521,7 @@ export function planFunding(request: FundingRequest): FundingPlan {
       message: "Pick at least one chain in Universe before you fund it.",
       deposit: null,
     });
-    return { paper: false, legs: [], totalUsdc: 0, totalGasUsd: 0, blockers, ready: false };
+    return { paper: false, legs: [], totalUsdc: 0, blockers, ready: false };
   }
 
   if (!(amountUsd >= MIN_FUND_USD)) {
@@ -398,9 +557,7 @@ export function planFunding(request: FundingRequest): FundingPlan {
         : (proportional.find((l) => l.chain === chain)?.amount ?? 0),
       2,
     );
-    const { price, derived } = nativePriceFor(cash, chain);
-    const native = gasAllowanceNative(gasUsd, price);
-    return { chain, usdc, native, nativeUsd: gasUsd, nativePriceDerived: derived };
+    return { chain, usdc };
   });
 
   for (const leg of legs) {
@@ -422,18 +579,9 @@ export function planFunding(request: FundingRequest): FundingPlan {
         deposit: { chain: leg.chain, asset: "usdc" },
       });
     }
-    if (leg.native > 0 && leg.native > chainCash.native + 1e-12) {
-      blockers.push({
-        kind: "chain-short-native",
-        chain: leg.chain,
-        message: `The agent needs ${NATIVE_SYMBOL[leg.chain]} on ${chainName[leg.chain]} to sign its own trades, and you have ${chainCash.native} ${NATIVE_SYMBOL[leg.chain]}.`,
-        deposit: { chain: leg.chain, asset: "native" },
-      });
-    }
   }
 
   const totalUsdc = round(legs.reduce((sum, leg) => sum + leg.usdc, 0), 2);
-  const fundedChains = legs.filter((leg) => leg.usdc > 0 || leg.native > 0).length;
 
   if (blockers.length === 0 && totalUsdc !== amountUsd) {
     blockers.push({
@@ -448,7 +596,6 @@ export function planFunding(request: FundingRequest): FundingPlan {
     paper: false,
     legs,
     totalUsdc,
-    totalGasUsd: round(gasUsd * fundedChains, 2),
     blockers,
     ready: blockers.length === 0 && totalUsdc > 0,
   };
@@ -462,9 +609,9 @@ export function planFunding(request: FundingRequest): FundingPlan {
  * Solana" and "you have no Solana wallet yet" both end at "put USDC on Solana".
  * Every reason is still worth printing; two identical buttons are not.
  */
-export function depositTargets(plan: FundingPlan): Array<{ chain: Chain; asset: "usdc" | "native" }> {
+export function depositTargets(plan: FundingPlan): DepositTarget[] {
   const seen = new Set<string>();
-  const out: Array<{ chain: Chain; asset: "usdc" | "native" }> = [];
+  const out: DepositTarget[] = [];
   for (const blocker of plan.blockers) {
     if (!blocker.deposit) continue;
     const key = `${blocker.deposit.chain}:${blocker.deposit.asset}`;
@@ -475,10 +622,10 @@ export function depositTargets(plan: FundingPlan): Array<{ chain: Chain; asset: 
   return out;
 }
 
-/** The transfers a plan implies, flattened in the order they should be signed. */
+/** The transfers a plan implies, flattened in the order they should be signed. USDC only. */
 export interface Transfer {
   chain: Chain;
-  asset: "usdc" | "native";
+  asset: "usdc";
   /** Human units. */
   amount: number;
 }
@@ -486,36 +633,126 @@ export interface Transfer {
 export function transfersFor(plan: FundingPlan): Transfer[] {
   const out: Transfer[] = [];
   for (const leg of plan.legs) {
-    // Gas first: a wallet with USDC and no gas cannot move it, which is the
-    // worse half-funded state to be stuck in.
-    if (leg.native > 0) out.push({ chain: leg.chain, asset: "native", amount: leg.native });
     if (leg.usdc > 0) out.push({ chain: leg.chain, asset: "usdc", amount: leg.usdc });
   }
   return out;
 }
 
+// ------------------------------------------------------------- fee failures
+
 /**
- * The blocker to show when a transfer failed because nobody could pay the network fee.
+ * Why a transfer failed on its network fee, when it did. Both are Tocker's problem and
+ * neither is ever told to the user as "get SOL" or "get ETH"; they differ in whether the
+ * same send can work a minute later.
  *
- * Sponsorship is a dashboard setting we cannot read from the browser, so this is a
- * *reaction*, not a precondition: it turns "0x1: insufficient lamports" into a deposit
- * button pointed at the right asset on the right chain.
+ *  - `"refuel"` — the fee payer was short for a moment: Tocker's Solana fee wallet caught
+ *    mid-refuel (the RPC's "insufficient lamports", `InsufficientFundsForFee`, the "no
+ *    record of a prior credit" a zero-SOL payer gets), or a Base sponsorship that could
+ *    not cover this one. Transient, so the UI offers the same send again.
+ *  - `"unavailable"` — Tocker cannot or will not pay this fee: Base sponsorship switched
+ *    off for the app, a co-signature refused because the transaction would cost the fee
+ *    wallet more than its allowance, a fee payer that is not Tocker's. The same send gets
+ *    the same answer, so nothing promises a retry will work.
  */
-export function gasBlockerFor(chain: Chain, reason?: string): FundingBlocker {
-  const amount = SELF_PAID_FEE_NATIVE[chain];
-  const symbol = NATIVE_SYMBOL[chain];
+export type FeeFailureKind = "refuel" | "unavailable";
+
+/**
+ * A person backing out of a wallet prompt — the prompt's own wording only. Deliberately
+ * not a bare "reject": the server's broadcast failures read "The network rejected this
+ * transfer: …", and those are exactly the fee failures this module has to catch.
+ */
+const WALLET_CANCELLATION =
+  /\b(?:you|user)\s+(?:cancel+ed|rejected|denied|declined|closed|exited)\b|\brejected the request\b|\brequest (?:was )?(?:rejected|denied|declined)\b|\bclosed the (?:modal|wallet|window|popup|prompt)\b/i;
+
+/** Someone sending the SOL or ETH they hold, asking for more than it covers: about the amount, not the fee. */
+const NATIVE_AMOUNT_TOO_HIGH = /than this wallet can send/i;
+
+/** Configuration or a refusal: a retry of the same send gets the same answer. Checked before {@link FEE_REFUEL}. */
+const FEE_UNAVAILABLE =
+  /tee stack|sponsorship is not enabled|not enabled for this app|switch it on|over its [\d.]+ (?:SOL|ETH) allowance|fee ?payer is \S+,? not\b/i;
+
+/** A fee payer that is short right now. */
+const FEE_REFUEL =
+  /insufficient lamports|insufficient ?funds ?for ?(?:fee|gas|rent)|no record of a prior credit|refilling|topping up|cannot top it up|network fee|fee ?payer|fee wallet|sponsor|\bgas\b|lamports/i;
+
+/** The older copy that named the native asset outright. Whole, upper-case words, so "Solana" does not count. */
+const NATIVE_WORD = /\b(?:SOL|ETH)\b/;
+
+/**
+ * Pure: did this transfer fail on its *network fee* — and if so, which kind of failure
+ * ({@link FeeFailureKind})? Null for everything else: the user's USDC being short (the
+ * token program's plain "insufficient funds"), a bad address, a cancelled prompt.
+ */
+export function feeFailureKind(message: string | null | undefined): FeeFailureKind | null {
+  const text = (message ?? "").trim();
+  if (!text) return null;
+  if (WALLET_CANCELLATION.test(text) || NATIVE_AMOUNT_TOO_HIGH.test(text)) return null;
+  if (FEE_UNAVAILABLE.test(text)) return "unavailable";
+  if (FEE_REFUEL.test(text) || NATIVE_WORD.test(text)) return "refuel";
+  return null;
+}
+
+/** Pure: did this transfer fail on its network fee, of either kind? */
+export function isNetworkFeeFailure(message: string | null | undefined): boolean {
+  return feeFailureKind(message) !== null;
+}
+
+/**
+ * The one sentence a user reads when a transfer failed on its network fee.
+ *
+ * It never asks for SOL or ETH — holding none is the design, not the fault — and it says
+ * the thing a person actually wants to know after a failed money movement: their money
+ * did not go anywhere. Only a `"refuel"` failure says to try again; an `"unavailable"`
+ * one would fail the same way, so it does not pretend otherwise.
+ *
+ * `asset` is what was being sent: USDC for funding and most withdrawals, "native" for a
+ * leftover-SOL/ETH withdrawal (which is then "Nothing was sent", not "Your USDC").
+ */
+export function feeFailureSentence(
+  chain: Chain,
+  kind: FeeFailureKind = "refuel",
+  asset: "usdc" | "native" = "usdc",
+): string {
+  const unmoved = asset === "usdc" ? "Your USDC has not moved" : "Nothing was sent";
+  if (kind === "unavailable") return `Tocker couldn't cover the network fee on this transfer. ${unmoved}.`;
+  return chain === "solana"
+    ? `Tocker pays this network fee, and its fee wallet is topping up right now. ${unmoved} — try again in a minute.`
+    : `Tocker pays this network fee and could not cover it just now. ${unmoved} — try again in a minute.`;
+}
+
+/**
+ * Pure: the error a user should read for a failed transfer. A fee failure becomes
+ * {@link feeFailureSentence} for its kind; anything else is passed through, already a
+ * sentence. The raw text belongs in the server log and the audit row, never in a toast.
+ */
+export function userFacingTransferError(
+  message: string,
+  chain: Chain,
+  asset: "usdc" | "native" = "usdc",
+): string {
+  const kind = feeFailureKind(message);
+  return kind ? feeFailureSentence(chain, kind, asset) : message;
+}
+
+/**
+ * The blocker to show when a transfer failed because its network fee could not be paid.
+ *
+ * It used to open the deposit sheet on SOL or ETH. It has no deposit target now: the
+ * fee is Tocker's and the user's wallet is fine. For a `"refuel"` failure the fix is a
+ * retry once the fee wallet has refilled; for `"unavailable"` there is nothing for the
+ * user to do, and the message says only that nothing moved.
+ */
+export function gasBlockerFor(chain: Chain, kind: FeeFailureKind = "refuel"): FundingBlocker {
   return {
-    kind: "chain-short-native",
+    kind: "fee-wallet",
     chain,
-    message:
-      `${reason ? `${reason} ` : ""}You need about ${amount} ${symbol} on ${chainName[chain]} to pay the network fee for this transfer.`.trim(),
-    deposit: { chain, asset: "native" },
+    message: feeFailureSentence(chain, kind),
+    deposit: null,
   };
 }
 
 export function transferLabel(transfer: Transfer): string {
-  const symbol = transfer.asset === "usdc" ? "USDC" : NATIVE_SYMBOL[transfer.chain];
-  return `${transfer.amount} ${symbol} on ${chainName[transfer.chain]}`;
+  return `${transfer.amount} USDC on ${chainName[transfer.chain]}`;
 }
 
 export function chainLabelFor(chain: Chain): string {

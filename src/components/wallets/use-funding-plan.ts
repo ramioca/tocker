@@ -9,7 +9,11 @@ import type { Chain, WalletBalance } from "@/server/types";
 export interface FundingPlanInput {
   mode: "paper" | "fund";
   amountUsd: number;
-  gasUsd: number;
+  /**
+   * Ignored. Funding is USDC only and network fees are Tocker's, so there is no gas
+   * allowance to plan. Accepted so a caller still passing the draft's field compiles.
+   */
+  gasUsd?: number;
   chains: Chain[];
   split: Partial<Record<Chain, number>> | null;
 }
@@ -33,7 +37,7 @@ export function useFundingPlan(input: FundingPlanInput): UseFundingPlan {
   const { data, isPending } = useUserWallets(enabled);
   const cash = data?.cash;
 
-  const { mode, amountUsd, gasUsd, chains, split } = input;
+  const { mode, amountUsd, chains, split } = input;
   const chainKey = chains.join(",");
   const splitKey = split ? JSON.stringify(split) : "";
 
@@ -42,17 +46,16 @@ export function useFundingPlan(input: FundingPlanInput): UseFundingPlan {
       return planFunding({
         mode: "paper",
         amountUsd: 0,
-        gasUsd: 0,
         chains,
         cash: { totalUsd: 0, gasUsd: 0, perChain: [], inAgentsUsd: 0, agents: [], allUsd: 0 },
       });
     }
     if (!cash) return null;
-    return planFunding({ mode, amountUsd, gasUsd, chains, cash, split: split ?? undefined });
+    return planFunding({ mode, amountUsd, chains, cash, split: split ?? undefined });
     // `chainKey` / `splitKey` stand in for the array and object identities, which
     // are new on every render of the draft.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, amountUsd, gasUsd, chainKey, splitKey, cash]);
+  }, [mode, amountUsd, chainKey, splitKey, cash]);
 
   return {
     plan,

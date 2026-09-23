@@ -44,9 +44,9 @@ export function CashTotal({
 }
 
 /**
- * Where that number actually sits. One row per chain: USDC as cash, native as
- * gas underneath in small type, because they are not the same kind of thing and
- * a user who confuses them funds an agent that cannot trade.
+ * Where that number actually sits. One row per chain, USDC only: a leftover bit of
+ * SOL or ETH in a wallet is not cash, and it is not something the user needs either,
+ * so it is not shown here at all.
  */
 export function ChainBreakdown({
   cash,
@@ -110,21 +110,19 @@ export function ChainBreakdown({
 }
 
 /**
- * "Cash" and "gas" said once, in the words the rest of the product uses.
+ * What "cash" means, and who pays the fees, said once in the words the rest of the
+ * product uses.
  *
- * W7 M2: it now says *who* pays. "Gas is sponsored" left the reader with no idea
- * whether that was them.
- *
- * W7 B1: and on Solana the answer changed. Tocker's platform wallet is the fee payer on
- * the transfers you sign there, not Privy's sponsor — which is why the sentence names
- * Tocker for both halves now instead of splitting them between two parties.
+ * W7 M2 made it say *who* pays — "gas is sponsored" left the reader wondering whether
+ * that was them. W8 made the answer the same everywhere: Tocker covers every network
+ * fee, on both chains, for what the user signs and for everything their agents sign.
+ * The sentence says that and nothing about SOL or ETH, which the user never needs.
  */
 export function CashLegend({ cash }: { cash: UnifiedCash }) {
   return (
     <p className="text-[11px] leading-relaxed text-muted-foreground">
       Cash is USDC across your wallets on Base and Solana{cash.agents.length > 0 ? ", plus your live agents' equity (their cash and open positions at today's marks)" : ""}, shown as one balance. Network
-      fees are not yours to hold: Tocker&rsquo;s own wallet pays them, both for what you
-      sign and for what your agents sign.
+      fees are covered by Tocker — on your transfers and on every trade your agents make.
     </p>
   );
 }

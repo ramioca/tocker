@@ -40,6 +40,7 @@ function inputs(overrides: Partial<StatusInputs> = {}): StatusInputs {
     lastRun: null,
     recentSucceeded: [],
     platformSolana: null,
+    viewerIsAdmin: false,
     ...overrides,
   };
 }
@@ -295,27 +296,41 @@ describe("deriveStatus", () => {
     ).toEqual([]);
   });
 
-  it("warns on the platform's Solana wallet, with the address to top up", () => {
+  it("warns an admin about the platform's Solana wallet, with the address to top up", () => {
     const item = deriveStatus(
-      inputs({ platformSolana: { address: "7xKXtg2C", sol: 0.004, usdc: 12 } }),
+      inputs({ viewerIsAdmin: true, platformSolana: { address: "7xKXtg2C", sol: 0.004, usdc: 12 } }),
     )[0];
     expect(item.kind).toBe("platform_gas");
     expect(item.severity).toBe("warn");
-    expect(item.title).toBe("Tocker's Solana data wallet is nearly empty");
+    expect(item.title).toBe("Tocker's Solana fee wallet is running low");
+    expect(item.detail).toContain("Admin only");
     expect(item.detail).toContain("7xKXtg2C");
     expect(item.detail).toContain("0.004 SOL");
-    expect(item.action).toEqual({ label: "Platform wallets", href: "/settings/admin" });
+    expect(item.action).toEqual({ label: "Platform wallets", href: "/settings/admin#platform" });
   });
 
-  it("warns on an empty platform USDC balance even when the SOL is fine", () => {
-    const item = deriveStatus(inputs({ platformSolana: { address: "7xKXtg2C", sol: 1, usdc: 0.12 } }))[0];
+  it("warns an admin on an empty platform USDC balance even when the SOL is fine", () => {
+    const item = deriveStatus(
+      inputs({ viewerIsAdmin: true, platformSolana: { address: "7xKXtg2C", sol: 1, usdc: 0.12 } }),
+    )[0];
     expect(item.kind).toBe("platform_gas");
     expect(item.detail).toContain("$0.12 USDC");
   });
 
-  it("says nothing about a platform wallet it could not read, or one that is funded", () => {
-    expect(deriveStatus(inputs({ platformSolana: { address: "7xKXtg2C", sol: null, usdc: null } }))).toEqual([]);
-    expect(deriveStatus(inputs({ platformSolana: { address: "7xKXtg2C", sol: 1.2, usdc: 40 } }))).toEqual([]);
+  it("never shows an owner who is not an admin a row about Tocker's wallet, however empty", () => {
+    expect(deriveStatus(inputs({ platformSolana: { address: "7xKXtg2C", sol: 0, usdc: 0 } }))).toEqual([]);
+    expect(
+      deriveStatus(inputs({ viewerIsAdmin: false, platformSolana: { address: "7xKXtg2C", sol: 0.0001, usdc: 12 } })),
+    ).toEqual([]);
+  });
+
+  it("says nothing, even to an admin, about a platform wallet it could not read, or one that is funded", () => {
+    expect(
+      deriveStatus(inputs({ viewerIsAdmin: true, platformSolana: { address: "7xKXtg2C", sol: null, usdc: null } })),
+    ).toEqual([]);
+    expect(
+      deriveStatus(inputs({ viewerIsAdmin: true, platformSolana: { address: "7xKXtg2C", sol: 1.2, usdc: 40 } })),
+    ).toEqual([]);
   });
 
   it("explains three quiet ticks by naming the window that emptied them", () => {

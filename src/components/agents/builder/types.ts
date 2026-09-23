@@ -1,5 +1,5 @@
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
-import { DEFAULT_FUND_USD, DEFAULT_GAS_USD } from "@/lib/wallets/funding";
+import { DEFAULT_FUND_USD } from "@/lib/wallets/funding";
 import type { AgentConfigInput } from "@/lib/agent/config";
 import type { AgentConfig } from "@/db/schema";
 
@@ -16,7 +16,11 @@ export interface BuilderFunding {
   mode: "paper" | "fund";
   /** Total USDC the agent should end up with, in dollars. */
   amountUsd: number;
-  /** Dollar value of native gas to send per funded chain. */
+  /**
+   * Always 0, and never shown. Network fees are Tocker's, so an agent is funded with
+   * USDC and nothing else; the field survives only so a draft saved before that still
+   * loads.
+   */
   gasUsd: number;
   /** Explicit per-chain USDC amounts once the user drags the split; null = proportional. */
   split: Partial<Record<"solana" | "base", number>> | null;
@@ -70,7 +74,7 @@ export function emptyDraft(): BuilderDraft {
     funding: {
       mode: "paper",
       amountUsd: DEFAULT_FUND_USD,
-      gasUsd: DEFAULT_GAS_USD,
+      gasUsd: 0,
       split: null,
     },
     config: {

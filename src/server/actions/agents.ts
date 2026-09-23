@@ -1,10 +1,13 @@
 "use server";
+import { MAX_AGENTS_PER_USER, RATE_LIMITS, limiter } from "@/lib/security/rate-limit";
 import { revalidatePath } from "next/cache";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { agentRuns, agents, getDb, llmKeys, posts } from "@/db";
 import { agentConfigSchema, type AgentConfigInput } from "@/lib/agent/config";
 import { getSession } from "@/lib/auth";
-import { applyAgentBudgetPolicy, createAgentWallets, getAgentWalletBalances } from "@/lib/wallets";
+import { applyAgentBudgetPolicy, createAgentWallets } from "@/lib/wallets";
+import { describeStranded } from "@/lib/wallets/funding";
+import { readStrandedHoldings } from "@/lib/wallets/stranded";
 import { newId, uniqueSlug } from "@/server/queries/_shared";
 import type { ActionResult, AgentMode, AgentStatus } from "@/server/types";
 
@@ -56,6 +59,10 @@ function revalidateAgent(slug?: string, handle?: string) {
 export async function createAgent(input: CreateAgentInput): Promise<ActionResult<{ id: string; slug: string }>> {
   const session = await getSession();
   if (!session) return fail("Sign in to create an agent");
+  // Every agent gets real wallets and a USDC account the platform pays rent for.
+  if (!limiter.consume(`agent:create:${session.userId}`, RATE_LIMITS.agentCreate).ok) {
+    return fail("That's a lot of new agents in an hour — try again in a little while.");
+  }
 
   const name = input.name?.trim();
   if (!name || name.length < 2) return fail("Give your agent a name");
@@ -66,6 +73,14 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
   const config = parsed.data;
 
   const db = await getDb();
+
+  const [owned] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(agents)
+    .where(eq(agents.ownerId, session.userId));
+  if ((owned?.n ?? 0) >= MAX_AGENTS_PER_USER) {
+    return fail(`You have ${MAX_AGENTS_PER_USER} agents, the most one account can hold. Delete one to make room.`);
+  }
 
   if (input.llmKeyId) {
     const [key] = await db
@@ -242,19 +257,13 @@ export async function deleteAgent(id: string): Promise<ActionResult> {
   if (agent.ownerId !== session.userId) return fail("You do not own this agent");
 
   // Deletion is irreversible and there is no in-app path to a deleted agent's
-  // wallet, so refuse while it still holds value. Paper wallets always read zero.
-  const balances = await getAgentWalletBalances(id);
-  const heldUsdc = balances.reduce(
-    (sum, w) => sum + (w.balances.find((b) => b.asset === "usdc")?.amount ?? 0),
-    0,
-  );
-  const heldNativeUsd = balances.reduce(
-    (sum, w) => sum + w.balances.filter((b) => b.asset !== "usdc").reduce((s, b) => s + (b.usd ?? 0), 0),
-    0,
-  );
-  if (heldUsdc > 0.01 || heldNativeUsd > 1) {
-    return fail("This agent's wallet still holds funds. Withdraw them first, or they'll be stranded.");
-  }
+  // wallet, so refuse while it still holds anything the owner can take out first —
+  // USDC, withdrawable SOL/ETH, tokens it bought live — and refuse when the wallet
+  // cannot be read at all. The rules: `strandedHoldings` in `@/lib/wallets/funding`.
+  const stranded = await readStrandedHoldings(id);
+  if (!stranded.ok) return fail(stranded.error);
+  const blocked = describeStranded(stranded.holdings);
+  if (blocked) return fail(blocked);
 
   await db.delete(agents).where(eq(agents.id, id));
   revalidateAgent(agent.slug, session.handle);

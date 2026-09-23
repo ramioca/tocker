@@ -144,6 +144,28 @@ async function ownedAgentSolanaWallet(
   return { ok: true, data: { agentId: agent.id, agentName: agent.name, slug: agent.slug, address: row.address } };
 }
 
+/**
+ * Per-user limits on sponsored funding — each submit spends the platform's SOL on a fee,
+ * and a prepare can start a refuel swap. Looser than withdrawals' (5 per 10 minutes):
+ * a create-and-fund plus a retry or two is several transfers in a minute, all to the
+ * user's own agents. In-process, like every limiter here (see `rate-limit.ts`).
+ */
+const FUNDING_PREPARE_LIMIT = { limit: 10, windowMs: 60_000 };
+const FUNDING_SUBMIT_BURST_LIMIT = { limit: 10, windowMs: 10 * 60_000 };
+const FUNDING_SUBMIT_DAILY_LIMIT = { limit: 50, windowMs: 24 * 60 * 60_000 };
+
+/** Null when allowed; otherwise the sentence to show. */
+async function fundingLimited(key: string, rule: { limit: number; windowMs: number }): Promise<string | null> {
+  const { limiter } = await import("@/lib/security/rate-limit");
+  const verdict = limiter.consume(key, rule);
+  if (verdict.ok) return null;
+  const wait =
+    verdict.retryAfterSeconds >= 90
+      ? `${Math.ceil(verdict.retryAfterSeconds / 60)} minutes`
+      : `${verdict.retryAfterSeconds} seconds`;
+  return `That's a lot of funding transfers in a short time. Try again in ${wait}.`;
+}
+
 /** The session user's recorded embedded Solana wallet — the only wallet we will build a transfer out of. */
 async function myEmbeddedSolanaAddress(userId: string): Promise<ActionResult<string>> {
   const db = await getDb();
@@ -168,10 +190,11 @@ async function myEmbeddedSolanaAddress(userId: string): Promise<ActionResult<str
  * and drips gas — is the fee payer, and it also pays the rent on the agent's USDC
  * account. Nothing here is signed: it returns bytes, and the browser decides.
  *
- * When the platform wallet cannot cover the fee this succeeds with `sponsored: false`
- * and a message naming the wallet and its address. That is deliberate. It is the
- * operator's own wallet, they are the only person who can fix it, and turning it into a
- * generic error would hide the one sentence that says what to do.
+ * When the platform wallet is short it refuels from its own USDC and is checked once
+ * more (`ensureSponsorCapacity`). If it still cannot pay, this fails with a sentence that
+ * asks the user for nothing — there is no self-paid fallback for USDC on Solana: the
+ * user's wallet has no SOL, and asking them to get some is exactly what this avoids.
+ * The platform wallet's numbers go to the server log, where the operator reads them.
  */
 export async function prepareSponsoredFunding(input: {
   toAddress: string;
@@ -180,8 +203,14 @@ export async function prepareSponsoredFunding(input: {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
+  const tooMany = await fundingLimited(`sponsored-fund:prepare:${session.userId}`, FUNDING_PREPARE_LIMIT);
+  if (tooMany) return fail(tooMany);
+
+  const { MIN_SPONSORED_FUNDING_USDC } = await import("@/lib/wallets/solana-sponsored");
   const amount = Number(input.amount);
-  if (!Number.isFinite(amount) || amount <= 0) return fail("Enter an amount greater than zero");
+  if (!Number.isFinite(amount) || amount < MIN_SPONSORED_FUNDING_USDC) {
+    return fail(`Send at least $${MIN_SPONSORED_FUNDING_USDC.toFixed(2)}.`);
+  }
 
   const target = await ownedAgentSolanaWallet(session.userId, input.toAddress);
   if (!target.ok) return target;
@@ -190,70 +219,51 @@ export async function prepareSponsoredFunding(input: {
   if (!from.ok) return from;
   if (from.data === target.data.address) return fail("That is the agent's own wallet, not yours");
 
-  const { PlatformWalletError, ensurePlatformWallet } = await import("@/lib/platform/wallets");
-  const cannotPay = (message: string): ActionResult<PreparedSponsoredFunding> => ({
-    ok: true,
-    data: { sponsored: false, blocker: "platform_cannot_pay", message },
-  });
-
-  let platform: { walletId: string; address: string };
-  try {
-    platform = await ensurePlatformWallet("solana");
-  } catch (err) {
-    return cannotPay(
-      err instanceof PlatformWalletError
-        ? err.message
-        : `Tocker's platform Solana wallet could not be reached, so it cannot pay this network fee: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-    );
-  }
-
   const { PublicKey } = await import("@solana/web3.js");
   const { SOLANA_USDC_MINT, associatedTokenAddress } = await import("@/lib/wallets/solana-transfer");
-  const { accountExists, getSolBalance } = await import("@/lib/wallets/solana-rpc");
-  const { LAMPORTS_PER_SOL, MIN_PLATFORM_SOL, sponsoredFundingLamports } = await import("@/lib/wallets/gas");
+  const { accountExists } = await import("@/lib/wallets/solana-rpc");
+  const {
+    agentAccountOpeningRefusal,
+    buildSponsoredUsdcTransfer,
+    ensureSponsorCapacity,
+    sponsoredAgentAccountOpens,
+    sponsorReserveLamports,
+    tokenAccountRentLamports,
+  } = await import("@/lib/wallets/solana-sponsored");
 
   const ata = associatedTokenAddress(new PublicKey(target.data.address), SOLANA_USDC_MINT).toBase58();
   // An unreadable account is assumed missing: that only ever makes the check stricter,
   // and being wrong the other way would mean promising to pay rent we cannot cover.
   const ataExists = await accountExists(ata).catch(() => false);
-  const needLamports = sponsoredFundingLamports({ ataExists });
-  const needSol = needLamports / LAMPORTS_PER_SOL;
+  const rentLamports = ataExists ? 0 : await tokenAccountRentLamports();
 
-  // The platform wallet pays this fee, and it refuels itself from its own USDC when it
-  // is short — so a dry wallet is a swap away from paying, not a blocker for the
-  // operator. A new agent's $50 funding used to fail right here (2026-09-22).
-  const { ensurePlatformSol } = await import("@/lib/platform/sol");
-  const refuel = await ensurePlatformSol("a sponsored funding transfer");
-
-  let platformSol: number;
-  try {
-    platformSol = await getSolBalance(platform.address);
-  } catch (err) {
-    return cannotPay(
-      `Tocker could not read the platform Solana wallet (${platform.address}) to confirm it can pay this network fee: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
+  // Opening the agent's USDC account is rent the user never pays back, and agents are
+  // free to create: a per-user daily count, asked here so the answer comes before the
+  // user signs, and again at submit, where it binds.
+  if (!ataExists) {
+    const refusal = agentAccountOpeningRefusal({
+      opensAccount: true,
+      openedInWindow: await sponsoredAgentAccountOpens(session.userId),
+    });
+    if (refusal) {
+      console.warn(`[prepareSponsoredFunding] ${session.userId}: agent account opening refused`);
+      return fail(refusal);
+    }
   }
 
-  if (platformSol * LAMPORTS_PER_SOL < needLamports) {
-    return cannotPay(
-      `Tocker's platform Solana wallet (${platform.address}) holds ${platformSol.toFixed(6)} SOL and needs at least ` +
-        `${needSol.toFixed(6)} SOL to pay the network fee${
-          ataExists ? "" : " and the token-account rent"
-        } on this funding transfer. It refuels itself from its own USDC, but this time ${refuel.reason}. ` +
-        `Send that wallet a little USDC or ${MIN_PLATFORM_SOL} SOL and try again.`,
-    );
-  }
+  // Can the platform pay? If not, it converts a little of its own USDC to SOL and is
+  // asked once more. A new agent's $50 funding used to fail right here (2026-09-22).
+  const capacity = await ensureSponsorCapacity({
+    needLamports: sponsorReserveLamports({ opensAccount: !ataExists, rentLamports }),
+    why: "a sponsored funding transfer",
+  });
+  if (!capacity.ok) return fail(capacity.error);
 
   try {
-    const { buildSponsoredUsdcTransfer } = await import("@/lib/wallets/solana-sponsored");
     const transaction = await buildSponsoredUsdcTransfer({
       from: from.data,
       to: target.data.address,
-      feePayer: platform.address,
+      feePayer: capacity.address,
       amount,
     });
     return {
@@ -261,7 +271,7 @@ export async function prepareSponsoredFunding(input: {
       data: {
         sponsored: true,
         transaction: Buffer.from(transaction).toString("base64"),
-        feePayer: platform.address,
+        feePayer: capacity.address,
         from: from.data,
         expectedAmount: amount,
       },
@@ -285,23 +295,38 @@ export async function prepareSponsoredFunding(input: {
  *  2. `validateSponsoredUsdcTransfer`, which accepts only the exact transaction this
  *     server authored, signed by the wallet on record. A failure returns here. Nothing
  *     is signed;
- *  3. Privy adds the platform's signature, and the result is validated **again** — the
- *     user's signature must still verify over the same message, and both slots must be
- *     filled. A backend that dropped the partial signature would otherwise produce a
- *     transaction that broadcasts and fails;
- *  4. only then, broadcast and confirm.
+ *  3. `cosignAsPlatform` (through `cosignSponsored`, which looks a second time only on an
+ *     over-budget reading) simulates the exact bytes and adds the platform's signature
+ *     only if the platform loses at most two signature fees plus — when the agent's USDC
+ *     account does not exist yet — that account's rent. Then the result is validated
+ *     **again**: the user's signature must still verify over the same message, and both
+ *     slots must be filled;
+ *  4. only then, broadcast and confirm (`broadcastSponsored`, which knows the signature
+ *     before sending, so an ambiguous send is looked up instead of called a failure).
+ *
+ * Rate-limited per user: prepare 10 a minute, submit 10 per 10 minutes and 50 a day —
+ * and, counted in the audit log rather than in-process, at most
+ * `MAX_SPONSORED_AGENT_ACCOUNT_OPENS` transfers a day that open an agent's USDC account.
  */
 export async function submitSponsoredFunding(input: {
   toAddress: string;
   amount: number;
   /** The transaction from `prepareSponsoredFunding`, with the user's signature on it. */
   signedTransaction: string;
-}): Promise<ActionResult<{ hash: string; confirmed: boolean }>> {
+}): Promise<ActionResult<{ hash: string; confirmed: boolean; uncertain: boolean }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
+  const tooMany =
+    (await fundingLimited(`sponsored-fund:submit:${session.userId}`, FUNDING_SUBMIT_BURST_LIMIT)) ??
+    (await fundingLimited(`sponsored-fund:submit-day:${session.userId}`, FUNDING_SUBMIT_DAILY_LIMIT));
+  if (tooMany) return fail(tooMany);
+
+  const sponsored = await import("@/lib/wallets/solana-sponsored");
   const amount = Number(input.amount);
-  if (!Number.isFinite(amount) || amount <= 0) return fail("Enter an amount greater than zero");
+  if (!Number.isFinite(amount) || amount < sponsored.MIN_SPONSORED_FUNDING_USDC) {
+    return fail(`Send at least $${sponsored.MIN_SPONSORED_FUNDING_USDC.toFixed(2)}.`);
+  }
   if (!input.signedTransaction) return fail("No signed transaction was submitted");
 
   const target = await ownedAgentSolanaWallet(session.userId, input.toAddress);
@@ -310,12 +335,13 @@ export async function submitSponsoredFunding(input: {
   const from = await myEmbeddedSolanaAddress(session.userId);
   if (!from.ok) return from;
 
-  const { PlatformWalletError, ensurePlatformWallet } = await import("@/lib/platform/wallets");
+  const { platformFeePayer } = await import("@/lib/wallets/solana-cosign");
   let platform: { walletId: string; address: string };
   try {
-    platform = await ensurePlatformWallet("solana");
+    platform = await platformFeePayer();
   } catch (err) {
-    return fail(err instanceof PlatformWalletError ? err.message : "Tocker's platform Solana wallet is unavailable");
+    console.error("[submitSponsoredFunding] platform wallet unavailable", err);
+    return fail(sponsored.FEE_WALLET_REFILLING);
   }
 
   let submitted: Uint8Array;
@@ -332,8 +358,7 @@ export async function submitSponsoredFunding(input: {
     amount,
   };
 
-  const { isFullySigned, validateSponsoredUsdcTransfer } = await import("@/lib/wallets/solana-sponsored");
-  const check = validateSponsoredUsdcTransfer(submitted, expected);
+  const check = sponsored.validateSponsoredUsdcTransfer(submitted, expected);
   if (!check.ok) {
     console.warn(`[submitSponsoredFunding] refused to co-sign for ${session.userId}: ${check.reason}`);
     return fail(
@@ -341,57 +366,72 @@ export async function submitSponsoredFunding(input: {
     );
   }
 
-  const { authorizationContext, privy } = await import("@/lib/privy");
+  // The tightest budget this transaction can have: two signatures, plus the rent of the
+  // agent's USDC account only if it is still missing (when it already exists, the
+  // idempotent create costs nothing).
+  const { PublicKey } = await import("@solana/web3.js");
+  const { SOLANA_USDC_MINT, associatedTokenAddress } = await import("@/lib/wallets/solana-transfer");
+  const { accountExists } = await import("@/lib/wallets/solana-rpc");
+  const ata = associatedTokenAddress(new PublicKey(target.data.address), SOLANA_USDC_MINT).toBase58();
+  const ataExists = await accountExists(ata).catch(() => false);
+
+  // The binding check on the per-user daily count of agent accounts the platform opens
+  // (see `MAX_SPONSORED_AGENT_ACCOUNT_OPENS`). Before the co-sign: nothing is signed yet.
+  if (!ataExists) {
+    const refusal = sponsored.agentAccountOpeningRefusal({
+      opensAccount: true,
+      openedInWindow: await sponsored.sponsoredAgentAccountOpens(session.userId),
+    });
+    if (refusal) {
+      console.warn(`[submitSponsoredFunding] ${session.userId}: agent account opening refused`);
+      return fail(refusal);
+    }
+  }
+
+  const maxOutflowLamports = sponsored.sponsoredCosignBudgetLamports({
+    opensAccount: !ataExists,
+    rentLamports: ataExists ? 0 : await sponsored.tokenAccountRentLamports(),
+  });
+
   let signedBase64: string;
   try {
-    const signed = await privy()
-      .wallets()
-      .solana()
-      .signTransaction(platform.walletId, {
-        transaction: input.signedTransaction,
-        authorization_context: authorizationContext(),
-      });
-    signedBase64 = signed.signed_transaction;
+    signedBase64 = await sponsored.cosignSponsored({
+      transactionBase64: input.signedTransaction,
+      maxOutflowLamports,
+      purpose: "sponsored funding transfer",
+    });
   } catch (err) {
-    console.error("[submitSponsoredFunding] platform signature failed", err);
-    return fail(
-      `Tocker's platform wallet (${platform.address}) could not sign this transfer: ${
-        err instanceof Error ? err.message : String(err)
-      }. Nothing was sent.`,
-    );
+    console.warn(`[submitSponsoredFunding] co-sign refused for ${session.userId}`, err);
+    return fail(sponsored.explainCosignFailure(err, "funding transfer"));
   }
 
   const fullySigned = new Uint8Array(Buffer.from(signedBase64, "base64"));
-  if (!isFullySigned(fullySigned)) {
+  if (!sponsored.isFullySigned(fullySigned)) {
     return fail(
-      "The platform signed this transfer but the result is missing a signature — your own signature did not survive. Nothing was sent; tell the operator.",
+      "Tocker signed this transfer but your own signature did not survive. Nothing was sent — try again.",
     );
   }
   // The same boundary, run again on the bytes that are about to be broadcast: the
   // platform's signature is the only thing that may have changed.
-  const after = validateSponsoredUsdcTransfer(fullySigned, expected);
+  const after = sponsored.validateSponsoredUsdcTransfer(fullySigned, expected);
   if (!after.ok) {
-    return fail(
-      `The platform's signature changed this transfer (${after.reason}). Nothing was sent; tell the operator.`,
-    );
+    return fail(`Tocker's signature changed this transfer (${after.reason}). Nothing was sent.`);
   }
 
-  const { confirmSignature, sendRawTransaction } = await import("@/lib/wallets/solana-rpc");
-  let hash: string;
-  try {
-    hash = await sendRawTransaction(signedBase64);
-  } catch (err) {
-    // The RPC's own sentence, and whose wallet was paying — a bare "insufficient
-    // lamports" here is about Tocker's platform wallet, never the user's, and a message
-    // that does not say so sends them to deposit SOL that would not have helped.
-    return fail(
-      `The network rejected this transfer: ${err instanceof Error ? err.message : String(err)}. Tocker's ` +
-        `platform wallet (${platform.address}) was paying its fee; your USDC did not move.`,
-    );
+  // "Did not move" only when it is known. A send that times out, or errors at a gateway,
+  // may already be relayed; calling that a failure puts the builder's "sign it again"
+  // dialog in front of a transfer that then lands twice. Unknown is returned as sent and
+  // unconfirmed — the funding checklist waits on the agent's real balance either way.
+  const sent = await sponsored.broadcastSponsored(signedBase64);
+  if (sent.outcome === "rejected") {
+    return fail(`The network turned this transfer down: ${sent.reason}. Your USDC did not move.`);
   }
-
-  const status = await confirmSignature(hash, { timeoutMs: 25_000 });
-  const confirmed = status === "confirmed";
+  if (sent.outcome === "failed") {
+    return fail(`The transfer reached the network but failed there (${sent.signature}). Your USDC did not move.`);
+  }
+  const hash = sent.signature;
+  const confirmed = sent.outcome === "confirmed";
+  const uncertain = sent.outcome === "unknown";
 
   const { recordAudit } = await import("@/lib/security/audit");
   await recordAudit({
@@ -402,21 +442,27 @@ export async function submitSponsoredFunding(input: {
     kind: "budget_change",
     agentId: target.data.agentId,
     agentName: target.data.agentName,
-    summary: `Tocker's platform Solana wallet paid the network fee so ${amount} USDC could be funded into this agent's Solana wallet.`,
+    summary: uncertain
+      ? `Sent ${amount} USDC toward this agent's Solana wallet with Tocker paying the fee; the network had not confirmed it when Tocker last checked, and it may not land.`
+      : `Tocker's platform Solana wallet paid the network fee so ${amount} USDC could be funded into this agent's Solana wallet.`,
     metadata: {
       reason: "sponsored_funding",
       chain: "solana",
       amountUsdc: amount,
+      // Counted by `sponsoredAgentAccountOpens` — the per-user daily cap reads this key.
+      openedAgentAccount: !ataExists,
       fromAddress: expected.from,
       toAddress: expected.to,
       feePayer: platform.address,
       signature: hash,
       confirmed,
+      delivery: sent.outcome,
+      ...(uncertain ? { sendError: sent.reason } : {}),
     },
   });
 
   revalidatePath(`/agents/${target.data.slug}/settings`);
-  return { ok: true, data: { hash, confirmed } };
+  return { ok: true, data: { hash, confirmed, uncertain } };
 }
 
 // ----------------------------------------------------------- funding intents
@@ -567,25 +613,41 @@ export async function getFundingIntents(agentId: string): Promise<ActionResult<F
 
 // ------------------------------------------------------------------ withdraw
 
-/** Move funds from the agent server wallet back to the owner's embedded wallet. */
+/**
+ * Move funds from the agent server wallet back to the owner's embedded wallet.
+ *
+ * On Solana the platform pays the network fee (W8): the agent signs a transfer whose fee
+ * payer is the platform Solana wallet, so the agent needs no SOL and none is dripped into
+ * it. See `withdrawFromAgentSolana`. Base is unchanged — Privy's `transfer`, gas
+ * sponsored by Privy.
+ *
+ * The product's Withdraw button goes through `secureWithdrawAction` (security.ts), which
+ * takes the same Solana path; this is the older action `withdrawAction` wraps.
+ *
+ * Limits: on Solana every withdrawal is a transaction Tocker pays for, so
+ * `withdrawFromAgentSolana` itself enforces the per-owner rate limits, the $1 floor and
+ * the one-transfer-at-a-time rule — for this action and `secureWithdrawAction` alike. A
+ * Base withdrawal is Privy-sponsored gas the app is billed for, and gets the same burst
+ * limit here.
+ */
 export async function withdrawFromAgent(input: {
   agentId: string;
   chain: Chain;
   asset: "usdc" | "native";
   amount: number;
   toAddress: string;
-}): Promise<ActionResult<WithdrawResult>> {
+}): Promise<ActionResult<WithdrawResult & { delivered?: number; accountFeeUsdc?: number; tradingFeesUsdc?: number }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
-  if (!(input.amount > 0)) return fail("Enter an amount greater than zero");
+  if (!(input.amount > 0) || !Number.isFinite(input.amount)) return fail("Enter an amount greater than zero");
   const to = input.toAddress?.trim();
   if (!to) return fail("Enter a destination address");
   if (!isValidAddressForChain(input.chain, to)) return fail(addressHintForChain(input.chain));
 
   const db = await getDb();
   const [agent] = await db
-    .select({ id: agents.id, ownerId: agents.ownerId, slug: agents.slug })
+    .select({ id: agents.id, ownerId: agents.ownerId, slug: agents.slug, name: agents.name })
     .from(agents)
     .where(eq(agents.id, input.agentId))
     .limit(1);
@@ -598,6 +660,33 @@ export async function withdrawFromAgent(input: {
     .where(and(eq(wallets.agentId, input.agentId), eq(wallets.chain, input.chain), eq(wallets.kind, "agent_server")))
     .limit(1);
   if (!wallet) return fail(`This agent has no ${input.chain} wallet`);
+
+  if (input.chain === "solana") {
+    try {
+      const solana = await import("@/lib/wallets/solana-agent-transfer");
+      const sent = await solana.withdrawFromAgentSolana({
+        agentId: input.agentId,
+        asset: input.asset,
+        amount: input.amount,
+        toAddress: to,
+      });
+      await solana.recordAgentSolanaWithdrawal({ userId: session.userId, agent, asset: input.asset, requested: input.amount, to, sent });
+      revalidatePath(`/agents/${agent.slug}/settings`);
+      revalidatePath(`/agents/${agent.slug}`);
+      // What arrived and any account fee travel with the receipt; routing detail stays in the audit.
+      return { ok: true, data: solana.withdrawalForClient(sent) };
+    } catch (err) {
+      console.error("[withdrawFromAgent] solana", err);
+      return fail(err instanceof Error ? err.message : "Withdrawal failed");
+    }
+  }
+
+  const { limiter } = await import("@/lib/security/rate-limit");
+  const { OWNER_WITHDRAWAL_BURST_LIMIT, waitSentence } = await import("@/lib/wallets/solana-agent-transfer");
+  const verdict = limiter.consume(`agent-withdraw:${input.chain}:${session.userId}`, OWNER_WITHDRAWAL_BURST_LIMIT);
+  if (!verdict.ok) {
+    return fail(`That's a lot of withdrawals in a short time. Try again in ${waitSentence(verdict.retryAfterSeconds)}.`);
+  }
 
   try {
     const result = await sendWithdrawal(input);

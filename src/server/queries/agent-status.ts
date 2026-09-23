@@ -28,7 +28,7 @@ import "server-only";
  * and the run loop actually produce, with no database in the way.
  */
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { agentRuns, agents, getDb, trades } from "@/db";
+import { agentRuns, agents, getDb, trades, users } from "@/db";
 import type { AgentConfig } from "@/db/schema";
 import { isWorkspaceScopeError } from "@/lib/agent/anthropic-workspace";
 import { getPortfolio } from "@/lib/agent/portfolio";
@@ -231,6 +231,11 @@ export interface StatusInputs {
   recentSucceeded: StatusQuietRun[];
   /** The platform's Solana wallet, when this agent trades Solana. Unread balances are `null`. */
   platformSolana: { address: string; sol: number | null; usdc: number | null } | null;
+  /**
+   * The viewer is in `ADMIN_EMAILS`. The platform-wallet row is Tocker's problem, not the
+   * owner's, so it is shown to admins and to nobody else — however low the wallet is.
+   */
+  viewerIsAdmin: boolean;
 }
 
 /**
@@ -323,9 +328,11 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
     }
   }
 
-  // ---- warn: the platform's own Solana wallet. Not the operator's money, but their
-  // problem: an empty one means no paid reads and no gas for the agent's wallet.
-  const platform = input.platformSolana;
+  // ---- warn, admins only: the platform's own Solana wallet. It pays every Solana network
+  // fee and paid read, and it refuels its SOL from its own USDC. That makes it Tocker's
+  // problem and never the owner's: an owner is not shown a banner about Tocker's SOL, and
+  // has nothing to do about it if they were.
+  const platform = input.viewerIsAdmin ? input.platformSolana : null;
   if (platform) {
     const solLow = platform.sol !== null && platform.sol < MIN_PLATFORM_SOL;
     const usdcLow = platform.usdc !== null && platform.usdc < MIN_PLATFORM_USDC;
@@ -337,9 +344,9 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
       push({
         kind: "platform_gas",
         severity: "warn",
-        title: "Tocker's Solana data wallet is nearly empty",
-        detail: `Paid reads and gas top-ups will fail. It holds ${holds.join(" and ")} at ${platform.address}.`,
-        action: { label: "Platform wallets", href: "/settings/admin" },
+        title: "Tocker's Solana fee wallet is running low",
+        detail: `Admin only — owners never see this. It pays every Solana network fee and paid read, and holds ${holds.join(" and ")} at ${platform.address}.`,
+        action: { label: "Platform wallets", href: "/settings/admin#platform" },
       });
     }
   }
@@ -492,6 +499,13 @@ async function readPlatformSolana(
   return { address: wallet.address, sol: solBalance, usdc: usdcBalance };
 }
 
+/** Is this viewer in `ADMIN_EMAILS`? The same matcher `/settings/admin` is gated on. */
+async function viewerIsAdminUser(db: Db, viewerId: string): Promise<boolean> {
+  const [row] = await db.select({ email: users.email }).from(users).where(eq(users.id, viewerId)).limit(1);
+  const { isAdminEmail } = await import("@/lib/admin");
+  return isAdminEmail(row?.email);
+}
+
 /**
  * Everything the owner of this agent is waiting on. `[]` for anybody else, and `[]`
  * when there is nothing to say.
@@ -507,11 +521,17 @@ export async function getAgentStatus(agentId: string, viewerId?: string | null):
     const now = new Date();
     const config = agent.config;
 
+    // The platform wallet is read only for an admin: nobody else is shown it, so nobody
+    // else should pay for the round trip either.
+    const viewerIsAdmin = await guard("viewer admin", () => viewerIsAdminUser(db, viewerId), false);
+
     const [proposals, portfolio, runs, platformSolana] = await Promise.all([
       guard("proposals", () => readProposals(db, agent.id, config), []),
       guard("portfolio", () => getPortfolio(agent.id), null),
       guard("runs", () => readRuns(db, agent.id), { last: null, quiet: [] }),
-      guard("platform solana wallet", () => readPlatformSolana(config, now.getTime()), null),
+      viewerIsAdmin
+        ? guard("platform solana wallet", () => readPlatformSolana(config, now.getTime()), null)
+        : Promise.resolve(null),
     ]);
 
     return deriveStatus({
@@ -534,6 +554,7 @@ export async function getAgentStatus(agentId: string, viewerId?: string | null):
       lastRun: runs.last,
       recentSucceeded: runs.quiet,
       platformSolana,
+      viewerIsAdmin,
     });
   } catch (err) {
     // The banner is an aid, never the page. A database that cannot answer at all must

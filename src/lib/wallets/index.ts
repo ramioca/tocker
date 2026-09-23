@@ -470,10 +470,61 @@ const ERC20_TRANSFER_ABI_SCHEMA = [
   },
 ];
 
+/** Options for {@link budgetRules}. */
+export interface BudgetRuleOptions {
+  /**
+   * Solana USDC **token accounts** (not wallets) a transfer may reach above the cap: the
+   * platform wallet's (fee sweeps) and the owner's own embedded wallets' (withdrawals
+   * home). `uncappedSolanaDestinations` in `./solana-agent-transfer.ts` derives them.
+   * Empty by default, which writes exactly the rules this function always wrote.
+   */
+  uncappedSolanaDestinations?: readonly string[];
+}
+
+/** At most this many exempt destinations ride on a cap rule — each one is a condition. */
+const MAX_UNCAPPED_DESTINATIONS = 8;
+
 /**
- * The budget rules for one chain. Order matters — first match wins:
- * over-cap USDC transfers and key exports are denied, everything else
- * (swaps, approvals, x402 payments under the cap) passes through.
+ * Privy documents `neq` among its condition operators (docs.privy.io → Policies →
+ * Conditions → Operator: eq, neq, lt, lte, gt, gte, in, in_condition_set, …), but
+ * `@privy-io/node` 0.34's `ConditionOperator` union predates it. Cast once, here.
+ */
+const NEQ = "neq" as unknown as Extract<
+  PolicyCreateParams["rules"][number]["conditions"][number],
+  { field_source: "solana_token_program_instruction" }
+>["operator"];
+
+/**
+ * The budget rules for one chain: over-cap USDC transfers and key exports are denied,
+ * everything else (swaps, approvals, x402 payments under the cap) passes through.
+ *
+ * ## How Privy evaluates them (docs.privy.io → Policies → "Policy evaluation")
+ *
+ * Not first-match, and order does not matter. For the requested method every rule is
+ * evaluated: if **any** matching rule is `DENY` the request is denied; otherwise, if any
+ * matching rule is `ALLOW` it is allowed; if none matches, it is denied. A rule matches
+ * when **all** of its conditions hold (AND). On Solana each instruction of the
+ * transaction is evaluated separately, and every instruction must come out `ALLOW`. So
+ * an ALLOW rule can never carve an exception out of a DENY — the only way to exempt
+ * something is to add a condition to the DENY rule itself that the exempt case fails.
+ *
+ * ## The Solana exemption (W8)
+ *
+ * Since W8 a withdrawal or fee sweep out of an agent's Solana wallet is a sponsored
+ * transaction the agent *signs* (`signTransaction`), with a top-level `TransferChecked`
+ * — exactly what the cap rules below match. A $40 withdrawal from an agent capped at $5
+ * would be denied. With `options.uncappedSolanaDestinations`, each cap rule also
+ * requires `<Instruction>.destination neq <account>` for every listed token account, so
+ * it fires only when the amount is over the cap **and** the destination is none of them.
+ * Transfers to anyone else are capped exactly as before; swaps are untouched (they have
+ * no top-level token transfer). Without the option the rules are unchanged.
+ *
+ * The option is not passed anywhere yet: `@privy-io/node` does not type `neq`, and it has
+ * not been confirmed against a non-production Privy app. Until it is, `planAgentTransferRoute`
+ * (`./solana-agent-transfer.ts`) keeps every signed instruction under the cap instead:
+ * an over-cap transfer to the owner's own wallet or the platform is split into
+ * `TransferChecked`s at or under it (each instruction is evaluated on its own), and an
+ * over-cap transfer anywhere else goes through the `transfer` endpoint.
  *
  * ## What this cap does and does not reach (W7 H9)
  *
@@ -497,7 +548,11 @@ const ERC20_TRANSFER_ABI_SCHEMA = [
  * A layer that fails closed on a legitimate withdrawal is worse than one that does not
  * reach that path at all — the app-level owner check does.
  */
-export function budgetRules(chain: Chain, capBaseUnits: string): PolicyCreateParams["rules"] {
+export function budgetRules(
+  chain: Chain,
+  capBaseUnits: string,
+  options: BudgetRuleOptions = {},
+): PolicyCreateParams["rules"] {
   const noExports: PolicyCreateParams["rules"] = [
     { name: "No private key export", method: "exportPrivateKey", action: "DENY", conditions: [] },
     { name: "No seed export", method: "exportSeedPhrase", action: "DENY", conditions: [] },
@@ -545,16 +600,29 @@ export function budgetRules(chain: Chain, capBaseUnits: string): PolicyCreatePar
   // Solana: a transfer can be signed via either method and encoded as either
   // instruction, so all four combinations get the cap.
   const solanaMethods = ["signTransaction", "signAndSendTransaction"] as const;
-  const amountFields = ["Transfer.amount", "TransferChecked.amount"] as const;
+  const instructions = ["Transfer", "TransferChecked"] as const;
+  const uncapped = [...new Set(options.uncappedSolanaDestinations ?? [])].slice(0, MAX_UNCAPPED_DESTINATIONS);
   return [
     ...solanaMethods.flatMap((method) =>
-      amountFields.map(
-        (field): PolicyCreateParams["rules"][number] => ({
-          name: `Cap ${field.split(".")[0]} per ${method}`,
+      instructions.map(
+        (instruction): PolicyCreateParams["rules"][number] => ({
+          name: `Cap ${instruction} per ${method}`,
           method,
           action: "DENY",
           conditions: [
-            { field_source: "solana_token_program_instruction", field, operator: "gt", value: capBaseUnits },
+            {
+              field_source: "solana_token_program_instruction",
+              field: `${instruction}.amount`,
+              operator: "gt",
+              value: capBaseUnits,
+            },
+            // AND-ed with the amount: the DENY fires only when the destination is none of these.
+            ...uncapped.map((account) => ({
+              field_source: "solana_token_program_instruction" as const,
+              field: `${instruction}.destination` as const,
+              operator: NEQ,
+              value: account,
+            })),
           ],
         }),
       ),

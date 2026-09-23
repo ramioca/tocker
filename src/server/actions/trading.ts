@@ -10,6 +10,7 @@
  *
  * Everything here is owner-only and returns `{ ok: false, error }` for user errors.
  */
+import { RATE_LIMITS, limiter } from "@/lib/security/rate-limit";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
 import { eq } from "drizzle-orm";
@@ -219,6 +220,9 @@ export async function placeManualTrade(
 ): Promise<ActionResult<ManualTradeResult>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
+  if (!limiter.consume(`trade:${session.userId}`, RATE_LIMITS.trade).ok) {
+    return fail("Too many trades in a minute — give it a moment.");
+  }
 
   const agent = await ownedAgent(input.agentId, session.userId);
   if (!agent) return fail("You do not own this agent");
@@ -473,6 +477,9 @@ export async function decideProposalAction(
   const session = await getSession();
   if (!session) return fail("Sign in first");
   if (decision !== "approve" && decision !== "reject") return fail("Unknown decision");
+  if (decision === "approve" && !limiter.consume(`trade:${session.userId}`, RATE_LIMITS.trade).ok) {
+    return fail("Too many trades in a minute — give it a moment.");
+  }
 
   const result = await decideProposal({ tradeId, ownerId: session.userId, decision });
   if (!result.ok) return fail(result.error);

@@ -415,6 +415,21 @@ export async function secureWithdrawAction(input: {
   if (blocked) return fail(blocked);
 
   try {
+    if (input.chain === "solana") {
+      // W8: Tocker's fee wallet pays the network fee; nothing is dripped into the agent.
+      // Not inside `@/lib/wallets`' `withdrawFromAgent`: the Privy-transfer fallback calls it.
+      const solana = await import("@/lib/wallets/solana-agent-transfer");
+      const sent = await solana.withdrawFromAgentSolana({
+        agentId: input.agentId,
+        asset: input.asset,
+        amount: input.amount,
+        toAddress: to,
+      });
+      await solana.recordAgentSolanaWithdrawal({ userId: session.userId, agent, asset: input.asset, requested: input.amount, to, sent });
+      revalidateAgent(agent.slug);
+      return { ok: true, data: solana.withdrawalForClient(sent) };
+    }
+
     const result = await sendWithdrawal({
       agentId: input.agentId,
       chain: input.chain,

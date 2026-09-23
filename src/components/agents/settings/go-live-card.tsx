@@ -12,7 +12,7 @@ import { useWalletBalances } from "./wallets-card";
 import { FundAgentDrawer } from "./fund-agent-drawer";
 import type { AgentDetail } from "@/server/types";
 
-/** Enough USDC to place a trade and enough native to pay for gas. */
+/** Enough USDC to place a trade. Network fees are Tocker's, never the agent's. */
 const MIN_USDC = 5;
 
 /**

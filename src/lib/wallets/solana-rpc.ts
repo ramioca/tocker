@@ -46,6 +46,61 @@ export async function getLatestBlockhash(): Promise<string> {
   return blockhash;
 }
 
+export interface SimulatedAccount {
+  address: string;
+  /** Lamports after the transaction, or null when the account would not exist. */
+  lamportsAfter: number | null;
+}
+
+export interface SimulationResult {
+  /** The program error, when the transaction would fail. Null when it would succeed. */
+  err: unknown;
+  logs: string[];
+  accounts: SimulatedAccount[];
+  unitsConsumed: number | null;
+}
+
+/**
+ * Run a transaction against current state without sending it, and report the lamports
+ * of `watch` afterwards. Signatures are not verified (a partially signed transaction is
+ * fine) and the blockhash is replaced, so this answers "what would this do to these
+ * accounts" — the question a co-signer has to ask before it adds its signature.
+ */
+export async function simulateTransaction(base64: string, watch: readonly string[]): Promise<SimulationResult> {
+  const result = await rpc<{
+    value?: {
+      err?: unknown;
+      logs?: string[] | null;
+      unitsConsumed?: number;
+      accounts?: Array<{ lamports?: number } | null> | null;
+    };
+  }>(
+    "simulateTransaction",
+    [
+      base64,
+      {
+        encoding: "base64",
+        sigVerify: false,
+        replaceRecentBlockhash: true,
+        commitment: "confirmed",
+        accounts: { encoding: "base64", addresses: [...watch] },
+      },
+    ],
+    15_000,
+  );
+  const value = result?.value ?? {};
+  const accounts = (value.accounts ?? []).map((account, i) => ({
+    address: watch[i] ?? "",
+    lamportsAfter: account && typeof account.lamports === "number" ? account.lamports : null,
+  }));
+  return {
+    err: value.err ?? null,
+    logs: value.logs ?? [],
+    accounts,
+    unitsConsumed: typeof value.unitsConsumed === "number" ? value.unitsConsumed : null,
+  };
+}
+
 /**
  * Broadcast an already-signed transaction and return its signature.
  *

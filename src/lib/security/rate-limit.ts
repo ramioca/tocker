@@ -103,7 +103,17 @@ export const RATE_LIMITS = {
   cron: { limit: 30, windowMs: 60_000 },
   /** Anything that spends money or starts a run. */
   sensitive: { limit: 10, windowMs: 60_000 },
+  /**
+   * Trades a person places or approves by hand. Every Solana one is paid for by the
+   * platform's fee wallet, so a loop of failing or tiny trades is a loop of its SOL.
+   */
+  trade: { limit: 20, windowMs: 60_000 },
+  /** Agents created. Each one gets real wallets and a token account the platform funds. */
+  agentCreate: { limit: 5, windowMs: 60 * 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
+
+/** The most agents one person may own. Each has real wallets and rent the platform fronted. */
+export const MAX_AGENTS_PER_USER = 25;
 
 /**
  * Best-effort client identity for a bucket key.

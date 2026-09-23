@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { Input } from "@/components/ui/input";
 import { deleteAgentAction } from "@/components/agents/agent-actions";
-import { formatUsd } from "@/components/common/format";
+import { NATIVE_SYMBOL, describeStranded, strandedHoldings } from "@/lib/wallets/funding";
 import type { AgentDetail, WalletBalance } from "@/server/types";
 import { cn } from "@/lib/utils";
 
@@ -20,21 +21,47 @@ import { cn } from "@/lib/utils";
  *     looks identical. The comparison is trimmed and case-insensitive: the point
  *     is recognition, not transcription.
  *  2. **A two-second hold**, which snaps back instantly on release.
+ *
+ * And before either: an agent that still holds money cannot be deleted at all. The
+ * server refuses (`deleteAgent`), and this card says what is left and where to take it
+ * out, instead of letting someone type the name and hold for two seconds to be told no.
  */
 export function DangerZone({ agent, balances = [] }: { agent: AgentDetail; balances?: WalletBalance[] }) {
   const router = useRouter();
   const [typed, setTyped] = useState("");
   const confirmed = typed.trim().toLowerCase() === agent.name.trim().toLowerCase();
 
-  // Real (non-paper) funds still sitting in the agent's wallets. Deleting strands
-  // them, so surface the actual number instead of a generic "should withdraw".
-  const heldUsd = balances
-    .filter((wallet) => !wallet.walletId.startsWith("paper_"))
-    .reduce((sum, wallet) => sum + wallet.balances.reduce((s, b) => s + (b.usd ?? 0), 0), 0);
-  const hasFunds = heldUsd >= 0.01;
+  // The same rules the server enforces, over what this page already has: real
+  // wallets' USDC and withdrawable SOL/ETH (by amount — a Solana read carries no dollar
+  // value for SOL, and "$0" is how 5 SOL used to slip past), plus a live agent's
+  // positions. The server's read is the stricter one; this is so the answer comes first.
+  const holdings = useMemo(() => {
+    const real = balances.filter((wallet) => !wallet.walletId.startsWith("paper_"));
+    const amountOf = (wallet: WalletBalance, asset: string) =>
+      wallet.balances.find((b) => b.asset.toLowerCase() === asset)?.amount ?? 0;
+    return strandedHoldings({
+      wallets: real.map((wallet) => ({
+        chain: wallet.chain,
+        usdc: amountOf(wallet, "usdc"),
+        native: amountOf(wallet, NATIVE_SYMBOL[wallet.chain].toLowerCase()),
+      })),
+      tokens:
+        agent.mode === "live" && real.length > 0
+          ? agent.positions.map((p) => ({
+              chain: p.token.chain,
+              symbol: p.token.symbol,
+              amountToken: p.amountToken,
+              valueUsd: p.valueUsd,
+            }))
+          : [],
+    });
+  }, [agent.mode, agent.positions, balances]);
+  const stranded = describeStranded(holdings);
+  const hasPositions = holdings.some((h) => h.kind === "token");
+  const hasWithdrawable = holdings.some((h) => h.kind !== "token");
 
   const remove = async () => {
-    if (!confirmed) return;
+    if (!confirmed || stranded) return;
     const result = await deleteAgentAction(agent.id);
     if (!result.ok) {
       toast.error("Not deleted", { description: result.error });
@@ -51,15 +78,32 @@ export function DangerZone({ agent, balances = [] }: { agent: AgentDetail; balan
         <h2 className="text-sm font-medium text-destructive">Danger zone</h2>
       </div>
       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-        Deleting removes the agent, its runs, its trade history and its posts. Any funds still in
-        its wallets should be withdrawn first — this does not move them for you, and the wallets
-        become unreachable from Tocker once the agent is gone.
+        Deleting removes the agent, its runs, its trade history and its posts. Its wallets
+        become unreachable from Tocker, so an agent that still holds money can&apos;t be deleted:
+        sell its positions and withdraw first.
       </p>
-      {hasFunds ? (
-        <p className="mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive">
-          This agent still holds {formatUsd(heldUsd)}. Withdraw it first — deleting will strand these
-          funds.
-        </p>
+      {stranded ? (
+        <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <p className="font-medium tabular-nums">{stranded}</p>
+          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
+            {hasPositions ? (
+              <Link
+                href={`/agents/${agent.slug}`}
+                className="rounded underline underline-offset-2 transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Sell positions
+              </Link>
+            ) : null}
+            {hasWithdrawable ? (
+              <a
+                href="#withdraw"
+                className="rounded underline underline-offset-2 transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Withdraw
+              </a>
+            ) : null}
+          </div>
+        </div>
       ) : null}
 
       <div className="mt-3 space-y-2">
@@ -72,6 +116,7 @@ export function DangerZone({ agent, balances = [] }: { agent: AgentDetail; balan
           autoComplete="off"
           spellCheck={false}
           placeholder={agent.name}
+          disabled={Boolean(stranded)}
           onChange={(event) => setTyped(event.target.value)}
           className={cn("max-w-xs font-mono text-xs", confirmed && "border-destructive/50")}
         />
@@ -79,10 +124,12 @@ export function DangerZone({ agent, balances = [] }: { agent: AgentDetail; balan
           <HoldToConfirmButton
             size="sm"
             duration={2_000}
-            label={confirmed ? `Hold to delete ${agent.name}` : "Type the name first"}
+            label={
+              stranded ? "Empty the wallet first" : confirmed ? `Hold to delete ${agent.name}` : "Type the name first"
+            }
             confirmedLabel="Deleted"
             icon={<Trash2 className="size-3.5" />}
-            disabled={!confirmed}
+            disabled={!confirmed || Boolean(stranded)}
             onConfirm={() => void remove()}
           />
         </div>

@@ -12,15 +12,26 @@ import { useUserWallets } from "@/components/wallets/use-cash";
 import { useSession } from "@/hooks/use-session";
 import { secureWithdrawAction } from "@/server/actions/security";
 import { isValidAddressForChain, addressHintForChain } from "@/lib/wallet-address";
+import {
+  MIN_SOL_SEND,
+  NATIVE_SYMBOL,
+  NETWORK_WORDING,
+  chainLabelFor,
+  hasLeftoverNative,
+  nativeKeptBack,
+  userFacingTransferError,
+  withdrawableNative,
+} from "@/lib/wallets/funding";
 import { cn } from "@/lib/utils";
 import type { AgentDetail, Chain, WalletBalance } from "@/server/types";
 
 function assetAmount(balances: WalletBalance[], chain: Chain, asset: "usdc" | "native"): number | null {
   const wallet = balances.find((w) => w.chain === chain);
   if (!wallet) return null;
-  const row = wallet.balances.find((b) =>
-    asset === "usdc" ? b.asset.toLowerCase() === "usdc" : b.asset.toLowerCase() !== "usdc",
-  );
+  // By symbol, not "whatever is not USDC": a wallet row list can carry other tokens, and
+  // the first of those is not the chain's native asset.
+  const symbol = asset === "usdc" ? "usdc" : NATIVE_SYMBOL[chain].toLowerCase();
+  const row = wallet.balances.find((b) => b.asset.toLowerCase() === symbol);
   return row ? row.amount : 0;
 }
 
@@ -48,16 +59,36 @@ export function WithdrawForm({
     [mine, chain],
   );
 
-  const assetLabel = asset === "usdc" ? "USDC" : chain === "solana" ? "SOL" : "ETH";
-  const available = useMemo(() => assetAmount(balances, chain, asset), [balances, chain, asset]);
+  // USDC is the only thing an agent is ever funded with. SOL or ETH shows up only as a
+  // leftover — someone sent some, or it predates Tocker paying every fee — and the form
+  // offers it only when there is enough of it to be worth a withdrawal.
+  //
+  // On Solana the last AGENT_SOL_KEPT stays behind: an agent that pays its own fee is
+  // topped up from Tocker's wallet first, and that SOL is not the owner's to take. Offering
+  // it would make "withdraw a cent, then withdraw the leftover SOL" a one-click loop that
+  // empties the platform's fee wallet a drip at a time.
+  const nativeBalance = useMemo(() => assetAmount(balances, chain, "native"), [balances, chain]);
+  const leftoverNative = withdrawableNative(chain, nativeBalance);
+  const keptNative = nativeKeptBack(chain);
+  const offerNative = hasLeftoverNative(leftoverNative);
+  const selected: "usdc" | "native" = offerNative ? asset : "usdc";
+  const assetLabel = selected === "usdc" ? "USDC" : NATIVE_SYMBOL[chain];
+  const usdcAvailable = useMemo(() => assetAmount(balances, chain, "usdc"), [balances, chain]);
+  const available = selected === "usdc" ? usdcAvailable : leftoverNative;
   const amountNum = Number(amount);
+  /** A SOL withdrawal whose remainder stays with the agent — and pays the fee from there. */
+  const keepsNative = selected === "native" && keptNative > 0;
 
   const addressValid = toAddress.trim().length === 0 || isValidAddressForChain(chain, toAddress);
   const overBalance = available !== null && amount.length > 0 && amountNum > available;
+  // Solana will not credit a fresh wallet with less than its rent-exempt minimum.
+  const belowSolMinimum =
+    selected === "native" && chain === "solana" && amount.length > 0 && amountNum > 0 && amountNum < MIN_SOL_SEND;
   const canReview =
     amount.length > 0 &&
     amountNum > 0 &&
     !overBalance &&
+    !belowSolMinimum &&
     toAddress.trim().length > 0 &&
     isValidAddressForChain(chain, toAddress);
 
@@ -73,14 +104,17 @@ export function WithdrawForm({
     const result = await secureWithdrawAction({
       agentId: agent.id,
       chain,
-      asset,
+      asset: selected,
       amount: amountNum,
       toAddress: toAddress.trim(),
     });
     setPending(false);
 
     if (!result.ok) {
-      toast.error("Withdrawal failed", { description: result.error });
+      // Never the server's raw text: a fee failure there can still read "send SOL to the
+      // platform wallet", which is Tocker's to fix and never the owner's. The raw message
+      // is in the server log and the audit trail.
+      toast.error("Withdrawal failed", { description: userFacingTransferError(result.error, chain, selected) });
       return;
     }
 
@@ -131,8 +165,23 @@ export function WithdrawForm({
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="text-muted-foreground">Network</dt>
-              <dd>{chain === "solana" ? "Solana" : "Base"}</dd>
+              <dd>{chainLabelFor(chain)}</dd>
             </div>
+            {keepsNative ? (
+              // The agent pays this fee itself, out of the SOL that stays behind — so the
+              // row says what stays rather than claiming Tocker covered it.
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">Stays in the agent</dt>
+                <dd className="tnum font-mono">
+                  {keptNative} {NATIVE_SYMBOL[chain]}
+                </dd>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">Network fee</dt>
+                <dd>{NETWORK_WORDING[chain].fees}</dd>
+              </div>
+            )}
             <div className="flex items-center justify-between gap-3">
               <dt className="text-muted-foreground">To</dt>
               <dd className="font-mono text-xs">{truncateAddress(toAddress.trim(), 6, 6)}</dd>
@@ -169,7 +218,7 @@ export function WithdrawForm({
           }}
           className="mt-3 space-y-3"
         >
-          <div className="grid grid-cols-2 gap-2">
+          <div className={cn("grid gap-2", offerNative && "grid-cols-2")}>
             <div>
               <label htmlFor="withdraw-chain" className="mb-1 block text-xs text-muted-foreground">
                 Chain
@@ -179,25 +228,31 @@ export function WithdrawForm({
                 value={chain}
                 options={agent.wallets.map((wallet) => ({
                   value: wallet.chain,
-                  label: wallet.chain === "solana" ? "Solana" : "Base",
+                  label: chainLabelFor(wallet.chain),
                 }))}
-                onChange={(next) => setChain(next as Chain)}
+                onChange={(next) => {
+                  setChain(next as Chain);
+                  // A leftover on one chain says nothing about the other.
+                  setAsset("usdc");
+                }}
               />
             </div>
-            <div>
-              <label htmlFor="withdraw-asset" className="mb-1 block text-xs text-muted-foreground">
-                Asset
-              </label>
-              <SimpleSelect
-                id="withdraw-asset"
-                value={asset}
-                options={[
-                  { value: "usdc", label: "USDC" },
-                  { value: "native", label: chain === "solana" ? "SOL" : "ETH" },
-                ]}
-                onChange={(next) => setAsset(next as "usdc" | "native")}
-              />
-            </div>
+            {offerNative ? (
+              <div>
+                <label htmlFor="withdraw-asset" className="mb-1 block text-xs text-muted-foreground">
+                  Asset
+                </label>
+                <SimpleSelect
+                  id="withdraw-asset"
+                  value={selected}
+                  options={[
+                    { value: "usdc", label: "USDC" },
+                    { value: "native", label: `Leftover ${NATIVE_SYMBOL[chain]}` },
+                  ]}
+                  onChange={(next) => setAsset(next as "usdc" | "native")}
+                />
+              </div>
+            ) : null}
           </div>
 
           <div>
@@ -211,7 +266,9 @@ export function WithdrawForm({
                   onClick={() => setAmount(String(available))}
                   className="tnum rounded text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  Balance {available.toLocaleString("en-US", { maximumFractionDigits: 4 })} {assetLabel} · Max
+                  {selected === "native" ? "Leftover" : "Balance"}{" "}
+                  {available.toLocaleString("en-US", { maximumFractionDigits: selected === "native" ? 6 : 4 })}{" "}
+                  {assetLabel} · Max
                 </button>
               ) : null}
             </div>
@@ -226,7 +283,17 @@ export function WithdrawForm({
             />
             {overBalance ? (
               <p className="mt-1 text-xs text-destructive">
-                More than the agent holds ({available?.toLocaleString("en-US", { maximumFractionDigits: 4 })} {assetLabel}).
+                More than the agent can withdraw (
+                {available?.toLocaleString("en-US", { maximumFractionDigits: selected === "native" ? 6 : 4 })}{" "}
+                {assetLabel}).
+              </p>
+            ) : belowSolMinimum ? (
+              <p className="mt-1 text-xs text-destructive">
+                Send at least {MIN_SOL_SEND} SOL. Solana refuses less than that to a new wallet.
+              </p>
+            ) : keepsNative ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                The last {keptNative} {NATIVE_SYMBOL[chain]} stays in the agent&apos;s wallet to cover network fees.
               </p>
             ) : null}
           </div>

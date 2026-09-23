@@ -11,9 +11,9 @@ import {
 } from "@/components/ui/sheet";
 import { Address } from "@/components/common/address";
 import { ChainBadge } from "@/components/common/chain-badge";
+import { FeesCovered } from "@/components/common/fees-covered";
 import { formatUsd } from "@/components/common/format";
 import {
-  NATIVE_SYMBOL,
   NETWORK_WORDING,
   chainLabelFor,
   cashOn,
@@ -36,8 +36,6 @@ export interface DepositSheetProps {
   cash?: UnifiedCash;
   /** Opens straight on this chain — what a blocked funding step passes through. */
   initialChain?: Chain;
-  /** "native" swaps the copy to gas, for the "you have no SOL" blocker. */
-  initialAsset?: "usdc" | "native";
 }
 
 /**
@@ -47,6 +45,11 @@ export interface DepositSheetProps {
  * people can use the second. Both are per-chain — an onramp lands on one chain
  * and there is no bridge in v1 — so the chain is chosen once at the top and
  * everything below it follows.
+ *
+ * USDC only, on both chains. There used to be a "SOL / ETH for gas" variant of this
+ * sheet for a blocker that asked the user to deposit gas; no such blocker exists any
+ * more, because every network fee is Tocker's — Privy sponsors Base, and Tocker's own
+ * fee wallet pays on Solana. One quiet line says so, and that is all the user needs.
  */
 export function DepositSheet({
   open,
@@ -54,10 +57,8 @@ export function DepositSheet({
   wallets,
   cash,
   initialChain = "base",
-  initialAsset = "usdc",
 }: DepositSheetProps) {
   const [chain, setChain] = useState<Chain>(initialChain);
-  const [asset, setAsset] = useState<"usdc" | "native">(initialAsset);
 
   // Reopening from a different blocker must land on that blocker's chain, and
   // a chain the user picked last time must not stick. Adjusted during render
@@ -65,10 +66,7 @@ export function DepositSheet({
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
-    if (open) {
-      setChain(initialChain);
-      setAsset(initialAsset);
-    }
+    if (open) setChain(initialChain);
   }
 
   const resolved = useMemo(() => cash ?? unifiedCash(wallets), [cash, wallets]);
@@ -104,6 +102,7 @@ export function DepositSheet({
               USDC on Base and Solana, added up. Deposits land on one chain and stay there —
               there is no bridge yet.
             </p>
+            <FeesCovered className="mt-2" />
           </div>
 
           <div
@@ -177,9 +176,7 @@ export function DepositSheet({
                   </div>
                   <div className="flex justify-between gap-4">
                     <dt className="text-muted-foreground">Send only</dt>
-                    <dd className="text-right">
-                      {asset === "native" ? `${NATIVE_SYMBOL[chain]} for gas` : wording.asset}
-                    </dd>
+                    <dd className="text-right">{wording.asset}</dd>
                   </div>
                 </dl>
 
