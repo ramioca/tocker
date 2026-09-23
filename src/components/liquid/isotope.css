@@ -1,30 +1,212 @@
+/* ============================================================================
+ * Tocker landing — the DOM around the shaders.
+ *
+ * One typeface in two registers: Geist for everything read, Geist Mono for
+ * chrome (eyebrows, pills, timestamps, table heads — uppercase, tracked, never
+ * more than a line). Grounds are a near-black ladder, not one flat colour.
+ * Violet (#A78BFA, the brand's signal colour) is the only hue on the page
+ * outside the shaders: pills, the live dot, focus rings, selection, the CTA's
+ * hover ring. Hover states are gated to fine pointers, transitions are
+ * 150–200ms and name their properties, every pressable has a press state,
+ * reduced motion renders end states.
+ * ========================================================================== */
+
+.liquid-main,
+.nav,
+.wl-overlay {
+  --lq-l0: #040407;
+  --lq-l1: #0a0a0e;
+  --lq-l2: #111014;
+  --lq-l3: #17151d;
+  --lq-paper: #f4f4f1;
+  --lq-violet: #a78bfa;
+  --lq-violet-deep: #7155d9;
+  --lq-hair: rgba(244, 244, 241, 0.08);
+  --lq-hair-strong: rgba(244, 244, 241, 0.14);
+  --lq-edge: rgba(244, 244, 241, 0.06);
+  --lq-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --lq-ease-emph: cubic-bezier(0.2, 0, 0, 1);
+  --lq-gutter: clamp(20px, 4vw, 64px);
+}
+
 /* ============================ shared ============================ */
 .iso-hero,
-.ctc {
+.ctc,
+.mech,
+.sig-section,
+.nav,
+.wl-overlay {
   font-family: var(--font-geist-sans), "Geist", ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
-.iso-hero ::selection,
-.ctc ::selection {
-  background: rgba(255, 45, 92, 0.9);
-  color: #040407;
+.liquid-main ::selection,
+.nav ::selection,
+.wl-overlay ::selection {
+  background: var(--lq-violet);
+  color: var(--lq-l0);
 }
-.iso-hero a:focus-visible,
-.ctc a:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.6);
-  outline-offset: 4px;
+.liquid-main :is(a, button, input):focus-visible,
+.nav :is(a, button):focus-visible,
+.wl-overlay :is(a, button, input):focus-visible {
+  outline: 2px solid var(--lq-violet);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+/* Button chrome reset — never `font` (it would wipe each CTA's own size). */
+.liquid-main button,
+.nav button,
+.wl-overlay button {
+  font-family: inherit;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .reveal {
   opacity: 0;
   transform: translateY(18px);
-  animation: iso-reveal 1.1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: iso-reveal 1.1s var(--lq-ease-out) forwards;
   animation-delay: var(--reveal-delay, 0s);
 }
 @keyframes iso-reveal {
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* Mono chrome, shared. */
+.lq-mono,
+.sig-label,
+.sig-intro-meta,
+.mech-eyebrow,
+.ctc-eyebrow,
+.iso-corner,
+.wl-eyebrow,
+.wl-label {
+  font-family: var(--font-geist-mono), "Geist Mono", ui-monospace, SFMono-Regular, monospace;
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 1.2;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(244, 244, 241, 0.5);
+}
+
+/* ============================ nav ============================ */
+.nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  height: 64px;
+  color: #fff;
+  border-bottom: 1px solid transparent;
+  transition:
+    background-color 200ms ease-out,
+    border-color 200ms ease-out,
+    -webkit-backdrop-filter 200ms ease-out;
+  transition:
+    background-color 200ms ease-out,
+    border-color 200ms ease-out,
+    backdrop-filter 200ms ease-out;
+}
+.nav-scrolled {
+  background: rgba(10, 10, 14, 0.62);
+  border-bottom-color: var(--lq-hair);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  backdrop-filter: blur(20px) saturate(1.5);
+}
+.nav-inner {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding-inline: var(--lq-gutter);
+}
+.nav-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: #fff;
+}
+.nav-links {
+  display: none;
+  gap: 32px;
+  font-size: 14px;
+  font-weight: 500;
+}
+@media (min-width: 640px) {
+  .nav-links {
+    display: flex;
+  }
+}
+.nav-link {
+  position: relative;
+  color: rgba(244, 244, 241, 0.62);
+  transition: color 150ms ease-out;
+}
+.nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -5px;
+  height: 1px;
+  background: var(--lq-violet);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 180ms var(--lq-ease-emph);
+}
+@media (hover: hover) and (pointer: fine) {
+  .nav-link:hover {
+    color: #fff;
+  }
+  .nav-link:hover::after {
+    transform: scaleX(1);
+  }
+}
+.nav-link:focus-visible::after {
+  transform: scaleX(1);
+}
+.nav-cta {
+  display: inline-flex;
+  align-items: center;
+  height: 38px;
+  padding-inline: 16px;
+  border: 1px solid var(--lq-hair-strong);
+  border-radius: 999px;
+  background: rgba(244, 244, 241, 0.04);
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    transform 200ms var(--lq-ease-emph);
+}
+@media (hover: hover) and (pointer: fine) {
+  .nav-cta:hover {
+    background: rgba(244, 244, 241, 0.09);
+    border-color: rgba(244, 244, 241, 0.26);
+  }
+}
+.nav-cta:active {
+  transform: scale(0.97);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .nav-scrolled {
+    background: var(--lq-l1);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 
@@ -36,40 +218,29 @@
   flex-direction: column;
   min-height: 100dvh;
   overflow: hidden;
-  background: #040407;
+  background: var(--lq-l0);
   color: #fff;
 }
 .iso-shaderwrap {
   position: absolute;
   inset: 0;
-  z-index: 0;
+  z-index: 1;
 }
 .iso-scrim {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  height: 28%;
-  z-index: 1;
+  height: 30%;
+  z-index: 2;
   pointer-events: none;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.3) 50%, transparent);
-}
-
-/* The static art sits BENEATH the canvas and the canvas is never hidden. The
-   shader tree starts with an opaque SolidColor, so the moment it draws it
-   covers the mark; until then, or if the renderer never draws (a transparent
-   canvas is the library's silent failure mode), the mark shows through.
-   Nothing about what the visitor sees depends on a callback firing. */
-.iso-hero .iso-static {
-  z-index: 0;
-}
-.iso-hero .iso-shaderwrap {
-  z-index: 1;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.3) 50%, transparent);
 }
 
 /* Static hero art: the Ticker Knot as a lit object on the same near-black
-   ground. What phones, iOS before 26, Firefox and reduced-motion visitors see,
-   and what a capable desktop sees for the second before the shader is ready. */
+   ground. It sits BENEATH every canvas and the canvas is never hidden: the
+   shader tree starts with an opaque colour, so the moment it draws it covers
+   the mark; if it never draws, the mark shows through. */
 .iso-static {
   position: absolute;
   inset: 0;
@@ -105,94 +276,11 @@
     margin-top: -12vh;
   }
 }
-/* On a phone the hero keeps its full height with the shader full-bleed and the
-   copy at the bottom, exactly like desktop; where the shader cannot run the
-   mark occupies the upper half instead of a void.
-   (Two-class selectors: the base rules come later in this file.) */
 @media (max-width: 639px) {
   .iso-hero .iso-static-mark {
     width: min(56vw, 230px);
     margin-top: 76px;
   }
-  .iso-hero .iso-copy {
-    padding-top: 40px;
-    padding-bottom: 40px;
-  }
-}
-
-.iso-header {
-  position: relative;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 24px;
-}
-@media (min-width: 640px) {
-  .iso-header {
-    padding-inline: 48px;
-  }
-}
-.iso-logo {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  color: #fff;
-}
-.orbit {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: orbit-spin 14s linear infinite;
-}
-@keyframes orbit-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.iso-logo:hover .orbit {
-  animation-duration: 1.6s;
-}
-.iso-nav {
-  display: none;
-  gap: 32px;
-  font-size: 14px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.6);
-}
-@media (min-width: 640px) {
-  .iso-nav {
-    display: flex;
-  }
-}
-.iso-nav-active {
-  color: #fff;
-}
-.nav-link {
-  position: relative;
-  transition: color 0.3s ease;
-}
-.nav-link::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -5px;
-  height: 1px;
-  background: currentColor;
-  transform: scaleX(0);
-  transform-origin: left;
-  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.nav-link:hover,
-.nav-link:focus-visible {
-  color: #fff;
-}
-.nav-link:hover::after,
-.nav-link:focus-visible::after {
-  transform: scaleX(1);
 }
 
 .iso-copy {
@@ -203,12 +291,18 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 160px 24px 48px;
+  padding: 160px 24px 88px;
 }
 @media (min-width: 640px) {
   .iso-copy {
     padding-inline: 48px;
-    padding-bottom: 64px;
+    padding-bottom: 104px;
+  }
+}
+@media (max-width: 639px) {
+  .iso-hero .iso-copy {
+    padding-top: 40px;
+    padding-bottom: 56px;
   }
 }
 .iso-h1 {
@@ -245,11 +339,12 @@
   }
 }
 .iso-sub {
-  max-width: 42rem;
+  max-width: 40rem;
   font-size: 16px;
-  line-height: 1.625;
+  line-height: 1.6;
+  letter-spacing: -0.008em;
   text-wrap: pretty;
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(244, 244, 241, 0.62);
 }
 @media (min-width: 640px) {
   .iso-sub {
@@ -264,48 +359,134 @@
   justify-content: center;
   gap: 12px;
 }
+
+/* Corner chrome + scroll cue. */
+.iso-corners {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  display: none;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 0 var(--lq-gutter) 26px;
+  pointer-events: none;
+}
+@media (min-width: 900px) {
+  .iso-corners {
+    display: flex;
+  }
+}
+.iso-corner {
+  color: rgba(244, 244, 241, 0.42);
+  font-size: 10px;
+}
+.iso-corner-l,
+.iso-corner-r {
+  flex: 1;
+}
+.iso-corner-r {
+  text-align: right;
+}
+.iso-corner-c {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.iso-scrollcue {
+  display: block;
+  width: 1px;
+  height: 36px;
+  background: linear-gradient(to bottom, transparent, rgba(244, 244, 241, 0.7));
+  animation: iso-scrollcue 2.2s var(--lq-ease-out) infinite;
+  transform-origin: top;
+}
+@keyframes iso-scrollcue {
+  0% {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  35% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleY(1) translateY(10px);
+    opacity: 0;
+  }
+}
+
+/* ============================ CTAs ============================ */
+/* The app's liquid-metal ring around a dark pill: the landing's most important
+   button is the same object as "New agent" inside the product. */
+.cta-liquid {
+  border-radius: 9999px;
+}
 .cta-primary {
   display: inline-flex;
   align-items: center;
   gap: 10px;
   height: 48px;
-  padding-inline: 28px;
+  padding-inline: 26px;
+  border: none;
   border-radius: 9999px;
-  background: #fff;
-  color: #0a0a12;
-  font-size: 14px;
-  font-weight: 600;
-  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  background: rgba(10, 10, 14, 0.78);
+  color: #fff;
+  font-size: 14.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  transition:
+    background-color 150ms ease-out,
+    transform 200ms var(--lq-ease-emph);
 }
 .cta-primary .cta-arrow {
-  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 200ms var(--lq-ease-emph);
 }
-.cta-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 6px 2px 28px rgba(255, 45, 92, 0.4), -6px -2px 28px rgba(61, 233, 255, 0.35);
+@media (hover: hover) and (pointer: fine) {
+  .cta-primary:hover {
+    background: rgba(23, 21, 29, 0.86);
+  }
+  .cta-primary:hover .cta-arrow {
+    transform: translateX(3px);
+  }
 }
-.cta-primary:hover .cta-arrow {
-  transform: translateX(3px);
+.cta-primary:active {
+  transform: scale(0.97);
+}
+/* Where MetalFx cannot run, its fallback wrapper leaves the pill bare. */
+.metal-fx-fallback .cta-primary {
+  background: var(--lq-paper);
+  color: var(--lq-l0);
 }
 .cta-secondary {
   display: inline-flex;
   align-items: center;
   height: 48px;
-  padding-inline: 28px;
+  padding-inline: 26px;
   border-radius: 9999px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 14px;
+  border: 1px solid var(--lq-hair-strong);
+  background: rgba(244, 244, 241, 0.04);
+  color: rgba(244, 244, 241, 0.8);
+  font-size: 14.5px;
   font-weight: 500;
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
-  transition: border-color 0.3s ease, background 0.3s ease, color 0.3s ease;
+  letter-spacing: -0.01em;
+  transition:
+    border-color 150ms ease-out,
+    background-color 150ms ease-out,
+    color 150ms ease-out,
+    transform 200ms var(--lq-ease-emph);
 }
-.cta-secondary:hover {
-  border-color: rgba(255, 255, 255, 0.5);
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+@media (hover: hover) and (pointer: fine) {
+  .cta-secondary:hover {
+    border-color: rgba(244, 244, 241, 0.3);
+    background: rgba(244, 244, 241, 0.08);
+    color: #fff;
+  }
+}
+.cta-secondary:active {
+  transform: scale(0.97);
 }
 
 /* ============================ cursor-trail contact ============================ */
@@ -321,11 +502,9 @@
   background: linear-gradient(45deg, #1e1e1f 0%, #070708 100%);
   color: #fff;
 }
-/* Same idea as the hero: the CSS gradient is the floor, the canvas draws over
-   it when it can, and nothing is hidden waiting for a callback. */
 @media (max-width: 639px) {
   .ctc {
-    min-height: 70dvh;
+    min-height: 78dvh;
   }
 }
 .ctc-shaderwrap {
@@ -341,13 +520,18 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 0 1.5rem;
+  padding: 96px 1.5rem 48px;
   text-align: center;
+}
+.ctc-eyebrow {
+  margin-bottom: 22px;
 }
 .ctc-kicker {
   font-size: 1.5rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.7);
+  letter-spacing: -0.02em;
+  color: rgba(244, 244, 241, 0.72);
+  text-wrap: balance;
 }
 @media (min-width: 640px) {
   .ctc-kicker {
@@ -359,26 +543,43 @@
   margin-top: 1.25rem;
   max-width: 100%;
   overflow-wrap: break-word;
+  background: none;
+  border: none;
+  padding: 0;
   font-size: clamp(2.2rem, 7vw, 6rem);
   line-height: 1.05;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
   color: #fff;
-  transition: color 0.3s ease;
+  transition:
+    color 150ms ease-out,
+    transform 200ms var(--lq-ease-emph);
 }
-.ctc-cta:hover {
-  color: rgba(255, 255, 255, 0.85);
+.ctc-cta:active {
+  transform: scale(0.985);
 }
 .ctc-underline {
   display: block;
   margin: 0.5rem auto 0;
   height: 3px;
-  width: 0;
-  background: rgba(255, 255, 255, 0.7);
-  transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.ctc-cta:hover .ctc-underline {
   width: 100%;
+  background: var(--lq-violet);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 320ms var(--lq-ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .ctc-cta:hover .ctc-underline {
+    transform: scaleX(1);
+  }
+}
+.ctc-cta:focus-visible .ctc-underline {
+  transform: scaleX(1);
+}
+.ctc-sub {
+  margin-top: 1.5rem;
+  font-size: 15px;
+  color: rgba(244, 244, 241, 0.55);
 }
 .ctc-footer {
   position: relative;
@@ -387,28 +588,23 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  padding: 0 1.5rem 2.25rem;
+  gap: 0.75rem 1.5rem;
+  padding: 0 var(--lq-gutter) 2.25rem;
   font-family: var(--font-geist-mono), "Geist Mono", ui-monospace, monospace;
-  font-size: 0.75rem;
-  letter-spacing: 0.18em;
+  font-size: 11px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(244, 244, 241, 0.5);
 }
-@media (min-width: 640px) {
-  .ctc-footer {
-    padding-inline: 3rem;
-  }
+.ctc-brand,
+.ctc-legal {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
 }
-.ctc-socials {
-  display: flex;
-  gap: 1.75rem;
-}
-.ctc-socials a {
-  transition: color 0.3s ease;
-}
-.ctc-socials a:hover {
-  color: #fff;
+.ctc-legal {
+  gap: 24px;
 }
 .ctc-hint {
   display: none;
@@ -416,127 +612,185 @@
 /* Only where there is a cursor to move. */
 @media (min-width: 640px) and (hover: hover) and (pointer: fine) {
   .ctc-hint {
-    display: block;
+    display: inline;
   }
 }
 
-/* ============================ x402 signal cards ============================ */
+/* ============================ signals gallery ============================ */
+@media (min-width: 768px) {
+  .sig-section {
+    height: 400vh;
+  }
+}
+.sig-intro {
+  width: clamp(300px, 28vw, 420px);
+  padding-right: 24px;
+}
+.sig-intro-title {
+  font-size: clamp(1.75rem, 2.6vw, 2.5rem);
+  line-height: 1.02;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  color: var(--lq-paper);
+  text-wrap: balance;
+}
+.sig-intro-body {
+  margin-top: 18px;
+  font-size: 15px;
+  line-height: 1.6;
+  letter-spacing: -0.006em;
+  color: rgba(244, 244, 241, 0.66);
+  text-wrap: pretty;
+}
+.sig-intro-meta {
+  margin-top: 22px;
+  color: rgba(244, 244, 241, 0.45);
+}
+
+/* The card. A repeating surface, so it is solid — no backdrop blur, which was
+   both against the material rules and the cause of the unpainted section. */
 .sig-card {
-  --accent: 25, 227, 255;
   position: relative;
   isolation: isolate;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  width: clamp(288px, 26vw, 392px);
-  aspect-ratio: 5 / 6;
+  width: clamp(292px, 25vw, 372px);
+  aspect-ratio: 5 / 6.15;
   padding: 22px;
   overflow: hidden;
   border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: linear-gradient(158deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.02) 62%);
-  -webkit-backdrop-filter: blur(26px) saturate(150%);
-  backdrop-filter: blur(26px) saturate(150%);
-  box-shadow: 0 22px 45px -22px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--lq-hair);
+  background: linear-gradient(168deg, #15141a 0%, #0f0e12 100%);
+  box-shadow:
+    inset 0 1px 0 var(--lq-edge),
+    0 24px 48px -28px rgba(0, 0, 0, 0.9);
   color: #fff;
-  transition: transform 0.55s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.4s ease, box-shadow 0.4s ease;
+  transition:
+    transform 200ms var(--lq-ease-emph),
+    border-color 150ms ease-out;
 }
-/* top sheen — light catching the glass */
+.sig-card[data-tier="default"] {
+  border-color: rgba(167, 139, 250, 0.22);
+}
+/* A whisper of light along the top edge. */
 .sig-card::before {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  background: radial-gradient(130% 80% at 50% -25%, rgba(255, 255, 255, 0.16), transparent 55%);
-  z-index: 1;
-}
-.sig-card:hover {
-  transform: translateY(-6px);
-  border-color: rgba(var(--accent), 0.45);
-  box-shadow: 0 34px 60px -26px rgba(0, 0, 0, 0.92), 0 0 44px -10px rgba(var(--accent), 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
-}
-.sig-glow {
-  position: absolute;
-  inset: 0;
+  background: radial-gradient(120% 70% at 50% -30%, rgba(244, 244, 241, 0.08), transparent 55%);
   z-index: 0;
-  pointer-events: none;
-  opacity: 0.55;
-  background: radial-gradient(85% 55% at 15% 112%, rgba(var(--accent), 0.28), transparent 60%);
-  transition: opacity 0.4s ease;
-}
-.sig-card:hover .sig-glow {
-  opacity: 1;
 }
 .sig-card > * {
   position: relative;
-  z-index: 2;
+  z-index: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .sig-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(244, 244, 241, 0.18);
+  }
+  .sig-card[data-tier="default"]:hover {
+    border-color: rgba(167, 139, 250, 0.45);
+  }
+  .sig-card:hover .sig-val {
+    color: #fff;
+  }
 }
 .sig-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
 }
-.sig-logo {
+.sig-provider {
   display: inline-flex;
-  align-items: center;
-  gap: 7px;
+  align-items: baseline;
+  gap: 9px;
   font-size: 13px;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.015em;
   color: #fff;
+  white-space: nowrap;
 }
-.sig-net {
+.sig-index {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 9px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.4);
-  padding: 3px 9px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  color: rgba(244, 244, 241, 0.42);
+}
+.sig-pills {
+  display: inline-flex;
+  gap: 6px;
+}
+.sig-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding-inline: 8px;
   border-radius: 999px;
+  border: 1px solid var(--lq-hair-strong);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(244, 244, 241, 0.6);
+  white-space: nowrap;
+}
+.sig-pill-accent {
+  border-color: rgba(167, 139, 250, 0.5);
+  background: rgba(167, 139, 250, 0.12);
+  color: var(--lq-violet);
+}
+.sig-pill-dim {
+  color: rgba(244, 244, 241, 0.45);
+  border-style: dashed;
 }
 .sig-namerow {
-  margin-top: 20px;
+  margin-top: 22px;
   display: flex;
   align-items: baseline;
   gap: 10px;
 }
 .sig-name {
-  font-size: clamp(1.5rem, 2.2vw, 1.95rem);
-  line-height: 1;
-  font-weight: 600;
-  letter-spacing: -0.035em;
+  font-size: clamp(1.4rem, 2vw, 1.8rem);
+  line-height: 1.02;
+  font-weight: 500;
+  letter-spacing: -0.03em;
   text-wrap: balance;
 }
 .sig-tagpill {
   flex-shrink: 0;
   align-self: center;
-  padding: 3px 9px;
+  padding: 3px 8px;
   border-radius: 999px;
-  background: rgba(var(--accent), 0.14);
-  border: 1px solid rgba(var(--accent), 0.4);
+  background: rgba(167, 139, 250, 0.12);
+  border: 1px solid rgba(167, 139, 250, 0.45);
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 9px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: rgb(var(--accent));
+  color: var(--lq-violet);
   white-space: nowrap;
 }
 .sig-desc {
-  margin-top: 9px;
-  font-size: 12.5px;
-  line-height: 1.4;
-  color: rgba(255, 255, 255, 0.5);
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: -0.005em;
+  color: rgba(244, 244, 241, 0.6);
   text-wrap: pretty;
 }
 .sig-preview {
   margin-top: 18px;
-  padding: 12px 13px 13px;
+  padding: 12px 13px 12px;
   border-radius: 11px;
-  background: rgba(0, 0, 0, 0.34);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(4, 4, 7, 0.55);
+  border: 1px solid var(--lq-hair);
   font-family: var(--font-geist-mono), ui-monospace, monospace;
 }
 .sig-preview-head {
@@ -544,16 +798,16 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
-  font-size: 9px;
+  font-size: 9.5px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.38);
+  color: rgba(244, 244, 241, 0.5);
 }
 .sig-live {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: rgb(var(--accent));
+  color: var(--lq-violet);
 }
 .sig-live::before {
   content: "";
@@ -561,47 +815,55 @@
   height: 5px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 8px 1px rgba(var(--accent), 0.9);
-  animation: sig-pulse 1.8s ease-in-out infinite;
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.16);
+  animation: sig-pulse 2.4s ease-in-out infinite;
 }
 @keyframes sig-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 .sig-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 14px;
-  padding: 3.5px 0;
+  padding: 4px 0;
   font-size: 12px;
 }
 .sig-row + .sig-row {
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid rgba(244, 244, 241, 0.06);
 }
 .sig-key {
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(244, 244, 241, 0.5);
+  white-space: nowrap;
 }
 .sig-val {
-  color: rgba(255, 255, 255, 0.92);
+  color: rgba(244, 244, 241, 0.88);
   text-align: right;
   font-variant-numeric: tabular-nums;
+  transition: color 150ms ease-out;
 }
 .sig-foot {
   margin-top: auto;
-  padding-top: 15px;
+  padding-top: 14px;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--lq-hair);
 }
 .sig-price {
-  font-size: 1.5rem;
-  font-weight: 600;
+  font-size: 1.45rem;
+  font-weight: 500;
   letter-spacing: -0.02em;
   color: #fff;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .sig-per {
   margin-left: 6px;
@@ -610,43 +872,186 @@
   font-weight: 400;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(244, 244, 241, 0.5);
+  white-space: nowrap;
 }
 .sig-src {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 10px;
   letter-spacing: 0.06em;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(244, 244, 241, 0.48);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* ============ CTA buttons (some CTAs are <button>, normalize chrome) ============
-   Reset only button chrome — NOT `font` (the shorthand would wipe each CTA's own
-   font-size, e.g. the giant clamp() on .ctc-cta). Keep font-family so buttons
-   don't fall back to the UA system face. */
-button.nav-link,
-button.cta-primary,
-button.cta-secondary,
-button.ctc-cta {
-  font-family: inherit;
-  cursor: pointer;
-  -webkit-appearance: none;
-  appearance: none;
+/* ============================ mechanics ============================ */
+.mech {
+  padding: clamp(96px, 14vh, 160px) var(--lq-gutter);
 }
-button.nav-link {
-  font-size: inherit;
-  font-weight: inherit;
-  color: inherit;
-  background: none;
-  border: none;
-  padding: 0;
+.mech-inner {
+  max-width: 1280px;
+  margin-inline: auto;
 }
-button.ctc-cta {
-  background: none;
-  border: none;
-  padding: 0;
+.mech-title {
+  margin-top: 22px;
+  max-width: 16ch;
+  font-size: clamp(2.25rem, 6.4vw, 5.5rem);
+  line-height: 0.96;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+  text-wrap: balance;
 }
-button.cta-primary {
-  border: none;
+.mech-grid {
+  margin-top: 72px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 48px 40px;
+}
+@media (min-width: 640px) {
+  .mech-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (min-width: 1024px) {
+  .mech-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+.mech-item {
+  border-top: 1px solid var(--lq-hair-strong);
+  padding-top: 20px;
+}
+.mech-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--lq-paper);
+}
+.mech-item-index {
+  color: rgba(244, 244, 241, 0.42);
+}
+.mech-item-body {
+  margin-top: 14px;
+  max-width: 34rem;
+  font-size: 15.5px;
+  line-height: 1.6;
+  letter-spacing: -0.006em;
+  color: rgba(244, 244, 241, 0.68);
+  text-wrap: pretty;
+}
+.mech-statement {
+  margin-top: 112px;
+  max-width: 52rem;
+}
+.mech-statement-rule {
+  display: block;
+  width: 28px;
+  height: 1px;
+  background: var(--lq-violet);
+  margin-bottom: 28px;
+}
+.mech-statement-line {
+  font-size: clamp(2rem, 4.6vw, 4.25rem);
+  line-height: 1.02;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  color: var(--lq-paper);
+  text-wrap: balance;
+}
+.mech-statement-sub {
+  margin-top: 24px;
+  max-width: 38rem;
+  font-size: 17px;
+  line-height: 1.6;
+  letter-spacing: -0.008em;
+  color: rgba(244, 244, 241, 0.62);
+  text-wrap: pretty;
+}
+.mech-defaults {
+  margin: 88px 0 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  border-top: 1px solid var(--lq-hair-strong);
+  border-left: 1px solid var(--lq-hair);
+}
+@media (min-width: 640px) {
+  .mech-defaults {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+@media (min-width: 1024px) {
+  .mech-defaults {
+    grid-template-columns: repeat(7, 1fr);
+  }
+}
+.mech-defaults-head,
+.mech-default {
+  padding: 18px 16px 20px 0;
+  border-bottom: 1px solid var(--lq-hair);
+  padding-left: 16px;
+  border-right: 1px solid var(--lq-hair);
+}
+.mech-defaults-head {
+  grid-column: 1 / -1;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(244, 244, 241, 0.5);
+}
+@media (min-width: 1024px) {
+  .mech-defaults-head {
+    grid-column: span 1;
+    display: flex;
+    align-items: center;
+  }
+}
+.mech-default dt {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(244, 244, 241, 0.48);
+}
+.mech-default dd {
+  margin: 8px 0 0;
+  font-size: 1.25rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--lq-paper);
+}
+
+/* ============================ cursor ============================ */
+.cursor {
+  display: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .liquid-main {
+    cursor: none;
+  }
+  .cursor {
+    display: block;
+    transition: opacity 200ms ease-out;
+  }
+  .cursor-ring {
+    width: 34px;
+    height: 34px;
+    border: 1px solid rgba(244, 244, 241, 0.5);
+  }
+  .cursor-dot {
+    width: 6px;
+    height: 6px;
+    background: var(--lq-paper);
+  }
 }
 
 /* ============================ waitlist modal ============================ */
@@ -659,47 +1064,29 @@ button.cta-primary {
   justify-content: center;
   padding: 20px;
   cursor: auto;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.32s cubic-bezier(0.16, 1, 0.3, 1);
-  font-family: var(--font-geist-sans), "Geist", ui-sans-serif, system-ui, sans-serif;
-}
-.wl-overlay-open {
-  opacity: 1;
-  pointer-events: auto;
 }
 .wl-scrim {
   position: absolute;
   inset: 0;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  background: rgba(2, 2, 6, 0.66);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
+  background: rgba(4, 4, 7, 0.7);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
 .wl-panel {
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 452px;
+  max-width: 440px;
   max-height: calc(100dvh - 40px);
   overflow-y: auto;
   padding: 28px;
   border-radius: 22px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: linear-gradient(158deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03) 62%), #0a0a12;
-  -webkit-backdrop-filter: blur(30px) saturate(150%);
-  backdrop-filter: blur(30px) saturate(150%);
-  box-shadow: 0 40px 90px -30px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  border: 1px solid var(--lq-hair-strong);
+  background: var(--lq-l3);
+  box-shadow:
+    inset 0 1px 0 var(--lq-edge),
+    0 40px 90px -30px rgba(0, 0, 0, 0.9);
   color: #fff;
-  transform: translateY(12px) scale(0.965);
-  opacity: 0;
-  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.4s ease;
-}
-.wl-overlay-open .wl-panel {
-  transform: none;
-  opacity: 1;
 }
 .wl-panel::before {
   content: "";
@@ -707,7 +1094,7 @@ button.cta-primary {
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  background: radial-gradient(120% 60% at 50% -10%, rgba(255, 255, 255, 0.1), transparent 60%);
+  background: radial-gradient(120% 60% at 50% -10%, rgba(244, 244, 241, 0.07), transparent 60%);
 }
 .wl-panel > * {
   position: relative;
@@ -718,34 +1105,48 @@ button.cta-primary {
   right: 16px;
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.7);
-  cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid var(--lq-hair);
+  background: rgba(244, 244, 241, 0.03);
+  color: rgba(244, 244, 241, 0.72);
+  transition:
+    background-color 150ms ease-out,
+    color 150ms ease-out,
+    transform 200ms var(--lq-ease-emph);
 }
-.wl-close:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+@media (hover: hover) and (pointer: fine) {
+  .wl-close:hover {
+    background: rgba(244, 244, 241, 0.08);
+    color: #fff;
+  }
+}
+.wl-close:active {
+  transform: scale(0.95);
+}
+.wl-eyebrow {
+  margin: 2px 0 12px;
+  color: var(--lq-violet);
 }
 .wl-title {
   font-size: 26px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: -0.03em;
+  line-height: 1.1;
   margin: 0;
+  padding-right: 40px;
 }
 .wl-sub {
-  margin: 8px 0 0;
-  font-size: 14px;
+  margin: 10px 0 0;
+  font-size: 14.5px;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.58);
-  max-width: 34ch;
+  color: rgba(244, 244, 241, 0.66);
+  max-width: 36ch;
+  text-wrap: pretty;
 }
 .wl-form {
-  margin-top: 22px;
+  margin-top: 24px;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -753,41 +1154,40 @@ button.cta-primary {
 .wl-group {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 10px;
 }
 .wl-label {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.5);
 }
 .wl-req {
   font-style: normal;
-  color: rgba(61, 233, 255, 0.85);
+  color: var(--lq-violet);
 }
 .wl-input {
   width: 100%;
   height: 46px;
   padding: 0 14px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--lq-hair-strong);
+  background: rgba(4, 4, 7, 0.5);
   color: #fff;
+  font: inherit;
   font-size: 15px;
   cursor: text;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 150ms ease-out,
+    box-shadow 150ms ease-out;
 }
 .wl-input::placeholder {
-  color: rgba(255, 255, 255, 0.32);
+  color: rgba(244, 244, 241, 0.45);
 }
 .wl-input:focus {
   outline: none;
-  border-color: rgba(61, 233, 255, 0.6);
-  box-shadow: 0 0 0 3px rgba(61, 233, 255, 0.14);
+  border-color: rgba(167, 139, 250, 0.55);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.14);
 }
 .wl-seg {
   display: flex;
@@ -795,66 +1195,79 @@ button.cta-primary {
   gap: 8px;
 }
 .wl-chip {
-  font: inherit;
-  cursor: pointer;
-  padding: 9px 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 13px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(255, 255, 255, 0.68);
-  font-size: 13px;
+  border: 1px solid var(--lq-hair-strong);
+  background: rgba(244, 244, 241, 0.02);
+  color: rgba(244, 244, 241, 0.72);
+  font-size: 13.5px;
   line-height: 1;
-  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 150ms ease-out,
+    background-color 150ms ease-out,
+    color 150ms ease-out,
+    transform 200ms var(--lq-ease-emph);
 }
-.wl-chip:hover {
-  border-color: rgba(255, 255, 255, 0.35);
-  color: #fff;
+@media (hover: hover) and (pointer: fine) {
+  .wl-chip:hover {
+    border-color: rgba(244, 244, 241, 0.26);
+    color: #fff;
+  }
+}
+.wl-chip:active {
+  transform: scale(0.97);
 }
 .wl-chip-on {
   color: #fff;
-  border-color: rgba(61, 233, 255, 0.55);
-  background: rgba(61, 233, 255, 0.1);
-  box-shadow: inset 0 0 0 1px rgba(61, 233, 255, 0.35);
-}
-.wl-chip:focus-visible {
-  outline: 2px solid rgba(61, 233, 255, 0.7);
-  outline-offset: 2px;
+  border-color: rgba(167, 139, 250, 0.55);
+  background: rgba(167, 139, 250, 0.12);
 }
 .wl-error {
   margin: 0;
   font-size: 13px;
-  color: #ff6b8a;
+  color: var(--lq-paper);
 }
 .wl-submit {
-  font: inherit;
-  cursor: pointer;
   margin-top: 4px;
   height: 48px;
   border: none;
   border-radius: 9999px;
-  background: #fff;
-  color: #0a0a12;
+  background: var(--lq-paper);
+  color: var(--lq-l0);
   font-size: 14.5px;
-  font-weight: 600;
-  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  transition:
+    background-color 150ms ease-out,
+    box-shadow 150ms ease-out,
+    transform 200ms var(--lq-ease-emph);
 }
-.wl-submit:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 6px 2px 28px rgba(255, 45, 92, 0.4), -6px -2px 28px rgba(61, 233, 255, 0.35);
+@media (hover: hover) and (pointer: fine) {
+  .wl-submit:hover:not(:disabled) {
+    background: #fff;
+    box-shadow:
+      0 0 0 1px rgba(167, 139, 250, 0.5),
+      0 8px 32px rgba(167, 139, 250, 0.18);
+  }
+}
+.wl-submit:active:not(:disabled) {
+  transform: scale(0.97);
 }
 .wl-submit:disabled {
-  opacity: 0.45;
+  opacity: 0.5;
   cursor: not-allowed;
-}
-.wl-submit:focus-visible {
-  outline: 2px solid rgba(61, 233, 255, 0.7);
-  outline-offset: 3px;
 }
 .wl-fine {
   margin: 0;
   text-align: center;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.42);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: rgba(244, 244, 241, 0.5);
+  text-wrap: pretty;
 }
 .wl-done {
   display: flex;
@@ -865,6 +1278,7 @@ button.cta-primary {
 }
 .wl-done .wl-title {
   margin-top: 16px;
+  padding-right: 0;
 }
 .wl-done .wl-sub {
   margin-top: 10px;
@@ -877,32 +1291,17 @@ button.cta-primary {
 .wl-check {
   display: grid;
   place-items: center;
-  width: 54px;
-  height: 54px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
-  color: #3de9ff;
-  border: 1.5px solid rgba(61, 233, 255, 0.4);
-  background: rgba(61, 233, 255, 0.1);
-  box-shadow: 0 0 40px -6px rgba(61, 233, 255, 0.5);
+  color: var(--lq-violet);
+  border: 1px solid rgba(167, 139, 250, 0.5);
+  background: rgba(167, 139, 250, 0.12);
 }
 
-/* ============================ reduced motion ============================ */
-/* The lagging custom cursor only exists for a mouse; never hide the system
-   cursor on touch or hybrid devices. */
-@media (hover: hover) and (pointer: fine) {
-  .liquid-main {
-    cursor: none;
-  }
-}
-
-/* Signals under 768px: a native horizontal snap row in normal flow instead of
-   the 460vh scroll-driven track (which showed ~1.3 cards per screen with dead
-   space around them). The two-class selectors outrank the Tailwind utilities. */
-@media (min-width: 768px) {
-  .sig-section {
-    height: 460vh;
-  }
-}
+/* ============================ signals: phone row ============================ */
+/* Under 768px: a native horizontal snap row in normal flow instead of the
+   scroll-driven track. The two-class selectors outrank the Tailwind utilities. */
 @media (max-width: 767px) {
   .sig-section .sig-stage {
     position: static;
@@ -938,33 +1337,10 @@ button.cta-primary {
     scrollbar-width: none;
     will-change: auto;
     transform: none !important;
+    cursor: grab;
   }
   .sig-section .sig-track::-webkit-scrollbar {
     display: none;
-  }
-  .sig-section .sig-intro {
-    width: 100%;
-    max-width: none;
-    flex: 0 0 100%;
-    padding: 0;
-    margin-bottom: 20px;
-  }
-  .sig-section .sig-intro p {
-    max-width: 34em;
-  }
-  .sig-section .sig-track .sig-card {
-    width: min(78vw, 320px);
-    aspect-ratio: auto;
-    min-height: 380px;
-    scroll-snap-align: start;
-  }
-  .sig-section .sig-rule {
-    position: static;
-    margin-top: 32px;
-  }
-  /* Grab-and-drag with a mouse: snapping is suspended while the pointer is down. */
-  .sig-section .sig-track {
-    cursor: grab;
   }
   .sig-section .sig-track.sig-dragging {
     cursor: grabbing;
@@ -972,7 +1348,23 @@ button.cta-primary {
     user-select: none;
     -webkit-user-select: none;
   }
-  /* Swipe hint and progress line under the row. */
+  .sig-section .sig-intro {
+    flex: 0 0 min(78vw, 320px);
+    width: min(78vw, 320px);
+    padding-right: 8px;
+    scroll-snap-align: start;
+    align-self: center;
+  }
+  .sig-section .sig-track .sig-card {
+    width: min(78vw, 320px);
+    aspect-ratio: auto;
+    min-height: 400px;
+    scroll-snap-align: start;
+  }
+  .sig-section .sig-rule {
+    position: static;
+    margin-top: 32px;
+  }
   .sig-section .sig-swipe {
     display: flex;
     align-items: center;
@@ -1004,46 +1396,44 @@ button.cta-primary {
     will-change: transform;
   }
 }
-/* The hint and progress line exist only for the mobile row. */
+/* The hint and progress line exist only for the phone row. */
 .sig-swipe {
   display: none;
 }
-/* The intro is the row's first slide, the same width as a card. */
-@media (max-width: 767px) {
-  .sig-section .sig-intro {
-    flex: 0 0 min(78vw, 320px);
-    width: min(78vw, 320px);
-    margin-bottom: 0;
-    padding-right: 8px;
-    scroll-snap-align: start;
-    align-self: center;
-  }
-}
 
+/* ============================ reduced motion ============================ */
 @media (prefers-reduced-motion: reduce) {
   .reveal {
     opacity: 1;
     transform: none;
     animation: none;
   }
-  .orbit,
-  .sig-live::before {
+  .sig-live::before,
+  .iso-scrollcue {
     animation: none;
   }
+  .iso-scrollcue {
+    transform: none;
+    opacity: 1;
+  }
+  .nav,
+  .nav-link,
+  .nav-link::after,
+  .nav-cta,
   .cta-primary,
   .cta-primary .cta-arrow,
-  .nav-link::after,
+  .cta-secondary,
+  .ctc-cta,
   .ctc-underline,
   .sig-card,
-  .wl-overlay,
-  .wl-panel,
+  .sig-val,
+  .wl-close,
+  .wl-chip,
+  .wl-input,
   .wl-submit {
     transition: none;
   }
   .sig-card:hover {
-    transform: none;
-  }
-  .wl-panel {
     transform: none;
   }
 }

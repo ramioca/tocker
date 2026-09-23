@@ -7,16 +7,22 @@ import {
   useEffect,
   useRef,
   useState,
-  type CSSProperties,
+  type FormEvent,
   type ReactNode,
 } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { EASE_OUT, SPRING_PANEL } from "@/components/spectrumui/ease";
 import "./isotope.css";
 
 /**
- * Waitlist modal for the Tocker landing. A short, glass qualifier form: the goal
- * is to onboard people who actually trade size (monthly volume is the gate) and
- * capture just enough to segment — email, chains, style — without turning it into
- * a survey. Provider holds the open state; any CTA calls useWaitlist().open().
+ * Waitlist modal for the Tocker landing. A short qualifier: email and
+ * monthly volume are required (volume is how we prioritise onboarding), chains
+ * and style are segmentation. Provider holds the open state; any CTA calls
+ * `useWaitlist().open()`.
+ *
+ * Posts `{ email, volume, chains, style }` to /api/waitlist — do not change
+ * the shape. Conditionally rendered: when closed, nothing is in the DOM to tab
+ * into.
  */
 
 type WaitlistCtx = { open: () => void };
@@ -35,40 +41,25 @@ export function WaitlistProvider({ children }: { children: ReactNode }) {
   const triggerRef = useRef<HTMLElement | null>(null);
 
   const doOpen = useCallback(() => {
-    triggerRef.current = (document.activeElement as HTMLElement) ?? null;
+    triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setOpen(true);
   }, []);
   const doClose = useCallback(() => {
     setOpen(false);
-    triggerRef.current?.focus?.();
+    const el = triggerRef.current;
+    if (el) requestAnimationFrame(() => el.focus({ preventScroll: true }));
   }, []);
 
   return (
     <Ctx.Provider value={{ open: doOpen }}>
       {children}
-      <WaitlistModal open={open} onClose={doClose} />
+      <AnimatePresence>{open ? <WaitlistModal key="waitlist" onClose={doClose} /> : null}</AnimatePresence>
     </Ctx.Provider>
   );
 }
 
-function trapFocus(event: KeyboardEvent, panel: HTMLElement | null) {
-  if (!panel) return;
-  const nodes = panel.querySelectorAll<HTMLElement>(
-    'a[href],button:not([disabled]),input:not([disabled]),select,textarea,[tabindex]:not([tabindex="-1"])',
-  );
-  if (nodes.length === 0) return;
-  const first = nodes[0];
-  const last = nodes[nodes.length - 1];
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault();
-    last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first.focus();
-  }
-}
-
-function WaitlistModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function WaitlistModal({ onClose }: { onClose: () => void }) {
+  const reduced = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
 
@@ -77,23 +68,44 @@ function WaitlistModal({ open, onClose }: { open: boolean; onClose: () => void }
   const [chains, setChains] = useState<string[]>([]);
   const [style, setStyle] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "sending" | "done" | "error">("idle");
-  const [error, setError] = useState<string | null>(null);
 
+  // Lock the page, focus the first field, trap Tab, close on Escape.
   useEffect(() => {
-    if (!open) return;
+    const prev = document.documentElement.style.overflow;
     document.documentElement.style.overflow = "hidden";
-    const focusTimer = window.setTimeout(() => emailRef.current?.focus(), 80);
+    const t = window.setTimeout(() => emailRef.current?.focus(), 60);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-      else if (e.key === "Tab") trapFocus(e, panelRef.current);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab" || !panelRef.current) return;
+      const nodes = panelRef.current.querySelectorAll<HTMLElement>(
+        'a[href],button:not([disabled]),input:not([disabled]),[tabindex]:not([tabindex="-1"])',
+      );
+      if (nodes.length === 0) return;
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      const active = document.activeElement;
+      if (!panelRef.current.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => {
-      document.documentElement.style.overflow = "";
-      window.clearTimeout(focusTimer);
+      document.documentElement.style.overflow = prev;
+      window.clearTimeout(t);
       window.removeEventListener("keydown", onKey);
     };
-  }, [open, onClose]);
+  }, [onClose]);
 
   const emailValid = EMAIL_RE.test(email.trim());
   const canSubmit = emailValid && volume !== null && status !== "sending";
@@ -101,11 +113,10 @@ function WaitlistModal({ open, onClose }: { open: boolean; onClose: () => void }
   const toggleChain = (c: string) =>
     setChains((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
     setStatus("sending");
-    setError(null);
     try {
       const res = await fetch("/api/waitlist", {
         method: "POST",
@@ -116,19 +127,28 @@ function WaitlistModal({ open, onClose }: { open: boolean; onClose: () => void }
       setStatus("done");
     } catch {
       setStatus("error");
-      setError("Couldn't reach the waitlist. Try again in a moment.");
     }
   };
 
   return (
-    <div className={cx("wl-overlay", open && "wl-overlay-open")} aria-hidden={!open}>
-      <button className="wl-scrim" tabIndex={-1} aria-label="Close" onClick={onClose} />
-      <div
+    <motion.div
+      className="wl-overlay"
+      initial={reduced ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0, transition: { duration: 0.18 } }}
+      transition={{ duration: 0.25, ease: EASE_OUT }}
+    >
+      <div className="wl-scrim" onClick={onClose} aria-hidden />
+      <motion.div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="wl-title"
         className="wl-panel"
+        initial={reduced ? false : { opacity: 0, y: 14, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 8, scale: 0.98, transition: { duration: 0.16 } }}
+        transition={SPRING_PANEL}
       >
         <button type="button" className="wl-close" onClick={onClose} aria-label="Close">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -138,15 +158,23 @@ function WaitlistModal({ open, onClose }: { open: boolean; onClose: () => void }
 
         {status === "done" ? (
           <div className="wl-done">
-            <span className="wl-check" aria-hidden>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <motion.span
+              className="wl-check"
+              aria-hidden
+              initial={reduced ? false : { scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.4, ease: EASE_OUT }}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
                 <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-            </span>
-            <h2 id="wl-title" className="wl-title">You&rsquo;re on the list</h2>
+            </motion.span>
+            <h2 id="wl-title" className="wl-title">
+              You&rsquo;re in the queue
+            </h2>
             <p className="wl-sub">
-              We prioritize by trading size, so the biggest desks hear from us first. Watch your
-              inbox for early access and a strategy teardown.
+              We work down the list by size. When your turn comes you get early access and a read of your
+              strategy before you fund anything.
             </p>
             <button type="button" className="wl-submit" onClick={onClose}>
               Done
@@ -154,12 +182,17 @@ function WaitlistModal({ open, onClose }: { open: boolean; onClose: () => void }
           </div>
         ) : (
           <>
-            <h2 id="wl-title" className="wl-title">Join the waitlist</h2>
-            <p className="wl-sub">We onboard active traders first. Takes about 20 seconds.</p>
+            <p className="wl-eyebrow">Private beta</p>
+            <h2 id="wl-title" className="wl-title">
+              Join the waitlist
+            </h2>
+            <p className="wl-sub">We onboard by trading size, largest books first. Twenty seconds.</p>
 
-            <form className="wl-form" onSubmit={submit}>
+            <form className="wl-form" onSubmit={submit} noValidate>
               <div className="wl-group">
-                <label htmlFor="wl-email" className="wl-label">Email</label>
+                <label htmlFor="wl-email" className="wl-label">
+                  Email
+                </label>
                 <input
                   id="wl-email"
                   ref={emailRef}
@@ -174,73 +207,75 @@ function WaitlistModal({ open, onClose }: { open: boolean; onClose: () => void }
                 />
               </div>
 
-              <div className="wl-group">
-                <span className="wl-label">
-                  Monthly trading volume <em className="wl-req">required</em>
-                </span>
-                <div className="wl-seg" role="group" aria-label="Monthly trading volume">
-                  {VOLUMES.map((v) => (
-                    <button
-                      key={v}
-                      type="button"
-                      aria-pressed={volume === v}
-                      className={cx("wl-chip", volume === v && "wl-chip-on")}
-                      onClick={() => setVolume(v)}
-                    >
-                      {v}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <ChipGroup
+                label="Monthly volume"
+                required
+                options={VOLUMES}
+                selected={volume ? [volume] : []}
+                onToggle={setVolume}
+              />
+              <ChipGroup label="Where you trade" options={CHAINS} selected={chains} onToggle={toggleChain} />
+              <ChipGroup label="Mostly" options={STYLES} selected={style ? [style] : []} onToggle={setStyle} />
 
-              <div className="wl-group">
-                <span className="wl-label">Where you trade</span>
-                <div className="wl-seg" role="group" aria-label="Chains you trade">
-                  {CHAINS.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      aria-pressed={chains.includes(c)}
-                      className={cx("wl-chip", chains.includes(c) && "wl-chip-on")}
-                      onClick={() => toggleChain(c)}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              {status === "error" ? (
+                <p className="wl-error" role="alert">
+                  Couldn&rsquo;t reach the waitlist. Try again in a moment.
+                </p>
+              ) : null}
 
-              <div className="wl-group">
-                <span className="wl-label">Mostly</span>
-                <div className="wl-seg" role="group" aria-label="What you mostly trade">
-                  {STYLES.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      aria-pressed={style === s}
-                      className={cx("wl-chip", style === s && "wl-chip-on")}
-                      onClick={() => setStyle(s)}
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {error ? <p className="wl-error">{error}</p> : null}
-
-              <button
-                type="submit"
-                className="wl-submit"
-                disabled={!canSubmit}
-                style={{ "--reveal-delay": "0s" } as CSSProperties}
-              >
-                {status === "sending" ? "Joining…" : "Join the waitlist"}
+              <button type="submit" className="wl-submit" disabled={!canSubmit}>
+                {status === "sending" ? "Sending…" : "Join the waitlist"}
               </button>
-              <p className="wl-fine">Heavy hitters get early access and a free strategy teardown.</p>
+              <p className="wl-fine">
+                Solana and Base at launch. Tell us the rest anyway — it decides what we build next.
+              </p>
             </form>
           </>
         )}
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function ChipGroup({
+  label,
+  required,
+  options,
+  selected,
+  onToggle,
+}: {
+  label: string;
+  required?: boolean;
+  options: ReadonlyArray<string>;
+  selected: ReadonlyArray<string>;
+  onToggle: (value: string) => void;
+}) {
+  return (
+    <div className="wl-group">
+      <span className="wl-label">
+        {label}
+        {required ? <em className="wl-req">required</em> : null}
+      </span>
+      <div className="wl-seg" role="group" aria-label={label}>
+        {options.map((o) => {
+          const on = selected.includes(o);
+          return (
+            <button
+              key={o}
+              type="button"
+              aria-pressed={on}
+              className={cx("wl-chip", on && "wl-chip-on")}
+              onClick={() => onToggle(o)}
+            >
+              {on ? (
+                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden>
+                  <path d="M2.5 6.5l2.5 2.5L9.5 3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : null}
+              {o}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
