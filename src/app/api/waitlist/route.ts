@@ -1,8 +1,9 @@
 import { appendFile } from "node:fs/promises";
 import path from "node:path";
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { nanoid } from "nanoid";
 import { getDb, waitlistSignups } from "@/db";
+import { notifyWaitlistSignup } from "@/lib/waitlist/notify";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -12,6 +13,10 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * is segmentation. Stored in `waitlist_signups`; when there is no database yet
  * (a first deploy) it falls back to a local JSONL append, then to a log line —
  * a signup is never answered with a 500 over storage.
+ *
+ * Each signup is also emailed to the founder over Resend (`src/lib/waitlist/
+ * notify.ts`), after the response has been sent, so the visitor never waits
+ * on the mail and a mail failure never fails the signup.
  */
 export async function POST(req: Request) {
   let body: unknown;
@@ -58,6 +63,8 @@ export async function POST(req: Request) {
       console.log("[waitlist]", JSON.stringify(entry));
     }
   }
+
+  after(() => notifyWaitlistSignup(entry));
 
   return NextResponse.json({ ok: true });
 }
