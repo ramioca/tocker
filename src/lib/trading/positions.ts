@@ -141,6 +141,11 @@ export function sellAmountToken(input: {
   // Within a cent of the whole position is the whole position. Asking for 99.97% of a
   // balance is how dust is made.
   if (requestedUsd >= positionValueUsd - 0.01) return heldToken;
+  // And so is asking for 99%: the model sizes a sell from its own reading of the
+  // position, a mark or two stale, and the venue fills what it asked — Charlie's book
+  // carried eight remainders worth a cent to a quarter each (2026-09-23). A sell that
+  // would leave less than {@link DUST_POSITION_USD} or 5% behind is a full exit.
+  if (positionValueUsd - requestedUsd < Math.max(DUST_POSITION_USD, positionValueUsd * 0.05)) return heldToken;
 
   const share = (heldToken * requestedUsd) / positionValueUsd;
   // `10 ** decimals`, never `1 / 10 ** -decimals`: the reciprocal of 1e-5 is 99999.999…
@@ -152,6 +157,17 @@ export function sellAmountToken(input: {
   const floored = Math.floor(share * scale + 1e-6) / scale;
   if (!(floored > 0)) return undefined;
   return Math.min(floored, heldToken);
+}
+
+/**
+ * Below this, a position is dust: worth less than the platform fee a sale would cost,
+ * not worth a guardian's attention, and not something the model should count as "held".
+ * It stays on the row (its cents still count in equity) but leaves the book.
+ */
+export const DUST_POSITION_USD = 0.25;
+
+export function isDustPosition(valueUsd: number | null): boolean {
+  return valueUsd !== null && Number.isFinite(valueUsd) && valueUsd < DUST_POSITION_USD;
 }
 
 /** Whole units of `tokenId` this agent holds right now. Zero when there is no row. */

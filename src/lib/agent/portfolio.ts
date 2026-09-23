@@ -4,6 +4,7 @@
  * Paper cash is recomputed from the trade ledger (see `trading/paper.ts`); live cash
  * is the agent's USDC balance across its Privy server wallets.
  */
+import { isDustPosition } from "@/lib/trading/positions";
 import { nanoid } from "nanoid";
 import { exitDistances } from "@/lib/pnl";
 import { and, eq, gte } from "drizzle-orm";
@@ -208,8 +209,9 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
     agentId,
     mode: agent.mode,
     cashUsd,
+    // Every remainder still counts in equity; only the book is spared them.
     equityUsd: cashUsd + positionsValue,
-    positions: view,
+    positions: view.filter((p) => !isDustPosition(p.valueUsd)),
     realizedPnlUsd,
     unrealizedPnlUsd,
     tradesToday: todayRows.length,
