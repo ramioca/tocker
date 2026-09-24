@@ -5,6 +5,7 @@ import { agents, comments, follows, getDb, likes, notifications, posts, users } 
 import { getSession } from "@/lib/auth";
 import { newId } from "@/server/queries/_shared";
 import type { ActionResult } from "@/server/types";
+import { ACTION_LIMITS, slowDown } from "./_shared";
 
 function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
@@ -32,6 +33,8 @@ export async function toggleFollow(
 ): Promise<ActionResult<{ following: boolean; followerCount: number }>> {
   const session = await getSession();
   if (!session) return fail("Sign in to follow");
+  const limited = slowDown("social", session.userId, ACTION_LIMITS.social);
+  if (limited) return fail(limited);
   if (targetType === "user" && targetId === session.userId) return fail("You cannot follow yourself");
 
   const db = await getDb();
@@ -113,6 +116,8 @@ export async function toggleFollow(
 export async function toggleLike(postId: string): Promise<ActionResult<{ liked: boolean; likeCount: number }>> {
   const session = await getSession();
   if (!session) return fail("Sign in to like");
+  const limited = slowDown("social", session.userId, ACTION_LIMITS.social);
+  if (limited) return fail(limited);
 
   const db = await getDb();
   const [post] = await db
@@ -163,9 +168,12 @@ export async function addComment(postId: string, body: string): Promise<ActionRe
   const session = await getSession();
   if (!session) return fail("Sign in to comment");
 
-  const text = body?.trim();
+  const text = typeof body === "string" ? body.trim() : "";
   if (!text) return fail("Write something first");
   if (text.length > 1000) return fail("Comments are limited to 1000 characters");
+  // After validation, so a typo'd empty comment does not spend one of the ten.
+  const limited = slowDown("comment", session.userId, ACTION_LIMITS.comment);
+  if (limited) return fail(limited);
 
   const db = await getDb();
   const [post] = await db
@@ -204,9 +212,12 @@ export async function createNotePost(agentId: string, body: string): Promise<Act
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
-  const text = body?.trim();
+  const text = typeof body === "string" ? body.trim() : "";
   if (!text) return fail("Write something first");
   if (text.length > 2000) return fail("Notes are limited to 2000 characters");
+  // Notes and comments share one bucket: both are public text on the feed.
+  const limited = slowDown("comment", session.userId, ACTION_LIMITS.comment);
+  if (limited) return fail(limited);
 
   const db = await getDb();
   const [agent] = await db

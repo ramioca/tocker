@@ -32,6 +32,7 @@ import { getSession } from "@/lib/auth";
 import { limiter, type RateLimitRule } from "@/lib/security/rate-limit";
 import { isValidAddressForChain } from "@/lib/wallet-address";
 import type { ActionResult } from "@/server/types";
+import { publicErrorMessage } from "./_shared";
 
 /** What the withdraw modal shows before the hold-to-confirm. */
 export interface SponsoredWithdrawalQuote {
@@ -287,7 +288,13 @@ export async function prepareSponsoredWithdrawal(input: {
     };
   } catch (err) {
     console.error("[prepareSponsoredWithdrawal]", err);
-    return fail(`Tocker could not build this withdrawal: ${err instanceof Error ? err.message : String(err)}`);
+    // Keep the builder's own refusal ("Tocker will not build this withdrawal: …"); hide raw throws.
+    const detail = publicErrorMessage(err, "");
+    return fail(
+      detail
+        ? `Tocker could not build this withdrawal: ${detail}`
+        : "Tocker could not build this withdrawal. Nothing was sent — try again in a minute.",
+    );
   }
 }
 

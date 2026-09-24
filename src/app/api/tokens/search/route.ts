@@ -16,10 +16,22 @@ export const dynamic = "force-dynamic";
 const MAX_RESULTS = 8;
 /** An empty query lists the token table so ⌘K can filter it client-side. */
 const LIST_LIMIT = 25;
+/** No symbol, name or address is longer; anything past this is not a search. */
+const MAX_QUERY = 64;
+
+/**
+ * The query as it reaches `searchTokens`: LIKE wildcards and the escape character
+ * stripped (so `%` cannot turn a keystroke into a full-table scan, and `_` cannot
+ * match what it should not), then capped. No token symbol, name or address needs
+ * any of the three.
+ */
+function normalizeSearchQuery(raw: string | null): string {
+  return (raw ?? "").replace(/[%_\\]/g, "").trim().slice(0, MAX_QUERY);
+}
 
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
-  const query = params.get("q")?.trim() ?? "";
+  const query = normalizeSearchQuery(params.get("q"));
   const limit = query.length === 0 ? LIST_LIMIT : MAX_RESULTS;
 
   try {

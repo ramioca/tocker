@@ -53,7 +53,8 @@ Set these in Vercel → Project → Settings → Environment Variables, for Prod
 | `ADMIN_EMAILS` | Who may open **Settings → Admin**: a comma-separated list of email addresses, trimmed and matched case-insensitively against the address on the user's row. Unset or blank means **nobody** — there is no bootstrap admin and no "first user wins", so `/settings/admin` 404s for everyone including you until this is set. The address must be one Privy actually linked at signup (a wallet-only account has no email and can never match). Admins see every user's counts, balances, fills and audit events; they do **not** see any strategy, universe rule, data-source list or run transcript, and there is no admin view that reaches one. |
 
 Every one of these is checked by `pnpm preflight` and reported (as booleans only) under
-`live` in `/api/health`. `TOKENS_MOCK` must also be unset or `0`.
+`live` in `/api/health` — to a request carrying `Authorization: Bearer $CRON_SECRET`. Anonymous
+callers get only `ok`/`database`. `TOKENS_MOCK` must also be unset or `0`.
 
 **Never set `DEV_IMPERSONATE_USER_ID` in production.** It is ignored whenever Privy is configured, but it must not be there at all.
 
@@ -309,10 +310,10 @@ Vercel auto-detects Next.js and pnpm. Nothing in `next.config.ts` needs changing
 ## 4. Verify
 
 ```bash
-curl https://your-app.vercel.app/api/health
+curl -H "Authorization: Bearer $CRON_SECRET" https://your-app.vercel.app/api/health
 ```
 
-Expect `{"ok":true,"database":"ok","embedded":false,...}`. If `embedded` is `true`, `DATABASE_URL` did not reach the function. Then check `privyConfigured: true` and `impersonation: false`.
+Expect `{"ok":true,"database":"ok","embedded":false,...}`. If `embedded` is `true`, `DATABASE_URL` did not reach the function. Then check `privyConfigured: true` and `impersonation: false`. Without the bearer the route answers only `ok`/`database` — the config report (which secrets are set, which mocks are on) is operator-only.
 
 Test a cron endpoint by hand before trusting the schedule:
 

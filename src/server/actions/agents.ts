@@ -10,6 +10,29 @@ import { describeStranded } from "@/lib/wallets/funding";
 import { readStrandedHoldings } from "@/lib/wallets/stranded";
 import { newId, uniqueSlug } from "@/server/queries/_shared";
 import type { ActionResult, AgentMode, AgentStatus } from "@/server/types";
+import { slowDown } from "./_shared";
+
+/** Matches the `maxLength` on the builder's and the settings form's inputs. */
+const MAX_NAME = 60;
+const MAX_TAGLINE = 120;
+const MAX_AVATAR_SEED = 64;
+/**
+ * Paper money is imaginary, but the number is persisted as `numeric` and drives every
+ * sizing rule; an absurd or non-finite one makes the book meaningless. Well above the
+ * largest preset ($100k) and anything anyone would fund an agent with.
+ */
+const MAX_PAPER_STARTING_USD = 10_000_000;
+/** What an owner may set by hand; `error` is only ever set by the run loop. */
+const SETTABLE_STATUSES: ReadonlySet<string> = new Set(["draft", "active", "paused"]);
+
+/** Shared by create and update, so the two paths cannot drift apart on a bound. */
+function checkPaperStartingUsd(value: unknown): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return "Paper starting balance must be positive";
+  }
+  if (value > MAX_PAPER_STARTING_USD) return "Paper starting balance must be $10,000,000 or less";
+  return null;
+}
 
 /**
  * Note the absence of any "forkable" flag. Copying someone's agent is not a setting the
@@ -64,9 +87,15 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
     return fail("That's a lot of new agents in an hour — try again in a little while.");
   }
 
-  const name = input.name?.trim();
+  const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!name || name.length < 2) return fail("Give your agent a name");
-  if (name.length > 60) return fail("Name must be 60 characters or fewer");
+  if (name.length > MAX_NAME) return fail(`Name must be ${MAX_NAME} characters or fewer`);
+  if (input.tagline !== undefined && (typeof input.tagline !== "string" || input.tagline.trim().length > MAX_TAGLINE)) {
+    return fail(`Tagline must be ${MAX_TAGLINE} characters or fewer`);
+  }
+  if (input.avatarSeed !== undefined && (typeof input.avatarSeed !== "string" || input.avatarSeed.trim().length > MAX_AVATAR_SEED)) {
+    return fail(`Avatar seed must be ${MAX_AVATAR_SEED} characters or fewer`);
+  }
 
   const parsed = agentConfigSchema.safeParse(input.config);
   if (!parsed.success) return fail(firstIssue(parsed.error));
@@ -94,8 +123,9 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
   const id = newId("agent");
   const slug = await uniqueSlug(name, db);
   const activate = input.activate === true;
-  const paperStartingUsd = Number.isFinite(input.paperStartingUsd) ? Number(input.paperStartingUsd) : 10_000;
-  if (paperStartingUsd <= 0) return fail("Paper starting balance must be positive");
+  const paperStartingUsd = input.paperStartingUsd === undefined ? 10_000 : input.paperStartingUsd;
+  const paperProblem = checkPaperStartingUsd(paperStartingUsd);
+  if (paperProblem) return fail(paperProblem);
 
   try {
     await db.insert(agents).values({
@@ -140,8 +170,9 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
     });
   } catch (err) {
     await db.delete(agents).where(eq(agents.id, id));
+    // The raw text is a Postgres or Privy error; it belongs in the log, not a toast.
     console.error("[createAgent]", err);
-    return fail(err instanceof Error ? err.message : "Could not create the agent");
+    return fail("Could not create the agent — nothing was saved. Try again in a minute.");
   }
 
   revalidateAgent(slug, session.handle);
@@ -160,15 +191,25 @@ export async function updateAgent(id: string, input: Partial<CreateAgentInput>):
   const patch: Partial<typeof agents.$inferInsert> = { updatedAt: new Date() };
 
   if (input.name !== undefined) {
-    const name = input.name.trim();
+    const name = typeof input.name === "string" ? input.name.trim() : "";
     if (name.length < 2) return fail("Give your agent a name");
+    if (name.length > MAX_NAME) return fail(`Name must be ${MAX_NAME} characters or fewer`);
     patch.name = name;
   }
-  if (input.tagline !== undefined) patch.tagline = input.tagline.trim() || null;
-  if (input.avatarSeed !== undefined) patch.avatarSeed = input.avatarSeed.trim() || null;
-  if (input.isPublic !== undefined) patch.isPublic = input.isPublic;
+  if (input.tagline !== undefined) {
+    const tagline = typeof input.tagline === "string" ? input.tagline.trim() : "";
+    if (tagline.length > MAX_TAGLINE) return fail(`Tagline must be ${MAX_TAGLINE} characters or fewer`);
+    patch.tagline = tagline || null;
+  }
+  if (input.avatarSeed !== undefined) {
+    const seed = typeof input.avatarSeed === "string" ? input.avatarSeed.trim() : "";
+    if (seed.length > MAX_AVATAR_SEED) return fail(`Avatar seed must be ${MAX_AVATAR_SEED} characters or fewer`);
+    patch.avatarSeed = seed || null;
+  }
+  if (input.isPublic !== undefined) patch.isPublic = input.isPublic === true;
   if (input.paperStartingUsd !== undefined) {
-    if (!(input.paperStartingUsd > 0)) return fail("Paper starting balance must be positive");
+    const paperProblem = checkPaperStartingUsd(input.paperStartingUsd);
+    if (paperProblem) return fail(paperProblem);
     patch.paperStartingUsd = input.paperStartingUsd.toFixed(2);
   }
   if (input.llmKeyId !== undefined) {
@@ -218,6 +259,9 @@ export async function updateAgent(id: string, input: Partial<CreateAgentInput>):
 export async function setAgentStatus(id: string, status: Exclude<AgentStatus, "error">): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
+  // The type is erased at the wire: a caller can post any string, and the enum column
+  // would turn it into a 500 — or, for "error", into a state only the run loop may set.
+  if (!SETTABLE_STATUSES.has(status)) return fail("Unknown status");
 
   const db = await getDb();
   const [agent] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
@@ -279,6 +323,9 @@ export async function deleteAgent(id: string): Promise<ActionResult> {
 export async function triggerRun(id: string): Promise<ActionResult<{ runId: string }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
+  // Same bucket size as the `/api/agents/[id]/run` route: a run spends the owner's LLM key.
+  const limited = slowDown("run", session.userId, RATE_LIMITS.sensitive);
+  if (limited) return fail(limited);
 
   const db = await getDb();
   const [agent] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);

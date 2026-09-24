@@ -11,9 +11,10 @@ import { eq } from "drizzle-orm";
 import { agents, getDb } from "@/db";
 import type { AgentConfig } from "@/db/schema";
 import { getSession } from "@/lib/auth";
-import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { DEFAULT_AGENT_CONFIG, chainSchema } from "@/lib/agent/config";
 import { getTokenScore } from "@/lib/tokens";
 import type { ActionResult, Chain, TokenScore } from "@/server/types";
+import { ACTION_LIMITS, slowDown } from "./_shared";
 
 const MAX_BLOCKLIST = 200;
 
@@ -21,8 +22,22 @@ function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
 }
 
+/**
+ * A Solana mint is base58 (≤44 chars) and a Base contract is `0x` + 40 hex, so both fit
+ * in 64 alphanumerics. Checked at runtime because these arguments arrive from the wire:
+ * an unchecked `chain` lands in the agent's config, and an unchecked address is stored,
+ * revalidated as a path, and handed to four third-party APIs.
+ */
+const ADDRESS_RE = /^[A-Za-z0-9]{3,64}$/;
+
+function tokenProblem(chain: unknown, address: unknown): string | null {
+  if (!chainSchema.safeParse(chain).success) return "Unknown chain";
+  if (typeof address !== "string" || !ADDRESS_RE.test(address)) return "That does not look like a token address";
+  return null;
+}
+
 function normalizeSymbol(symbol: string): string {
-  const trimmed = symbol.trim().replace(/^\$/, "");
+  const trimmed = (typeof symbol === "string" ? symbol : "").trim().replace(/^\$/, "");
   return (trimmed.length > 0 ? trimmed : "TOKEN").slice(0, 16);
 }
 
@@ -40,7 +55,8 @@ export async function addToBlocklist(
 ): Promise<ActionResult<{ blocked: true; count: number }>> {
   const session = await getSession();
   if (!session) return fail("Sign in to block a token");
-  if (!address || address.length < 3) return fail("That does not look like a token address");
+  const problem = tokenProblem(chain, address);
+  if (problem) return fail(problem);
 
   const db = await getDb();
   const [agent] = await db
@@ -120,7 +136,10 @@ export async function removeFromBlocklist(
 export async function scoreTokenNow(chain: Chain, address: string): Promise<ActionResult<TokenScore>> {
   const session = await getSession();
   if (!session) return fail("Sign in to score a token");
-  if (!address || address.length < 3) return fail("That does not look like a token address");
+  const problem = tokenProblem(chain, address);
+  if (problem) return fail(problem);
+  const limited = slowDown("score", session.userId, ACTION_LIMITS.score);
+  if (limited) return fail(limited);
 
   try {
     const score = await getTokenScore({
@@ -133,6 +152,8 @@ export async function scoreTokenNow(chain: Chain, address: string): Promise<Acti
     revalidatePath(`/tokens/${chain}/${address}`);
     return { ok: true, data: score };
   } catch (error) {
-    return fail(error instanceof Error ? error.message : "Scoring failed");
+    // Whatever threw here came from a provider or the database, not from us.
+    console.error("[scoreTokenNow]", error);
+    return fail("Could not score this token right now — the data providers did not answer. Try again in a minute.");
   }
 }

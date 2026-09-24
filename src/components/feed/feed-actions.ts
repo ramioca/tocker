@@ -50,13 +50,21 @@ export async function fetchFeedPage(input: {
   return withReceipts(await feedPage({ ...input, viewerId: session?.userId ?? null }));
 }
 
-/** The server-rendered first page for `/feed`. Same shape as the action returns. */
+/**
+ * The server-rendered first page for `/feed`. Same shape as the action returns.
+ *
+ * The viewer comes from the session, never from an argument: this file is "use
+ * server", so every export is a public endpoint, and a caller-supplied `viewerId`
+ * would let anyone read the feed as someone else — private agents' posts included.
+ */
 export async function initialFeedPage(input: {
   scope: "global" | "following";
   limit?: number;
-  viewerId: string | null;
 }): Promise<FeedPage> {
-  return withReceipts(await feedPage(input));
+  const session = await viewerSession();
+  return withReceipts(
+    await feedPage({ scope: input.scope, limit: input.limit, viewerId: session?.userId ?? null }),
+  );
 }
 
 export async function fetchComments(

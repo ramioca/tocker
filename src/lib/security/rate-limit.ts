@@ -110,7 +110,61 @@ export const RATE_LIMITS = {
   trade: { limit: 20, windowMs: 60_000 },
   /** Agents created. Each one gets real wallets and a token account the platform funds. */
   agentCreate: { limit: 5, windowMs: 60 * 60_000 },
+  /**
+   * The same-origin Solana RPC. Every call spends the platform's Helius credits, and
+   * Privy's confirmation modal makes a handful per transaction — not hundreds.
+   */
+  solanaRpc: { limit: 60, windowMs: 60_000 },
+  /** One blockhash per user-signed transfer. */
+  blockhash: { limit: 30, windowMs: 60_000 },
+  /** Unauthenticated, writes a row and emails the founder. Nobody signs up six times. */
+  waitlist: { limit: 5, windowMs: 10 * 60_000 },
+  /** ⌘K queries on every keystroke, so this is generous; the response is also cached. */
+  tokenSearch: { limit: 120, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
+
+/**
+ * Which bucket, if any, a request path draws from — what `src/proxy.ts` applies before
+ * the handler runs. Pure, so the matching can be tested without a request.
+ */
+export function limitForPath(pathname: string): { rule: RateLimitRule; prefix: string } | null {
+  if (pathname.startsWith("/api/cron/")) return { rule: RATE_LIMITS.cron, prefix: `cron${pathname}` };
+  // It takes the CRON_SECRET as a bearer for its operator view, so it gets the cron bucket.
+  if (pathname === "/api/health") return { rule: RATE_LIMITS.cron, prefix: "health" };
+  if (pathname.startsWith("/api/me")) return { rule: RATE_LIMITS.me, prefix: "me" };
+  // Starting a run spends the owner's LLM key and can place a trade. Match the route
+  // exactly: `includes("/run")` also caught `/agents/[slug]/runs/[runId]` — pages people
+  // browse, plus Next's link prefetches — and ten of those a minute is a normal visit.
+  if (/^\/api\/agents\/[^/]+\/run$/.test(pathname)) return { rule: RATE_LIMITS.sensitive, prefix: "run" };
+  if (pathname === "/api/solana/rpc") return { rule: RATE_LIMITS.solanaRpc, prefix: "solana-rpc" };
+  if (pathname === "/api/solana/blockhash") return { rule: RATE_LIMITS.blockhash, prefix: "blockhash" };
+  if (pathname === "/api/waitlist") return { rule: RATE_LIMITS.waitlist, prefix: "waitlist" };
+  if (pathname === "/api/tokens/search") return { rule: RATE_LIMITS.tokenSearch, prefix: "token-search" };
+  return null;
+}
+
+/**
+ * True when a request carries an `Origin` that is not this site.
+ *
+ * Used on `/api/solana/rpc`: it is public (Privy's modal calls it before anyone signs
+ * in), so a session cannot guard it, but a browser always sends `Origin` on a
+ * cross-site POST — so another site cannot make its visitors spend our Helius credits.
+ * A missing `Origin` (curl, a server) passes: that caller is bounded by the rate limit,
+ * and refusing it would not stop anyone who can simply omit the header. The host is
+ * compared against `x-forwarded-host` then `host`, which is what the browser dialled.
+ */
+export function isCrossOrigin(headers: Headers): boolean {
+  const origin = headers.get("origin");
+  if (origin === null) return false;
+  const host = (headers.get("x-forwarded-host") ?? headers.get("host"))?.split(",")[0]?.trim().toLowerCase();
+  if (!host) return true;
+  try {
+    return new URL(origin).host.toLowerCase() !== host;
+  } catch {
+    // "null" (a sandboxed frame, a file:// page) or garbage: not us.
+    return true;
+  }
+}
 
 /** The most agents one person may own. Each has real wallets and rent the platform fronted. */
 export const MAX_AGENTS_PER_USER = 25;

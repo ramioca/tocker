@@ -16,8 +16,11 @@ export async function GET() {
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
     return NextResponse.json({ blockhash, lastValidBlockHeight }, { headers: { "cache-control": "no-store" } });
   } catch (err) {
+    // Logged, never returned: a fetch error can quote the upstream URL, and that URL is
+    // the Helius endpoint with its API key in it — the one thing this route exists to hide.
+    console.error("[api/solana/blockhash] upstream failed", err);
     return NextResponse.json(
-      { error: "Could not reach the Solana RPC.", detail: err instanceof Error ? err.message : String(err) },
+      { error: "Could not reach the Solana RPC." },
       { status: 502, headers: { "cache-control": "no-store" } },
     );
   }

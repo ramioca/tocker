@@ -15,6 +15,7 @@ import {
 import { unifiedCash, type UnifiedCash } from "@/lib/wallets/funding";
 import { toNumeric } from "@/lib/money";
 import { newId } from "@/server/queries/_shared";
+import { publicErrorMessage, transferErrorMessage } from "./_shared";
 import type {
   ActionResult,
   Chain,
@@ -278,8 +279,13 @@ export async function prepareSponsoredFunding(input: {
     };
   } catch (err) {
     console.error("[prepareSponsoredFunding]", err);
+    // The builder's own refusals ("The amount must be at least $1.") are worth showing;
+    // an RPC or Privy throw is not, and can carry the RPC URL.
+    const detail = publicErrorMessage(err, "");
     return fail(
-      `Tocker could not build the funding transaction: ${err instanceof Error ? err.message : String(err)}`,
+      detail
+        ? `Tocker could not build the funding transaction: ${detail}`
+        : "Tocker could not build the funding transaction. Your USDC has not moved — try again in a minute.",
     );
   }
 }
@@ -630,6 +636,8 @@ export async function getFundingIntents(agentId: string): Promise<ActionResult<F
  * Base withdrawal is Privy-sponsored gas the app is billed for, and gets the same burst
  * limit here.
  */
+const WITHDRAW_FAILED = "The withdrawal did not go through. Nothing was sent — try again in a minute.";
+
 export async function withdrawFromAgent(input: {
   agentId: string;
   chain: Chain;
@@ -677,7 +685,7 @@ export async function withdrawFromAgent(input: {
       return { ok: true, data: solana.withdrawalForClient(sent) };
     } catch (err) {
       console.error("[withdrawFromAgent] solana", err);
-      return fail(err instanceof Error ? err.message : "Withdrawal failed");
+      return fail(transferErrorMessage(err, WITHDRAW_FAILED, "solana", input.asset));
     }
   }
 
@@ -695,7 +703,7 @@ export async function withdrawFromAgent(input: {
     return { ok: true, data: result };
   } catch (err) {
     console.error("[withdrawFromAgent]", err);
-    return fail(err instanceof Error ? err.message : "Withdrawal failed");
+    return fail(transferErrorMessage(err, WITHDRAW_FAILED, input.chain, input.asset));
   }
 }
 
@@ -739,7 +747,8 @@ export async function setAgentWalletBudget(input: {
     revalidatePath(`/agents/${agent.slug}/settings`);
     return { ok: true, data: { perTxUsd: walletBudget.perTxUsd } };
   } catch (err) {
+    // A Privy policy API or database error: log it, don't forward it.
     console.error("[setAgentWalletBudget]", err);
-    return fail(err instanceof Error ? err.message : "Could not apply the budget policy");
+    return fail("Could not apply the budget policy with the wallet provider. Nothing changed — try again in a minute.");
   }
 }

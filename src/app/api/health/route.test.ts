@@ -1,9 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route";
 
+const SECRET = "s".repeat(64);
+
 afterEach(() => {
   vi.unstubAllEnvs();
 });
+
+function anonymous(): Promise<Response> {
+  return GET(new Request("http://localhost/api/health"));
+}
+
+/** The operator's view: the same bearer the cron routes take. */
+function operator(secret = SECRET): Promise<Response> {
+  vi.stubEnv("CRON_SECRET", SECRET);
+  return GET(new Request("http://localhost/api/health", { headers: { authorization: `Bearer ${secret}` } }));
+}
 
 describe("GET /api/health", () => {
   /**
@@ -14,14 +26,39 @@ describe("GET /api/health", () => {
     vi.stubEnv("DATABASE_URL", "");
     vi.stubEnv("NODE_ENV", "production");
 
-    const res = await GET();
+    const res = await anonymous();
     expect(res.status).toBe(503);
 
     const body = await res.json();
     expect(body.ok).toBe(false);
     expect(body.database).toBe("unreachable");
     expect(body.embedded).toBe(false);
-    expect(body.error).toMatch(/DATABASE_URL/);
+    // Fixed text in public: the driver's own message can name hosts and users.
+    expect(body.error).toBe("database unreachable");
+    expect(JSON.stringify(body)).not.toMatch(/DATABASE_URL/);
+  });
+
+  it("gives the operator the database's own error text", async () => {
+    vi.stubEnv("DATABASE_URL", "");
+    vi.stubEnv("NODE_ENV", "production");
+    const body = await (await operator()).json();
+    expect(body.error).toBe("database unreachable");
+    expect(body.detail).toMatch(/DATABASE_URL/);
+  });
+
+  /** Which protections are off on this deploy is reconnaissance, not health. */
+  it("shows only liveness to an anonymous or wrongly-authorized caller", async () => {
+    vi.stubEnv("CRON_SECRET", SECRET);
+    for (const res of [await anonymous(), await operator("x".repeat(64))]) {
+      const body = await res.json();
+      expect(Object.keys(body).sort()).toEqual(
+        expect.arrayContaining(["database", "embedded", "ms", "ok"]),
+      );
+      expect(body).not.toHaveProperty("live");
+      expect(body).not.toHaveProperty("mocks");
+      expect(body).not.toHaveProperty("impersonation");
+      expect(body).not.toHaveProperty("privyConfigured");
+    }
   });
 
   /**
@@ -29,11 +66,10 @@ describe("GET /api/health", () => {
    * that leaked a value here would be invisible in the UI and catastrophic.
    */
   it("reports live readiness as booleans and never echoes a secret", async () => {
-    vi.stubEnv("CRON_SECRET", "s".repeat(64));
     vi.stubEnv("ENCRYPTION_KEY", Buffer.alloc(32, 7).toString("base64"));
     vi.stubEnv("PRIVY_AUTHORIZATION_PRIVATE_KEY", "wallet-auth:sensitive");
 
-    const body = await (await GET()).json();
+    const body = await (await operator()).json();
     const serialized = JSON.stringify(body);
 
     for (const value of Object.values(body.live)) {
@@ -47,25 +83,27 @@ describe("GET /api/health", () => {
     expect(serialized).not.toContain("s".repeat(20));
   });
 
-  it("refuses to call a short CRON_SECRET configured", async () => {
+  /** A short secret cannot authorize the operator view, so the report is never reachable with one. */
+  it("refuses the operator view when CRON_SECRET is too short", async () => {
     vi.stubEnv("CRON_SECRET", "test");
-    const body = await (await GET()).json();
-    expect(body.live.cronSecret).toBe(false);
-    expect(body.live.blockers).toContain("cronSecret");
+    const body = await (
+      await GET(new Request("http://localhost/api/health", { headers: { authorization: "Bearer test" } }))
+    ).json();
+    expect(body).not.toHaveProperty("live");
   });
 
   /** A deploy still on fixtures must never report itself ready to trade real money. */
   it("is not live-ready while the x402 and LLM mocks are on", async () => {
     vi.stubEnv("X402_MOCK", "1");
     vi.stubEnv("LLM_MOCK", "1");
-    const body = await (await GET()).json();
+    const body = await (await operator()).json();
     expect(body.live.ready).toBe(false);
     expect(body.live.blockers).toEqual(expect.arrayContaining(["dataPaid", "realModel"]));
   });
 
   it("treats DEV_IMPERSONATE_USER_ID as a live blocker", async () => {
     vi.stubEnv("DEV_IMPERSONATE_USER_ID", "did:privy:seed-you");
-    const body = await (await GET()).json();
+    const body = await (await operator()).json();
     expect(body.impersonation).toBe(true);
     expect(body.live.blockers).toContain("noImpersonation");
   });

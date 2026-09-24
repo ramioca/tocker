@@ -43,8 +43,10 @@ export async function POST(
     const { runId } = await startRun({ agentId: id, trigger: "manual" });
     return NextResponse.json({ ok: true, runId });
   } catch (err) {
+    // A database or runtime throw: the detail is for the log, not the response body.
+    console.error("[api/agents/run] could not start run", err);
     return NextResponse.json(
-      { ok: false, error: err instanceof Error ? err.message : "failed to start run" },
+      { ok: false, error: "The agent runtime is unavailable. Try again in a minute." },
       { status: 500 },
     );
   }

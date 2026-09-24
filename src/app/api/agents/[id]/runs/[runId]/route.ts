@@ -78,11 +78,9 @@ export async function GET(
   );
 
   // Public on purpose: the one-line rationale and the score are the record, after the fact.
-  // The per-trade `error` is not — same rule as the run's.
-  const tradeList: TradeRow[] = tradeRows.map((r) => ({
-    ...toTradeRow(r.trade, toTokenRef(r.token)),
-    error: visibleError(r.trade.error, isOwner),
-  }));
+  // The per-trade `error` and the strategy-shaped parts of the score are not — `toTradeRow`
+  // applies the same owner rule as the run's.
+  const tradeList: TradeRow[] = tradeRows.map((r) => toTradeRow(r.trade, toTokenRef(r.token), { isOwner }));
 
   const detail: RunDetail = {
     id: run.id,

@@ -49,8 +49,10 @@ export async function updateProfile(input: {
     patch.bio = bio || null;
   }
   if (input.avatarUrl !== undefined) {
-    const url = input.avatarUrl.trim();
+    const url = typeof input.avatarUrl === "string" ? input.avatarUrl.trim() : "";
     if (url && !/^https?:\/\//i.test(url)) return fail("Avatar URL must start with http(s)://");
+    // Rendered on every post and profile; the practical browser limit is about this.
+    if (url.length > 2048) return fail("Avatar URL must be 2048 characters or fewer");
     patch.avatarUrl = url || null;
   }
 
@@ -75,6 +77,9 @@ export async function addLlmKey(input: {
   const key = input.key?.trim();
   if (!key || key.length < 16) return fail("That does not look like an API key");
   if (!["anthropic", "openai", "openrouter"].includes(input.provider)) return fail("Unknown provider");
+  if (input.label !== undefined && (typeof input.label !== "string" || input.label.trim().length > 60)) {
+    return fail("Label must be 60 characters or fewer");
+  }
 
   // An Anthropic key made at the organization level must name a workspace on every
   // request. Nobody should have to know that: one free request says whether this key

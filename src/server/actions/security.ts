@@ -1,12 +1,15 @@
 "use server";
 /**
- * Security actions: the kill switch, the MFA-gated money actions, and the
- * first-live-trade wizard's writes.
+ * Security actions: the kill switch, the MFA status reads, the audited money
+ * actions, and the first-live-trade wizard's writes.
  *
  * Every one of these begins with `getSession()`, re-checks ownership against the
  * database, and writes an audit row. The two that move real money
- * (`goLiveAction`, `secureWithdrawAction`) also call `secondFactorBlock()` first
- * and fail closed if Privy cannot be reached.
+ * (`goLiveAction`, `secureWithdrawAction`) also call `secondFactorBlock()`, but that
+ * is NOT a gate: it always returns `null` and only records enrolment, because a second
+ * factor is optional by product decision (see `src/lib/security/mfa.ts` and DEPLOY.md).
+ * Neither action is refused for a missing second factor, and nothing here fails closed
+ * on Privy's MFA read.
  *
  * `agent-actions.ts` still exposes the older `setAgentModeAction` /
  * `withdrawAction`, which are not gated. The UI in this workstream no longer
@@ -15,9 +18,9 @@
  */
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
-import { agents, getDb } from "@/db";
+import { agents, getDb, trades } from "@/db";
 import { getSession } from "@/lib/auth";
-import { agentConfigSchema } from "@/lib/agent/config";
+import { agentConfigSchema, chainSchema } from "@/lib/agent/config";
 import { withdrawFromAgent as sendWithdrawal, type WithdrawResult } from "@/lib/wallets";
 import { recordAudit, listAuditEvents, type AuditRow } from "@/lib/security/audit";
 import { getKillSwitch, setTradingPaused } from "@/lib/security/kill-switch";
@@ -29,6 +32,7 @@ import {
 } from "@/lib/security/live-readiness";
 import type { ActionResult, Chain } from "@/server/types";
 import type { AgentConfig, TradeReceiptData } from "@/db/schema";
+import { transferErrorMessage } from "./_shared";
 
 function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
@@ -262,10 +266,10 @@ export async function applyFirstTradePresetAction(agentId: string): Promise<Acti
 /**
  * Switch an agent to live mode.
  *
- * Refuses unless, at this moment: the caller owns the agent, a second factor is
- * enrolled, and every readiness check passes. The checks are re-run here rather
- * than trusted from the wizard's last render — the browser could be showing a
- * checklist from five minutes and one withdrawal ago.
+ * Refuses unless, at this moment: the caller owns the agent and every readiness
+ * check passes. A second factor is not required — `secondFactorBlock` only records
+ * it. The checks are re-run here rather than trusted from the wizard's last render —
+ * the browser could be showing a checklist from five minutes and one withdrawal ago.
  */
 export async function goLiveAction(input: {
   agentId: string;
@@ -332,7 +336,7 @@ export async function goLiveAction(input: {
   return { ok: true, data: { mode: "live" } };
 }
 
-/** Back to paper. No second factor required — stopping is never the dangerous direction. */
+/** Back to paper. Owner-only, nothing more — stopping is never the dangerous direction. */
 export async function backToPaperAction(agentId: string): Promise<ActionResult<{ mode: "paper" }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
@@ -381,7 +385,8 @@ export async function pauseAgentAction(agentId: string): Promise<ActionResult<{ 
 // ------------------------------------------------------------------ withdraw
 
 /**
- * Withdraw from an agent wallet, behind the second-factor gate and the audit log.
+ * Withdraw from an agent wallet, on the audit log. `secondFactorBlock` is called for
+ * the record only; it never refuses (a second factor is optional).
  *
  * The address is validated per chain before anything is signed: a Base address
  * pasted into a Solana withdrawal is an irrecoverable loss, and the shape check
@@ -400,7 +405,11 @@ export async function secureWithdrawAction(input: {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
-  if (!(input.amount > 0)) return fail("Enter an amount greater than zero");
+  // `chain` picks the address check below and the wallet that signs; the type is gone at
+  // the wire, and an unknown value would skip both address regexes.
+  if (!chainSchema.safeParse(input.chain).success) return fail("Unknown chain");
+  if (input.asset !== "usdc" && input.asset !== "native") return fail("Unknown asset");
+  if (!(input.amount > 0) || !Number.isFinite(input.amount)) return fail("Enter an amount greater than zero");
   const to = input.toAddress?.trim();
   if (!to) return fail("Enter a destination address");
   if (input.chain === "base" && !/^0x[a-fA-F0-9]{40}$/.test(to)) return fail("That is not a valid Base address");
@@ -451,7 +460,9 @@ export async function secureWithdrawAction(input: {
     return { ok: true, data: result };
   } catch (err) {
     console.error("[secureWithdrawAction]", err);
-    return fail(err instanceof Error ? err.message : "Withdrawal failed");
+    return fail(
+      transferErrorMessage(err, "The withdrawal did not go through. Nothing was sent — try again in a minute.", input.chain, input.asset),
+    );
   }
 }
 
@@ -490,8 +501,8 @@ export async function noteBudgetChangeAction(input: {
 
 /**
  * The execution receipt for one of the caller's own trades, for the wizard's final
- * step. Ownership is checked against the agent before the receipt is read, so this
- * is not a second path onto someone else's fill detail.
+ * step. Ownership is checked against the agent, and the trade against that agent,
+ * before the receipt is read — owning *an* agent must not open any trade id's receipt.
  */
 export async function tradeReceiptAction(
   agentId: string,
@@ -502,6 +513,14 @@ export async function tradeReceiptAction(
 
   const { error, agent } = await ownedAgent(agentId, session.userId);
   if (error || !agent) return fail(error ?? "Agent not found");
+
+  const db = await getDb();
+  const [trade] = await db
+    .select({ id: trades.id })
+    .from(trades)
+    .where(and(eq(trades.id, tradeId), eq(trades.agentId, agentId)))
+    .limit(1);
+  if (!trade) return fail("Trade not found");
 
   const { receiptsFor } = await import("@/server/queries/trading");
   const receipts = await receiptsFor([tradeId]);

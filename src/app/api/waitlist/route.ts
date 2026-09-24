@@ -2,10 +2,26 @@ import { appendFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse, after } from "next/server";
 import { nanoid } from "nanoid";
+import { sql } from "drizzle-orm";
+import { z } from "zod";
 import { getDb, waitlistSignups } from "@/db";
 import { notifyWaitlistSignup } from "@/lib/waitlist/notify";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Bounded strings rather than enums of the landing form's chip labels: the form owns
+ * that copy and may reword it, and a signup must never be lost to a label change. The
+ * bounds are what matter — this is an unauthenticated write into our database and into
+ * the founder's inbox, so nothing in it may be arbitrarily large. 254 is the longest a
+ * deliverable address can be (RFC 5321).
+ */
+const signupSchema = z.object({
+  email: z.string().trim().max(254).regex(EMAIL_RE),
+  volume: z.string().trim().min(1).max(64),
+  chains: z.array(z.string().trim().min(1).max(16)).max(5).optional().default([]),
+  style: z.string().trim().max(64).nullish(),
+});
 
 /**
  * Landing-page waitlist capture. Deliberately tiny: email + monthly volume are
@@ -26,27 +42,34 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Invalid request." }, { status: 400 });
   }
 
-  const b = body as Record<string, unknown>;
-  const email = typeof b.email === "string" ? b.email.trim() : "";
-  const volume = typeof b.volume === "string" ? b.volume : null;
-
-  if (!EMAIL_RE.test(email)) {
-    return NextResponse.json({ ok: false, error: "Enter a valid email." }, { status: 400 });
-  }
-  if (!volume) {
-    return NextResponse.json({ ok: false, error: "Pick your monthly volume." }, { status: 400 });
+  const parsed = signupSchema.safeParse(body);
+  if (!parsed.success) {
+    const field = parsed.error.issues[0]?.path[0];
+    const error =
+      field === "email" ? "Enter a valid email." : field === "volume" ? "Pick your monthly volume." : "Invalid request.";
+    return NextResponse.json({ ok: false, error }, { status: 400 });
   }
 
   const entry = {
-    email,
-    volume,
-    chains: Array.isArray(b.chains) ? b.chains.filter((c) => typeof c === "string").slice(0, 8) : [],
-    style: typeof b.style === "string" ? b.style : null,
+    email: parsed.data.email,
+    volume: parsed.data.volume,
+    chains: parsed.data.chains,
+    style: parsed.data.style || null,
     at: new Date().toISOString(),
   };
 
   try {
     const db = await getDb();
+    // Select-before-insert rather than a unique index (which would need a migration).
+    // A repeat signup gets the same answer as a first one — no insert, no second email —
+    // so the endpoint neither spams the inbox nor tells anyone which addresses are on it.
+    const [already] = await db
+      .select({ id: waitlistSignups.id })
+      .from(waitlistSignups)
+      .where(sql`lower(${waitlistSignups.email}) = ${entry.email.toLowerCase()}`)
+      .limit(1);
+    if (already) return NextResponse.json({ ok: true });
+
     await db.insert(waitlistSignups).values({
       id: nanoid(),
       email: entry.email,

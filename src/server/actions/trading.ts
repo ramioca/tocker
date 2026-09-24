@@ -48,6 +48,10 @@ import type {
   TokenScore,
   TradePreview,
 } from "@/server/types";
+import { ACTION_LIMITS, publicErrorMessage, slowDown } from "./_shared";
+
+/** A manual trade's note is its public rationale on the feed. */
+const MAX_NOTE = 280;
 
 function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
@@ -114,6 +118,8 @@ export interface PreviewTradeInput {
 export async function previewTrade(input: PreviewTradeInput): Promise<ActionResult<TradePreview>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
+  const limited = slowDown("preview", session.userId, ACTION_LIMITS.preview);
+  if (limited) return fail(limited);
 
   const agent = await ownedAgent(input.agentId, session.userId);
   if (!agent) return fail("You do not own this agent");
@@ -125,7 +131,9 @@ export async function previewTrade(input: PreviewTradeInput): Promise<ActionResu
   try {
     token = await resolveToken(input.chain, input.tokenAddress);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Could not resolve that token.");
+    // `resolveToken`'s own refusal is a sentence worth reading; a lookup or DB failure is not.
+    console.error("[trading] resolveToken", err);
+    return fail(publicErrorMessage(err, "Could not look that token up right now. Try again in a minute."));
   }
 
   const config: AgentConfig = agent.config;
@@ -230,6 +238,9 @@ export async function placeManualTrade(
 
   const amountUsd = Number(input.amountUsd);
   if (!Number.isFinite(amountUsd) || amountUsd <= 0) return fail("Enter an amount greater than zero.");
+  if (input.note !== undefined && (typeof input.note !== "string" || input.note.trim().length > MAX_NOTE)) {
+    return fail(`Keep the note to ${MAX_NOTE} characters or fewer.`);
+  }
 
   const db = await getDb();
   const config: AgentConfig = agent.config;
@@ -238,7 +249,9 @@ export async function placeManualTrade(
   try {
     token = await resolveToken(input.chain, input.tokenAddress);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "Could not resolve that token.");
+    // `resolveToken`'s own refusal is a sentence worth reading; a lookup or DB failure is not.
+    console.error("[trading] resolveToken", err);
+    return fail(publicErrorMessage(err, "Could not look that token up right now. Try again in a minute."));
   }
   const quoteTokenId = await ensureQuoteToken(input.chain);
 
@@ -305,7 +318,9 @@ export async function placeManualTrade(
   try {
     executor = await getExecutor(executorAgent, input.chain);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : "No venue available for this chain.");
+    // A missing live wallet (`LiveWalletError`) explains itself; anything else stays in the log.
+    console.error("[placeManualTrade] getExecutor", err);
+    return fail(publicErrorMessage(err, "No venue available for this chain right now."));
   }
 
   const tradeId = nanoid();
