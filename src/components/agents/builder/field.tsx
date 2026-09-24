@@ -22,6 +22,7 @@ export function clampToStep(value: number, min: number, max: number, step: numbe
  */
 function EditableValue({
   id,
+  label,
   value,
   min,
   max,
@@ -30,6 +31,7 @@ function EditableValue({
   onChange,
 }: {
   id: string;
+  label: string;
   value: number;
   min: number;
   max: number;
@@ -49,7 +51,7 @@ function EditableValue({
   return (
     <input
       id={`${id}-value`}
-      aria-label="Exact value"
+      aria-label={`${label}, exact value`}
       type="text"
       inputMode="decimal"
       value={text ?? format(value)}
@@ -150,13 +152,24 @@ export function RiskSlider({
   return (
     <div className="rounded-xl border border-border/70 bg-card/30 p-3">
       <div className="flex items-baseline justify-between gap-3">
-        <label htmlFor={id} className="text-sm font-medium">
+        {/* Names both controls: the typed value (htmlFor) and the slider (aria-labelledby). */}
+        <label id={`${id}-label`} htmlFor={`${id}-value`} className="text-sm font-medium">
           {label}
         </label>
-        <EditableValue id={id} value={value} min={min} max={max} step={step} format={format} onChange={onChange} />
+        <EditableValue
+          id={id}
+          label={label}
+          value={value}
+          min={min}
+          max={max}
+          step={step}
+          format={format}
+          onChange={onChange}
+        />
       </div>
       <Slider
-        id={id}
+        aria-labelledby={`${id}-label`}
+        getAriaValueText={(_, v) => format(v)}
         className="mt-3"
         value={[value]}
         min={min}

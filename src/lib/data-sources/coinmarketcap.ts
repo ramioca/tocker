@@ -34,6 +34,7 @@ const quotesInput = z.object({
 export const cmcQuotes = defineSource({
   id: "cmc-quotes",
   name: "CoinMarketCap quotes",
+  summary: "Price, volume, market cap and 1h/24h/7d change for listed tokens.",
   description: "Latest CMC market quotes (price, 24h volume, 1h/24h/7d change, market cap) for up to 10 symbols.",
   category: "prices",
   network: "eip155:8453",
@@ -87,6 +88,7 @@ const dexInput = z.object({
 export const cmcDexSearch = defineSource({
   id: "cmc-dex-search",
   name: "CoinMarketCap DEX search",
+  summary: "Finds DEX-listed tokens by name, symbol or contract, with price and liquidity.",
   description: "Search DEX-listed tokens by name, symbol or contract and get price, liquidity and 24h volume.",
   category: "onchain",
   network: "eip155:8453",

@@ -21,17 +21,25 @@ import { NAV_ITEMS, isActivePath } from "./nav-items";
  * unread badge below stays wired to `/notifications` rather than being deleted:
  * the tab list is data, and the day it comes back the count comes back with it.
  */
-export function MobileTabBar({ unreadCount }: { unreadCount: number }) {
+export function MobileTabBar({
+  unreadCount,
+  ownedSlugs,
+}: {
+  unreadCount: number;
+  ownedSlugs?: ReadonlySet<string>;
+}) {
   const pathname = usePathname();
   const items = NAV_ITEMS.filter((item) => item.mobile);
 
   return (
     <nav
       aria-label="Primary"
+      // The toaster reads this to lift its toasts clear of the bar (see Providers).
+      data-tab-bar
       className="glass-bar fixed inset-x-0 bottom-0 z-40 flex border-t border-border/60 pb-[env(safe-area-inset-bottom)] md:hidden"
     >
       {items.map((item) => {
-        const active = isActivePath(pathname, item.href);
+        const active = isActivePath(pathname, item.href, ownedSlugs);
         const Icon = item.icon;
         return (
           <Link

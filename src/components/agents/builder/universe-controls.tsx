@@ -79,26 +79,36 @@ function LadderSlider({
   disabled?: boolean;
   action?: React.ReactNode;
 }) {
-  const index = nearestIndex(ladder, value);
+  // A stored gate that is not on the ladder (a seed, a preset, an older default) stays
+  // a stop of its own, so the header reads what is actually enforced and the thumb can
+  // come back to it; snapping it to the nearest rung would rewrite the gate on first
+  // touch. Remembered rather than derived from `value`, or it would vanish the moment
+  // the thumb moved off it. A new off-ladder value from outside (a preset) replaces it.
+  const [extra, setExtra] = useState(value);
+  if (!ladder.includes(value) && value !== extra) setExtra(value);
+  const stops = ladder.includes(extra) ? ladder : [...ladder, extra].sort((a, b) => a - b);
+  const index = nearestIndex(stops, value);
   return (
     <GateShell
       id={id}
       label={label}
-      display={format(ladder[index])}
+      display={format(value)}
       meaning={meaning}
       disabled={disabled}
       action={action}
     >
       <Slider
-        id={id}
+        aria-labelledby={`${id}-label`}
+        // The slider's value is a rung index; announce the rung, "$50K", not "4".
+        getAriaValueText={(_, i) => format(stops[i] ?? value)}
         value={[index]}
         min={0}
-        max={ladder.length - 1}
+        max={stops.length - 1}
         step={1}
         disabled={disabled}
         onValueChange={(next) => {
           const first = Array.isArray(next) ? next[0] : next;
-          if (typeof first === "number") onChange(ladder[first]);
+          if (typeof first === "number") onChange(stops[first]);
         }}
       />
     </GateShell>
@@ -131,7 +141,8 @@ function LinearSlider({
   return (
     <GateShell id={id} label={label} display={format(value)} meaning={meaning} disabled={disabled}>
       <Slider
-        id={id}
+        aria-labelledby={`${id}-label`}
+        getAriaValueText={(_, v) => format(v)}
         value={[value]}
         min={min}
         max={max}
@@ -172,13 +183,13 @@ function GateShell({
       )}
     >
       <div className="flex items-baseline justify-between gap-3">
-        <label htmlFor={id} className="text-sm font-medium">
+        {/* The slider is named by aria-labelledby; Base UI puts an id on its root div,
+            which a <label htmlFor> cannot label. */}
+        <span id={`${id}-label`} className="text-sm font-medium">
           {label}
-        </label>
+        </span>
         <span className="flex items-center gap-2">
-          <output htmlFor={id} className="tnum font-mono text-sm">
-            {display}
-          </output>
+          <output className="tnum font-mono text-sm">{display}</output>
           {action}
         </span>
       </div>
@@ -443,7 +454,7 @@ export function UniverseControls({
                 <span className="text-xs leading-relaxed text-muted-foreground">
                   {feed.description}
                 </span>
-                <span className="text-[11px] leading-relaxed text-muted-foreground/70">
+                <span className="text-[11px] leading-relaxed text-muted-foreground">
                   {feed.caveat}
                 </span>
               </button>
@@ -470,12 +481,11 @@ export function UniverseControls({
           }}
         >
           <div className="flex items-baseline justify-between gap-3">
-            <label htmlFor={id("min-score")} className="text-sm font-medium">
+            <span id={`${id("min-score")}-label`} className="text-sm font-medium">
               Minimum score
-            </label>
+            </span>
             <span className="flex items-baseline gap-2">
               <output
-                htmlFor={id("min-score")}
                 className="tnum font-mono text-2xl font-semibold"
                 style={{ color: verdictMeta.color }}
               >
@@ -486,7 +496,8 @@ export function UniverseControls({
           </div>
 
           <Slider
-            id={id("min-score")}
+            aria-labelledby={`${id("min-score")}-label`}
+            getAriaValueText={(_, v) => `${Math.round(v)} out of 100`}
             className="mt-3"
             value={[universe.minScore]}
             min={0}
@@ -670,7 +681,7 @@ export function UniverseControls({
           </p>
         )}
 
-        <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground/75">
+        <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
           How many tokens a day actually clear this depends on the market, so we will not guess.
           The first sweep will tell you, on the agent&rsquo;s page.
         </p>

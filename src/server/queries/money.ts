@@ -463,7 +463,10 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
   const ids = rows.map((r) => r.id);
   const since = new Date(startOfUtcDayMs(Date.now()) - (SNAPSHOT_WINDOW_DAYS - 1) * DAY_MS);
   const bucketSeconds = Math.round(EQUITY_BUCKET_MS / 1000);
-  const bucketExpr = sql<string>`floor(extract(epoch from ${equitySnapshots.at}) / ${bucketSeconds})`;
+  // Inlined, not bound: this expression appears in both SELECT and GROUP BY, and each
+  // bound use becomes its own `$n`, so Postgres would see two different expressions and
+  // refuse the query. `bucketSeconds` is a server constant, never user input.
+  const bucketExpr = sql<string>`floor(extract(epoch from ${equitySnapshots.at}) / ${sql.raw(String(bucketSeconds))})`;
 
   const [
     snapshotRows,

@@ -21,22 +21,8 @@ export const positionSizingSchema = z.object({
 });
 export const llmProviderSchema = z.enum(["anthropic", "openai", "openrouter"]);
 
-export const DEFAULT_MODELS: Record<z.infer<typeof llmProviderSchema>, { id: string; label: string }[]> = {
-  anthropic: [
-    { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
-    { id: "claude-opus-5", label: "Claude Opus 5" },
-    { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
-  ],
-  openai: [
-    { id: "gpt-5", label: "GPT-5" },
-    { id: "gpt-5-mini", label: "GPT-5 mini" },
-  ],
-  openrouter: [
-    { id: "anthropic/claude-sonnet-5", label: "Claude Sonnet 5 (OpenRouter)" },
-    { id: "nousresearch/hermes-4-405b", label: "Hermes 4 405B" },
-    { id: "deepseek/deepseek-v4", label: "DeepSeek V4" },
-  ],
-};
+// The id → label list lives in a leaf module so display code can use it without zod.
+export { DEFAULT_MODELS } from "./models";
 
 export const agentConfigSchema = z.object({
   strategyPrompt: z.string().min(20, "Describe the strategy in at least a sentence").max(8000),

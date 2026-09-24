@@ -1,6 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { CircleStop } from "lucide-react";
+import { RelativeTime } from "@/components/common/relative-time";
 import { CommandMenu } from "./command-menu";
 import { MobileTabBar } from "./mobile-tab-bar";
 import { RunIsland } from "./run-island";
@@ -10,13 +13,22 @@ import type { CommandIndex } from "./command-index";
 export function AppShell({
   unreadCount,
   index,
+  ownedSlugs,
+  tradingPaused = false,
+  pausedAt = null,
   children,
 }: {
   unreadCount: number;
   index: CommandIndex;
+  /** The viewer's agent slugs, so "My agents" is only lit on agents they own. */
+  ownedSlugs?: string[];
+  /** The account-wide kill switch (Settings → Security). */
+  tradingPaused?: boolean;
+  pausedAt?: string | null;
   children: ReactNode;
 }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const owned = useMemo(() => (ownedSlugs ? new Set(ownedSlugs) : undefined), [ownedSlugs]);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
 
   useEffect(() => {
@@ -43,14 +55,55 @@ export function AppShell({
         Skip to content
       </a>
 
-      <TopBar unreadCount={unreadCount} onOpenSearch={() => setPaletteOpen(true)} />
-      <main id="main" tabIndex={-1} className="min-w-0 flex-1 pb-24 outline-none md:pb-0">
+      <TopBar unreadCount={unreadCount} onOpenSearch={() => setPaletteOpen(true)} ownedSlugs={owned} />
+      {tradingPaused ? <TradingPausedBanner pausedAt={pausedAt} /> : null}
+      {/* While an island is docked at the bottom, the end of every page scrolls clear of it. */}
+      <main
+        id="main"
+        tabIndex={-1}
+        className="min-w-0 flex-1 pb-24 outline-none md:pb-0 [body:has([data-run-island])_&]:pb-32 md:[body:has([data-run-island])_&]:pb-20"
+      >
         {children}
       </main>
 
-      <MobileTabBar unreadCount={unreadCount} />
+      <MobileTabBar unreadCount={unreadCount} ownedSlugs={owned} />
       <RunIsland />
       <CommandMenu open={paletteOpen} onClose={closePalette} index={index} />
+    </div>
+  );
+}
+
+/**
+ * The kill switch, visible from everywhere. Pausing is rare and forgetting it is the
+ * failure: every agent page keeps looking healthy while nothing trades. So it is a
+ * static strip under the bar on every page — no motion, it is a state, not an event —
+ * with the way back one click away.
+ */
+function TradingPausedBanner({ pausedAt }: { pausedAt: string | null }) {
+  return (
+    <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <CircleStop aria-hidden className="size-4 shrink-0 text-destructive" />
+        <p className="min-w-0 flex-1">
+          <span className="font-medium">All trading is paused.</span>{" "}
+          {/* One line on a phone: the state and the way back; the detail is on the card. */}
+          <span className="text-muted-foreground max-sm:sr-only">
+            No agent runs until you resume; exits still fire.
+            {pausedAt ? (
+              <>
+                {" "}
+                Paused <RelativeTime iso={pausedAt} className="tnum" />.
+              </>
+            ) : null}
+          </span>
+        </p>
+        <Link
+          href="/settings/security#kill-switch"
+          className="shrink-0 rounded-md font-medium text-foreground underline decoration-destructive/50 underline-offset-4 transition-colors duration-150 hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Resume in Security
+        </Link>
+      </div>
     </div>
   );
 }

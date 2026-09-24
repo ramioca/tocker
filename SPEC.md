@@ -229,6 +229,8 @@ the same numbers.
 - Feed query: posts joined with author, agent, trade+token, like-by-me; cursor pagination on `createdAt`; `scope: 'global' | 'following'`.
 - Forking does not exist. `forkAgent`, `isForkable`, `forkedFromId` and the `fork` notification kind are all removed. "Copy this agent" must not reappear in any form.
 - Leaderboard: from `equity_snapshots`: PnL% = (latest − snapshot at window start) / snapshot at window start; ties by trade count. Public + active agents only.
+- Notification preferences (2026-09-24): `users.notification_prefs` (jsonb, `{ [kind]: false }` per muted kind; `{}` = everything on). A read-side filter applied by `getNotifications` and the unread count; rows are still written. `proposal`, `exit_failed` and `trade_unsettled` are always delivered. Groups and sanitising live in `src/lib/notifications/prefs.ts`; the write is `updateNotificationPrefs`.
+- Likes and follows are set, not toggled, from the UI: `setLike(postId, liked)` and `setFollow(type, id, following)` insert on conflict do nothing (notifying only on a real insert) or delete. Like and comment notifications link to `/feed/<postId>`.
 
 ## Design direction
 Dark-first, high contrast, "trading terminal meets social app". Green/red only for PnL. One accent color (violet `oklch(0.7 0.19 300)`). Geist Sans + Geist Mono for numbers (`tabular-nums`). Motion budget per emil-design-eng: no animation on hot paths (feed scroll, tab switch), spring on state changes (trade filled, follow), Dynamic Island for live run status. Every list has empty/loading/error states (Spectrum `skeleton-reveal`, `chart-states`).

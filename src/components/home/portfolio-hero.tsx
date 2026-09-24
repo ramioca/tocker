@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { ArrowUpRight, Coins, Layers, Wallet } from "lucide-react";
+import { ArrowUpRight, Coins, FlaskConical, Layers, Wallet } from "lucide-react";
 import { Sparkline } from "@/components/social-common/sparkline";
 import { PnlText } from "@/components/common/pnl-text";
+import { ModeBadge } from "@/components/common/mode-badge";
 import { formatUsd, truncateAddress } from "@/components/common/format";
 import { cn } from "@/lib/utils";
 import type { HomeOverview } from "@/server/queries/home";
@@ -45,21 +46,25 @@ function Well({
 }
 
 export function PortfolioHero({ overview }: { overview: HomeOverview }) {
-  const {
-    totalEquityUsd,
-    cashUsd,
-    allocatedUsd,
-    pnlUsd,
-    pnlPct,
-    realizedPnlUsd,
-    unrealizedPnlUsd,
-    sparkline,
-    cashByWallet,
-    hasWallets,
-    counts,
-  } = overview;
+  const { cashUsd, allocatedUsd, cashByWallet, hasWallets, counts, paper } = overview;
 
-  const points = sparkline.map((p) => p.equityUsd);
+  // Real money and paper are never added together. An account with nothing real yet —
+  // no live agent, no cash — leads with its paper book, labelled as such, rather than a
+  // bare $0.00; everyone else leads with real money and sees paper in its own well.
+  const paperOnly = counts.live === 0 && cashUsd === 0 && counts.paper > 0;
+  const book = paperOnly
+    ? paper
+    : {
+        equityUsd: overview.totalEquityUsd,
+        pnlUsd: overview.pnlUsd,
+        pnlPct: overview.pnlPct,
+        realizedPnlUsd: overview.realizedPnlUsd,
+        unrealizedPnlUsd: overview.unrealizedPnlUsd,
+        sparkline: overview.sparkline,
+      };
+  const showPaperWell = !paperOnly && counts.paper > 0;
+
+  const points = book.sparkline.map((p) => p.equityUsd);
 
   return (
     <section
@@ -71,16 +76,19 @@ export function PortfolioHero({ overview }: { overview: HomeOverview }) {
         <div className="min-w-0">
           <h2
             id="portfolio-heading"
-            className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+            className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
           >
-            Total equity
+            {paperOnly ? "Paper equity" : "Total equity"}
+            {paperOnly ? <ModeBadge mode="paper" size="xs" /> : null}
           </h2>
           <p className="tnum mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
-            {formatUsd(totalEquityUsd)}
+            {formatUsd(book.equityUsd)}
           </p>
           <p className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <PnlText usd={pnlUsd} pct={pnlPct} size="sm" />
-            <span className="text-xs text-muted-foreground">all time, across every agent</span>
+            <PnlText usd={book.pnlUsd} pct={book.pnlPct} size="sm" />
+            <span className="text-xs text-muted-foreground">
+              {paperOnly ? "all time, paper agents (simulated)" : "all time, live agents"}
+            </span>
           </p>
         </div>
 
@@ -99,7 +107,7 @@ export function PortfolioHero({ overview }: { overview: HomeOverview }) {
           <Sparkline
             id="home-equity"
             points={points}
-            pnl={pnlUsd}
+            pnl={book.pnlUsd}
             width={1200}
             height={96}
             stretch
@@ -109,13 +117,20 @@ export function PortfolioHero({ overview }: { overview: HomeOverview }) {
           <div className="mx-3 flex h-20 items-center justify-center rounded-xl border border-dashed border-[var(--glass-hairline)] px-4 text-center text-xs text-muted-foreground sm:h-24">
             {counts.total === 0
               ? "The curve starts the moment your first agent takes a snapshot."
-              : "Not enough snapshots yet — the curve fills in after the next run."}
+              : !paperOnly && counts.live === 0
+                ? "The curve starts when an agent goes live."
+                : "Not enough snapshots yet — the curve fills in after the next run."}
           </div>
         )}
       </div>
 
       {/* footer: the decomposition */}
-      <div className="grid grid-cols-2 gap-2 px-5 pb-5 pt-4 sm:grid-cols-4 sm:px-6 sm:pb-6">
+      <div
+        className={cn(
+          "grid grid-cols-2 gap-2 px-5 pb-5 pt-4 sm:px-6 sm:pb-6",
+          showPaperWell ? "sm:grid-cols-5" : "sm:grid-cols-4",
+        )}
+      >
         <Well
           icon={Wallet}
           label="Cash"
@@ -140,13 +155,31 @@ export function PortfolioHero({ overview }: { overview: HomeOverview }) {
           {formatUsd(allocatedUsd)}
         </Well>
 
-        <Well icon={Coins} label="Realised" footnote="closed positions">
-          <PnlText usd={realizedPnlUsd} size="md" />
+        <Well icon={Coins} label="Realised" footnote={paperOnly ? "closed paper positions" : "closed positions"}>
+          <PnlText usd={book.realizedPnlUsd} size="md" />
         </Well>
 
-        <Well icon={Coins} label="Unrealised" footnote="open positions, at the last mark">
-          <PnlText usd={unrealizedPnlUsd} size="md" />
+        <Well
+          icon={Coins}
+          label="Unrealised"
+          footnote={paperOnly ? "open paper positions, at the last mark" : "open positions, at the last mark"}
+        >
+          <PnlText usd={book.unrealizedPnlUsd} size="md" />
         </Well>
+
+        {showPaperWell ? (
+          <Well
+            icon={FlaskConical}
+            label="Paper (simulated)"
+            className="col-span-2 sm:col-span-1"
+            footnote={<PnlText usd={paper.pnlUsd} size="xs" />}
+          >
+            <span className="flex items-center gap-1.5">
+              {formatUsd(paper.equityUsd)}
+              <ModeBadge mode="paper" size="xs" />
+            </span>
+          </Well>
+        ) : null}
       </div>
     </section>
   );

@@ -32,7 +32,20 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-export function isActivePath(pathname: string, href: string): boolean {
+/**
+ * Whether `href`'s nav entry should read as the current page.
+ *
+ * "My agents" means mine: the list, the builder, and agent pages this viewer owns.
+ * Someone else's agent is reached from Discover or the feed, and lighting "My agents"
+ * there would claim it as yours — so when the caller knows the viewer's slugs, any
+ * other `/agents/<slug>` lights nothing. Without them it falls back to the prefix.
+ */
+export function isActivePath(pathname: string, href: string, ownedSlugs?: ReadonlySet<string>): boolean {
   if (href === "/home") return pathname === "/home" || pathname === "/";
+  if (href === "/agents" && ownedSlugs) {
+    if (pathname === "/agents") return true;
+    const [, root, slug] = pathname.split("/");
+    return root === "agents" && slug !== undefined && (slug === "new" || ownedSlugs.has(slug));
+  }
   return pathname === href || pathname.startsWith(`${href}/`);
 }

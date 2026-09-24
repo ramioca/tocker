@@ -9,10 +9,19 @@ import { WalletsCard } from "@/components/agents/settings/wallets-card";
 import { WithdrawForm } from "@/components/agents/settings/withdraw-form";
 import { AgentAvatar } from "@/components/common/agent-avatar";
 import { EmptyState } from "@/components/common/empty-state";
-import { agentBySlug, agentWalletBudget, dataSources, llmKeys, viewerSession, walletBalances } from "@/components/common/data-access";
+import {
+  accountPaused,
+  agentBySlug,
+  agentWalletBudget,
+  dataSources,
+  llmKeys,
+  viewerSession,
+  walletBalances,
+} from "@/components/common/data-access";
 import { BudgetCard } from "@/components/agents/settings/budget-card";
 import { HashScroll } from "@/components/agents/settings/hash-scroll";
 import { MoneyStrip } from "@/components/agents/settings/money-strip";
+import { isAdminEmail } from "@/lib/admin";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -49,11 +58,12 @@ export default async function AgentSettingsPage({ params }: Params) {
   // rendering an editor over someone else's strategy.
   if (!agent.config) notFound();
 
-  const [balances, walletBudget, sources, keys] = await Promise.all([
+  const [balances, walletBudget, sources, keys, paused] = await Promise.all([
     walletBalances(agent.id),
     agentWalletBudget(agent.id),
     dataSources(),
     llmKeys(session.userId),
+    accountPaused(session.userId),
   ]);
   const hasRealWallets = balances.some((wallet) => !wallet.walletId.startsWith("paper_"));
 
@@ -93,7 +103,14 @@ export default async function AgentSettingsPage({ params }: Params) {
         <HashScroll />
         <MoneyStrip agent={agent} initialBalances={balances} />
 
-        <AgentSettingsForm agent={agent} config={agent.config} sources={sources} llmKeys={keys} />
+        <AgentSettingsForm
+          agent={agent}
+          config={agent.config}
+          sources={sources}
+          llmKeys={keys}
+          accountPaused={paused}
+          isAdmin={isAdminEmail(session.email)}
+        />
 
         <div id="wallets" className="scroll-mt-20">
           <WalletsCard agentId={agent.id} agentName={agent.name} initialBalances={balances} />

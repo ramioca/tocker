@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { getMyLlmKeys, getUserProfile } from "@/server/queries/users";
+import { getMyLlmKeys, getNotificationPrefs, getUserProfile } from "@/server/queries/users";
 import { withMock } from "@/lib/data";
 import { mockLlmKeys, mockSession, mockUserProfile } from "@/mocks/social";
 import { SettingsSection } from "@/components/settings/settings-section";
@@ -18,7 +18,7 @@ export default async function SettingsPage() {
   const session = await withMock(getSession, mockSession);
   if (!session) redirect(`/login?next=${encodeURIComponent("/settings")}`);
 
-  const [keys, profile] = await Promise.all([
+  const [keys, profile, notificationPrefs] = await Promise.all([
     withMock(
       () => getMyLlmKeys(session.userId),
       () => mockLlmKeys(),
@@ -27,6 +27,10 @@ export default async function SettingsPage() {
       () => getUserProfile(session.handle, session.userId),
       () => mockUserProfile(session.handle),
     ),
+    withMock(
+      () => getNotificationPrefs(session.userId),
+      () => ({}),
+    ),
   ]);
 
   return (
@@ -34,7 +38,7 @@ export default async function SettingsPage() {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
-          Your profile, the keys your agents think with, and what we interrupt you for.
+          Your profile, the keys your agents think with, and what reaches your notifications.
         </p>
       </header>
 
@@ -60,9 +64,9 @@ export default async function SettingsPage() {
         <SettingsSection
           id="notifications"
           title="Notifications"
-          description="What lands in your notification list. Stored in this browser for now."
+          description="What reaches the bell and your notifications list. Turning one off hides it there; nothing is deleted."
         >
-          <NotificationPrefs />
+          <NotificationPrefs initial={notificationPrefs} />
         </SettingsSection>
 
         {/*

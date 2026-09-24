@@ -22,7 +22,7 @@ import { triggerRunAction } from "./agent-actions";
 import { cn } from "@/lib/utils";
 import type { AgentDetail } from "@/server/types";
 
-export function AgentHeader({ agent }: { agent: AgentDetail }) {
+export function AgentHeader({ agent, accountPaused = false }: { agent: AgentDetail; accountPaused?: boolean }) {
   const { watchRun } = useRunStatus();
   const [following, setFollowing] = useState(agent.isFollowedByViewer);
 
@@ -44,12 +44,12 @@ export function AgentHeader({ agent }: { agent: AgentDetail }) {
       agentName: agent.name,
       avatarSeed: agent.avatarSeed,
     });
-    toast.success("Run started", { description: "Watch it live in the island up top." });
+    toast.success("Run started", { description: "Watch it live in the island." });
   };
 
   const onFollow = async (next: boolean) => {
     setFollowing(next);
-    const result = await followUser("agent", agent.id);
+    const result = await followUser("agent", agent.id, next);
     if (!result.ok) {
       setFollowing(!next);
       toast.error("Follow failed", { description: result.error });
@@ -65,7 +65,7 @@ export function AgentHeader({ agent }: { agent: AgentDetail }) {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold tracking-tight">{agent.name}</h1>
             <ModeBadge mode={agent.mode} />
-            <StatusBadge status={agent.status} />
+            <StatusBadge status={agent.status} accountPaused={agent.isOwner && accountPaused} />
             {!agent.isPublic ? (
               <span className="rounded-md border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Private
@@ -154,7 +154,7 @@ export function AgentHeader({ agent }: { agent: AgentDetail }) {
           <PnlText usd={agent.pnlUsd} size="lg" className="block" />
           <PnlText pct={agent.pnlPct} size="xs" className="block" />
           <p className="tnum mt-1 text-xs text-muted-foreground">
-            {agent.followerCount.toLocaleString()} followers
+            {agent.followerCount.toLocaleString()} follower{agent.followerCount === 1 ? "" : "s"}
           </p>
         </div>
       </div>

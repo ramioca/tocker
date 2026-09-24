@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Check } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { formatUsd } from "@/components/common/format";
 import { chainLabelFor } from "@/lib/wallets/funding";
 import type { Chain, DataSourceInfo } from "@/server/types";
 
@@ -30,12 +31,15 @@ export function DataSourcePicker({
   chains,
   selected,
   onChange,
+  isAdmin = false,
 }: {
   sources: DataSourceInfo[];
   /** The chains the agent trades — the default filter. */
   chains: Chain[];
   selected: string[];
   onChange: (next: string[]) => void;
+  /** Platform wallet funding is an operator's job, so only admins are told about it. */
+  isAdmin?: boolean;
 }) {
   const [showAll, setShowAll] = useState(false);
   const picked = new Set(selected);
@@ -95,10 +99,10 @@ export function DataSourcePicker({
                 <span className="text-sm font-medium">{source.name}</span>
                 {active ? <Check aria-hidden className="size-3.5 text-primary" /> : null}
                 <span className="tnum ml-auto font-mono text-[11px] text-muted-foreground">
-                  {source.priceUsd === null ? "dynamic" : `$${source.priceUsd.toFixed(3)}`}
+                  {source.priceUsd === null ? "dynamic" : formatUsd(source.priceUsd)}
                 </span>
               </span>
-              <span className="text-xs leading-relaxed text-muted-foreground">{source.description}</span>
+              <span className="text-xs leading-relaxed text-muted-foreground">{source.summary ?? source.description}</span>
               <span className="flex flex-wrap items-center gap-1.5">
                 <span
                   className={cn(
@@ -109,7 +113,7 @@ export function DataSourcePicker({
                   )}
                 >
                   paid on {paysOn}
-                  {paysOnAgentChain || source.id === "bazaar" ? "" : " — needs that platform wallet funded"}
+                  {isAdmin && !paysOnAgentChain && source.id !== "bazaar" ? " — needs that platform wallet funded" : ""}
                 </span>
                 <span className="rounded border border-border bg-muted/40 px-1.5 py-px text-[10px] capitalize text-muted-foreground">
                   {source.category}
@@ -133,7 +137,9 @@ export function DataSourcePicker({
         >
           {showAll
             ? `Show only sources paid on ${chains.map(chainLabelFor).join(" or ") || "the agent's chains"}`
-            : `Show ${hidden} more paid on ${otherChains.map(chainLabelFor).join(" or ") || "other chains"} — Tocker's wallet there must hold USDC`}
+            : `Show ${hidden} more paid on ${otherChains.map(chainLabelFor).join(" or ") || "other chains"}${
+                isAdmin ? " — Tocker's wallet there must hold USDC" : ""
+              }`}
         </button>
       ) : null}
     </div>

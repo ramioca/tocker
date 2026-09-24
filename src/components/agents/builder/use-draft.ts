@@ -32,14 +32,20 @@ export function clearAllDrafts(): void {
 
 /**
  * The builder is seven steps long and people close tabs. The draft is restored
- * on mount and written back on every change, debounced so typing in the
- * strategy textarea does not hammer localStorage.
+ * on mount and written back on every change the user makes, debounced so typing
+ * in the strategy textarea does not hammer localStorage.
  */
 export function useDraft(userId: string) {
   const draftKey = storageKey(userId);
   const [draft, setDraft] = useState<BuilderDraft>(emptyDraft);
   const [restored, setRestored] = useState(false);
   const timer = useRef<number | null>(null);
+  /**
+   * Only an edit makes a draft. Without this, the mount itself (and the random avatar
+   * it picks) was saved, so the next visit offered to "Start over" a form nobody had
+   * touched.
+   */
+  const touched = useRef(false);
 
   useEffect(() => {
     try {
@@ -74,6 +80,7 @@ export function useDraft(userId: string) {
 
   useEffect(() => {
     if (timer.current) window.clearTimeout(timer.current);
+    if (!touched.current) return;
     timer.current = window.setTimeout(() => {
       try {
         window.localStorage.setItem(draftKey, JSON.stringify(draft));
@@ -87,20 +94,26 @@ export function useDraft(userId: string) {
   }, [draft, draftKey]);
 
   const update = useCallback((patch: Partial<BuilderDraft>) => {
+    touched.current = true;
     setDraft((current) => ({ ...current, ...patch }));
   }, []);
 
   const updateConfig = useCallback((patch: Partial<BuilderDraft["config"]>) => {
+    touched.current = true;
     setDraft((current) => ({ ...current, config: { ...current.config, ...patch } }));
   }, []);
 
   const clear = useCallback(() => {
+    touched.current = false;
+    if (timer.current) window.clearTimeout(timer.current);
     try {
       window.localStorage.removeItem(draftKey);
     } catch {
       // ignore
     }
     setDraft(emptyDraft());
+    // Nothing is restored any more, so "Start over" has nothing left to undo.
+    setRestored(false);
   }, [draftKey]);
 
   return { draft, setDraft, update, updateConfig, clear, restored };

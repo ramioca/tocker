@@ -128,6 +128,7 @@ export function toDataSourceInfo(source: DataSource): DataSourceInfo {
   return {
     id: source.id,
     name: source.name,
+    summary: source.summary,
     description: source.description,
     category: source.category,
     network: source.network,

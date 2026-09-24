@@ -6,7 +6,16 @@ import { toNum, toNumOrNull } from "@/lib/money";
 import { unrealized } from "@/lib/pnl";
 import { getScoreHistory } from "@/lib/tokens/history";
 import { universeKey } from "@/lib/tokens";
-import type { AgentCard, Chain, ScoreHistoryPoint, TokenPage, TokenRef, TokenScore, TradeRow } from "@/server/types";
+import type {
+  AgentCard,
+  Chain,
+  ScoreHistoryPoint,
+  TokenMarketFacts,
+  TokenPage,
+  TokenRef,
+  TokenScore,
+  TradeRow,
+} from "@/server/types";
 import { loadTokens, toTokenRef, toTradeRow } from "./_shared";
 
 /**
@@ -29,15 +38,32 @@ const FLOW_WINDOW_DAYS = 30;
  * either: an hour-old score is still the last thing we knew, and the page says
  * when it was taken.
  */
-async function cachedScore(db: Db, id: string): Promise<TokenScore | null> {
+async function cachedScore(
+  db: Db,
+  id: string,
+): Promise<{ score: TokenScore | null; marketFacts: TokenMarketFacts | null }> {
   const [row] = await db.select().from(tokenScores).where(eq(tokenScores.id, id)).limit(1);
-  if (!row) return null;
+  if (!row) return { score: null, marketFacts: null };
+
+  // Market facts are the same under any universe, so they are shown whoever scored
+  // the token last. Only these fields leave this branch.
+  const marketFacts: TokenMarketFacts = {
+    priceUsd: toNumOrNull(row.priceUsd),
+    liquidityUsd: toNumOrNull(row.liquidityUsd),
+    volume24hUsd: toNumOrNull(row.volume24hUsd),
+    marketCapUsd: toNumOrNull(row.marketCapUsd),
+    holderCount: row.holderCount,
+    ageHours: toNumOrNull(row.ageHours),
+    priceChange24hPct: toNumOrNull(row.priceChange24hPct),
+    measuredAt: row.scoredAt.toISOString(),
+  };
+
   // A row scored under a different universe carries that universe's verdict and
   // blockers. Reusing it here would leak another operator's thresholds.
-  if (row.universeKey !== PUBLIC_UNIVERSE_KEY) return null;
+  if (row.universeKey !== PUBLIC_UNIVERSE_KEY) return { score: null, marketFacts };
 
   const c = row.components;
-  return {
+  const score: TokenScore = {
     tokenId: row.id,
     chain: row.chain as Chain,
     address: row.address,
@@ -67,6 +93,7 @@ async function cachedScore(db: Db, id: string): Promise<TokenScore | null> {
     sources: row.sources,
     scoredAt: row.scoredAt.toISOString(),
   };
+  return { score, marketFacts };
 }
 
 /** A token we have no row for still deserves a page — build the reference from the URL. */
@@ -100,7 +127,7 @@ export async function getTokenPage(
   const db = await getDb();
   const id = `${chain}:${address}`;
 
-  const [tokenRows, score] = await Promise.all([
+  const [tokenRows, { score, marketFacts }] = await Promise.all([
     db.select().from(tokens).where(eq(tokens.id, id)).limit(1),
     cachedScore(db, id),
   ]);
@@ -183,6 +210,7 @@ export async function getTokenPage(
   return {
     token,
     score,
+    marketFacts,
     history,
     holders,
     recentTrades,

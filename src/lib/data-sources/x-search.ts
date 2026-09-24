@@ -104,6 +104,7 @@ function normalize(query: string, data: unknown): NormalizedResult {
 export const xSearch = defineSource({
   id: "x-search",
   name: "X/Twitter search (x402Atlas)",
+  summary: "Recent X posts about a token, with a weighted sentiment read.",
   description:
     "Search X/Twitter and get up to 20 normalized tweets with text, author, follower count and engagement, plus a weighted sentiment read. Paid on Base at $0.006 a call.",
   category: "social",

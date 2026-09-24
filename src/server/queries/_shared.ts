@@ -161,6 +161,7 @@ export function toTradeRow(
   return {
     id: row.id,
     agentId: row.agentId,
+    runId: row.runId ?? null,
     chain: row.chain as Chain,
     side: row.side,
     token,
@@ -200,6 +201,11 @@ export type AgentRow = typeof agents.$inferSelect;
 
 export interface AgentAggregates {
   equityUsd: number | null;
+  /**
+   * What the current book started with: a paper agent's notional, or a live agent's
+   * first live mark. All-time PnL is measured against it, here and on the agent page.
+   */
+  startEquityUsd: number | null;
   pnlUsd: number | null;
   pnlPct: number | null;
   sparkline: number[];
@@ -210,6 +216,7 @@ export interface AgentAggregates {
 
 const EMPTY_AGG: AgentAggregates = {
   equityUsd: null,
+  startEquityUsd: null,
   pnlUsd: null,
   pnlPct: null,
   sparkline: [],
@@ -257,6 +264,8 @@ export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<M
         equityUsd: equitySnapshots.equityUsd,
         cashUsd: equitySnapshots.cashUsd,
         at: equitySnapshots.at,
+        mode: agents.mode,
+        paperStartingUsd: agents.paperStartingUsd,
       })
       .from(equitySnapshots)
       .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
@@ -275,10 +284,12 @@ export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<M
   ]);
 
   const byAgent = new Map<string, Array<{ at: Date; equityUsd: number; cashUsd: number }>>();
+  const paperStart = new Map<string, number>();
   for (const s of snapshots) {
     const list = byAgent.get(s.agentId) ?? [];
     list.push({ at: s.at, equityUsd: toNum(s.equityUsd), cashUsd: toNum(s.cashUsd) });
     byAgent.set(s.agentId, list);
+    if (s.mode === "paper") paperStart.set(s.agentId, toNum(s.paperStartingUsd));
   }
 
   for (const [agentId, series] of byAgent) {
@@ -288,6 +299,17 @@ export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<M
     agg.equityUsd = last ? last.equityUsd : null;
     agg.cashUsd = last ? last.cashUsd : null;
     agg.sparkline = series.slice(-30).map((p) => p.equityUsd);
+    // A paper book started at its notional, not at its first mark — that mark can land
+    // after the first fill's fee, and then the card, the agent header and the chart
+    // (which is drawn against the notional) each printed a different all-time PnL.
+    const start = paperStart.get(agentId);
+    if (start !== undefined && last) {
+      agg.startEquityUsd = start;
+      agg.pnlUsd = last.equityUsd - start;
+      agg.pnlPct = start === 0 ? 0 : (agg.pnlUsd / Math.abs(start)) * 100;
+      continue;
+    }
+    agg.startEquityUsd = series[0]?.equityUsd ?? null;
     const window = pnlOverWindow(series, "all");
     agg.pnlUsd = window ? window.pnlUsd : null;
     agg.pnlPct = window ? window.pnlPct : null;

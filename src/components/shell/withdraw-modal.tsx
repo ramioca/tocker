@@ -2,6 +2,7 @@
 
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ArrowUpRight } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -121,11 +122,6 @@ export function WithdrawModal({
   const quoteReady = chain !== "solana" || ready !== null;
   const canSend = validAmount && destinationOk && quoteReady && !pending && available;
 
-  const summary = useMemo(
-    () => (validAmount && destinationOk ? `${parsed} USDC → ${truncateAddress(target, 6, 6)}` : null),
-    [validAmount, destinationOk, parsed, target],
-  );
-
   const confirm = async () => {
     if (!canSend) return;
     setPending(true);
@@ -193,7 +189,9 @@ export function WithdrawModal({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
+        {/* min-w-0: a grid item's floor is its content, so one long unbreakable child
+            would otherwise widen the whole form past the dialog's padding. */}
+        <div className="min-w-0 space-y-3">
           <div>
             <label htmlFor="withdraw-chain" className="mb-1 block text-xs text-muted-foreground">
               Chain
@@ -242,7 +240,7 @@ export function WithdrawModal({
               <p className="tnum mt-2 text-xs text-destructive">{amountHint}</p>
             ) : (
               <p className="tnum mt-2 text-xs text-muted-foreground">
-                {formatUsd(chainCash.usdcUsd)} on {chainLabelFor(chain)} · {formatUsd(cash.totalUsd)} in total
+                {formatUsd(chainCash.usdcUsd)} on {chainLabelFor(chain)} · {formatUsd(cash.totalUsd)} across your wallets
               </p>
             )}
           </div>
@@ -291,8 +289,8 @@ export function WithdrawModal({
               aria-live="polite"
               className="space-y-1.5 rounded-xl border border-border/60 bg-muted/20 px-3 py-2.5 text-xs"
             >
-              {/* Every character, before the hold: the hold label can only fit 6…6, and a
-                  vanity look-alike matches exactly those. */}
+              {/* Every character, before the hold: a vanity look-alike matches the first
+                  and last few, so a truncated address is not something to check against. */}
               <div className="space-y-0.5 border-b border-border/60 pb-1.5">
                 <span className="text-muted-foreground">Sending to</span>
                 <FullAddress address={target} className="flex" />
@@ -313,10 +311,12 @@ export function WithdrawModal({
                   </p>
                 </div>
               ) : null}
-              {feeUsdc > 0 && validAmount ? (
+              {validAmount ? (
                 <div className="space-y-1.5 border-t border-border/60 pt-1.5">
                   <FeeRow label="They receive" value={`${formatUsd(parsed)} USDC`} />
-                  <FeeRow label="From your cash" value={formatUsd(parsed + feeUsdc)} strong />
+                  {feeUsdc > 0 ? (
+                    <FeeRow label="From your cash" value={formatUsd(parsed + feeUsdc)} strong />
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -324,17 +324,20 @@ export function WithdrawModal({
 
           {available ? null : (
             <p className="rounded-xl border border-border/70 bg-muted/20 p-3 text-xs leading-relaxed text-muted-foreground">
-              In-app withdrawals are not available in this environment. Export your wallet from
-              Settings and send from any wallet for now.
+              Withdrawals aren&rsquo;t available in this environment yet.
             </p>
           )}
 
           {/* A hold, not a click: the signature is silent now (no wallet popup), so this
-              gesture is the confirmation, and money leaving the app deserves one. */}
+              gesture is the confirmation, and money leaving the app deserves one. The label
+              carries the amount only — the full destination is spelled out above, where a
+              look-alike address can actually be checked, and a nowrap label with both
+              overflowed a phone. */}
           <HoldToConfirmButton
             duration={1_400}
             disabled={!canSend}
-            label={pending ? "Sending…" : summary ? `Hold to send ${summary}` : "Hold to send"}
+            icon={<ArrowUpRight size={14} strokeWidth={2} />}
+            label={pending ? "Sending…" : validAmount ? `Hold to send ${formatUsd(parsed)}` : "Hold to send"}
             confirmedLabel="Sent"
             onConfirm={() => void confirm()}
             className="h-10 w-full justify-center rounded-xl border-primary/40 bg-primary/10 text-sm font-medium text-foreground hover:bg-primary/15 dark:border-primary/40 dark:bg-primary/10 dark:text-foreground dark:hover:bg-primary/15"

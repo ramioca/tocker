@@ -127,6 +127,7 @@ export function parseSolEnrichLaunches(data: unknown): PaidLaunch[] {
 export const solEnrichLaunches = defineSource({
   id: "solenrich-launches",
   name: "SolEnrich launches",
+  summary: "New Solana launches ranked by risk, plus due diligence on a single token.",
   description:
     "Solana new-launch radar and token due diligence, priced on Solana (the platform pays, not your agent). mode 'launches' returns freshly launched tokens already filtered by liquidity and a 0-1 risk score and ranked safest first; mode 'token' adds top-20 holders, HHI concentration, volatility and slippage for one mint; mode 'ask' routes a plain-English question. EXPERIMENTAL: the request shape is verified live but the response keys are undocumented, so fields may arrive named differently.",
   category: "onchain",

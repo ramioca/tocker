@@ -18,7 +18,7 @@ export function AdminUsersTable({ rows }: { rows: AdminUserRow[] }) {
       <DataTable label="Users" minWidth="46rem">
         <thead>
           <tr>
-            <Th>Handle</Th>
+            <Th sticky>Handle</Th>
             <Th>Email</Th>
             <Th>Joined</Th>
             <Th numeric>Agents</Th>
@@ -32,7 +32,7 @@ export function AdminUsersTable({ rows }: { rows: AdminUserRow[] }) {
           ) : (
             rows.map((row) => (
               <tr key={row.id} className="hover:bg-muted/25">
-                <Td>
+                <Td sticky>
                   <Link
                     href={`/u/${row.handle}`}
                     className="font-medium underline-offset-2 hover:underline focus-visible:underline"

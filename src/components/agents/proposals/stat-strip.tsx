@@ -111,7 +111,7 @@ export function ProposalStatStrip({
           <>
             {formatCompactUsd(stats.reserveUsd)}
             {move ? (
-              <span className={cn("ml-1 text-[10px]", pnlTone(move.pct))}>
+              <span className={cn("ml-1 text-[10px]", pnlTone(move.pct, 0))}>
                 {formatSignedPct(move.pct, 0)}
                 <span className="ml-0.5 opacity-60">{move.window}</span>
               </span>

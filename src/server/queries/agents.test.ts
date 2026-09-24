@@ -28,6 +28,7 @@ import {
   getAgentTrades,
   getAgentWindowPnl,
   getEquitySeries,
+  listMyAgents,
 } from "./agents";
 import { getAgentAnalytics } from "./analytics";
 import { getLeaderboard, getTopDataSources, MIN_AGGREGATE_AGENTS } from "./discover";
@@ -136,6 +137,23 @@ describe("equity reads are scoped to the agent's current mode", () => {
 });
 
 // ------------------------------------------------------- run & trade visibility
+
+describe("all-time PnL has one basis", () => {
+  it("measures a paper agent against its notional, so the card, header and chart agree", async () => {
+    // The first mark landed after the first fill's fee. Last-minus-first read +$758.42
+    // on the card and header while the chart, drawn against $10,000, read +$756.58.
+    const agent = await seedAgent(db, { mode: "paper" });
+    await snapshot(agent.agentId, daysAgo(5), 9_998.16, "paper");
+    await snapshot(agent.agentId, daysAgo(1), 10_756.58, "paper");
+
+    const detail = await getAgentBySlug(agent.slug, agent.userId);
+    expect(detail!.pnlUsd).toBeCloseTo(756.58, 6);
+    expect(detail!.pnlPct).toBeCloseTo(7.5658, 4);
+
+    const [card] = await listMyAgents(agent.userId);
+    expect(card.pnlUsd).toBeCloseTo(756.58, 6);
+  });
+});
 
 describe("run and trade history are gated on the viewer", () => {
   async function seedFailedRun(agentId: string) {

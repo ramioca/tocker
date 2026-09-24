@@ -1,6 +1,6 @@
 import { Coins, Receipt, Sun, Wallet } from "lucide-react";
 import { PnlText } from "@/components/common/pnl-text";
-import { formatUsd } from "@/components/common/format";
+import { formatSignedUsd, formatUsd } from "@/components/common/format";
 import { cn } from "@/lib/utils";
 import type { MoneySummary } from "@/server/queries/money";
 
@@ -113,7 +113,7 @@ export function MoneyHeadline({ summary }: { summary: MoneySummary }) {
         <Well
           icon={Coins}
           label="All-time P&L"
-          footnote={`${formatUsd(totals.realizedPnlUsd)} realised · ${formatUsd(totals.unrealizedPnlUsd)} open`}
+          footnote={`${formatSignedUsd(totals.realizedPnlUsd)} realised · ${formatSignedUsd(totals.unrealizedPnlUsd)} open`}
         >
           <PnlText usd={totals.pnlUsd} size="md" />
         </Well>

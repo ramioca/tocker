@@ -18,10 +18,10 @@ export default function NotFound() {
 
       <div className="flex items-center gap-2">
         <Link
-          href="/feed"
+          href="/home"
           className="inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          Back to the feed
+          Go home
         </Link>
         <Link
           href="/discover"

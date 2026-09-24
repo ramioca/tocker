@@ -7,6 +7,21 @@ const usdFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 
+/** Prices between a cent and a dollar — see `formatPriceUsd`. */
+const subDollar3 = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 3,
+});
+
+const subDollar4 = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+});
+
 const compactFormatter = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1,
@@ -57,9 +72,15 @@ export function formatUsd(value: number | null | undefined, opts?: { compact?: b
 export function formatPriceUsd(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value) || !Number.isFinite(value)) return "—";
   if (value === 0) return "$0.00";
-  if (Math.abs(value) < 0.01) return `$${subCentText(value)}`;
+  const abs = Math.abs(value);
+  if (abs < 0.01) return `$${subCentText(value)}`;
+  // Between a cent and a dollar, two decimals is one significant digit: a $0.01182 fill
+  // printed as "$0.01" is 15% off. Keep three significant digits here too (3 or 4
+  // decimals), which is also what `priceText` writes into the exit messages.
+  if (abs < 1) return (abs < 0.1 ? subDollar4 : subDollar3).format(value);
   return usdFormatter.format(value);
 }
+
 
 export function formatSignedUsd(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
@@ -74,8 +95,10 @@ export function formatPct(value: number | null | undefined, dp = 2): string {
 
 export function formatSignedPct(value: number | null | undefined, dp = 2): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
-  const sign = value > 0 ? "+" : value < 0 ? "−" : "";
-  return `${sign}${Math.abs(value).toFixed(dp)}%`;
+  // Sign the number as printed, not as stored: −0.004 at 1dp is "0.0%", not "−0.0%".
+  const rounded = Number(Math.abs(value).toFixed(dp));
+  const sign = rounded === 0 ? "" : value > 0 ? "+" : "−";
+  return `${sign}${rounded.toFixed(dp)}%`;
 }
 
 export function formatCount(value: number | null | undefined): string {

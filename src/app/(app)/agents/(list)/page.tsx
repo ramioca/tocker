@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Bot, Plus } from "lucide-react";
 import { AgentCard } from "@/components/agents/agent-card";
 import { EmptyState } from "@/components/common/empty-state";
-import { myAgents, viewerSession } from "@/components/common/data-access";
+import { accountPaused, myAgents, viewerSession } from "@/components/common/data-access";
 
 export const metadata: Metadata = {
   title: "My agents",
@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 export default async function MyAgentsPage() {
   const session = await viewerSession();
   if (!session) redirect(`/login?next=${encodeURIComponent("/agents")}`);
-  const agents = await myAgents(session?.userId ?? null);
+  const [agents, paused] = await Promise.all([myAgents(session?.userId ?? null), accountPaused(session?.userId ?? null)]);
 
   const live = agents.filter((agent) => agent.mode === "live").length;
   const active = agents.filter((agent) => agent.status === "active").length;
@@ -27,7 +27,9 @@ export default async function MyAgentsPage() {
           <p className="mt-1 text-sm text-muted-foreground">
             {agents.length === 0
               ? "Nothing deployed yet."
-              : `${agents.length} agent${agents.length === 1 ? "" : "s"} · ${active} active · ${live} trading live money.`}
+              : paused
+                ? `${agents.length} agent${agents.length === 1 ? "" : "s"} · all trading paused account-wide.`
+                : `${agents.length} agent${agents.length === 1 ? "" : "s"} · ${active} active · ${live} trading live money.`}
           </p>
         </div>
 
@@ -59,7 +61,7 @@ export default async function MyAgentsPage() {
         <ul className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {agents.map((agent, index) => (
             <li key={agent.id}>
-              <AgentCard agent={agent} index={index} />
+              <AgentCard agent={agent} index={index} accountPaused={paused} />
             </li>
           ))}
         </ul>

@@ -56,11 +56,16 @@ import type { Chain, DataSourceInfo, LlmKeyRow } from "@/server/types";
  * removal: every control of the old wizard is still one tap away.
  */
 
-function validate(draft: ReturnType<typeof useDraft>["draft"]): Record<string, string> {
+function validate(draft: ReturnType<typeof useDraft>["draft"], keys: LlmKeyRow[]): Record<string, string> {
   const errors: Record<string, string> = {};
 
   if (draft.name.trim().length < 2) errors.name = "Give it a name — at least two characters.";
   if (!draft.llmKeyId) errors.llmKeyId = "Pick or add an API key. The agent cannot think without one.";
+  // A restored draft can name a key that has since been removed, and a key for another
+  // provider would be kept but could never be used: both fail every run, so neither passes.
+  else if (!keys.some((key) => key.id === draft.llmKeyId && key.provider === draft.config.llm.provider)) {
+    errors.llmKeyId = `Pick one of your ${draft.config.llm.provider} keys, or add one.`;
+  }
 
   const parsed = agentConfigSchema.safeParse(draft.config);
   if (!parsed.success) {
@@ -76,6 +81,18 @@ function validate(draft: ReturnType<typeof useDraft>["draft"]): Record<string, s
 }
 
 type RuleId = "universe" | "data" | "risk" | "funding" | "schedule";
+
+/**
+ * The three required fields, in page order, and the control an error on each should
+ * take focus to. The commit bar is sticky, so people submit from the bottom of a long
+ * page; a toast alone leaves them hunting for a field 1,400px up.
+ */
+const FIELD_TARGETS: Array<{ key: string; ids: string[] }> = [
+  { key: "name", ids: ["agent-name"] },
+  // The key select when there is a key to choose; otherwise the way to add one.
+  { key: "llmKeyId", ids: ["llm-key", "llm-key-add"] },
+  { key: "strategyPrompt", ids: ["strategy-prompt"] },
+];
 
 const RULE_ERROR_KEYS: Record<RuleId, string[]> = {
   universe: ["chains", "universe"],
@@ -158,11 +175,12 @@ async function runFundingPlan(input: {
   return { sent, total: transfers.length, firstError };
 }
 
+/** A heading that looks like a label, so heading navigation finds the builder's sections. */
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
+    <h2 className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
       {children}
-    </p>
+    </h2>
   );
 }
 
@@ -208,7 +226,7 @@ function RuleCard({
               <TriangleAlert aria-label="has an error" className="size-3.5 shrink-0 text-destructive" />
             ) : null}
           </span>
-          <span className={cn("mt-0.5 block truncate text-xs text-muted-foreground", open && "sr-only")}>
+          <span className={cn("mt-0.5 line-clamp-2 text-xs text-muted-foreground", open && "sr-only")}>
             {summary}
           </span>
         </span>
@@ -220,10 +238,14 @@ function RuleCard({
           )}
         />
       </button>
+      {/* `inert` while closed: the panel is 0px tall but its controls would otherwise
+          stay in the Tab order and the accessibility tree, and arrow keys could move a
+          risk limit nobody can see. It keeps the grid-rows transition intact. */}
       <div
         id={panelId}
         role="region"
         aria-label={title}
+        inert={!open}
         className={cn(
           "grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
           open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
@@ -255,7 +277,7 @@ export function AgentBuilder({
   const [open, setOpen] = useState<Set<RuleId>>(new Set());
   const rulesRef = useRef<HTMLDivElement>(null);
 
-  const errors = useMemo(() => validate(draft), [draft]);
+  const errors = useMemo(() => validate(draft, keys), [draft, keys]);
   const visibleErrors = attempted ? errors : {};
 
   const toggle = (id: RuleId) =>
@@ -271,6 +293,9 @@ export function AgentBuilder({
   const interval = draft.config.schedule.intervalMinutes;
   const runsPerDay = interval === 0 ? 0 : Math.round(1_440 / interval);
   const risk = draft.config.risk;
+  // The same short form as the balance buttons in the Schedule card.
+  const paperLabel =
+    draft.paperStartingUsd >= 1_000 ? `$${draft.paperStartingUsd / 1_000}K` : formatUsd(draft.paperStartingUsd);
 
   // Funding cannot be validated from the draft alone — it depends on what the
   // user holds right now — so it gets its own gate, checked at submit time.
@@ -289,16 +314,25 @@ export function AgentBuilder({
       : null;
 
   const submit = async () => {
-    const allErrors = validate(draft);
+    const allErrors = validate(draft, keys);
     if (Object.keys(allErrors).length > 0) {
       setAttempted(true);
       const badRules = (Object.keys(RULE_ERROR_KEYS) as RuleId[]).filter((id) =>
         RULE_ERROR_KEYS[id].some((key) => allErrors[key]),
       );
-      if (badRules.length > 0) {
-        setOpen((current) => new Set([...current, ...badRules]));
-        rulesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
+      if (badRules.length > 0) setOpen((current) => new Set([...current, ...badRules]));
+      const field = FIELD_TARGETS.find((target) => allErrors[target.key]);
+      // After the render that marks it invalid (and opens any card), so the focused
+      // control already carries its error when a screen reader announces it.
+      requestAnimationFrame(() => {
+        const target = field?.ids.map((id) => document.getElementById(id)).find((el) => el !== null);
+        if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: "center" });
+          target.focus({ preventScroll: true });
+        } else if (badRules.length > 0) {
+          rulesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
       toast.error("Something is still missing", {
         description: Object.values(allErrors)[0],
       });
@@ -421,19 +455,26 @@ export function AgentBuilder({
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-lg font-semibold tracking-tight">New agent</h1>
         {restored ? (
-          <button
-            type="button"
-            onClick={() => {
-              clear();
-              setOpen(new Set());
-              setAttempted(false);
-              toast.success("Draft cleared");
-            }}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <RotateCcw aria-hidden className="size-3" />
-            Start over
-          </button>
+          // Say why the form is already filled in, next to the way out of it.
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-muted-foreground">
+              <span className="sm:hidden">Draft restored</span>
+              <span className="hidden sm:inline">Restored your unsaved draft</span>
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                clear();
+                setOpen(new Set());
+                setAttempted(false);
+                toast.success("Draft cleared");
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <RotateCcw aria-hidden className="size-3" />
+              Start over
+            </button>
+          </div>
         ) : null}
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
@@ -489,7 +530,7 @@ export function AgentBuilder({
 
           <RuleCard
             title="Risk limits"
-            summary={`${formatUsd(risk.maxTradeUsd)} per trade · ${risk.maxDailyTrades} trades/day · ${risk.maxPositionPct}% max position · ${formatUsd(risk.maxDataSpendUsdPerRun)} data/run`}
+            summary={`${formatUsd(risk.maxTradeUsd)}/trade · ${risk.maxDailyTrades}/day · ${risk.maxPositionPct}% max position · ${formatUsd(risk.maxDataSpendUsdPerRun)} data/run`}
             open={open.has("risk")}
             onToggle={() => toggle("risk")}
             hasError={attempted && RULE_ERROR_KEYS.risk.some((key) => errors[key])}
@@ -522,7 +563,7 @@ export function AgentBuilder({
             summary={
               draft.funding.mode === "fund"
                 ? `${intervalLabel(interval)} · real money only · ${draft.goLive ? "live after the checklist" : "paper until you go live"}`
-                : `${intervalLabel(interval)} · ${formatUsd(draft.paperStartingUsd)} paper balance · ${draft.activate ? "starts active" : "starts paused"}`
+                : `${intervalLabel(interval)} · ${draft.activate ? "starts active" : "starts paused"} · ${paperLabel} paper`
             }
             open={open.has("schedule")}
             onToggle={() => toggle("schedule")}
@@ -535,7 +576,12 @@ export function AgentBuilder({
 
       {/* The commit bar: what it costs, then the one button. Sticky glass so the
           decision is always in reach, above the mobile tab bar on phones. */}
-      <div className="glass-bar sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] z-10 mt-8 -mx-4 flex items-center gap-3 border-t border-border/60 px-4 py-3 sm:-mx-6 sm:px-6 md:bottom-0">
+      <div
+        data-sticky-actionbar
+        // overflow-x-clip: the chrome ring's glow canvas is wider than the button and,
+        // at the right edge of a phone, pushed the whole page 28px sideways.
+        className="glass-bar sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] z-10 mt-8 -mx-4 flex items-center gap-3 overflow-x-clip border-t border-border/60 px-4 py-3 sm:-mx-6 sm:px-6 md:bottom-0"
+      >
         <p className="min-w-0 flex-1 text-xs leading-4 text-muted-foreground">
           {draft.funding.mode === "fund" ? (
             <>
@@ -555,12 +601,15 @@ export function AgentBuilder({
           )}
         </p>
         <LiquidMetal preset="chromatic" theme="dark" strength={0.85} className="shrink-0">
+          {/* metal-fx strips the button's dark:bg-white, which would leave its
+              dark:text-neutral-900 on the dark chrome at about 1.2:1. */}
           <MorphButton
             size="lg"
             onAction={submit}
             loadingLabel="Creating…"
             successLabel="Created"
             errorLabel="Check the form"
+            className="text-foreground dark:text-foreground"
           >
             Create agent
           </MorphButton>

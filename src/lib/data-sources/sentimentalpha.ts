@@ -46,6 +46,7 @@ const inputSchema = z.object({
 export const sentimentAlpha = defineSource({
   id: "sentimentalpha",
   name: "SentimentAlpha",
+  summary: "Sentiment, narrative momentum and contrarian signals from X for a ticker or theme.",
   description:
     "Real-time X/Twitter narrative alpha: sentiment score, narrative velocity and a contrarian signal for a topic or ticker. Paid on Base at $0.01 a call. EXPERIMENTAL: this vendor advertises the wrong EIP-712 domain name for Base USDC; Tocker corrects it before signing, but no payment to it has settled yet — prefer x-search until one has.",
   category: "sentiment",

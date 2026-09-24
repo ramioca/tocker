@@ -6,6 +6,7 @@ function trade(overrides: Partial<TradeRow> = {}): TradeRow {
   return {
     id: "t1",
     agentId: "a1",
+    runId: null,
     chain: "solana",
     side: "buy",
     token: {

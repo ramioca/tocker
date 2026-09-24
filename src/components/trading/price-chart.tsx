@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { ChartEmpty } from "@/components/spectrumui/charts/chart-engine";
+import { ChartEmpty, useElementWidth } from "@/components/spectrumui/charts/chart-engine";
 import { formatAbsolute, formatUsd } from "@/components/common/format";
 import { cn } from "@/lib/utils";
 import type { TokenMarker } from "@/server/queries/trading";
@@ -31,7 +31,10 @@ import type { PricePoint } from "./price-points";
  * no interpolation.
  */
 
+// Left and right match the score chart under it (`tokens/page/score-history-chart.tsx`),
+// so the two plots share an x range.
 const PAD = { top: 12, right: 10, bottom: 22, left: 44 };
+/** Width before the first measurement (server render). After it, one unit = one CSS px. */
 const VIEW_W = 720;
 
 interface Placed extends TokenMarker {
@@ -57,6 +60,11 @@ export function PriceChart({
   const [active, setActive] = useState<number | null>(null);
   const [hoveredMarker, setHoveredMarker] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  // On a wrapper that is always mounted: the hook observes once, on mount, and the
+  // empty state has no <figure> to hand it. A fixed 720-unit viewBox letterboxed —
+  // 4px labels at 390px, ~110px of dead space either side at 1440px.
+  const [frameRef, measured] = useElementWidth<HTMLDivElement>();
+  const viewW = measured > 0 ? Math.round(measured) : VIEW_W;
 
   const series = useMemo(
     () =>
@@ -67,7 +75,7 @@ export function PriceChart({
     [points],
   );
 
-  const plotW = VIEW_W - PAD.left - PAD.right;
+  const plotW = Math.max(1, viewW - PAD.left - PAD.right);
   const plotH = height - PAD.top - PAD.bottom;
 
   const geometry = useMemo(() => {
@@ -111,7 +119,7 @@ export function PriceChart({
       if (!svg || !geometry) return;
       const rect = svg.getBoundingClientRect();
       if (rect.width === 0) return;
-      const px = ((event.clientX - rect.left) / rect.width) * VIEW_W;
+      const px = ((event.clientX - rect.left) / rect.width) * viewW;
       let best = 0;
       let bestDistance = Infinity;
       geometry.coords.forEach((point, i) => {
@@ -123,17 +131,19 @@ export function PriceChart({
       });
       setActive(best);
     },
-    [geometry],
+    [geometry, viewW],
   );
 
   if (!geometry) {
     return (
-      <ChartEmpty
-        height={height}
-        variant="line"
-        title="No price history yet"
-        description="Price is recorded every time this token is scored. The line fills in from the next sweep."
-      />
+      <div ref={frameRef} className={cn("w-full min-w-0", className)}>
+        <ChartEmpty
+          height={height}
+          variant="line"
+          title="No price history yet"
+          description="Price is recorded every time this token is scored. The line fills in from the next sweep."
+        />
+      </div>
     );
   }
 
@@ -147,139 +157,144 @@ export function PriceChart({
   const marker = placed.find((m) => m.tradeId === hoveredMarker) ?? null;
 
   return (
-    <figure className={cn("w-full min-w-0", className)}>
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${VIEW_W} ${height}`}
-        width="100%"
-        height={height}
-        role="img"
-        aria-label={`Price history, ${coords.length} points, latest ${formatUsd(latest.priceUsd)}${
-          placed.length > 0 ? `, with ${placed.length} of your own fills marked` : ""
-        }`}
-        className="block touch-pan-y overflow-visible"
-        onPointerMove={onMove}
-        onPointerLeave={() => setActive(null)}
-      >
-        <defs>
-          <linearGradient id="price-chart-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={stroke} stopOpacity="0.12" />
-            <stop offset="100%" stopColor={stroke} stopOpacity="0" />
-          </linearGradient>
-        </defs>
-
-        {/* Two reference prices, top and bottom of the plotted range. */}
-        {[geometry.yHi, geometry.yLo].map((price, i) => {
-          const cy = PAD.top + (i === 0 ? 0 : plotH);
-          return (
-            <g key={price}>
-              <line
-                x1={PAD.left}
-                x2={PAD.left + plotW}
-                y1={cy}
-                y2={cy}
-                stroke="var(--border)"
-                strokeWidth="1"
-                strokeDasharray="3 5"
-                opacity="0.6"
-              />
-              <text
-                x={PAD.left - 6}
-                y={cy + (i === 0 ? 8 : 0)}
-                textAnchor="end"
-                className="tnum fill-muted-foreground font-mono text-[9px]"
-              >
-                {formatUsd(price)}
-              </text>
-            </g>
-          );
-        })}
-
-        <path d={area} fill="url(#price-chart-fill)" />
-        <path d={line} fill="none" stroke={stroke} strokeWidth="1.75" strokeLinejoin="round" strokeLinecap="round" />
-
-        {hovered ? (
-          <g>
-            <line x1={hovered.cx} x2={hovered.cx} y1={PAD.top} y2={PAD.top + plotH} stroke="var(--border)" strokeWidth="1" />
-            <circle cx={hovered.cx} cy={hovered.cy} r="3.5" fill={stroke} stroke="var(--background)" strokeWidth="1.5" />
-          </g>
-        ) : null}
-
-        {/* The viewer's own fills. Buys point up, sells point down, and a guardian exit
-            carries a ring so a rule-driven sell is distinguishable from a decided one. */}
-        {placed.map((m) => (
-          <g
-            key={m.tradeId}
-            onPointerEnter={() => setHoveredMarker(m.tradeId)}
-            onPointerLeave={() => setHoveredMarker(null)}
-            className="cursor-default"
-          >
-            {m.origin === "guardian" ? (
-              <circle cx={m.cx} cy={m.cy} r="7" fill="none" stroke="var(--primary)" strokeWidth="1" opacity="0.7" />
-            ) : null}
-            <path
-              d={
-                m.side === "buy"
-                  ? `M${m.cx},${m.cy - 5} L${m.cx + 4.5},${m.cy + 3} L${m.cx - 4.5},${m.cy + 3} Z`
-                  : `M${m.cx},${m.cy + 5} L${m.cx + 4.5},${m.cy - 3} L${m.cx - 4.5},${m.cy - 3} Z`
-              }
-              fill={m.side === "buy" ? "var(--positive)" : "var(--negative)"}
-              stroke="var(--background)"
-              strokeWidth="1"
-            />
-            {/* A generous invisible hit area: the glyph is 9px wide on a 720px viewBox. */}
-            <circle cx={m.cx} cy={m.cy} r="10" fill="transparent" />
-          </g>
-        ))}
-
-        <text x={PAD.left} y={height - 6} className="tnum fill-muted-foreground font-mono text-[9px]">
-          {shortDate(coords[0].at)}
-        </text>
-        <text
-          x={PAD.left + plotW}
-          y={height - 6}
-          textAnchor="end"
-          className="tnum fill-muted-foreground font-mono text-[9px]"
+    <div ref={frameRef} className={cn("w-full min-w-0", className)}>
+      <figure className="w-full min-w-0">
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${viewW} ${height}`}
+          width="100%"
+          height={height}
+          role="img"
+          aria-label={`Price history, ${coords.length} points, latest ${formatUsd(latest.priceUsd)}${
+            placed.length > 0 ? `, with ${placed.length} of your own fills marked` : ""
+          }`}
+          // Hidden only until the first measurement, so the drawing never visibly snaps
+          // from the 720-unit fallback to the real width after hydration.
+          style={{ opacity: measured > 0 ? 1 : 0 }}
+          className="block touch-pan-y overflow-visible transition-opacity duration-150 ease-out"
+          onPointerMove={onMove}
+          onPointerLeave={() => setActive(null)}
         >
-          {shortDate(latest.at)}
-        </text>
-      </svg>
+          <defs>
+            <linearGradient id="price-chart-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={stroke} stopOpacity="0.12" />
+              <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+            </linearGradient>
+          </defs>
 
-      <figcaption
-        className="tnum mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground"
-        aria-live="polite"
-      >
-        {marker ? (
-          <>
-            <span className={marker.side === "buy" ? "text-positive" : "text-negative"}>
-              {marker.side === "buy" ? "Bought" : "Sold"} {formatUsd(marker.amountUsd)}
-            </span>
-            <span>@ {formatUsd(marker.priceUsd)}</span>
-            <span className="font-sans">{formatAbsolute(marker.at)}</span>
-            <span className="font-sans">{marker.agentName}</span>
-            {marker.exitReason ? (
-              <span className="rounded bg-primary/15 px-1.5 py-0.5 font-sans text-[10px] text-primary">
-                {marker.exitReason.replace(/_/g, " ")}
+          {/* Two reference prices, top and bottom of the plotted range. */}
+          {[geometry.yHi, geometry.yLo].map((price, i) => {
+            const cy = PAD.top + (i === 0 ? 0 : plotH);
+            return (
+              <g key={price}>
+                <line
+                  x1={PAD.left}
+                  x2={PAD.left + plotW}
+                  y1={cy}
+                  y2={cy}
+                  stroke="var(--border)"
+                  strokeWidth="1"
+                  strokeDasharray="3 5"
+                  opacity="0.6"
+                />
+                <text
+                  x={PAD.left - 6}
+                  y={cy + (i === 0 ? 8 : 0)}
+                  textAnchor="end"
+                  className="tnum fill-muted-foreground font-mono text-[9px]"
+                >
+                  {formatUsd(price)}
+                </text>
+              </g>
+            );
+          })}
+
+          <path d={area} fill="url(#price-chart-fill)" />
+          <path d={line} fill="none" stroke={stroke} strokeWidth="1.75" strokeLinejoin="round" strokeLinecap="round" />
+
+          {hovered ? (
+            <g>
+              <line x1={hovered.cx} x2={hovered.cx} y1={PAD.top} y2={PAD.top + plotH} stroke="var(--border)" strokeWidth="1" />
+              <circle cx={hovered.cx} cy={hovered.cy} r="3.5" fill={stroke} stroke="var(--background)" strokeWidth="1.5" />
+            </g>
+          ) : null}
+
+          {/* The viewer's own fills. Buys point up, sells point down, and a guardian exit
+              carries a ring so a rule-driven sell is distinguishable from a decided one. */}
+          {placed.map((m) => (
+            <g
+              key={m.tradeId}
+              onPointerEnter={() => setHoveredMarker(m.tradeId)}
+              onPointerLeave={() => setHoveredMarker(null)}
+              className="cursor-default"
+            >
+              {m.origin === "guardian" ? (
+                <circle cx={m.cx} cy={m.cy} r="7" fill="none" stroke="var(--primary)" strokeWidth="1" opacity="0.7" />
+              ) : null}
+              <path
+                d={
+                  m.side === "buy"
+                    ? `M${m.cx},${m.cy - 5} L${m.cx + 4.5},${m.cy + 3} L${m.cx - 4.5},${m.cy + 3} Z`
+                    : `M${m.cx},${m.cy + 5} L${m.cx + 4.5},${m.cy - 3} L${m.cx - 4.5},${m.cy - 3} Z`
+                }
+                fill={m.side === "buy" ? "var(--positive)" : "var(--negative)"}
+                stroke="var(--background)"
+                strokeWidth="1"
+              />
+              {/* A generous invisible hit area around a 9px glyph. */}
+              <circle cx={m.cx} cy={m.cy} r="10" fill="transparent" />
+            </g>
+          ))}
+
+          <text x={PAD.left} y={height - 6} className="tnum fill-muted-foreground font-mono text-[9px]">
+            {shortDate(coords[0].at)}
+          </text>
+          <text
+            x={PAD.left + plotW}
+            y={height - 6}
+            textAnchor="end"
+            className="tnum fill-muted-foreground font-mono text-[9px]"
+          >
+            {shortDate(latest.at)}
+          </text>
+        </svg>
+
+        <figcaption
+          className="tnum mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground"
+          aria-live="polite"
+        >
+          {marker ? (
+            <>
+              <span className={marker.side === "buy" ? "text-positive" : "text-negative"}>
+                {marker.side === "buy" ? "Bought" : "Sold"} {formatUsd(marker.amountUsd)}
               </span>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <span className="font-sans">{hovered ? formatAbsolute(hovered.at) : "Latest"}</span>
-            <span className="text-foreground">{formatUsd((hovered ?? latest).priceUsd)}</span>
-            {placed.length > 0 ? (
-              <span className="font-sans">
-                {placed.length} of your fill{placed.length === 1 ? "" : "s"} marked
-              </span>
-            ) : agentCount > 0 ? (
-              <span className="font-sans">
-                {agentCount} agent{agentCount === 1 ? "" : "s"} traded this
-              </span>
-            ) : null}
-          </>
-        )}
-      </figcaption>
-    </figure>
+              <span>@ {formatUsd(marker.priceUsd)}</span>
+              <span className="font-sans">{formatAbsolute(marker.at)}</span>
+              <span className="font-sans">{marker.agentName}</span>
+              {marker.exitReason ? (
+                <span className="rounded bg-primary/15 px-1.5 py-0.5 font-sans text-[10px] text-primary">
+                  {marker.exitReason.replace(/_/g, " ")}
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <span className="font-sans">{hovered ? formatAbsolute(hovered.at) : "Latest"}</span>
+              <span className="text-foreground">{formatUsd((hovered ?? latest).priceUsd)}</span>
+              {placed.length > 0 ? (
+                <span className="font-sans">
+                  {placed.length} of your fill{placed.length === 1 ? "" : "s"} marked
+                </span>
+              ) : agentCount > 0 ? (
+                <span className="font-sans">
+                  {agentCount} agent{agentCount === 1 ? "" : "s"} traded this
+                </span>
+              ) : null}
+            </>
+          )}
+        </figcaption>
+      </figure>
+    </div>
   );
 }
 

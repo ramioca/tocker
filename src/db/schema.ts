@@ -61,6 +61,12 @@ export const users = pgTable(
     bio: text("bio"),
     avatarUrl: text("avatar_url"),
     email: text("email"),
+    /**
+     * Muted notification kinds, as `{ [kind]: false }` (src/lib/notifications/prefs.ts).
+     * A read-side filter on the list and the unread count; proposal, exit_failed and
+     * trade_unsettled are always delivered whatever this says.
+     */
+    notificationPrefs: jsonb("notification_prefs").$type<Record<string, boolean>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

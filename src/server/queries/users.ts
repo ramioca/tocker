@@ -1,8 +1,29 @@
 import "server-only";
-import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
-import { agents, follows, getDb, llmKeys, notifications, users } from "@/db";
+import { and, desc, eq, isNull, lt, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { agents, follows, getDb, llmKeys, notifications, users, type Db } from "@/db";
 import type { LlmKeyRow, NotificationRow, Page, UserProfile } from "@/server/types";
 import { buildAgentCards, decodeCursor, encodeCursor, isFollowing, pageSize } from "./_shared";
+import { mutedKinds, sanitizePrefs, type NotificationPrefs } from "@/lib/notifications/prefs";
+
+async function readPrefs(db: Db, userId: string): Promise<NotificationPrefs> {
+  const [row] = await db
+    .select({ prefs: users.notificationPrefs })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return sanitizePrefs(row?.prefs);
+}
+
+/** The viewer's stored notification switches, cleaned. `{}` means everything is on. */
+export async function getNotificationPrefs(userId: string): Promise<NotificationPrefs> {
+  return readPrefs(await getDb(), userId);
+}
+
+/** The filter both the list and the unread count apply, so they can never disagree. */
+async function visibleKinds(db: Db, userId: string): Promise<SQL | undefined> {
+  const muted = mutedKinds(await readPrefs(db, userId));
+  return muted.length > 0 ? notInArray(notifications.kind, muted) : undefined;
+}
 
 export async function getUserProfile(handle: string, viewerId?: string | null): Promise<UserProfile | null> {
   const db = await getDb();
@@ -69,19 +90,21 @@ export async function getNotifications(userId: string, cursor?: string | null): 
   const db = await getDb();
   const limit = pageSize(30);
   const c = decodeCursor(cursor);
+  const visible = await visibleKinds(db, userId);
   const rows = await db
     .select()
     .from(notifications)
     .where(
-      c
-        ? and(
-            eq(notifications.userId, userId),
-            or(
+      and(
+        eq(notifications.userId, userId),
+        visible,
+        c
+          ? or(
               lt(notifications.createdAt, c.at),
               and(eq(notifications.createdAt, c.at), lt(notifications.id, c.id)),
-            ),
-          )
-        : eq(notifications.userId, userId),
+            )
+          : undefined,
+      ),
     )
     .orderBy(desc(notifications.createdAt), desc(notifications.id))
     .limit(limit + 1);
@@ -104,9 +127,10 @@ export async function getNotifications(userId: string, cursor?: string | null): 
 
 export async function getUnreadNotificationCount(userId: string): Promise<number> {
   const db = await getDb();
+  const visible = await visibleKinds(db, userId);
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(notifications)
-    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)));
+    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt), visible));
   return Number(row?.n ?? 0);
 }

@@ -28,11 +28,11 @@ const BAND_VERDICT = {
   "80-100": "strong",
 } as const;
 
-export function CalibrationChart({ bands }: { bands: ScoreBandStat[] }) {
+export function CalibrationChart({ bands, isOwner = false }: { bands: ScoreBandStat[]; isOwner?: boolean }) {
   const reduce = useReducedMotion();
   const populated = bands.filter((band) => band.trades > 0);
   const scale = Math.max(10, ...bands.map((band) => Math.abs(band.avgReturnPct ?? 0)));
-  const sentence = calibrationSentence(bands);
+  const sentence = calibrationSentence(bands, { owner: isOwner });
 
   return (
     <section aria-labelledby="calibration-heading" className="glass-panel rounded-2xl p-3 sm:p-4">
@@ -120,11 +120,14 @@ export function CalibrationChart({ bands }: { bands: ScoreBandStat[] }) {
 
           {sentence ? (
             <p className="mt-4 border-t border-border/60 pt-3 text-xs leading-relaxed text-foreground/85">
-              {sentence}{" "}
-              <span className="text-muted-foreground">
-                Raise or lower this agent&rsquo;s score floor accordingly — it is the one number that
-                decides what it is allowed to buy.
-              </span>
+              {sentence}
+              {isOwner ? (
+                <span className="text-muted-foreground">
+                  {" "}
+                  Raise or lower this agent&rsquo;s score floor accordingly — it is the one number
+                  that decides what it is allowed to buy.
+                </span>
+              ) : null}
             </p>
           ) : null}
 

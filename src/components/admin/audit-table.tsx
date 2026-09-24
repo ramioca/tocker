@@ -20,7 +20,7 @@ export function AdminAuditTable({ rows }: { rows: AdminAuditRow[] }) {
       <DataTable label="Audit events" minWidth="50rem">
         <thead>
           <tr>
-            <Th>Time</Th>
+            <Th sticky>Time</Th>
             <Th>User</Th>
             <Th>Kind</Th>
             <Th>What happened</Th>
@@ -37,7 +37,7 @@ export function AdminAuditTable({ rows }: { rows: AdminAuditRow[] }) {
           ) : (
             rows.map((row) => (
               <tr key={row.id} className="hover:bg-muted/25">
-                <Td muted>
+                <Td sticky muted>
                   <RelativeTime iso={row.createdAt} />
                 </Td>
                 <Td>

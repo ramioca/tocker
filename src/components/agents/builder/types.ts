@@ -308,6 +308,20 @@ export const INTERVAL_PRESETS = [
 
 export const PAPER_BALANCES = [1_000, 10_000, 100_000] as const;
 
+/**
+ * Slider bounds shared by the builder and the settings form. They used to disagree
+ * (settings started Max per trade at $10 in $10 steps), so the live checklist's $2
+ * first-trade preset sat below the settings slider's floor and any nudge silently
+ * rewrote it to $10. One definition, so every surface can hold what any other wrote.
+ */
+export const RISK_BOUNDS = {
+  maxTradeUsd: { min: 1, max: 5_000, step: 1 },
+} as const;
+
+export const LLM_BOUNDS = {
+  maxSteps: { min: 2, max: 40, step: 1 },
+} as const;
+
 export const STEPS = [
   { id: "identity", label: "Identity" },
   { id: "brain", label: "Brain" },

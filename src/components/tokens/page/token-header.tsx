@@ -2,10 +2,12 @@
  * Who the token is and what it is worth right now. Server-rendered: it is the
  * first thing read and must not wait on hydration.
  *
- * The facts come from the score when there is one — that is where liquidity,
- * holders and age are measured — and fall back to the token row's last mark when
- * there is not, so an unscored token still shows a price rather than a page of
- * dashes.
+ * The facts come from the public score when there is one — that is where liquidity,
+ * holders and age are measured. Without one, they fall back to the cached market
+ * facts from whichever universe scored it last (the same under any agent's rules;
+ * never a verdict or a blocker), then to the newest score-history point, then to the
+ * token row's last mark, so an unscored token still shows a price rather than a page
+ * of dashes.
  */
 import { GeckoTerminalLink } from "@/components/common/chart-link";
 import type { ReactNode } from "react";
@@ -26,7 +28,10 @@ export function TokenHeader({
   action?: ReactNode;
 }) {
   const { token, score } = page;
-  const price = score?.priceUsd ?? token.lastPriceUsd;
+  const facts = score ?? page.marketFacts;
+  const price =
+    score?.priceUsd ?? lastKnown(page.history, "priceUsd") ?? page.marketFacts?.priceUsd ?? token.lastPriceUsd;
+  const change24h = facts?.priceChange24hPct ?? null;
 
   return (
     <header className="border-b border-border/70 px-4 pt-6 pb-5 sm:px-6">
@@ -50,9 +55,9 @@ export function TokenHeader({
 
           <div className="flex flex-col items-end gap-1.5">
             <p className="tnum text-2xl font-semibold">{formatUsd(price)}</p>
-            {score?.priceChange24hPct === null || score === null ? null : (
-              <p className={cn("tnum text-xs font-medium", pnlTone(score.priceChange24hPct))}>
-                {formatSignedPct(score.priceChange24hPct, 1)} <span className="text-muted-foreground">24h</span>
+            {change24h === null ? null : (
+              <p className={cn("tnum text-xs font-medium", pnlTone(change24h, 1))}>
+                {formatSignedPct(change24h, 1)} <span className="text-muted-foreground">24h</span>
               </p>
             )}
             {action}
@@ -60,15 +65,34 @@ export function TokenHeader({
         </div>
 
         <dl className="tnum mt-4 grid grid-cols-2 gap-x-5 gap-y-2.5 font-mono text-xs sm:grid-cols-5">
-          <Fact label="Market cap" value={formatCompactUsd(score?.marketCapUsd ?? null)} />
-          <Fact label="Liquidity" value={formatCompactUsd(score?.liquidityUsd ?? null)} />
-          <Fact label="24h volume" value={formatCompactUsd(score?.volume24hUsd ?? null)} />
-          <Fact label="Holders" value={formatHolders(score?.holderCount ?? null)} />
-          <Fact label="Age" value={formatAge(score?.ageHours ?? null)} />
+          <Fact label="Market cap" value={formatCompactUsd(facts?.marketCapUsd ?? null)} />
+          <Fact
+            label="Liquidity"
+            value={formatCompactUsd(score?.liquidityUsd ?? lastKnown(page.history, "liquidityUsd") ?? facts?.liquidityUsd ?? null)}
+          />
+          <Fact label="24h volume" value={formatCompactUsd(facts?.volume24hUsd ?? null)} />
+          <Fact
+            label="Holders"
+            value={formatHolders(score?.holderCount ?? lastKnown(page.history, "holderCount") ?? facts?.holderCount ?? null)}
+          />
+          <Fact label="Age" value={formatAge(facts?.ageHours ?? null)} />
         </dl>
       </div>
     </header>
   );
+}
+
+/** The newest history reading of one fact. A failed read lands as a point with nulls. */
+function lastKnown(
+  history: TokenPage["history"],
+  key: "priceUsd" | "liquidityUsd" | "holderCount",
+): number | null {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const value = history[i][key];
+    // The price chart drops non-positive prices; skip them too, so both end on one number.
+    if (value !== null && !(key === "priceUsd" && value <= 0)) return value;
+  }
+  return null;
 }
 
 function Fact({ label, value }: { label: string; value: string }) {

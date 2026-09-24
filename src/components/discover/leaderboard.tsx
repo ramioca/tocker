@@ -7,9 +7,9 @@
  * slide that preserves spatial continuity. The PnL number ticker is the exception —
  * it makes the value change legible, which is the whole point of switching windows.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, Trophy } from "lucide-react";
+import { Trophy } from "lucide-react";
 import { EmptyState } from "@/components/common/empty-state";
 import type { LeaderboardRow, LeaderboardWindow } from "@/server/types";
 import { NumberTicker } from "@/components/spectrumui/number-ticker";
@@ -26,10 +26,41 @@ const WINDOWS: Array<{ id: LeaderboardWindow; label: string }> = [
   { id: "all", label: "All time" },
 ];
 
-export function Leaderboard({ data }: { data: Record<LeaderboardWindow, LeaderboardRow[]> }) {
+export function Leaderboard({
+  data,
+  followedIds,
+  viewerId,
+}: {
+  data: Record<LeaderboardWindow, LeaderboardRow[]>;
+  /** Agents the viewer already follows, so each row's button starts out true. */
+  followedIds: readonly string[];
+  viewerId: string | null;
+}) {
   const [active, setActive] = useState<LeaderboardWindow>("7d");
   const rows = data[active] ?? [];
   const index = WINDOWS.findIndex((w) => w.id === active);
+  const followed = useMemo(() => new Set(followedIds), [followedIds]);
+
+  // Roving focus per the ARIA tabs pattern: one tab stop, arrows move between windows.
+  function onTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, i: number) {
+    const last = WINDOWS.length - 1;
+    const next =
+      event.key === "ArrowRight"
+        ? (i + 1) % WINDOWS.length
+        : event.key === "ArrowLeft"
+          ? (i + last) % WINDOWS.length
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? last
+              : null;
+    if (next === null) return;
+    event.preventDefault();
+    setActive(WINDOWS[next].id);
+    event.currentTarget.parentElement
+      ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+      [next]?.focus();
+  }
 
   return (
     <section aria-labelledby="leaderboard-heading">
@@ -49,13 +80,17 @@ export function Leaderboard({ data }: { data: Record<LeaderboardWindow, Leaderbo
             className="absolute inset-y-0.5 left-0.5 rounded-[7px] bg-muted transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]"
             style={{ width: `calc((100% - 4px) / ${WINDOWS.length})`, transform: `translateX(${index * 100}%)` }}
           />
-          {WINDOWS.map((w) => (
+          {WINDOWS.map((w, i) => (
             <button
               key={w.id}
               type="button"
               role="tab"
+              id={`leaderboard-tab-${w.id}`}
               aria-selected={active === w.id}
+              aria-controls="leaderboard-panel"
+              tabIndex={active === w.id ? 0 : -1}
               onClick={() => setActive(w.id)}
+              onKeyDown={(event) => onTabKeyDown(event, i)}
               className={`relative z-10 h-7 rounded-[7px] px-3 text-xs font-medium transition-colors duration-150 focus-ring ${
                 active === w.id ? "text-foreground" : "text-muted-foreground hover:text-foreground"
               }`}
@@ -66,38 +101,63 @@ export function Leaderboard({ data }: { data: Record<LeaderboardWindow, Leaderbo
         </div>
       </div>
 
-      {rows.length === 0 ? (
-        <EmptyState
-          className="mt-6"
-          icon={<Trophy />}
-          title={`No ranking for ${active === "all" ? "all time" : `the last ${active}`} yet`}
-          description="A place on the board needs two equity snapshots inside the window. Run an agent — or give one a schedule — and it appears on the next pass."
-          action={
-            <Link
-              href="/agents/new"
-              className="focus-ring rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]"
-            >
-              Create an agent
-            </Link>
-          }
-        />
-      ) : (
-        <ol className="glass-panel mt-5 divide-y divide-[var(--glass-hairline)] overflow-hidden rounded-2xl">
-          {rows.map((row) => (
-            <Row key={row.agent.id} row={row} window={active} />
-          ))}
-        </ol>
-      )}
+      <div role="tabpanel" id="leaderboard-panel" aria-labelledby={`leaderboard-tab-${active}`}>
+        {rows.length === 0 ? (
+          <EmptyState
+            className="mt-6"
+            icon={<Trophy />}
+            title={`No ranking for ${active === "all" ? "all time" : `the last ${active}`} yet`}
+            description="A place on the board needs two equity snapshots inside the window. Run an agent — or give one a schedule — and it appears on the next pass."
+            action={
+              <Link
+                href="/agents/new"
+                className="focus-ring rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]"
+              >
+                Create an agent
+              </Link>
+            }
+          />
+        ) : (
+          <ol className="glass-panel mt-5 divide-y divide-[var(--glass-hairline)] overflow-hidden rounded-2xl">
+            {rows.map((row) => (
+              <Row
+                key={row.agent.id}
+                row={row}
+                window={active}
+                following={followed.has(row.agent.id)}
+                own={viewerId !== null && row.agent.owner.id === viewerId}
+              />
+            ))}
+          </ol>
+        )}
+      </div>
     </section>
   );
 }
 
-function Row({ row, window: win }: { row: LeaderboardRow; window: LeaderboardWindow }) {
+/**
+ * One ranking line. On a phone it is exactly that — rank, who, PnL — because ten
+ * stacked pairs of call-to-action pills read as a list of buttons, not a ranking. The
+ * name already links to the record, so there is no separate "Record" button at all.
+ */
+function Row({
+  row,
+  window: win,
+  following,
+  own,
+}: {
+  row: LeaderboardRow;
+  window: LeaderboardWindow;
+  following: boolean;
+  own: boolean;
+}) {
   const { agent } = row;
   const positive = row.pnlPct >= 0;
+  // Sign and colour follow the printed one-decimal value, so −0.04% reads "0.0%", neutral.
+  const printed = Number(Math.abs(row.pnlPct).toFixed(1));
 
   return (
-    <li className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5 transition-colors duration-150 hover:bg-foreground/[0.04] sm:flex-nowrap sm:px-5">
+    <li className="flex items-center gap-x-3 px-4 py-3 transition-colors duration-150 hover:bg-foreground/[0.04] sm:gap-x-4 sm:px-5 sm:py-3.5">
       <span
         className={`w-6 shrink-0 text-center font-mono text-sm tabular-nums ${
           row.rank <= 3 ? "font-semibold text-primary" : "text-muted-foreground"
@@ -108,7 +168,7 @@ function Row({ row, window: win }: { row: LeaderboardRow; window: LeaderboardWin
 
       <AgentAvatar seed={agent.avatarSeed ?? agent.slug} name={agent.name} size="sm" />
 
-      <div className="min-w-0 flex-1 basis-40">
+      <div className="min-w-0 flex-1">
         <Link
           href={`/agents/${agent.slug}`}
           className="block truncate rounded text-sm font-medium hover:text-primary focus-ring"
@@ -135,15 +195,15 @@ function Row({ row, window: win }: { row: LeaderboardRow; window: LeaderboardWin
         className="hidden shrink-0 md:block"
       />
 
-      <div className="w-24 shrink-0 text-right">
+      <div className="w-20 shrink-0 text-right sm:w-24">
         <span
           className="font-mono text-sm font-medium tabular-nums"
-          style={{ color: pnlColor(row.pnlPct) }}
+          style={{ color: pnlColor(printed === 0 ? 0 : row.pnlPct) }}
         >
           <NumberTicker
-            value={Math.round(Math.abs(row.pnlPct) * 10)}
+            value={Math.round(printed * 10)}
             format={(v) => (v / 10).toFixed(1)}
-            prefix={positive ? "+" : "−"}
+            prefix={printed === 0 ? "" : positive ? "+" : "−"}
             suffix="%"
             startOnView={false}
             duration={0.4}
@@ -160,15 +220,12 @@ function Row({ row, window: win }: { row: LeaderboardRow; window: LeaderboardWin
         <span className="block text-[10px] tracking-wide uppercase">trades</span>
       </p>
 
-      <div className="ml-auto flex shrink-0 items-center gap-2 sm:ml-0">
-        <FollowToggle targetType="agent" targetId={agent.id} defaultFollowing={false} size="sm" />
-        <Link
-          href={`/agents/${agent.slug}`}
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97] focus-ring"
-        >
-          <ArrowUpRight className="size-3.5" aria-hidden />
-          Record
-        </Link>
+      {/* Fixed width so the numbers stay in columns whether the pill reads Follow,
+          Following or — on your own agent — nothing. */}
+      <div className="hidden w-[6.75rem] shrink-0 justify-end sm:flex">
+        {own ? null : (
+          <FollowToggle targetType="agent" targetId={agent.id} defaultFollowing={following} size="sm" />
+        )}
       </div>
     </li>
   );

@@ -5,7 +5,7 @@ import { isAdminEmail } from "@/lib/admin";
 import { listAuditEvents } from "@/lib/security/audit";
 import { getKillSwitch } from "@/lib/security/kill-switch";
 import { getMfaStatus } from "@/lib/security/mfa";
-import { encryptionConfigured, getLlmKeyDetails } from "@/lib/security/llm-keys";
+import { getLlmKeyDetails } from "@/lib/security/llm-keys";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { SignedOut } from "@/components/settings/signed-out";
@@ -76,7 +76,7 @@ export default async function SecuritySettingsPage() {
           title="LLM keys"
           description="Your agents reason on your provider account. A key here can spend money on your bill, so it gets the same treatment as a wallet."
         >
-          <LlmKeyInventory keys={keys} encryptionOk={encryptionConfigured()} />
+          <LlmKeyInventory keys={keys} isAdmin={isAdminEmail(session.email)} />
         </SettingsSection>
 
         <SettingsSection

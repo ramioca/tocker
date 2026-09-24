@@ -101,6 +101,7 @@ function narrativesOf(source: unknown): string[] {
 export const ottoPulse = defineSource({
   id: "otto-pulse",
   name: "Otto AI pulse",
+  summary: "A quick pulse of crypto Twitter: breaking news, trending narratives and sentiment.",
   description:
     "The cheapest read in your kit. mode 'pulse' ($0.001) is a crypto-Twitter pulse check — breaking news, trending narratives and sentiment shifts at a glance; mode 'recap' ($0.003) is a 4-6 sentence market recap with the ranked stories behind it. Market-wide context, not a per-token signal: use it to decide what kind of tick this is, not which token to buy. EXPERIMENTAL: the response envelope is verified but its inner keys are undocumented.",
   category: "news",

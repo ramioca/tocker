@@ -1,13 +1,28 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { nanoid } from "nanoid";
+import type { Db } from "@/db";
+import * as schema from "@/db/schema";
+import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
+import { toNumeric } from "@/lib/money";
 import {
+  EQUITY_BUCKET_MS,
   MODEL_PRICES,
   combineEquity,
   estimateModelSpendUsd,
+  getMoney,
   pnlByDay,
   resolveModelPrice,
   utcDayKey,
   type SnapshotPoint,
 } from "./money";
+
+// A live book reads the wallet through `getPortfolio`; with no network in tests, make it
+// fail the way an RPC outage does so `getMoney` takes its snapshot fallback.
+vi.mock("@/lib/agent/portfolio", () => ({
+  getPortfolio: async () => {
+    throw new Error("offline in tests");
+  },
+}));
 
 const DAY = 86_400_000;
 /** 2026-09-20T00:00:00Z — a fixed Sunday, so nothing in here depends on the wall clock. */
@@ -195,5 +210,39 @@ describe("model pricing", () => {
 
   it("never turns a negative count into a credit", () => {
     expect(estimateModelSpendUsd("claude-sonnet-5", { inputTokens: -5_000_000, outputTokens: 1_000_000 })).toBe(15);
+  });
+});
+
+describe("getMoney", () => {
+  let db: Db;
+
+  beforeAll(async () => {
+    db = await setupTestDb();
+  }, 120_000);
+
+  async function snapshot(agentId: string, at: number, equityUsd: number, mode: "paper" | "live") {
+    await db.insert(schema.equitySnapshots).values({
+      id: nanoid(),
+      agentId,
+      equityUsd: toNumeric(equityUsd, 6),
+      cashUsd: toNumeric(equityUsd, 6),
+      at: new Date(at),
+      mode,
+    });
+  }
+
+  it("runs the bucketed snapshot query against a real Postgres", async () => {
+    // The bucket expression sits in both SELECT and GROUP BY. Bound as a parameter, each
+    // use is its own `$n` and Postgres rejects the query — the whole page 500'd on it.
+    const { userId, agentId } = await seedAgent(db, { mode: "live" });
+    const bucket = Math.floor(Date.now() / EQUITY_BUCKET_MS) * EQUITY_BUCKET_MS - EQUITY_BUCKET_MS;
+    await snapshot(agentId, bucket + 60_000, 100, "live");
+    await snapshot(agentId, bucket + 10 * 60_000, 112, "live");
+
+    const money = await getMoney(userId);
+
+    expect(money.equity).toHaveLength(1);
+    expect(money.equity[0].equityUsd).toBe(112);
+    expect(money.live[0]).toMatchObject({ equityUsd: 112, stale: true });
   });
 });

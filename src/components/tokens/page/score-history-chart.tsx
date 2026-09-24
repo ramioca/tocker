@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { ScoreHistoryPoint } from "@/server/types";
-import { ChartEmpty } from "@/components/spectrumui/charts/chart-engine";
+import { ChartEmpty, useElementWidth } from "@/components/spectrumui/charts/chart-engine";
 import { formatAbsolute, formatUsd } from "@/components/common/format";
 import { VERDICT_META, verdictTint } from "@/components/tokens/verdict";
 import { formatCompactUsd } from "@/components/tokens/format";
@@ -19,6 +19,11 @@ import { cn } from "@/lib/utils";
  *
  * One SVG, no chart library: a fixed-height plot measured in real pixels means
  * labels never stretch, and 90 points of a step-ish walk need no interpolation.
+ *
+ * "Real pixels" means the viewBox is as wide as the element, measured. A fixed
+ * 720-unit viewBox letterboxed instead: at 390px the drawing shrank to 46% (9px labels
+ * at 4px) inside a tall empty band, and at 1440px it sat centred with ~110px of dead
+ * space either side.
  */
 
 const BANDS = [
@@ -28,7 +33,10 @@ const BANDS = [
   { verdict: "strong", lo: 80, hi: 100 },
 ] as const;
 
-const PAD = { top: 10, right: 8, bottom: 20, left: 30 };
+// Left and right match the price chart above it (`trading/price-chart.tsx`), so the
+// two plots share an x range and the same instant sits at the same x in both.
+const PAD = { top: 10, right: 10, bottom: 20, left: 44 };
+/** Width before the first measurement (server render), and the sparkline's fixed box. */
 const VIEW_W = 720;
 
 export function ScoreHistoryChart({
@@ -42,6 +50,10 @@ export function ScoreHistoryChart({
 }) {
   const [active, setActive] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  // On a wrapper that is always mounted: the hook observes once, on mount, and the
+  // empty state has no <figure> to hand it.
+  const [frameRef, measured] = useElementWidth<HTMLDivElement>();
+  const viewW = measured > 0 ? Math.round(measured) : VIEW_W;
 
   const points = useMemo(
     () =>
@@ -52,7 +64,7 @@ export function ScoreHistoryChart({
     [history],
   );
 
-  const plotW = VIEW_W - PAD.left - PAD.right;
+  const plotW = Math.max(1, viewW - PAD.left - PAD.right);
   const plotH = height - PAD.top - PAD.bottom;
 
   const geometry = useMemo(() => {
@@ -72,7 +84,7 @@ export function ScoreHistoryChart({
       if (!svg || !geometry) return;
       const rect = svg.getBoundingClientRect();
       if (rect.width === 0) return;
-      const px = ((event.clientX - rect.left) / rect.width) * VIEW_W;
+      const px = ((event.clientX - rect.left) / rect.width) * viewW;
       let best = 0;
       let bestDistance = Infinity;
       geometry.coords.forEach((point, i) => {
@@ -84,17 +96,19 @@ export function ScoreHistoryChart({
       });
       setActive(best);
     },
-    [geometry],
+    [geometry, viewW],
   );
 
   if (!geometry || points.length < 2) {
     return (
-      <ChartEmpty
-        height={height}
-        variant="line"
-        title="No score history yet"
-        description="Every time this token is scored, a point lands here. The curve fills in from the next sweep."
-      />
+      <div ref={frameRef} className={cn("w-full min-w-0", className)}>
+        <ChartEmpty
+          height={height}
+          variant="line"
+          title="No score history yet"
+          description="Every time this token is scored, a point lands here. The curve fills in from the next sweep."
+        />
+      </div>
     );
   }
 
@@ -105,141 +119,146 @@ export function ScoreHistoryChart({
   const latest = coords[coords.length - 1];
 
   return (
-    <figure className={cn("w-full", className)}>
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${VIEW_W} ${height}`}
-        width="100%"
-        height={height}
-        role="img"
-        aria-label={`Score history, ${points.length} points, latest ${Math.round(latest.total)} out of 100`}
-        className="block touch-pan-y overflow-visible"
-        onPointerMove={onMove}
-        onPointerLeave={() => setActive(null)}
-      >
-        <defs>
-          <linearGradient id="score-history-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.13" />
-            <stop offset="100%" stopColor="var(--primary)" stopOpacity="0" />
-          </linearGradient>
-        </defs>
+    <div ref={frameRef} className={cn("w-full min-w-0", className)}>
+      <figure className="w-full">
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${viewW} ${height}`}
+          width="100%"
+          height={height}
+          role="img"
+          aria-label={`Score history, ${points.length} points, latest ${Math.round(latest.total)} out of 100`}
+          // Hidden only until the first measurement, so the drawing never visibly snaps
+          // from the 720-unit fallback to the real width after hydration.
+          style={{ opacity: measured > 0 ? 1 : 0 }}
+          className="block touch-pan-y overflow-visible transition-opacity duration-150 ease-out"
+          onPointerMove={onMove}
+          onPointerLeave={() => setActive(null)}
+        >
+          <defs>
+            <linearGradient id="score-history-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.13" />
+              <stop offset="100%" stopColor="var(--primary)" stopOpacity="0" />
+            </linearGradient>
+          </defs>
 
-        {/* Verdict bands — the thresholds, not decoration. */}
-        {BANDS.map((band) => {
-          const top = PAD.top + (1 - band.hi / 100) * plotH;
-          const bandHeight = ((band.hi - band.lo) / 100) * plotH;
-          const color = VERDICT_META[band.verdict].color;
-          return (
-            <g key={band.verdict}>
-              <rect
-                x={PAD.left}
-                y={top}
-                width={plotW}
-                height={bandHeight}
-                fill={verdictTint(color, 7)}
+          {/* Verdict bands — the thresholds, not decoration. */}
+          {BANDS.map((band) => {
+            const top = PAD.top + (1 - band.hi / 100) * plotH;
+            const bandHeight = ((band.hi - band.lo) / 100) * plotH;
+            const color = VERDICT_META[band.verdict].color;
+            return (
+              <g key={band.verdict}>
+                <rect
+                  x={PAD.left}
+                  y={top}
+                  width={plotW}
+                  height={bandHeight}
+                  fill={verdictTint(color, 7)}
+                />
+                {band.lo > 0 ? (
+                  <>
+                    <line
+                      x1={PAD.left}
+                      x2={PAD.left + plotW}
+                      y1={top + bandHeight}
+                      y2={top + bandHeight}
+                      stroke={verdictTint(color, 30)}
+                      strokeWidth="1"
+                      strokeDasharray="3 4"
+                    />
+                    <text
+                      x={PAD.left - 6}
+                      y={top + bandHeight + 3}
+                      textAnchor="end"
+                      className="tnum fill-muted-foreground font-mono text-[9px]"
+                    >
+                      {band.lo}
+                    </text>
+                  </>
+                ) : null}
+              </g>
+            );
+          })}
+
+          <path d={area} fill="url(#score-history-fill)" />
+          <path
+            d={line}
+            fill="none"
+            stroke="var(--primary)"
+            strokeWidth="1.75"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+
+          {hovered ? (
+            <g>
+              <line
+                x1={hovered.cx}
+                x2={hovered.cx}
+                y1={PAD.top}
+                y2={PAD.top + plotH}
+                stroke="var(--border)"
+                strokeWidth="1"
               />
-              {band.lo > 0 ? (
-                <>
-                  <line
-                    x1={PAD.left}
-                    x2={PAD.left + plotW}
-                    y1={top + bandHeight}
-                    y2={top + bandHeight}
-                    stroke={verdictTint(color, 30)}
-                    strokeWidth="1"
-                    strokeDasharray="3 4"
-                  />
-                  <text
-                    x={PAD.left - 6}
-                    y={top + bandHeight + 3}
-                    textAnchor="end"
-                    className="tnum fill-muted-foreground font-mono text-[9px]"
-                  >
-                    {band.lo}
-                  </text>
-                </>
-              ) : null}
+              <circle
+                cx={hovered.cx}
+                cy={hovered.cy}
+                r="3.5"
+                fill={VERDICT_META[hovered.verdict].color}
+                stroke="var(--background)"
+                strokeWidth="1.5"
+              />
             </g>
-          );
-        })}
-
-        <path d={area} fill="url(#score-history-fill)" />
-        <path
-          d={line}
-          fill="none"
-          stroke="var(--primary)"
-          strokeWidth="1.75"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-
-        {hovered ? (
-          <g>
-            <line
-              x1={hovered.cx}
-              x2={hovered.cx}
-              y1={PAD.top}
-              y2={PAD.top + plotH}
-              stroke="var(--border)"
-              strokeWidth="1"
-            />
+          ) : (
             <circle
-              cx={hovered.cx}
-              cy={hovered.cy}
-              r="3.5"
-              fill={VERDICT_META[hovered.verdict].color}
+              cx={latest.cx}
+              cy={latest.cy}
+              r="3"
+              fill={VERDICT_META[latest.verdict].color}
               stroke="var(--background)"
               strokeWidth="1.5"
             />
-          </g>
-        ) : (
-          <circle
-            cx={latest.cx}
-            cy={latest.cy}
-            r="3"
-            fill={VERDICT_META[latest.verdict].color}
-            stroke="var(--background)"
-            strokeWidth="1.5"
-          />
-        )}
+          )}
 
-        <text
-          x={PAD.left}
-          y={height - 6}
-          className="tnum fill-muted-foreground font-mono text-[9px]"
-        >
-          {shortDate(coords[0].at)}
-        </text>
-        <text
-          x={PAD.left + plotW}
-          y={height - 6}
-          textAnchor="end"
-          className="tnum fill-muted-foreground font-mono text-[9px]"
-        >
-          {shortDate(latest.at)}
-        </text>
-      </svg>
+          <text
+            x={PAD.left}
+            y={height - 6}
+            className="tnum fill-muted-foreground font-mono text-[9px]"
+          >
+            {shortDate(coords[0].at)}
+          </text>
+          <text
+            x={PAD.left + plotW}
+            y={height - 6}
+            textAnchor="end"
+            className="tnum fill-muted-foreground font-mono text-[9px]"
+          >
+            {shortDate(latest.at)}
+          </text>
+        </svg>
 
-      <figcaption
-        className="tnum mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground"
-        aria-live="polite"
-      >
-        {(() => {
-          const point = hovered ?? latest;
-          const meta = VERDICT_META[point.verdict];
-          return (
-            <>
-              <span className="font-sans">{hovered ? formatAbsolute(point.at) : "Latest"}</span>
-              <span style={{ color: meta.color }}>
-                {Math.round(point.total)} · {meta.label.toLowerCase()}
-              </span>
-              {point.priceUsd === null ? null : <span>{formatUsd(point.priceUsd)}</span>}
-              {point.liquidityUsd === null ? null : <span>{formatCompactUsd(point.liquidityUsd)} liq</span>}
-            </>
-          );
-        })()}
-      </figcaption>
-    </figure>
+        <figcaption
+          className="tnum mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground"
+          aria-live="polite"
+        >
+          {(() => {
+            const point = hovered ?? latest;
+            const meta = VERDICT_META[point.verdict];
+            return (
+              <>
+                <span className="font-sans">{hovered ? formatAbsolute(point.at) : "Latest"}</span>
+                <span style={{ color: meta.color }}>
+                  {Math.round(point.total)} · {meta.label.toLowerCase()}
+                </span>
+                {point.priceUsd === null ? null : <span>{formatUsd(point.priceUsd)}</span>}
+                {point.liquidityUsd === null ? null : <span>{formatCompactUsd(point.liquidityUsd)} liq</span>}
+              </>
+            );
+          })()}
+        </figcaption>
+      </figure>
+    </div>
   );
 }
 

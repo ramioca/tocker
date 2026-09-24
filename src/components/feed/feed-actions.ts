@@ -9,9 +9,9 @@
  */
 import { withMock } from "@/lib/data";
 import { commentsPage, feedPage, viewerSession } from "@/components/common/data-access";
-import { addComment, toggleFollow, toggleLike } from "@/server/actions/social";
+import { addComment, setFollow, setLike } from "@/server/actions/social";
 import { receiptsFor } from "@/server/queries/trading";
-import { mockComments } from "@/mocks/core";
+import { mockComments, mockPost } from "@/mocks/core";
 import type { TradeReceiptData } from "@/lib/trading/receipt-format";
 import type { ActionResult, CommentRow, FeedItem, Page } from "@/server/types";
 
@@ -74,12 +74,28 @@ export async function fetchComments(
   return commentsPage(postId, cursor);
 }
 
+/**
+ * Set the viewer's like on a post to `liked`, rather than flipping it.
+ *
+ * The card sends the state it is showing, so a card that went stale (liked in another
+ * tab, a tap racing a refetch) cannot flip the server the wrong way. `setLike` is
+ * idempotent at the source: a repeat like inserts nothing and notifies nobody.
+ */
 export async function likePost(
   postId: string,
+  liked: boolean,
 ): Promise<ActionResult<{ liked: boolean; likeCount: number }>> {
+  // A public endpoint: the arguments are whatever the caller sent.
+  if (typeof postId !== "string" || typeof liked !== "boolean") {
+    return { ok: false, error: "Post not found" };
+  }
   return withMock(
-    () => toggleLike(postId),
-    () => ({ ok: true, data: { liked: true, likeCount: 1 } }),
+    () => setLike(postId, liked),
+    () => {
+      const post = mockPost(postId);
+      const others = Math.max(0, (post?.likeCount ?? 0) - (post?.likedByViewer ? 1 : 0));
+      return { ok: true, data: { liked, likeCount: others + (liked ? 1 : 0) } };
+    },
   );
 }
 
@@ -96,12 +112,14 @@ export async function submitComment(
   );
 }
 
+/** Set the viewer's follow to `following` (the state the button shows), never flip it. */
 export async function followUser(
   targetType: "user" | "agent",
   targetId: string,
+  following: boolean,
 ): Promise<ActionResult<{ following: boolean; followerCount: number }>> {
   return withMock(
-    () => toggleFollow(targetType, targetId),
-    () => ({ ok: true, data: { following: true, followerCount: 1 } }),
+    () => setFollow(targetType, targetId, following),
+    () => ({ ok: true, data: { following, followerCount: following ? 1 : 0 } }),
   );
 }

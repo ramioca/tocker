@@ -1,7 +1,13 @@
 "use client";
 
 import { StatCards, type StatCardData } from "@/components/spectrumui/charts/stat-cards";
-import { formatUsd } from "@/components/common/format";
+import { formatSignedUsd, formatUsd } from "@/components/common/format";
+
+/** Signed and compact, like the header's PnL: "+$1.9K", "−$341.02". */
+function signedCompactUsd(value: number): string {
+  const amount = formatUsd(Math.abs(value), { compact: true });
+  return value > 0 ? `+${amount}` : value < 0 ? `−${amount}` : amount;
+}
 import type { AgentDetail } from "@/server/types";
 
 /**
@@ -32,9 +38,9 @@ export function AgentStats({ agent }: { agent: AgentDetail }) {
     {
       label: "All-time PnL",
       value: agent.pnlUsd ?? 0,
-      format: (value) => formatUsd(value, { compact: true }),
+      format: signedCompactUsd,
       goodWhen: "up",
-      caption: `${formatUsd(agent.stats.realizedPnlUsd)} realised · ${formatUsd(agent.stats.unrealizedPnlUsd)} open`,
+      caption: `${formatSignedUsd(agent.stats.realizedPnlUsd)} realised · ${formatSignedUsd(agent.stats.unrealizedPnlUsd)} open`,
     },
     {
       label: "Win rate",

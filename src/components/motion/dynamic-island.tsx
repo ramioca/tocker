@@ -173,8 +173,10 @@ export function DynamicIsland({
         )}
       >
         {/* w-max keeps this at the natural size of the active content; the
-            shell springs toward it. */}
-        <div ref={sizerRef} className="w-max">
+            shell springs toward it. shrink-0 stops the shell's mid-spring width from
+            squeezing a wrappable view and feeding that width back into the measurement;
+            the max-width keeps any view inside a phone screen. */}
+        <div ref={sizerRef} className="w-max max-w-[calc(100vw-2rem)] shrink-0">
           <AnimatePresence mode="popLayout" initial={false}>
             {!expanded && compact ? (
               <Slot

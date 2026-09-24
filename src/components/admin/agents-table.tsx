@@ -23,10 +23,10 @@ import { DataTable, EmptyRow, TableShell, Td, Th } from "./table-shell";
 export function AdminAgentsTable({ rows, balancesRead }: { rows: AdminAgentRow[]; balancesRead: boolean }) {
   return (
     <TableShell title="Agents" hint={rows.length === 0 ? undefined : `${rows.length}, newest first`}>
-      <DataTable label="Agents" minWidth="62rem">
+      <DataTable label="Agents" minWidth="58rem">
         <thead>
           <tr>
-            <Th>Agent</Th>
+            <Th sticky>Agent</Th>
             <Th>Owner</Th>
             <Th>Mode</Th>
             <Th>Status</Th>
@@ -44,7 +44,7 @@ export function AdminAgentsTable({ rows, balancesRead }: { rows: AdminAgentRow[]
           ) : (
             rows.map(({ card, fundedUsdc }) => (
               <tr key={card.id} className="hover:bg-muted/25">
-                <Td className="max-w-[14rem]">
+                <Td sticky className="max-w-[14rem]">
                   <Link
                     href={`/agents/${card.slug}`}
                     className="truncate font-medium underline-offset-2 hover:underline focus-visible:underline"
@@ -66,7 +66,8 @@ export function AdminAgentsTable({ rows, balancesRead }: { rows: AdminAgentRow[]
                 <Td muted className="font-sans text-xs">
                   {card.chains.length === 0 ? "—" : card.chains.map(chainLabel).join(" · ")}
                 </Td>
-                <Td numeric>{formatUsd(card.equityUsd, { compact: true })}</Td>
+                {/* Full precision, like PnL beside it: compact switches format at $10K mid-column. */}
+                <Td numeric>{formatUsd(card.equityUsd)}</Td>
                 <Td numeric>
                   <span style={{ color: card.pnlUsd === null ? undefined : pnlColor(card.pnlUsd) }}>
                     {formatSignedUsd(card.pnlUsd)}

@@ -16,7 +16,6 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { agents, equitySnapshots, getDb, positions, tokens, trades } from "@/db";
 import { getUserWalletBalances } from "@/lib/wallets";
 import { toNum } from "@/lib/money";
-import { pnlOverWindow } from "@/lib/pnl";
 import { proposalExpiresAt, sweepBeforeRead } from "@/lib/trading/proposals";
 import { buildAgentCards, snapshotInCurrentMode, toTokenRef, toTradeRow } from "./_shared";
 import type { AgentCard, Chain, TradeRow } from "@/server/types";
@@ -35,24 +34,44 @@ export interface HomeCashRow {
   nativeAmount: number;
 }
 
+/**
+ * One side of the book. Real money and paper are never summed: a paper agent is born
+ * holding a $10,000 notional, and adding that to a $12 wallet does not make a bigger
+ * number, it makes a meaningless one (the same rule as `/money`).
+ */
+export interface HomeBook {
+  /** Latest equity across this side's agents. */
+  equityUsd: number;
+  /** Realised + unrealised — the `/money` definition, so the headline adds up to its wells. */
+  pnlUsd: number;
+  /** Against the capital each agent started this book with. Null when nothing has a baseline. */
+  pnlPct: number | null;
+  realizedPnlUsd: number;
+  unrealizedPnlUsd: number;
+  /** Up to 60 points of this side's combined equity, oldest first. Fewer than 2 = no chart. */
+  sparkline: HomeEquityPoint[];
+}
+
 export interface HomeOverview {
   /** Spendable USDC in the user's own embedded wallets, summed across chains. */
   cashUsd: number;
   cashByWallet: HomeCashRow[];
   /** True when the user has no embedded wallet recorded yet (pre-first-login sync). */
   hasWallets: boolean;
-  /** Latest equity across every agent — capital that is already working. */
+  /** Latest equity across **live** agents — real capital that is already working. */
   allocatedUsd: number;
-  /** Cash + allocated. The only number on the page that is "everything". */
+  /** Cash + live allocated. Real money only; paper is in `paper` and never added here. */
   totalEquityUsd: number;
-  /** Sum of each agent's all-time PnL, so adding an agent never fakes a gain. */
+  /** Live agents' realised + unrealised, so it reconciles with the two fields below. */
   pnlUsd: number;
-  /** Against the capital each agent started with. Null when nothing has a baseline. */
+  /** Against the capital each live agent started with. Null when nothing has a baseline. */
   pnlPct: number | null;
   realizedPnlUsd: number;
   unrealizedPnlUsd: number;
-  /** Up to 60 points of combined equity, oldest first. Fewer than 2 = no chart. */
+  /** Live agents' combined equity, up to 60 points, oldest first. Fewer than 2 = no chart. */
   sparkline: HomeEquityPoint[];
+  /** The simulated side, kept apart so it can be shown and labelled as such. */
+  paper: HomeBook;
   agents: AgentCard[];
   counts: { total: number; live: number; paper: number; active: number; paused: number };
 }
@@ -171,7 +190,6 @@ export async function getHomeOverview(userId: string): Promise<HomeOverview> {
 
   // ---- per-agent series, PnL and cost basis -------------------------------
   const seriesByAgent = new Map<string, Array<{ at: number; equityUsd: number }>>();
-  const rawByAgent = new Map<string, Array<{ at: Date; equityUsd: number }>>();
   const latestByAgent = new Map<string, { equityUsd: number; cashUsd: number }>();
 
   for (const snapshot of snapshots) {
@@ -180,40 +198,58 @@ export async function getHomeOverview(userId: string): Promise<HomeOverview> {
     list.push({ at: snapshot.at.getTime(), equityUsd });
     seriesByAgent.set(snapshot.agentId, list);
 
-    const raw = rawByAgent.get(snapshot.agentId) ?? [];
-    raw.push({ at: snapshot.at, equityUsd });
-    rawByAgent.set(snapshot.agentId, raw);
-
     latestByAgent.set(snapshot.agentId, { equityUsd, cashUsd: toNum(snapshot.cashUsd) });
   }
 
-  let pnlUsd = 0;
-  let basisUsd = 0;
-  for (const [, raw] of rawByAgent) {
-    const window = pnlOverWindow(raw, "all");
-    if (!window) continue;
-    pnlUsd += window.pnlUsd;
-    basisUsd += Math.abs(window.startEquityUsd);
-  }
-
-  let allocatedUsd = 0;
-  let agentCashUsd = 0;
-  for (const row of rows) {
-    const latest = latestByAgent.get(row.id);
-    // An agent with no snapshot yet is still holding its paper float.
-    allocatedUsd += latest ? latest.equityUsd : toNum(row.paperStartingUsd);
-    agentCashUsd += latest ? latest.cashUsd : toNum(row.paperStartingUsd);
-  }
-
-  let realizedPnlUsd = 0;
-  let costBasisUsd = 0;
+  const costBasisByAgent = new Map<string, number>();
+  const realizedByAgent = new Map<string, number>();
   for (const position of positionRows) {
-    realizedPnlUsd += toNum(position.realizedPnlUsd);
-    costBasisUsd += toNum(position.amountToken) * toNum(position.avgCostUsd);
+    realizedByAgent.set(
+      position.agentId,
+      (realizedByAgent.get(position.agentId) ?? 0) + toNum(position.realizedPnlUsd),
+    );
+    costBasisByAgent.set(
+      position.agentId,
+      (costBasisByAgent.get(position.agentId) ?? 0) +
+        toNum(position.amountToken) * toNum(position.avgCostUsd),
+    );
   }
-  // Open positions are worth (agent equity − agent cash) at the last mark; what
-  // they cost is the summed basis. The difference is the unrealised number.
-  const unrealizedPnlUsd = allocatedUsd - agentCashUsd - costBasisUsd;
+
+  const bookFor = (mode: "paper" | "live"): HomeBook => {
+    let equityUsd = 0;
+    let basisUsd = 0;
+    let realizedPnlUsd = 0;
+    let unrealizedPnlUsd = 0;
+    const series = new Map<string, Array<{ at: number; equityUsd: number }>>();
+
+    for (const row of rows) {
+      if (row.mode !== mode) continue;
+      const latest = latestByAgent.get(row.id);
+      const agentSeries = seriesByAgent.get(row.id);
+      if (agentSeries) series.set(row.id, agentSeries);
+
+      // Before its first mark a paper agent is still holding its whole float; a live
+      // one has not been read yet, and counting a notional there would be inventing money.
+      equityUsd += latest ? latest.equityUsd : mode === "paper" ? toNum(row.paperStartingUsd) : 0;
+      basisUsd += mode === "paper" ? toNum(row.paperStartingUsd) : Math.abs(agentSeries?.[0]?.equityUsd ?? 0);
+      realizedPnlUsd += realizedByAgent.get(row.id) ?? 0;
+      // Open positions are worth (agent equity − agent cash) at the last mark; what
+      // they cost is the summed basis. No mark yet means no open number, not a loss.
+      if (latest) unrealizedPnlUsd += latest.equityUsd - latest.cashUsd - (costBasisByAgent.get(row.id) ?? 0);
+    }
+
+    const pnlUsd = realizedPnlUsd + unrealizedPnlUsd;
+    return {
+      equityUsd,
+      pnlUsd,
+      pnlPct: basisUsd > 0 ? (pnlUsd / basisUsd) * 100 : null,
+      realizedPnlUsd,
+      unrealizedPnlUsd,
+      sparkline: combineSeries(series),
+    };
+  };
+  const live = bookFor("live");
+  const paper = bookFor("paper");
 
   const counts = {
     total: rows.length,
@@ -227,13 +263,14 @@ export async function getHomeOverview(userId: string): Promise<HomeOverview> {
     cashUsd,
     cashByWallet,
     hasWallets: walletBalances.length > 0,
-    allocatedUsd,
-    totalEquityUsd: cashUsd + allocatedUsd,
-    pnlUsd,
-    pnlPct: basisUsd > 0 ? (pnlUsd / basisUsd) * 100 : null,
-    realizedPnlUsd,
-    unrealizedPnlUsd,
-    sparkline: combineSeries(seriesByAgent),
+    allocatedUsd: live.equityUsd,
+    totalEquityUsd: cashUsd + live.equityUsd,
+    pnlUsd: live.pnlUsd,
+    pnlPct: live.pnlPct,
+    realizedPnlUsd: live.realizedPnlUsd,
+    unrealizedPnlUsd: live.unrealizedPnlUsd,
+    sparkline: live.sparkline,
+    paper,
     agents: cards,
     counts,
   };

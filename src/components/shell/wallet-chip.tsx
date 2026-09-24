@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, ChevronDown, Plus } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Plus, RotateCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CashLegend, CashTotal, ChainBreakdown } from "@/components/wallets/cash-summary";
 import { DepositSheet } from "@/components/wallets/deposit-sheet";
@@ -28,7 +29,9 @@ export type { MeWallets } from "@/components/wallets/use-cash";
  */
 export function WalletChip() {
   const { ready, session } = useSession();
-  const { data } = useUserWallets(Boolean(ready && session));
+  const { data, isError, refetch, isRefetching } = useUserWallets(Boolean(ready && session));
+  // Only when there is nothing to show: a failed background refetch keeps the last number.
+  const failed = isError && !data;
   // Land on the same mark as the page: every navigation re-reads the balance, so the
   // chip and an agent page rendered a moment later agree to the cent.
   const pathname = usePathname();
@@ -43,6 +46,18 @@ export function WalletChip() {
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
 
+  // The chip outlives every navigation, and so would its surfaces: a link inside the
+  // deposit sheet (an agent under "Where your cash sits") would leave the sheet open
+  // over the page it opened. Any route change closes all three. Adjusted during render,
+  // not in an effect, so the new page never paints with the old sheet on it.
+  const [lastPathname, setLastPathname] = useState(pathname);
+  if (pathname !== lastPathname) {
+    setLastPathname(pathname);
+    setDepositOpen(false);
+    setWithdrawOpen(false);
+    setPanelOpen(false);
+  }
+
   if (!ready || !session) return null;
 
   const openDeposit = (chain: Chain) => {
@@ -56,9 +71,13 @@ export function WalletChip() {
       <Popover open={panelOpen} onOpenChange={setPanelOpen}>
         <PopoverTrigger
           className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-2.5 text-sm transition-colors duration-150 hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:h-8"
-          aria-label="Cash balance — deposit or withdraw"
+          aria-label={failed ? "Balance unavailable — deposit or withdraw" : "Cash balance — deposit or withdraw"}
         >
-          <CashTotal cash={data?.cash} size="sm" scope="all" />
+          {failed ? (
+            <span className="text-sm font-medium text-muted-foreground">—</span>
+          ) : (
+            <CashTotal cash={data?.cash} size="sm" scope="all" />
+          )}
           <span className="hidden text-xs text-muted-foreground sm:inline">cash</span>
           <ChevronDown
             aria-hidden
@@ -72,7 +91,13 @@ export function WalletChip() {
         <PopoverContent align="end" className="glass-heavy w-80 space-y-3 rounded-2xl border border-border/60 p-4">
           <div>
             <p className="text-[11px] text-muted-foreground">Cash</p>
-            <CashTotal cash={data?.cash} size="lg" scope="all" className="mt-0.5 block" />
+            {failed ? (
+              <p className="mt-0.5 text-3xl font-semibold text-muted-foreground" aria-hidden>
+                —
+              </p>
+            ) : (
+              <CashTotal cash={data?.cash} size="lg" scope="all" className="mt-0.5 block" />
+            )}
           </div>
 
           {data ? (
@@ -80,6 +105,20 @@ export function WalletChip() {
               <ChainBreakdown cash={data.cash} onDeposit={openDeposit} />
               <CashLegend cash={data.cash} />
             </>
+          ) : failed ? (
+            // A skeleton that never resolves reads as "still loading" forever; say it failed.
+            <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-muted/20 px-3 py-2.5">
+              <p className="text-xs text-muted-foreground">Couldn&rsquo;t load your balance.</p>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isRefetching}
+                onClick={() => void refetch()}
+              >
+                <RotateCw aria-hidden className={cn(isRefetching && "motion-safe:animate-spin")} />
+                {isRefetching ? "Retrying…" : "Retry"}
+              </Button>
+            </div>
           ) : (
             <div className="space-y-2" role="status" aria-label="Loading your balances">
               <span className="block h-14 rounded-xl bg-muted/50 motion-safe:animate-pulse" aria-hidden />

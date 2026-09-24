@@ -97,6 +97,11 @@ describe("evaluateFirstTradeRisk", () => {
   it("refuses a zero or negative cap", () => {
     expect(evaluateFirstTradeRisk(config(), 0).ok).toBe(false);
   });
+
+  it("writes money as money, not as a raw number", () => {
+    const verdict = evaluateFirstTradeRisk(config({ maxTradeUsd: 3200 }), 2.5);
+    expect(verdict.problems.join(" ")).toContain("its max per trade is $3,200.00 but you asked for a cap of $2.50");
+  });
 });
 
 describe("withFirstTradePreset", () => {

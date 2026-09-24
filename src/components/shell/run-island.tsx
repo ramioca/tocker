@@ -25,6 +25,27 @@ const TOOL_ORB: Record<string, OrbState> = {
 };
 
 /**
+ * Where both islands sit. Phone: just above the tab bar. Desktop: bottom-centre,
+ * because the approvals island is persistent and the top bar holds the nav and
+ * Search — anything docked there covers them for as long as a proposal waits.
+ * `data-run-island` on the dock is how the toaster knows to lift above it.
+ */
+const ISLAND_DOCK =
+  "pointer-events-none fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4 md:bottom-6";
+
+/**
+ * Every island view is capped at the viewport less the dock's gutters. The shell
+ * springs to the measured width of its content, so capping the view is what keeps
+ * the target on-screen; past the cap, text columns truncate instead of pushing.
+ *
+ * `w-max` matters as much as the cap: it makes the view's minimum size its natural
+ * size (up to the cap). The truncating columns inside have no minimum of their own,
+ * and without it the measuring wrapper could shrink to whatever width the shell is
+ * mid-spring — and the shell would then settle on that.
+ */
+const VIEW_FIT = "!px-4 !py-2.5 w-max max-w-[calc(100vw-2rem)]";
+
+/**
  * The island exists because a run is the one thing in this app that takes
  * minutes and happens off-screen. It is rare (a user triggers a handful a day),
  * so it earns real motion — and it dismisses itself once the run settles.
@@ -60,7 +81,7 @@ export function RunIsland() {
       .find((step) => step.toolName)?.toolName ?? null;
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4 md:bottom-auto md:top-2">
+    <div data-run-island className={ISLAND_DOCK}>
       <div className="pointer-events-auto">
         {/* The beam rides the border only while the run is live — it IS the
             running indicator, and `active` freezes it the moment the run settles. */}
@@ -72,24 +93,24 @@ export function RunIsland() {
           active={isRunning && !reducedMotion}
         >
           <DynamicIsland view={view} className="border border-white/10">
-          <DynamicIslandView id="running" className="!px-4 !py-2.5">
+          <DynamicIslandView id="running" className={VIEW_FIT}>
             <Link
               href={`/agents/${watched.agentSlug}/runs/${watched.runId}`}
-              className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="flex min-w-0 items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               <AgentAvatar seed={watched.avatarSeed} name={watched.agentName} size="sm" />
-              <span className="flex flex-col leading-tight">
-                <span className="text-[13px] font-medium">{watched.agentName}</span>
+              <span className="flex min-w-0 flex-col leading-tight">
+                <span className="truncate text-[13px] font-medium">{watched.agentName}</span>
                 {/* Per-tick churn: kept out of the polite live region so a run
                     doesn't read "1s… 2s… 3s…" over the meaningful announcements. */}
-                <span className="text-[11px] opacity-70" aria-hidden>
+                <span className="truncate text-[11px] opacity-70" aria-hidden>
                   {lastTool ? `${lastTool}…` : "thinking…"}
                   {stepCount > 0 ? ` · ${stepCount} steps` : null}
                 </span>
               </span>
               <span
                 aria-hidden
-                className="tnum ml-2 rounded-full bg-white/10 px-2 py-0.5 font-mono text-[11px]"
+                className="tnum ml-2 shrink-0 rounded-full bg-white/10 px-2 py-0.5 font-mono text-[11px]"
               >
                 {elapsed}s
               </span>
@@ -100,14 +121,15 @@ export function RunIsland() {
                 size={20}
                 theme="dark"
                 aria-hidden
+                className="shrink-0"
               />
             </Link>
           </DynamicIslandView>
 
-          <DynamicIslandView id="settled" className="!px-4 !py-2.5">
+          <DynamicIslandView id="settled" className={VIEW_FIT}>
             <Link
               href={`/agents/${watched.agentSlug}/runs/${watched.runId}`}
-              className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="flex min-w-0 items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               {status === "failed" ? (
                 <TriangleAlert aria-hidden className="size-4 shrink-0 text-negative" />
@@ -164,8 +186,10 @@ function notifyPermissionChanged(): void {
   for (const listener of permissionListeners) listener();
 }
 
+// Below `sm` the pill is icon-only (a 28px round target) so the approval line keeps
+// the width; the label stays in the accessible name via `sr-only`.
 const ALERT_PILL =
-  "ml-2 flex shrink-0 items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-white/20 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60";
+  "ml-2 flex shrink-0 items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-white/20 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60 max-sm:size-7 max-sm:justify-center max-sm:p-0";
 
 /**
  * The one place the alert permission is asked for, and only while there is actually
@@ -197,7 +221,7 @@ function EnableAlertsButton() {
     return (
       <button type="button" disabled={push.busy} onClick={() => void push.enable()} className={ALERT_PILL}>
         <Bell aria-hidden className="size-3" />
-        {push.busy ? "Enabling…" : "Enable alerts"}
+        <span className="sr-only sm:not-sr-only">{push.busy ? "Enabling…" : "Enable alerts"}</span>
       </button>
     );
   }
@@ -218,7 +242,7 @@ function EnableAlertsButton() {
       className={ALERT_PILL}
     >
       <Bell aria-hidden className="size-3" />
-      Enable alerts
+      <span className="sr-only sm:not-sr-only">Enable alerts</span>
     </button>
   );
 }
@@ -239,26 +263,26 @@ function ApprovalsIsland({
   const href = latest ? `/agents/${latest.agentSlug}?proposal=${latest.tradeId}` : "/notifications";
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4 md:bottom-auto md:top-2">
+    <div data-run-island className={ISLAND_DOCK}>
       <div className="pointer-events-auto">
         <DynamicIsland view="proposals" className="border border-white/10">
-          <DynamicIslandView id="proposals" className="!px-4 !py-2.5">
+          <DynamicIslandView id="proposals" className={VIEW_FIT}>
             <Link
               href={href}
-              className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
-              <Gavel aria-hidden className="size-4" />
-              <span className="flex flex-col leading-tight">
-                <span className="text-[13px] font-medium">
+              <Gavel aria-hidden className="size-4 shrink-0" />
+              <span className="flex min-w-0 flex-col leading-tight">
+                <span className="truncate text-[13px] font-medium">
                   {count === 1 ? "1 trade awaiting approval" : `${count} trades awaiting approval`}
                 </span>
                 {latest ? (
-                  <span className="max-w-[18rem] truncate text-[11px] opacity-70">
+                  <span className="tnum max-w-[18rem] truncate text-[11px] opacity-70">
                     {latest.agentName} wants to {latest.side} ${Math.round(latest.requestedUsd)} of {latest.symbol}
                   </span>
                 ) : null}
               </span>
-              <span className="tnum ml-2 rounded-full bg-white/10 px-2 py-0.5 font-mono text-[11px]">
+              <span className="tnum ml-2 shrink-0 rounded-full bg-white/10 px-2 py-0.5 font-mono text-[11px]">
                 Review
               </span>
             </Link>

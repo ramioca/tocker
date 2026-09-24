@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Pause, Play } from "lucide-react";
@@ -13,22 +13,22 @@ import { formatUsd } from "@/components/common/format";
 import { Field, RiskSlider, Toggle } from "@/components/agents/builder/field";
 import { UniverseControls } from "@/components/agents/builder/universe-controls";
 import { UniversePreview } from "@/components/agents/settings/universe-preview";
+import { sameConfig } from "@/components/agents/settings/same-config";
 import { AddKeyInline } from "@/components/agents/builder/steps";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
 import { DEFAULT_MODELS } from "@/lib/agent/config";
 import { DataSourcePicker } from "@/components/agents/data-source-picker";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
 import { ExitRulesFields } from "@/components/agents/exit-rules";
-import { INTERVAL_PRESETS } from "@/components/agents/builder/types";
+import { INTERVAL_PRESETS, LLM_BOUNDS, RISK_BOUNDS } from "@/components/agents/builder/types";
 import { EmptyState } from "@/components/common/empty-state";
 import { setAgentStatusAction, updateAgentAction } from "@/components/agents/agent-actions";
 import { SizingControls } from "@/components/trading";
 import { readSizing } from "@/lib/trading/sizing";
-import { setPositionSizing } from "@/server/actions/trading";
 import { noteBudgetChangeAction } from "@/server/actions/security";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { cn } from "@/lib/utils";
-import type { AgentConfig } from "@/db/schema";
+import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { AgentDetail, DataSourceInfo, LlmKeyRow } from "@/server/types";
 
 /** The four numbers that decide how much money can move. */
@@ -51,6 +51,8 @@ export function AgentSettingsForm({
   config,
   sources = [],
   llmKeys = [],
+  accountPaused = false,
+  isAdmin = false,
 }: {
   agent: AgentDetail;
   config?: AgentConfig | null;
@@ -58,6 +60,10 @@ export function AgentSettingsForm({
   sources?: DataSourceInfo[];
   /** The owner's API keys, for the Brain section. Server-fetched by the page. */
   llmKeys?: LlmKeyRow[];
+  /** Trading is paused account-wide (Security → Stop everything). */
+  accountPaused?: boolean;
+  /** Shows operator-only notes, such as which platform wallet pays for a source. */
+  isAdmin?: boolean;
 }) {
   const resolved = config ?? agent.config;
   if (!resolved) {
@@ -68,7 +74,16 @@ export function AgentSettingsForm({
       />
     );
   }
-  return <SettingsForm agent={agent} initialConfig={resolved} sources={sources} llmKeys={llmKeys} />;
+  return (
+    <SettingsForm
+      agent={agent}
+      initialConfig={resolved}
+      sources={sources}
+      llmKeys={llmKeys}
+      accountPaused={accountPaused}
+      isAdmin={isAdmin}
+    />
+  );
 }
 
 function SettingsForm({
@@ -76,11 +91,15 @@ function SettingsForm({
   initialConfig,
   sources,
   llmKeys,
+  accountPaused,
+  isAdmin,
 }: {
   agent: AgentDetail;
   initialConfig: AgentConfig;
   sources: DataSourceInfo[];
   llmKeys: LlmKeyRow[];
+  accountPaused: boolean;
+  isAdmin: boolean;
 }) {
   const router = useRouter();
   const [name, setName] = useState(agent.name);
@@ -96,7 +115,37 @@ function SettingsForm({
     tagline !== (agent.tagline ?? "") ||
     isPublic !== agent.isPublic ||
     llmKeyId !== agent.llmKeyId ||
-    JSON.stringify(config) !== JSON.stringify(initialConfig);
+    !sameConfig(config, initialConfig);
+
+  // Unsaved edits live only in this component, so leaving drops them. Ask first: on
+  // reload or close, and on in-app links — the money strip's Go live, the back link,
+  // the tab bar — which navigate client-side and never fire `beforeunload`. Going live
+  // on the old caps because a Save was missed is the case this exists for.
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => event.preventDefault();
+    const onClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0) return;
+      // A modified click opens another tab; nothing here is lost.
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.target === "_blank" || anchor.hasAttribute("download")) return;
+      const url = new URL(anchor.href, window.location.href);
+      // Another origin unloads the page, so `beforeunload` asks; a #card jump stays here.
+      if (url.origin !== window.location.origin || url.pathname === window.location.pathname) return;
+      if (!window.confirm("You have unsaved changes to this agent. Leave without saving them?")) {
+        // Capture phase, so this runs before Next's <Link>, which skips a prevented click.
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    document.addEventListener("click", onClick, true);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("click", onClick, true);
+    };
+  }, [dirty]);
 
   const save = async () => {
     if (name.trim().length < 2) {
@@ -142,7 +191,7 @@ function SettingsForm({
     router.refresh();
   };
 
-  const patchRisk = (patch: Partial<AgentConfig["risk"]>) =>
+  const patchRisk = (patch: Partial<AgentRiskWithSizing>) =>
     setConfig((current) => ({ ...current, risk: { ...current.risk, ...patch } }));
 
   return (
@@ -150,7 +199,7 @@ function SettingsForm({
       <section className="rounded-xl border border-border/70 bg-card/30 p-4">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-medium">Status</h2>
-          <StatusBadge status={agent.status} />
+          <StatusBadge status={agent.status} accountPaused={accountPaused} />
           <button
             type="button"
             onClick={() => void toggleStatus()}
@@ -176,11 +225,26 @@ function SettingsForm({
           </button>
         </div>
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-          {agent.status === "active"
-            ? `Running ${intervalLabel(config.schedule.intervalMinutes).toLowerCase()}. Next tick ${
+          {agent.status === "active" ? (
+            accountPaused ? (
+              <>
+                Paused account-wide.{" "}
+                <Link
+                  href="/settings/security#kill-switch"
+                  className="rounded underline underline-offset-2 hover:text-foreground focus-ring"
+                >
+                  Resume trading
+                </Link>{" "}
+                in Security to let it run again.
+              </>
+            ) : (
+              `Running ${intervalLabel(config.schedule.intervalMinutes).toLowerCase()}. Next tick ${
                 agent.nextRunAt ? "is scheduled" : "unscheduled"
               }.`
-            : "Paused agents keep their positions and history; they just stop waking up."}
+            )
+          ) : (
+            "Paused agents keep their positions and history; they just stop waking up."
+          )}
         </p>
       </section>
 
@@ -269,9 +333,7 @@ function SettingsForm({
           id="settings-llm-steps"
           label="Steps per run"
           value={config.llm.maxSteps}
-          min={4}
-          max={40}
-          step={1}
+          {...LLM_BOUNDS.maxSteps}
           format={(value) => String(Math.round(value))}
           meaning={`Up to ${Math.round(config.llm.maxSteps)} tool calls a run. A shortlist of three proposals needs about 12; deeper research needs more, and every step costs model tokens.`}
           onChange={(maxSteps) =>
@@ -295,6 +357,7 @@ function SettingsForm({
             <p className="text-xs text-muted-foreground">No {config.llm.provider} key on file yet.</p>
           )}
           <AddKeyInline
+            provider={config.llm.provider}
             onAdded={(key) => {
               setKeys((current) => [key, ...current]);
               setLlmKeyId(key.id);
@@ -337,6 +400,7 @@ function SettingsForm({
         </div>
         <DataSourcePicker
           sources={sources}
+          isAdmin={isAdmin}
           chains={config.chains}
           selected={config.dataSources}
           onChange={(dataSources) => setConfig((current) => ({ ...current, dataSources }))}
@@ -417,9 +481,7 @@ function SettingsForm({
             id="settings-max-trade"
             label="Max per trade"
             value={config.risk.maxTradeUsd}
-            min={10}
-            max={5_000}
-            step={10}
+            {...RISK_BOUNDS.maxTradeUsd}
             format={(value) => formatUsd(value)}
             meaning={`No single trade may move more than ${formatUsd(config.risk.maxTradeUsd)}.`}
             onChange={(maxTradeUsd) => patchRisk({ maxTradeUsd })}
@@ -470,21 +532,17 @@ function SettingsForm({
 
         {/*
           Sizing decides how big a ticket is *within* the cap above; the cap is the
-          ceiling it can never cross. It saves through its own action rather than the
-          form's Save, so the ceiling and the ticket size can never be half-applied
-          against each other.
+          ceiling it can never cross. It is part of this form and saves with the caps in
+          the one Save below, so the ceiling and the ticket size are always applied
+          together — a second Save button in the same card saved one without the other,
+          and the form's own Save then wrote the old sizing back.
         */}
         <div className="border-t border-border/50 pt-4">
           <SizingControls
             value={readSizing(config.risk)}
             maxTradeUsd={config.risk.maxTradeUsd}
             equityUsd={agent.equityUsd}
-            onSave={async (next) => {
-              const result = await setPositionSizing(agent.id, next);
-              if (!result.ok) return result.error;
-              router.refresh();
-              return null;
-            }}
+            onChange={(sizing) => patchRisk({ sizing })}
           />
         </div>
       </section>

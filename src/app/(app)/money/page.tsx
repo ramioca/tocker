@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Plus, Wallet } from "lucide-react";
+import { ArrowRight, Plus, Wallet } from "lucide-react";
 import { EquityChart } from "@/components/charts/equity-chart";
 import { EmptyState } from "@/components/common/empty-state";
 import { AgentMoneyTable } from "@/components/money/agent-money-table";
+import { sumCosts } from "@/components/money/cost-totals";
 import { CostsNote } from "@/components/money/costs-note";
 import { MoneyHeadline } from "@/components/money/money-headline";
 import { PnlByDay } from "@/components/money/pnl-by-day";
@@ -62,6 +63,18 @@ const NEW_AGENT_BUTTON = (
   </Link>
 );
 
+// Going live is a per-agent switch (each agent's settings), so a paper-only account is
+// sent to its agents, not to build another one.
+const GO_LIVE_BUTTON = (
+  <Link
+    href="/agents"
+    className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.97]"
+  >
+    Take an agent live
+    <ArrowRight aria-hidden className="size-4" />
+  </Link>
+);
+
 export default async function MoneyPage() {
   const session = await getSession();
   if (!session) redirect(`/login?next=${encodeURIComponent("/money")}`);
@@ -69,6 +82,9 @@ export default async function MoneyPage() {
   const summary = await getMoney(session.userId);
   const hasLive = summary.live.length > 0;
   const hasAny = hasLive || summary.paper.length > 0;
+  // Before anything is live, the costs worth explaining are the paper agents' — the
+  // live totals would print $0.00 directly under a table that says otherwise.
+  const costScope = hasLive ? "live" : "paper";
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
@@ -126,7 +142,7 @@ export default async function MoneyPage() {
                 ? "Your paper agents are below. Their P&L is real arithmetic on simulated fills, but none of it is counted here — this page only totals live books. Fund an agent and switch it to live when its record convinces you."
                 : "An agent is a prompt, a wallet and a schedule. Build one — it starts on paper, so the first mistake costs nothing — and this page fills in the day it goes live."
             }
-            action={NEW_AGENT_BUTTON}
+            action={hasAny ? GO_LIVE_BUTTON : NEW_AGENT_BUTTON}
           />
         )}
 
@@ -150,9 +166,19 @@ export default async function MoneyPage() {
             <SectionHeading
               id="money-costs-heading"
               title="Costs"
-              hint="Three different bills, only one of which we collect."
+              hint={
+                costScope === "live"
+                  ? "Three different bills, only one of which we collect."
+                  : "What your paper agents have cost so far. The fee is simulated; the model tokens are a real bill on your own key."
+              }
             />
-            <CostsNote summary={summary} feeUsd={platformFeeUsd()} settleMinUsd={settleMinUsd()} />
+            <CostsNote
+              summary={summary}
+              scope={costScope}
+              totals={costScope === "paper" ? sumCosts(summary.paper) : undefined}
+              feeUsd={platformFeeUsd()}
+              settleMinUsd={settleMinUsd()}
+            />
           </section>
         ) : null}
       </div>

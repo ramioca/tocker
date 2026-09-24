@@ -26,9 +26,15 @@ export interface MfaStatus {
   enrolled: boolean;
   /**
    * Set when enrolment is impossible or unverifiable. The UI prints this verbatim
-   * rather than showing a dead "Enrol" button.
+   * rather than showing a dead "Enrol" button, to every user — so it says what it
+   * means for them and never how to configure the deployment.
    */
   blockedReason: string | null;
+  /**
+   * The same situation in operator terms (env vars, the Privy dashboard). For the admin
+   * page only; never render it on a page an ordinary user can reach.
+   */
+  operatorNote: string | null;
 }
 
 // ----------------------------------------------------------------- LLM keys

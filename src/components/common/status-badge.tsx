@@ -15,12 +15,32 @@ const AGENT_LABEL: Record<AgentStatus, string> = {
   error: "Error",
 };
 
-export function StatusBadge({ status, className }: { status: AgentStatus; className?: string }) {
+/**
+ * An agent's status. `accountPaused` is for the viewer's own agents only: with trading
+ * paused account-wide an active agent does not run, so it must not read "Active".
+ *
+ * `short` keeps a held agent's badge to "Paused" (the "(account)" is still read out and
+ * in the tooltip) for a card whose name would otherwise truncate to make room.
+ */
+export function StatusBadge({
+  status,
+  accountPaused = false,
+  short = false,
+  className,
+}: {
+  status: AgentStatus;
+  accountPaused?: boolean;
+  short?: boolean;
+  className?: string;
+}) {
+  const held = accountPaused && status === "active";
+  const shown: AgentStatus = held ? "paused" : status;
   return (
     <span
+      title={held ? "Trading is paused account-wide" : undefined}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-        AGENT_TONE[status],
+        "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        AGENT_TONE[shown],
         className,
       )}
     >
@@ -28,10 +48,20 @@ export function StatusBadge({ status, className }: { status: AgentStatus; classN
         aria-hidden
         className={cn(
           "size-1.5 rounded-full bg-current",
-          status === "active" && "motion-safe:animate-pulse",
+          shown === "active" && "motion-safe:animate-pulse",
         )}
       />
-      {AGENT_LABEL[status]}
+      {held ? (
+        short ? (
+          <>
+            Paused<span className="sr-only"> (account)</span>
+          </>
+        ) : (
+          "Paused (account)"
+        )
+      ) : (
+        AGENT_LABEL[status]
+      )}
     </span>
   );
 }

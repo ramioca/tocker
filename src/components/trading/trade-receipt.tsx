@@ -317,7 +317,7 @@ export function TradeReceiptSheet({
           </button>
         }
       />
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-md">
+      <SheetContent side="right" className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md">
         <SheetHeader>
           <SheetTitle className="font-mono tracking-tight">
             {title ?? `${receipt.side.toUpperCase()} ${receipt.symbol}`}

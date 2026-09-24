@@ -39,6 +39,7 @@ const inputSchema = z.object({
 export const agentData = defineSource({
   id: "agentdata",
   name: "AgentData",
+  summary: "Market-wide context for major assets: funding rates, volatility, correlation and liquidation levels.",
   description: `Macro/derivatives context for major assets. Endpoints: ${Object.entries(ENDPOINTS)
     .map(([k, v]) => `${k} (${v})`)
     .join("; ")}.`,

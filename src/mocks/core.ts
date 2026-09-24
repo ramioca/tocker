@@ -525,6 +525,7 @@ function tradesFor(agent: AgentCard, count: number, seedOffset = 0): TradeRow[] 
     out.push({
       id: `trade_${agent.slug}_${seedOffset}_${i}`,
       agentId: agent.id,
+      runId: null,
       chain: t.chain,
       side,
       token: t,
@@ -855,6 +856,7 @@ export function mockRun(runId: string): RunDetail | null {
       return {
         id: `${runId}_trade_${i}`,
         agentId: agent.id,
+        runId,
         chain: args.chain ?? tokenRef.chain,
         side: args.side ?? "buy",
         token: tokenRef,

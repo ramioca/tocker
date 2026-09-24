@@ -4,12 +4,14 @@ import {
   bandFor,
   calibration,
   calibrationSentence,
+  closedSells,
   closedTrades,
   computeAnalytics,
   maxDrawdownPct,
   winRateOf,
   type AnalyticsFill,
 } from "./analytics";
+import { winRate } from "./pnl";
 
 const HOUR = 3_600_000;
 const T0 = Date.parse("2026-09-01T00:00:00.000Z");
@@ -183,10 +185,15 @@ describe("calibration", () => {
 
   it("writes the operator's sentence from the best and worst populated band", () => {
     const sentence = calibrationSentence(calibration(closed));
-    expect(sentence).toContain("80-100");
-    expect(sentence).toContain("+100.0%");
+    expect(sentence).toMatch(/^Your 80-100 picks averaged \+100\.0%/);
     expect(sentence).toContain("40-59");
-    expect(sentence).toContain("lost");
+    expect(sentence).toMatch(/lost \d/);
+    expect(sentence).not.toContain("lost −");
+  });
+
+  it("addresses a visitor as the agent, not as its owner", () => {
+    const sentence = calibrationSentence(calibration(closed), { owner: false });
+    expect(sentence).toMatch(/^This agent's 80-100 picks/);
   });
 
   it("has no sentence with nothing closed", () => {
@@ -298,5 +305,45 @@ describe("computeAnalytics", () => {
     expect(out.unrealizedPnlUsd).toBeCloseTo(42.5, 6);
     expect(out.dataSpendUsd).toBeCloseTo(0.37, 6);
     expect(out.maxDrawdownPct).toBeNull();
+  });
+});
+
+describe("headline numbers agree with the average-cost ledger", () => {
+  // Buy 10 @ $1, buy 10 @ $3, sell 10 @ $2.50, and 10 are still open. FIFO books the
+  // sell against the $1 lot (+$15, a win); average cost ($2) books it at +$5. Both are
+  // "right", but the stat card, the positions table and the unrealized number handed
+  // in are average cost, and a Performance tab on FIFO printed a different realized
+  // total and win rate for the same agent.
+  const now = T0 + 10 * 24 * HOUR;
+  const fills: AnalyticsFill[] = [
+    fill({ tokenId: "x", side: "buy", amountToken: 10, priceUsd: 1, feeUsd: 0.1, createdAt: new Date(T0) }),
+    fill({ tokenId: "x", side: "buy", amountToken: 10, priceUsd: 3, feeUsd: 0.1, createdAt: new Date(T0 + HOUR) }),
+    fill({ id: "part", tokenId: "x", side: "sell", amountToken: 10, priceUsd: 2.5, feeUsd: 0.1, createdAt: new Date(T0 + 2 * HOUR) }),
+    fill({ tokenId: "y", side: "buy", amountToken: 5, priceUsd: 2, createdAt: new Date(T0) }),
+    fill({ id: "loss", tokenId: "y", side: "sell", amountToken: 5, priceUsd: 1, createdAt: new Date(T0 + 3 * HOUR) }),
+  ];
+
+  it("books one row per exit at the weighted-average basis", () => {
+    const sells = closedSells(fills);
+    expect(sells.map((s) => s.sellId)).toEqual(["part", "loss"]);
+    // avg cost (10 + 0.1 + 30 + 0.1) / 20 = 2.01 → 10 × (2.5 − 2.01) − 0.1
+    expect(sells[0].realizedPnlUsd).toBeCloseTo(4.8, 6);
+    expect(sells[1].realizedPnlUsd).toBeCloseTo(-5, 6);
+  });
+
+  it("reports the same realized total and win rate as lib/pnl", () => {
+    const out = computeAnalytics({ agentId: "a", window: "all", fills, equity: [], unrealizedPnlUsd: 0, dataSpendUsd: 0, now });
+    const ledger = winRate(fills);
+    expect(out.realizedPnlUsd).toBeCloseTo(ledger.realizedPnlUsd, 6);
+    expect(out.winRate).toBe(ledger.rate);
+    expect(out.byChain).toEqual([{ chain: "solana", trades: 2, pnlUsd: expect.closeTo(-0.2, 6) }]);
+  });
+
+  it("still attributes calibration and hold time to the FIFO lot that was closed", () => {
+    const out = computeAnalytics({ agentId: "a", window: "all", fills, equity: [], unrealizedPnlUsd: 0, dataSpendUsd: 0, now });
+    const part = out.closed.filter((c) => c.sellId === "part");
+    expect(part).toHaveLength(1);
+    expect(part[0].entryPriceUsd).toBe(1);
+    expect(part[0].holdHours).toBeCloseTo(2, 6);
   });
 });

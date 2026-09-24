@@ -93,6 +93,8 @@ export interface Position {
 export interface TradeRow {
   id: string;
   agentId: string;
+  /** The run that placed it. Null for manual trades and exits outside a run. */
+  runId: string | null;
   chain: Chain;
   side: "buy" | "sell";
   token: TokenRef;
@@ -410,6 +412,12 @@ export type PreparedSponsoredFunding = SponsoredFundingPlan | SponsoredFundingUn
 export interface DataSourceInfo {
   id: string;
   name: string;
+  /**
+   * One plain sentence for the owner, shown in the data-source picker. `description` is
+   * written for the model (modes, per-call prices, vendor quirks) and is not UI copy.
+   * Absent on resources discovered at runtime, whose description is the vendor's own.
+   */
+  summary?: string;
   description: string;
   category: "sentiment" | "prices" | "onchain" | "news" | "social" | "other";
   network: string; // CAIP-2, the network the registry prefers to pay on
@@ -437,9 +445,27 @@ export interface ScoreHistoryPoint {
   holderCount: number | null;
 }
 
+/**
+ * What the market says about a token, the same under any agent's rules: no verdict,
+ * no blockers, no components, no sources. Safe to show from a row scored under a
+ * private universe, because none of these numbers depend on the universe.
+ */
+export interface TokenMarketFacts {
+  priceUsd: number | null;
+  liquidityUsd: number | null;
+  volume24hUsd: number | null;
+  marketCapUsd: number | null;
+  holderCount: number | null;
+  ageHours: number | null;
+  priceChange24hPct: number | null;
+  measuredAt: string;
+}
+
 export interface TokenPage {
   token: TokenRef;
   score: TokenScore | null;
+  /** The latest cached market facts, from whichever universe last scored it. Null when never scored. */
+  marketFacts: TokenMarketFacts | null;
   history: ScoreHistoryPoint[];
   /** Public agents currently holding it, with their unrealized PnL on it. */
   holders: Array<{ agent: Pick<AgentCard, "id" | "slug" | "name" | "avatarSeed" | "mode">; valueUsd: number | null; unrealizedPnlPct: number | null }>;
@@ -465,6 +491,9 @@ export interface AgentAnalytics {
   maxDrawdownPct: number | null;
   bestTrade: TradeRow | null;
   worstTrade: TradeRow | null;
+  /** Realised PnL of `bestTrade` / `worstTrade` (average cost). Null when there is no such trade. */
+  bestTradePnlUsd: number | null;
+  worstTradePnlUsd: number | null;
   byChain: Array<{ chain: Chain; trades: number; pnlUsd: number }>;
   byOrigin: Array<{ origin: TradeOrigin; trades: number; pnlUsd: number }>;
   exits: Array<{ reason: ExitReason; count: number; pnlUsd: number }>;

@@ -33,8 +33,10 @@ function Card({ label, value, hint }: { label: string; value: string; hint: stri
   return (
     <div className="rounded-xl border border-border/70 bg-card/40 px-3 py-2.5">
       <dt className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">{label}</dt>
-      <dd className="tnum mt-1 text-lg leading-none font-semibold">{value}</dd>
-      <p className="mt-1 text-[10px] text-muted-foreground">{hint}</p>
+      <dd className="mt-1">
+        <span className="tnum block text-lg leading-none font-semibold">{value}</span>
+        <span className="mt-1 block text-[10px] font-normal text-muted-foreground">{hint}</span>
+      </dd>
     </div>
   );
 }

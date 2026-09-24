@@ -121,6 +121,7 @@ function flowSentiment(netflowUsd: number): number {
 export const nansenSmartMoney = defineSource({
   id: "nansen-smart-money",
   name: "Nansen Smart Money",
+  summary: "Whether wallets with a proven record are buying or selling a token.",
   description:
     "Net USD flow into a token from Nansen-labelled smart-money wallets (funds and proven traders), per chain and per window. The tie-breaker signal: it does not tell you a token is safe, it tells you whether wallets with a record are on the same side as you.",
   category: "onchain",

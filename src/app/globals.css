@@ -490,6 +490,48 @@
     outline: 2px solid var(--ring);
     outline-offset: -2px;
   }
+
+  /* An sr-only <table> with auto layout ignores `width: 1px` and sizes to its content,
+     so a chart's screen-reader table pushed phone pages ~20px sideways. Anchoring its
+     right edge keeps the whole box inside its containing block; it is still clipped
+     and still read. */
+  table.sr-only {
+    right: 0;
+  }
+}
+
+/* The liquid-metal chrome strips `outline` and `box-shadow` from whatever it wraps
+   (`normalizeHostStyles`), which took the focus ring off every CTA inside one. Draw
+   the same ring on the chrome itself; it follows the pill's radius. */
+.metal-fx-root:has(:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Keyboard focus must not land under the chrome: the sticky top bar (3.5rem) and, on
+   phones, the fixed tab bar. Scoped to the app shell (#main) so the landing page's own
+   scrolling is untouched; the tab bar is md:hidden, so the bottom value is too. */
+html:has(#main) {
+  scroll-padding-top: 4rem;
+}
+
+html:has(#main [data-sticky-subnav]) {
+  scroll-padding-top: calc(4rem + 2.75rem);
+}
+
+/* A sticky action bar at the bottom (the agent builder's) covers another ~4.5rem. */
+html:has(#main [data-sticky-actionbar]) {
+  scroll-padding-bottom: 4.75rem;
+}
+
+@media (max-width: 767px) {
+  html:has(#main) {
+    scroll-padding-bottom: calc(4.25rem + env(safe-area-inset-bottom));
+  }
+
+  html:has(#main [data-sticky-actionbar]) {
+    scroll-padding-bottom: calc(4.25rem + 4.75rem + env(safe-area-inset-bottom));
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

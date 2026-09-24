@@ -7,7 +7,19 @@ import { pnlOverWindow, WINDOW_DAYS } from "@/lib/pnl";
 import type { DataSourceInfo, LeaderboardRow, LeaderboardWindow, TokenScore } from "@/server/types";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import { discoverCandidates, getTokenScore } from "@/lib/tokens";
-import { buildAgentCards, snapshotInCurrentMode } from "./_shared";
+import { buildAgentCards, followedAgentIds, snapshotInCurrentMode } from "./_shared";
+
+/**
+ * Agent ids the viewer follows directly, so the leaderboard can say "Following" where
+ * it is true. One read for the whole page rather than a join in each of the three
+ * `getLeaderboard` windows. Empty for an anonymous viewer.
+ */
+export async function viewerFollowedAgentIds(viewerId: string | null): Promise<string[]> {
+  if (!viewerId) return [];
+  const db = await getDb();
+  const { agentIds } = await followedAgentIds(db, viewerId);
+  return agentIds;
+}
 
 /**
  * Leaderboard per SPEC: PnL% = (latest − snapshot at window start) / snapshot at

@@ -31,30 +31,51 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sentinel = useRef<HTMLDivElement>(null);
+  // Only the newest request may write. A page of "Top PnL" landing after the switch to
+  // "Newest" used to be appended to the new list and overwrite its cursor — one agent
+  // twice, another never, and "That's every public agent." underneath.
+  const requestRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(
     async (nextSort: Sort, nextCursor: string | null, replace: boolean) => {
+      const id = ++requestRef.current;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
       setLoading(true);
       setError(null);
       try {
         const params = new URLSearchParams({ sort: nextSort });
         if (nextCursor) params.set("cursor", nextCursor);
-        const response = await fetch(`/api/discover/agents?${params}`);
+        const response = await fetch(`/api/discover/agents?${params}`, { signal: controller.signal });
         if (!response.ok) throw new Error("Could not load agents");
         const page = (await response.json()) as Page<AgentCard>;
-        setItems((current) => (replace ? page.items : [...current, ...page.items]));
+        if (id !== requestRef.current) return;
+        setItems((current) => {
+          if (replace) return page.items;
+          // Offset cursors shift when the ranking moves between two requests; never
+          // render the same agent twice (it is also the React key).
+          const seen = new Set(current.map((agent) => agent.id));
+          return [...current, ...page.items.filter((agent) => !seen.has(agent.id))];
+        });
         setCursor(page.nextCursor);
       } catch {
+        // Superseded (aborted or simply stale): the newer request owns the state.
+        if (id !== requestRef.current) return;
         setError("Could not load more agents.");
       } finally {
-        setLoading(false);
+        if (id === requestRef.current) setLoading(false);
       }
     },
     [],
   );
 
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   function changeSort(next: Sort) {
     if (next === sort) return;
+    abortRef.current?.abort();
     setSort(next);
     setItems([]);
     setCursor(null);
@@ -75,6 +96,7 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
     return () => observer.disconnect();
   }, [cursor, loading, sort, load]);
 
+  const filtering = query.trim().length > 0;
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return items;
@@ -108,13 +130,13 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
         />
       </div>
 
-      <div role="tablist" aria-label="Sort agents" className="mt-5 flex flex-wrap gap-1.5">
+      {/* A sort, not tabs: there is one list and no panels, so pressed buttons. */}
+      <div role="group" aria-label="Sort agents" className="mt-5 flex flex-wrap gap-1.5">
         {SORTS.map((option) => (
           <button
             key={option.id}
             type="button"
-            role="tab"
-            aria-selected={sort === option.id}
+            aria-pressed={sort === option.id}
             onClick={() => changeSort(option.id)}
             className={`h-8 rounded-lg border px-3 text-xs font-medium transition-colors duration-150 focus-ring ${
               sort === option.id
@@ -127,18 +149,22 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
         ))}
       </div>
 
-      {visible.length === 0 && !loading ? (
+      {/* With a filter on, a background page load is not a reason to show skeletons:
+          the answer to "zzzz" is the empty state, and a match that arrives replaces it. */}
+      {visible.length === 0 && (!loading || filtering) ? (
         <EmptyState
           className="mt-6"
           icon={<Boxes />}
-          title={query ? `Nothing matches “${query}”` : "No public agents yet"}
+          title={filtering ? `Nothing matches “${query.trim()}”` : "No public agents yet"}
           description={
-            query
-              ? "The filter runs over what is loaded. Clear it, or scroll further to pull more of the archive in."
+            filtering
+              ? cursor || loading
+                ? "The filter runs over what is loaded. Clear it, or scroll further to pull more of the archive in."
+                : "Every public agent is loaded and none match. Try a name, an owner's handle or a model."
               : "Be the first to publish one. Every fill is public; the strategy behind it never is."
           }
           action={
-            query ? (
+            filtering ? (
               <button
                 type="button"
                 onClick={() => setQuery("")}
@@ -163,7 +189,7 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
               <AgentGridCard agent={agent} />
             </li>
           ))}
-          {loading
+          {loading && !filtering
             ? Array.from({ length: 3 }, (_, i) => (
                 <li key={`skeleton-${i}`} aria-hidden>
                   <div className="glass-card h-56 rounded-2xl motion-safe:animate-pulse" />

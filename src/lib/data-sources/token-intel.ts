@@ -48,6 +48,7 @@ const SAFETY_LEVEL_RISK: Record<string, number> = {
 export const deepnetsTokenSafety = defineSource({
   id: "deepnets-token-safety",
   name: "Deepnets token safety",
+  summary: "Solana token safety check: risk level, holder concentration, bundles and mint/freeze flags.",
   description:
     "Solana token safety analysis: overall risk level, wallet-network concentration, bundle detection, mint/freeze authority flags, critical risks and warnings. Paid on Solana at $0.01 a call, from the platform's Solana wallet.",
   category: "onchain",

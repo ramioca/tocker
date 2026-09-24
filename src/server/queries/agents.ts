@@ -211,10 +211,21 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
 
   const key = keyRow[0];
 
+  // Live and readable: cash now plus positions at their marks. Otherwise the series.
+  const equityUsd = live ? live.equityUsd : (equity.at(-1)?.equityUsd ?? equitySnapshot.equityUsd);
+  // All-time PnL is this equity against what the book started with — the subtraction
+  // the chart readout and the Equity card make — so the header and the PnL card print
+  // the same number as the chart instead of a last-snapshot-minus-first-snapshot one.
+  const basisUsd = agg?.startEquityUsd ?? (agent.mode === "paper" ? toNum(agent.paperStartingUsd) : null);
+  const pnlUsd = basisUsd === null ? card.pnlUsd : equityUsd - basisUsd;
+  const pnlPct =
+    basisUsd === null || pnlUsd === null ? card.pnlPct : basisUsd === 0 ? 0 : (pnlUsd / Math.abs(basisUsd)) * 100;
+
   return {
     ...card,
-    // Live and readable: cash now plus positions at their marks. Otherwise the series.
-    equityUsd: live ? live.equityUsd : (equity.at(-1)?.equityUsd ?? equitySnapshot.equityUsd),
+    equityUsd,
+    pnlUsd,
+    pnlPct,
     // THE GATE. The strategy prompt, universe rules, thresholds and data-source list
     // never leave the server for anyone but the owner. Everyone else gets the shape of
     // the agent (chains, model, cadence, how many sources it buys) and nothing more.

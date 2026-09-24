@@ -40,6 +40,7 @@
 import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { Chain, TokenScore } from "@/server/types";
 import { explainBlocker } from "@/lib/tokens/score";
+import { fmtUsd } from "@/lib/money";
 import { buyCostUsd, platformFeeUsd } from "@/lib/platform/fee";
 import { readSizing, sizeOrder, type SizedOrder } from "./sizing";
 
@@ -207,7 +208,7 @@ export function riskGuard(
     if (order.amountUsd > risk.maxTradeUsd) {
       return {
         ok: false,
-        reason: `Trade size $${order.amountUsd.toFixed(2)} exceeds maxTradeUsd $${risk.maxTradeUsd.toFixed(2)}.`,
+        reason: `Trade size ${fmtUsd(order.amountUsd)} exceeds maxTradeUsd ${fmtUsd(risk.maxTradeUsd)}.`,
       };
     }
 
@@ -219,10 +220,10 @@ export function riskGuard(
     if (order.amountUsd > ceiling.amountUsd + 1e-9) {
       return {
         ok: false,
-        reason: `Trade size $${order.amountUsd.toFixed(2)} exceeds what this agent's ${ceiling.effectiveMode.replace(
+        reason: `Trade size ${fmtUsd(order.amountUsd)} exceeds what this agent's ${ceiling.effectiveMode.replace(
           /_/g,
           " ",
-        )} sizing allows right now ($${ceiling.amountUsd.toFixed(2)}): ${ceiling.explanation}`,
+        )} sizing allows right now (${fmtUsd(ceiling.amountUsd)}): ${ceiling.explanation}`,
       };
     }
 
@@ -246,8 +247,8 @@ export function riskGuard(
         ok: false,
         reason:
           feeUsd > 0
-            ? `Insufficient cash: $${portfolio.cashUsd.toFixed(2)} available, $${order.amountUsd.toFixed(2)} requested plus the $${feeUsd.toFixed(2)} Tocker fee.`
-            : `Insufficient cash: $${portfolio.cashUsd.toFixed(2)} available, $${order.amountUsd.toFixed(2)} requested.`,
+            ? `Insufficient cash: ${fmtUsd(portfolio.cashUsd)} available, ${fmtUsd(order.amountUsd)} requested plus the ${fmtUsd(feeUsd)} Tocker fee.`
+            : `Insufficient cash: ${fmtUsd(portfolio.cashUsd)} available, ${fmtUsd(order.amountUsd)} requested.`,
       };
     }
     const equity = portfolio.equityUsd > 0 ? portfolio.equityUsd : portfolio.cashUsd;
@@ -273,7 +274,7 @@ export function riskGuard(
   if (order.amountUsd > position.valueUsd + 1e-9) {
     return {
       ok: false,
-      reason: `Sell size $${order.amountUsd.toFixed(2)} exceeds the ${order.symbol} position value $${position.valueUsd.toFixed(2)}.`,
+      reason: `Sell size ${fmtUsd(order.amountUsd)} exceeds the ${order.symbol} position value ${fmtUsd(position.valueUsd)}.`,
     };
   }
   return { ok: true };

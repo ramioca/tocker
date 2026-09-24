@@ -1,5 +1,6 @@
 "use server";
 import { discoverAnthropicWorkspace, needsWorkspaceHeader } from "@/lib/agent/anthropic-workspace";
+import { providerLabel } from "@/lib/agent/models";
 import { revalidatePath } from "next/cache";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { agents, getDb, llmKeys, notifications, users } from "@/db";
@@ -7,7 +8,13 @@ import { getSession } from "@/lib/auth";
 import { encryptSecret, last4 } from "@/lib/crypto";
 import { recordAudit } from "@/lib/security/audit";
 import { newId } from "@/server/queries/_shared";
+import { sanitizePrefs, type NotificationPrefs } from "@/lib/notifications/prefs";
 import type { ActionResult } from "@/server/types";
+
+/** "an OpenAI", "a Groq": the audit log is read, so it gets the article right. */
+function withArticle(word: string): string {
+  return `${/^[aeiou]/i.test(word) ? "an" : "a"} ${word}`;
+}
 
 function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
@@ -119,7 +126,7 @@ export async function addLlmKey(input: {
   await recordAudit({
     userId: session.userId,
     kind: "llm_key_added",
-    summary: `Added a ${input.provider} API key ending ${last4(key)}${input.label?.trim() ? ` (${input.label.trim()})` : ""}.`,
+    summary: `Added ${withArticle(providerLabel(input.provider))} API key ending ${last4(key)}${input.label?.trim() ? ` (${input.label.trim()})` : ""}.`,
     metadata: { provider: input.provider, last4: last4(key) },
   });
 
@@ -128,7 +135,7 @@ export async function addLlmKey(input: {
   return { ok: true, data: { id, last4: last4(key) } };
 }
 
-export async function removeLlmKey(id: string): Promise<ActionResult> {
+export async function removeLlmKey(id: string): Promise<ActionResult<{ detachedAgents: number }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
@@ -151,17 +158,19 @@ export async function removeLlmKey(id: string): Promise<ActionResult> {
   await recordAudit({
     userId: session.userId,
     kind: "llm_key_removed",
-    summary: `Revoked the ${key.provider} key ending ${key.last4}. ${
+    summary: `Revoked the ${providerLabel(key.provider)} key ending ${key.last4}. ${
       detached.length === 0
         ? "No agent was using it."
-        : `${detached.length} agent${detached.length === 1 ? "" : "s"} lost its brain and cannot run until another key is attached.`
+        : detached.length === 1
+          ? "1 agent lost its brain and cannot run until another key is attached."
+          : `${detached.length} agents lost their brains and cannot run until another key is attached.`
     }`,
     metadata: { provider: key.provider, last4: key.last4, detachedAgents: detached.length },
   });
 
   revalidatePath("/settings");
   revalidatePath("/settings/security");
-  return { ok: true, data: undefined };
+  return { ok: true, data: { detachedAgents: detached.length } };
 }
 
 /**
@@ -229,4 +238,41 @@ export async function markNotificationsRead(): Promise<ActionResult> {
   revalidatePath("/feed");
   revalidatePath("/settings");
   return { ok: true, data: undefined };
+}
+
+/** Mark one of the viewer's notifications read, when they open it. Idempotent. */
+export async function markNotificationRead(id: string): Promise<ActionResult> {
+  const session = await getSession();
+  if (!session) return fail("Sign in first");
+
+  const db = await getDb();
+  await db
+    .update(notifications)
+    .set({ readAt: new Date() })
+    .where(and(eq(notifications.id, id), eq(notifications.userId, session.userId), isNull(notifications.readAt)));
+
+  revalidatePath("/notifications");
+  return { ok: true, data: undefined };
+}
+
+/**
+ * Store which notification kinds the viewer wants. Only muteable kinds with boolean
+ * values are kept (see `sanitizePrefs`), so a crafted request cannot mute a proposal.
+ */
+export async function updateNotificationPrefs(prefs: NotificationPrefs): Promise<ActionResult<NotificationPrefs>> {
+  const session = await getSession();
+  if (!session) return fail("Sign in first");
+
+  const clean = sanitizePrefs(prefs);
+  const db = await getDb();
+  await db
+    .update(users)
+    .set({ notificationPrefs: clean, updatedAt: new Date() })
+    .where(eq(users.id, session.userId));
+
+  revalidatePath("/settings");
+  revalidatePath("/notifications");
+  // The unread badge lives in the app layout.
+  revalidatePath("/", "layout");
+  return { ok: true, data: clean };
 }

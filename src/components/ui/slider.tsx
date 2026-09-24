@@ -1,14 +1,22 @@
 import { Slider as SliderPrimitive } from "@base-ui/react/slider"
 import { cn } from "cn"
 
+/**
+ * `aria-labelledby` on the root reaches each thumb's `<input type="range">` through
+ * context. The two thumb-only props are forwarded here so a caller can name a thumb
+ * and, for a ladder slider whose value is an index, announce "$50K" instead of "4".
+ */
 function Slider({
   className,
   defaultValue,
   value,
   min = 0,
   max = 100,
+  getAriaLabel,
+  getAriaValueText,
   ...props
-}: SliderPrimitive.Root.Props) {
+}: SliderPrimitive.Root.Props &
+  Pick<SliderPrimitive.Thumb.Props, "getAriaLabel" | "getAriaValueText">) {
   const _values = Array.isArray(value)
     ? value
     : Array.isArray(defaultValue)
@@ -40,6 +48,8 @@ function Slider({
           <SliderPrimitive.Thumb
             data-slot="slider-thumb"
             key={index}
+            getAriaLabel={getAriaLabel}
+            getAriaValueText={getAriaValueText}
             className="relative block size-3 shrink-0 rounded-full border border-ring bg-white ring-ring/50 transition-[color,box-shadow] select-none after:absolute after:-inset-2 hover:ring-3 focus-visible:ring-3 focus-visible:outline-hidden active:ring-3 disabled:pointer-events-none disabled:opacity-50"
           />
         ))}

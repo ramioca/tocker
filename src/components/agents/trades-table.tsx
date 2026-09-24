@@ -1,5 +1,6 @@
 "use client";
 
+import { Fragment } from "react";
 import { GeckoTerminalLink } from "@/components/common/chart-link";
 import Link from "next/link";
 import { useInfiniteQuery } from "@tanstack/react-query";
@@ -41,11 +42,17 @@ function explorerUrl(trade: TradeRow): string | null {
   return txExplorerUrl(trade.chain, trade.txHash);
 }
 
+/** The columns left below `sm`, which the phone-only rationale row spans. */
+const MOBILE_COLUMNS = 5;
+
 export function TradesTable({
   agentId,
+  agentSlug,
   initialPage,
 }: {
   agentId: string;
+  /** For the link from each trade to the run that placed it. */
+  agentSlug: string;
   initialPage?: Page<TradeRow>;
 }) {
   const query = useInfiniteQuery({
@@ -88,18 +95,25 @@ export function TradesTable({
         />
       ) : (
         <div className="space-y-3">
-          <div className="glass-card overflow-x-auto rounded-xl">
+          <div className="@container glass-card overflow-x-auto rounded-xl">
+            {/*
+              Below `sm`: When / Side / Token / Value / Entry score. Amount and price
+              multiply out to Value, and a column of "paper" is not worth the width.
+            */}
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>When</TableHead>
                   <TableHead>Side</TableHead>
                   <TableHead>Token</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                  <TableHead className="text-right">Price</TableHead>
+                  <TableHead className="hidden text-right sm:table-cell">Amount</TableHead>
+                  <TableHead className="hidden text-right sm:table-cell">Price</TableHead>
                   <TableHead className="text-right">Value</TableHead>
-                  <TableHead className="text-right">Entry score</TableHead>
-                  <TableHead className="text-right">Tx</TableHead>
+                  <TableHead className="text-right">
+                    <span className="sm:hidden">Score</span>
+                    <span className="max-sm:hidden">Entry score</span>
+                  </TableHead>
+                  <TableHead className="hidden text-right sm:table-cell">Tx</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -113,106 +127,145 @@ export function TradesTable({
                     trade.status === "rejected" ||
                     trade.status === "expired";
                   return (
-                    <TableRow key={trade.id} className={cn(unfilled && "opacity-60")}>
-                      <TableCell className="whitespace-nowrap text-xs">
-                        <RelativeTime iso={trade.createdAt} />
-                      </TableCell>
-                      <TableCell>
-                        <span className="flex flex-wrap items-center gap-1">
-                          <span
-                            className={cn(
-                              "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider",
-                              trade.side === "buy"
-                                ? "bg-positive/15 text-positive"
-                                : "bg-negative/15 text-negative",
-                            )}
-                          >
-                            {trade.side}
-                          </span>
-                          {unfilled ? (
+                    <Fragment key={trade.id}>
+                      <TableRow className={cn(unfilled && "opacity-60", trade.rationale && "max-sm:border-b-0")}>
+                        <TableCell className="whitespace-nowrap text-xs">
+                          {trade.runId ? (
+                            <Link
+                              href={`/agents/${agentSlug}/runs/${trade.runId}`}
+                              className="rounded hover:underline focus-ring"
+                              title="Open the run that placed this trade"
+                            >
+                              <RelativeTime iso={trade.createdAt} />
+                            </Link>
+                          ) : (
+                            <RelativeTime iso={trade.createdAt} />
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <span className="flex flex-wrap items-center gap-1">
                             <span
-                              title={trade.error ?? undefined}
                               className={cn(
-                                "rounded border px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider",
-                                failed
-                                  ? "border-destructive/40 text-destructive"
-                                  : "border-border text-muted-foreground",
+                                "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider",
+                                trade.side === "buy"
+                                  ? "bg-positive/15 text-positive"
+                                  : "bg-negative/15 text-negative",
                               )}
                             >
-                              {trade.status}
+                              {trade.side}
+                            </span>
+                            {unfilled ? (
+                              <span
+                                title={trade.error ?? undefined}
+                                className={cn(
+                                  "rounded border px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider",
+                                  failed
+                                    ? "border-destructive/40 text-destructive"
+                                    : "border-border text-muted-foreground",
+                                )}
+                              >
+                                {trade.status}
+                              </span>
+                            ) : null}
+                          </span>
+                          {failed && trade.error ? (
+                            <span className="mt-1 block max-w-[28rem] text-[11px] leading-snug text-muted-foreground">
+                              {trade.error}
                             </span>
                           ) : null}
-                        </span>
-                        {failed && trade.error ? (
-                          <span className="mt-1 block max-w-[28rem] text-[11px] leading-snug text-muted-foreground">
-                            {trade.error}
-                          </span>
-                        ) : null}
-                      </TableCell>
-                      <TableCell>
-                        <Link
-                          href={`/tokens/${trade.token.chain}/${trade.token.address}`}
-                          className="inline-flex items-center gap-1.5 rounded hover:underline focus-ring"
-                        >
-                          <TokenIcon token={trade.token} size="xs" />
-                          <span className="font-medium">{trade.token.symbol}</span>
-                        </Link>
-                        <GeckoTerminalLink
-                          chain={trade.token.chain}
-                          address={trade.token.address}
-                          symbol={trade.token.symbol}
-                          size="xs"
-                          className="ml-1.5 align-middle"
-                        />
-                      </TableCell>
-                      <TableCell className="tnum text-right text-muted-foreground">
-                        {formatTokenAmount(trade.amountToken)}
-                      </TableCell>
-                      <TableCell className="tnum text-right text-muted-foreground">
-                        {formatPriceUsd(trade.priceUsd)}
-                      </TableCell>
-                      <TableCell className="tnum text-right font-medium">
-                        {formatUsd(trade.amountUsd)}
-                      </TableCell>
-                      {/*
-                        The score frozen onto the row, never a live one: a re-score after
-                        the fact must not be able to flatter or damn a decision already made.
-                        Rows from before scoring existed link out to score the token now.
-                      */}
-                      <TableCell className="text-right">
-                        {trade.entryScore === null ? (
+                        </TableCell>
+                        <TableCell>
                           <Link
                             href={`/tokens/${trade.token.chain}/${trade.token.address}`}
-                            className="rounded font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-ring"
+                            className="inline-flex items-center gap-1.5 rounded hover:underline focus-ring"
                           >
-                            score now
+                            <TokenIcon token={trade.token} size="xs" />
+                            <span className="font-medium">{trade.token.symbol}</span>
                           </Link>
-                        ) : (
-                          <ScoreBadge
-                            total={trade.entryScore}
-                            verdict={trade.score?.verdict}
-                            blockers={trade.score?.blockers}
+                          <GeckoTerminalLink
+                            chain={trade.token.chain}
+                            address={trade.token.address}
+                            symbol={trade.token.symbol}
                             size="xs"
-                            numberOnly
+                            className="ml-1.5 align-middle"
                           />
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {url ? (
-                          <a
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-0.5 rounded font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-ring"
-                          >
-                            {trade.txHash?.slice(0, 6)}
-                            <ArrowUpRight aria-hidden className="size-3" />
-                          </a>
-                        ) : (
-                          <span className="font-mono text-[11px] text-muted-foreground">paper</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
+                          {/*
+                            The one line the agent wrote for this fill — public, like the
+                            fill. Never the transcript that led to it.
+                          */}
+                          {trade.rationale ? (
+                            <p
+                              title={trade.rationale}
+                              className="mt-0.5 hidden max-w-[18rem] truncate text-[11px] text-muted-foreground sm:block"
+                            >
+                              {trade.rationale}
+                            </p>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="tnum hidden text-right text-muted-foreground sm:table-cell">
+                          {formatTokenAmount(trade.amountToken)}
+                        </TableCell>
+                        <TableCell className="tnum hidden text-right text-muted-foreground sm:table-cell">
+                          {formatPriceUsd(trade.priceUsd)}
+                        </TableCell>
+                        <TableCell className="tnum text-right font-medium">
+                          {formatUsd(trade.amountUsd)}
+                        </TableCell>
+                        {/*
+                          The score frozen onto the row, never a live one: a re-score after
+                          the fact must not be able to flatter or damn a decision already made.
+                          Rows from before scoring existed link out to score the token now.
+                        */}
+                        <TableCell className="text-right">
+                          {trade.entryScore === null ? (
+                            <Link
+                              href={`/tokens/${trade.token.chain}/${trade.token.address}`}
+                              className="rounded font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-ring"
+                            >
+                              score now
+                            </Link>
+                          ) : (
+                            <ScoreBadge
+                              total={trade.entryScore}
+                              verdict={trade.score?.verdict}
+                              blockers={trade.score?.blockers}
+                              size="xs"
+                              numberOnly
+                            />
+                          )}
+                        </TableCell>
+                        <TableCell className="hidden text-right sm:table-cell">
+                          {url ? (
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-0.5 rounded font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-ring"
+                            >
+                              {trade.txHash?.slice(0, 6)}
+                              <ArrowUpRight aria-hidden className="size-3" />
+                            </a>
+                          ) : (
+                            <span className="font-mono text-[11px] text-muted-foreground">paper</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                      {/*
+                        On a phone the rationale gets its own line under the row: in the
+                        Token cell it would widen that column and push Value off-screen.
+                        Capped at the visible width (`cqw` of the scroller), not the
+                        table's, so the end of each line is not hidden past the edge.
+                      */}
+                      {trade.rationale ? (
+                        <TableRow className={cn("hover:bg-transparent sm:hidden", unfilled && "opacity-60")}>
+                          <TableCell colSpan={MOBILE_COLUMNS} className="pt-0 whitespace-normal">
+                            <p className="line-clamp-2 max-w-[calc(100cqw-1rem)] text-[11px] leading-snug text-muted-foreground">
+                              {trade.rationale}
+                            </p>
+                          </TableCell>
+                        </TableRow>
+                      ) : null}
+                    </Fragment>
                   );
                 })}
               </TableBody>

@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { AlertTriangle, Check, Copy, RefreshCw } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -9,7 +9,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Address } from "@/components/common/address";
+import { FullAddress, useCopy } from "@/components/common/address";
+import { Button } from "@/components/ui/button";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { FeesCovered } from "@/components/common/fees-covered";
 import { formatUsd } from "@/components/common/format";
@@ -74,19 +75,45 @@ export function DepositSheet({
   const wording = NETWORK_WORDING[chain];
   const syncWallets = useSyncWallets();
   const [syncing, setSyncing] = useState(false);
+  // Why a sync came back empty. Without it the button just stopped spinning.
+  const [syncNote, setSyncNote] = useState<string | null>(null);
+  const tabsRef = useRef<HTMLDivElement>(null);
 
   const resync = async () => {
     setSyncing(true);
+    setSyncNote(null);
     try {
-      await syncWallets();
+      const result = await syncWallets();
+      if (result.wallets.length === 0) {
+        setSyncNote(
+          result.note === "privy not configured"
+            ? "Wallet sync isn’t available in this environment."
+            : "No wallet to sync yet.",
+        );
+      }
+    } catch {
+      setSyncNote("Could not reach Tocker. Try again in a moment.");
     } finally {
       setSyncing(false);
     }
   };
 
+  // "Deposit on …" sits at the bottom of the sheet; the tabs and address it switches are
+  // at the top, so bring them into view instead of changing something off-screen.
+  const depositOn = (next: Chain) => {
+    setChain(next);
+    setSyncNote(null);
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    tabsRef.current?.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" });
+  };
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-md">
+      {/* `data-[side=right]:` so these replace the sheet's own 3/4 width and max-w-sm rather than lose to them. */}
+      <SheetContent
+        side="right"
+        className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md"
+      >
         <SheetHeader>
           <SheetTitle className="text-sm">Deposit</SheetTitle>
           <SheetDescription className="text-xs">
@@ -96,9 +123,18 @@ export function DepositSheet({
 
         <div className="space-y-4 px-4 pb-8">
           <div className="glass rounded-2xl border border-border/60 px-4 py-3.5">
-            <p className="text-[11px] text-muted-foreground">Your cash</p>
+            {/*
+              "In your wallets", not "Your cash": the top bar's Cash also counts what live
+              agents hold, and one word must not name two numbers a click apart.
+            */}
+            <p className="text-[11px] text-muted-foreground">In your wallets</p>
             <CashTotal cash={resolved} size="lg" className="mt-0.5" />
-            <p className="mt-1 text-[11px] text-muted-foreground">
+            {resolved.inAgentsUsd > 0 ? (
+              <p className="tnum text-xs text-muted-foreground">
+                plus {formatUsd(resolved.inAgentsUsd)} working in your agents
+              </p>
+            ) : null}
+            <p className="mt-2 text-[11px] text-muted-foreground">
               USDC on Base and Solana, added up. Deposits land on one chain and stay there —
               there is no bridge yet.
             </p>
@@ -106,9 +142,10 @@ export function DepositSheet({
           </div>
 
           <div
+            ref={tabsRef}
             role="tablist"
             aria-label="Deposit network"
-            className="grid grid-cols-2 gap-1 rounded-xl border border-border/60 bg-muted/20 p-1"
+            className="scroll-mt-4 grid grid-cols-2 gap-1 rounded-xl border border-border/60 bg-muted/20 p-1"
           >
             {CHAINS.map((entry) => {
               const active = entry === chain;
@@ -118,7 +155,10 @@ export function DepositSheet({
                   role="tab"
                   type="button"
                   aria-selected={active}
-                  onClick={() => setChain(entry)}
+                  onClick={() => {
+                    setChain(entry);
+                    setSyncNote(null);
+                  }}
                   className={cn(
                     "h-9 rounded-lg text-sm font-medium",
                     "transition-[background-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]",
@@ -132,15 +172,6 @@ export function DepositSheet({
                 </button>
               );
             })}
-          </div>
-
-          <div className="flex items-center justify-between rounded-xl border border-border/50 bg-background/40 px-3 py-2.5">
-            <span className="text-xs text-muted-foreground">
-              On {chainLabelFor(chain)} you hold
-            </span>
-            <span className="text-right">
-              <span className="tnum block text-sm font-medium">{formatUsd(chainCash.usdcUsd)}</span>
-            </span>
           </div>
 
           <div className="glass space-y-3 rounded-2xl border border-border/60 p-4">
@@ -159,24 +190,24 @@ export function DepositSheet({
                   />
                 </div>
 
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-muted-foreground">Your address</span>
-                  <Address
-                    address={chainCash.address}
-                    lead={8}
-                    tail={8}
-                    label={`${chainLabelFor(chain)} deposit address`}
-                  />
+                {/*
+                  Every character, like the withdraw confirm: this is the address people
+                  paste into an exchange, and a truncated one is what address poisoning forges.
+                */}
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Your address</p>
+                  <FullAddress address={chainCash.address} className="flex" />
+                  <CopyAddressButton key={chainCash.address} address={chainCash.address} />
                 </div>
 
-                <dl className="space-y-1.5 border-t border-border/50 pt-3 text-xs">
-                  <div className="flex justify-between gap-4">
-                    <dt className="text-muted-foreground">Network</dt>
-                    <dd className="text-right">{wording.network}</dd>
+                <dl className="space-y-2 border-t border-border/50 pt-3 text-xs">
+                  <div className="flex flex-col gap-x-4 gap-y-0.5 sm:flex-row sm:justify-between">
+                    <dt className="shrink-0 text-muted-foreground">Network</dt>
+                    <dd className="sm:text-right">{wording.network}</dd>
                   </div>
-                  <div className="flex justify-between gap-4">
-                    <dt className="text-muted-foreground">Send only</dt>
-                    <dd className="text-right">{wording.asset}</dd>
+                  <div className="flex flex-col gap-x-4 gap-y-0.5 sm:flex-row sm:justify-between">
+                    <dt className="shrink-0 text-muted-foreground">Send only</dt>
+                    <dd className="sm:text-right">{wording.asset}</dd>
                   </div>
                 </dl>
 
@@ -230,6 +261,9 @@ export function DepositSheet({
                   <RefreshCw aria-hidden className={cn("size-3.5", syncing && "animate-spin")} />
                   {syncing ? "Looking for your wallets…" : "Sync wallets"}
                 </button>
+                <p role="status" className="text-xs leading-relaxed empty:hidden">
+                  {syncNote}
+                </p>
               </div>
             )}
           </div>
@@ -245,10 +279,21 @@ export function DepositSheet({
 
           <div className="space-y-2">
             <h3 className="text-xs font-medium text-muted-foreground">Where your cash sits</h3>
-            <ChainBreakdown cash={resolved} onDeposit={setChain} />
+            <ChainBreakdown cash={resolved} onDeposit={depositOn} />
           </div>
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** Keyed by address, so switching chains never shows "Copied" for an address that was not. */
+function CopyAddressButton({ address }: { address: string }) {
+  const { copied, copy } = useCopy();
+  return (
+    <Button variant="outline" size="lg" className="w-full" onClick={() => void copy(address)}>
+      {copied ? <Check aria-hidden className="text-positive" /> : <Copy aria-hidden />}
+      {copied ? "Copied" : "Copy address"}
+    </Button>
   );
 }

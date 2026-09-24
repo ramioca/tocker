@@ -58,11 +58,25 @@ export function useRefreshCash() {
   );
 }
 
-/** Record the user's embedded wallets server-side, then refresh. */
+/** What `POST /api/me/sync` answers. `note` explains an empty `wallets`, e.g. "privy not configured". */
+export interface SyncResult {
+  ok: boolean;
+  wallets: unknown[];
+  note?: string;
+}
+
+/**
+ * Record the user's embedded wallets server-side, then refresh. Resolves with what the
+ * server found, so the caller can say so when it found nothing; rejects when the
+ * request itself failed.
+ */
 export function useSyncWallets() {
   const refresh = useRefreshCash();
-  return useCallback(async () => {
-    await fetch("/api/me/sync", { method: "POST", credentials: "include" });
+  return useCallback(async (): Promise<SyncResult> => {
+    const res = await fetch("/api/me/sync", { method: "POST", credentials: "include" });
+    if (!res.ok) throw new Error(`/api/me/sync failed: ${res.status}`);
+    const body = (await res.json()) as Partial<SyncResult>;
     await refresh();
+    return { ok: body.ok ?? true, wallets: body.wallets ?? [], note: body.note };
   }, [refresh]);
 }

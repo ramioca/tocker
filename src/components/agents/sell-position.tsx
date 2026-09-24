@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { placeManualTrade, previewTrade } from "@/server/actions/trading";
+import { floorCents, sliceText } from "@/components/trading/sell-amount";
 import { cn } from "@/lib/utils";
 import type { Position, TradePreview } from "@/server/types";
 
@@ -32,16 +33,29 @@ const SLICES = [25, 50, 75, 100] as const;
  */
 export function SellPositionButton({ agentId, position }: { agentId: string; position: Position }) {
   const [open, setOpen] = useState(false);
+  // The dialog mounts on demand, so Base UI has no trigger of its own to hand focus back
+  // to on close; without this it fell to <body> and Tab started the page over.
+  const triggerRef = useRef<HTMLButtonElement>(null);
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(true)}
+        // One "Sell" per row: the symbol is what tells them apart to a screen reader.
+        aria-label={`Sell ${position.token.symbol}`}
         className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors duration-150 hover:border-negative/50 hover:text-negative focus-ring"
       >
         Sell
       </button>
-      {open ? <SellPositionDialog agentId={agentId} position={position} onClose={() => setOpen(false)} /> : null}
+      {open ? (
+        <SellPositionDialog
+          agentId={agentId}
+          position={position}
+          returnFocus={triggerRef}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
     </>
   );
 }
@@ -49,15 +63,20 @@ export function SellPositionButton({ agentId, position }: { agentId: string; pos
 function SellPositionDialog({
   agentId,
   position,
+  returnFocus,
   onClose,
 }: {
   agentId: string;
   position: Position;
+  returnFocus: RefObject<HTMLButtonElement | null>;
   onClose: () => void;
 }) {
   const router = useRouter();
   const valueUsd = position.valueUsd ?? 0;
-  const [amountText, setAmountText] = useState(valueUsd > 0 ? valueUsd.toFixed(2) : "");
+  // Every figure the dialog offers is floored to the cent: the guard refuses a sell
+  // worth more than the position, and `toFixed(2)` rounds up half the time.
+  const fullUsd = floorCents(valueUsd);
+  const [amountText, setAmountText] = useState(fullUsd > 0 ? fullUsd.toFixed(2) : "");
   // Keyed by the amount it answers for, so a stale answer is simply not shown rather
   // than cleared with a synchronous setState (which React flags as a cascading render).
   const [preview, setPreview] = useState<{ forUsd: number; data: TradePreview | null; error: string | null } | null>(
@@ -70,34 +89,41 @@ function SellPositionDialog({
   const pct = valueUsd > 0 && valid ? Math.min(100, (amountUsd / valueUsd) * 100) : 0;
   // Asking for the whole value is asking for everything. The server is told so
   // explicitly and sells the balance, not a dollar figure that the mark has outrun.
-  const sellAll = valid && amountUsd >= valueUsd - 0.01;
+  const sellAll = valid && amountUsd >= fullUsd;
+  // Typing the rounded figure the description shows ("worth $3,528.15" for $3,528.146)
+  // still means everything, so the order carries the floored full value, never more.
+  const orderUsd = sellAll ? fullUsd : amountUsd;
 
-  const current = preview !== null && preview.forUsd === amountUsd ? preview : null;
+  const current = preview !== null && preview.forUsd === orderUsd ? preview : null;
 
   // Preview follows the number, debounced: the guard's verdict and the venue's price.
   useEffect(() => {
     if (!valid) return;
     let cancelled = false;
     const handle = setTimeout(async () => {
-      const answer = await previewTrade({
+      // `sellAll` goes along so the preview can size "everything" from the balance, as
+      // the sell itself does; the floored figure keeps it inside the mark either way.
+      const request: Parameters<typeof previewTrade>[0] & { sellAll: boolean } = {
         agentId,
         chain: position.token.chain,
         side: "sell",
         tokenAddress: position.token.address,
-        amountUsd,
-      });
+        amountUsd: orderUsd,
+        sellAll,
+      };
+      const answer = await previewTrade(request);
       if (cancelled) return;
       setPreview(
         answer.ok
-          ? { forUsd: amountUsd, data: answer.data, error: null }
-          : { forUsd: amountUsd, data: null, error: answer.error },
+          ? { forUsd: orderUsd, data: answer.data, error: null }
+          : { forUsd: orderUsd, data: null, error: answer.error },
       );
     }, 350);
     return () => {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [agentId, amountUsd, valid, position.token.chain, position.token.address]);
+  }, [agentId, orderUsd, sellAll, valid, position.token.chain, position.token.address]);
 
   const sell = () =>
     start(async () => {
@@ -106,7 +132,7 @@ function SellPositionDialog({
         chain: position.token.chain,
         side: "sell",
         tokenAddress: position.token.address,
-        amountUsd,
+        amountUsd: orderUsd,
         sellAll,
         note: sellAll
           ? "Manual sell from the positions table (everything)."
@@ -126,7 +152,7 @@ function SellPositionDialog({
 
   return (
     <Dialog open onOpenChange={(next) => (next ? null : onClose())}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" finalFocus={returnFocus}>
         <DialogHeader>
           <DialogTitle>Sell {position.token.symbol}</DialogTitle>
           <DialogDescription>
@@ -156,7 +182,7 @@ function SellPositionDialog({
               <button
                 key={slice}
                 type="button"
-                onClick={() => setAmountText(((valueUsd * slice) / 100).toFixed(2))}
+                onClick={() => setAmountText(sliceText(valueUsd, slice))}
                 className={cn(
                   "rounded-md border px-2 py-1 text-[11px] transition-colors duration-150 focus-ring",
                   Math.abs(pct - slice) < 0.5
@@ -193,7 +219,7 @@ function SellPositionDialog({
             onClick={sell}
             disabled={pending || !valid || !current?.data || !current.data.allowed}
           >
-            {pending ? "Selling…" : sellAll ? "Sell everything" : `Sell ${valid ? formatUsd(amountUsd) : ""}`}
+            {pending ? "Selling…" : sellAll ? "Sell everything" : `Sell ${valid ? formatUsd(orderUsd) : ""}`}
           </Button>
         </DialogFooter>
       </DialogContent>

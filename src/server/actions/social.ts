@@ -11,12 +11,14 @@ function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
 }
 
+type Db = Awaited<ReturnType<typeof getDb>>;
+
 /**
  * A post that belongs to a private agent is invisible in every feed query, so it must
  * not be likeable or commentable either — otherwise the write path becomes an oracle for
  * post ids the reader was never shown.
  */
-async function postIsVisible(db: Awaited<ReturnType<typeof getDb>>, agentId: string | null, viewerId: string) {
+async function postIsVisible(db: Db, agentId: string | null, viewerId: string) {
   if (!agentId) return true;
   const [agent] = await db
     .select({ ownerId: agents.ownerId, isPublic: agents.isPublic })
@@ -25,6 +27,54 @@ async function postIsVisible(db: Awaited<ReturnType<typeof getDb>>, agentId: str
     .limit(1);
   if (!agent) return false;
   return agent.isPublic || agent.ownerId === viewerId;
+}
+
+type FollowTarget = { href: string; title: string; ownerId: string };
+
+/** Who gets told about a follow, and where the notification points. Applies the visibility rule. */
+async function resolveFollowTarget(
+  db: Db,
+  targetType: "user" | "agent",
+  targetId: string,
+  viewer: { userId: string; handle: string },
+): Promise<FollowTarget | { error: string }> {
+  if (targetType === "agent") {
+    const [agent] = await db
+      .select({ id: agents.id, slug: agents.slug, name: agents.name, ownerId: agents.ownerId, isPublic: agents.isPublic })
+      .from(agents)
+      .where(eq(agents.id, targetId))
+      .limit(1);
+    if (!agent) return { error: "Agent not found" };
+    if (!agent.isPublic && agent.ownerId !== viewer.userId) return { error: "This agent is private" };
+    return { href: `/agents/${agent.slug}`, title: `@${viewer.handle} followed ${agent.name}`, ownerId: agent.ownerId };
+  }
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.id, targetId)).limit(1);
+  if (!user) return { error: "User not found" };
+  return { href: `/u/${viewer.handle}`, title: `@${viewer.handle} followed you`, ownerId: user.id };
+}
+
+function followRow(followerId: string, targetType: "user" | "agent", targetId: string) {
+  return and(eq(follows.followerId, followerId), eq(follows.targetType, targetType), eq(follows.targetId, targetId));
+}
+
+async function notifyFollow(db: Db, target: FollowTarget, followerId: string) {
+  if (target.ownerId === followerId) return;
+  await db.insert(notifications).values({
+    id: newId("ntf"),
+    userId: target.ownerId,
+    kind: "follow",
+    title: target.title,
+    body: null,
+    href: target.href,
+  });
+}
+
+async function followerCount(db: Db, targetType: "user" | "agent", targetId: string): Promise<number> {
+  const [countRow] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(follows)
+    .where(and(eq(follows.targetType, targetType), eq(follows.targetId, targetId)));
+  return Number(countRow?.n ?? 0);
 }
 
 export async function toggleFollow(
@@ -38,52 +88,18 @@ export async function toggleFollow(
   if (targetType === "user" && targetId === session.userId) return fail("You cannot follow yourself");
 
   const db = await getDb();
-
-  let href: string | null = null;
-  let title = "";
-  let ownerId: string | null = null;
-  if (targetType === "agent") {
-    const [agent] = await db
-      .select({ id: agents.id, slug: agents.slug, name: agents.name, ownerId: agents.ownerId, isPublic: agents.isPublic })
-      .from(agents)
-      .where(eq(agents.id, targetId))
-      .limit(1);
-    if (!agent) return fail("Agent not found");
-    if (!agent.isPublic && agent.ownerId !== session.userId) return fail("This agent is private");
-    href = `/agents/${agent.slug}`;
-    title = `@${session.handle} followed ${agent.name}`;
-    ownerId = agent.ownerId;
-  } else {
-    const [user] = await db.select({ id: users.id, handle: users.handle }).from(users).where(eq(users.id, targetId)).limit(1);
-    if (!user) return fail("User not found");
-    href = `/u/${session.handle}`;
-    title = `@${session.handle} followed you`;
-    ownerId = user.id;
-  }
+  const target = await resolveFollowTarget(db, targetType, targetId, session);
+  if ("error" in target) return fail(target.error);
 
   const existing = await db
     .select({ followerId: follows.followerId })
     .from(follows)
-    .where(
-      and(
-        eq(follows.followerId, session.userId),
-        eq(follows.targetType, targetType),
-        eq(follows.targetId, targetId),
-      ),
-    )
+    .where(followRow(session.userId, targetType, targetId))
     .limit(1);
 
   let following: boolean;
   if (existing.length > 0) {
-    await db
-      .delete(follows)
-      .where(
-        and(
-          eq(follows.followerId, session.userId),
-          eq(follows.targetType, targetType),
-          eq(follows.targetId, targetId),
-        ),
-      );
+    await db.delete(follows).where(followRow(session.userId, targetType, targetId));
     following = false;
   } else {
     await db
@@ -91,26 +107,91 @@ export async function toggleFollow(
       .values({ followerId: session.userId, targetType, targetId })
       .onConflictDoNothing();
     following = true;
-    if (ownerId && ownerId !== session.userId) {
-      await db.insert(notifications).values({
-        id: newId("ntf"),
-        userId: ownerId,
-        kind: "follow",
-        title,
-        body: null,
-        href,
-      });
-    }
+    await notifyFollow(db, target, session.userId);
   }
 
+  const count = await followerCount(db, targetType, targetId);
+  revalidatePath("/feed");
+  revalidatePath(target.href);
+  return { ok: true, data: { following, followerCount: count } };
+}
+
+/**
+ * Set the viewer's follow to `following`, rather than flipping it.
+ *
+ * A button sends the state it is showing, so a stale button (followed in another tab,
+ * a row remounted from an older render) cannot do the opposite of what it says. The
+ * write is idempotent: following twice inserts once and notifies once.
+ */
+export async function setFollow(
+  targetType: "user" | "agent",
+  targetId: string,
+  following: boolean,
+): Promise<ActionResult<{ following: boolean; followerCount: number }>> {
+  const session = await getSession();
+  if (!session) return fail("Sign in to follow");
+  // A public endpoint: the arguments are whatever the caller sent.
+  if ((targetType !== "user" && targetType !== "agent") || typeof targetId !== "string" || typeof following !== "boolean") {
+    return fail("Nothing to follow");
+  }
+  const limited = slowDown("social", session.userId, ACTION_LIMITS.social);
+  if (limited) return fail(limited);
+  if (targetType === "user" && targetId === session.userId) return fail("You cannot follow yourself");
+
+  const db = await getDb();
+  const target = await resolveFollowTarget(db, targetType, targetId, session);
+  if ("error" in target) return fail(target.error);
+
+  if (following) {
+    const inserted = await db
+      .insert(follows)
+      .values({ followerId: session.userId, targetType, targetId })
+      .onConflictDoNothing()
+      .returning({ followerId: follows.followerId });
+    if (inserted.length > 0) await notifyFollow(db, target, session.userId);
+  } else {
+    await db.delete(follows).where(followRow(session.userId, targetType, targetId));
+  }
+
+  const count = await followerCount(db, targetType, targetId);
+  revalidatePath("/feed");
+  revalidatePath(target.href);
+  return { ok: true, data: { following, followerCount: count } };
+}
+
+/** The post, or null when it does not exist or the viewer may not see it (same answer for both). */
+async function visiblePost(db: Db, postId: string, viewerId: string) {
+  const [post] = await db
+    .select({ id: posts.id, authorId: posts.authorId, agentId: posts.agentId })
+    .from(posts)
+    .where(eq(posts.id, postId))
+    .limit(1);
+  if (!post) return null;
+  if (!(await postIsVisible(db, post.agentId, viewerId))) return null;
+  return post;
+}
+
+async function notifyLike(db: Db, post: { id: string; authorId: string }, viewer: { userId: string; handle: string }) {
+  if (post.authorId === viewer.userId) return;
+  await db.insert(notifications).values({
+    id: newId("ntf"),
+    userId: post.authorId,
+    kind: "like",
+    title: `@${viewer.handle} liked your post`,
+    body: null,
+    href: `/feed/${post.id}`,
+  });
+}
+
+/** Recount from the rows and store it on the post, so the cached count never drifts. */
+async function syncLikeCount(db: Db, postId: string): Promise<number> {
   const [countRow] = await db
     .select({ n: sql<number>`count(*)::int` })
-    .from(follows)
-    .where(and(eq(follows.targetType, targetType), eq(follows.targetId, targetId)));
-
-  revalidatePath("/feed");
-  if (href) revalidatePath(href);
-  return { ok: true, data: { following, followerCount: Number(countRow?.n ?? 0) } };
+    .from(likes)
+    .where(eq(likes.postId, postId));
+  const likeCount = Number(countRow?.n ?? 0);
+  await db.update(posts).set({ likeCount }).where(eq(posts.id, postId));
+  return likeCount;
 }
 
 export async function toggleLike(postId: string): Promise<ActionResult<{ liked: boolean; likeCount: number }>> {
@@ -120,13 +201,8 @@ export async function toggleLike(postId: string): Promise<ActionResult<{ liked: 
   if (limited) return fail(limited);
 
   const db = await getDb();
-  const [post] = await db
-    .select({ id: posts.id, authorId: posts.authorId, agentId: posts.agentId })
-    .from(posts)
-    .where(eq(posts.id, postId))
-    .limit(1);
+  const post = await visiblePost(db, postId, session.userId);
   if (!post) return fail("Post not found");
-  if (!(await postIsVisible(db, post.agentId, session.userId))) return fail("Post not found");
 
   const existing = await db
     .select({ postId: likes.postId })
@@ -141,26 +217,47 @@ export async function toggleLike(postId: string): Promise<ActionResult<{ liked: 
   } else {
     await db.insert(likes).values({ userId: session.userId, postId }).onConflictDoNothing();
     liked = true;
-    if (post.authorId !== session.userId) {
-      await db.insert(notifications).values({
-        id: newId("ntf"),
-        userId: post.authorId,
-        kind: "like",
-        title: `@${session.handle} liked your post`,
-        body: null,
-        href: `/feed`,
-      });
-    }
+    await notifyLike(db, post, session);
   }
 
-  const [countRow] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(likes)
-    .where(eq(likes.postId, postId));
-  const likeCount = Number(countRow?.n ?? 0);
-  await db.update(posts).set({ likeCount }).where(eq(posts.id, postId));
-
+  const likeCount = await syncLikeCount(db, postId);
   revalidatePath("/feed");
+  return { ok: true, data: { liked, likeCount } };
+}
+
+/**
+ * Set the viewer's like on a post to `liked`, rather than flipping it.
+ *
+ * Idempotent at the source: a second "like" inserts nothing and notifies nobody, and a
+ * card that went stale (liked in another tab, a tap racing a refetch) cannot flip the
+ * server the wrong way.
+ */
+export async function setLike(postId: string, liked: boolean): Promise<ActionResult<{ liked: boolean; likeCount: number }>> {
+  const session = await getSession();
+  if (!session) return fail("Sign in to like");
+  // A public endpoint: the arguments are whatever the caller sent.
+  if (typeof postId !== "string" || typeof liked !== "boolean") return fail("Post not found");
+  const limited = slowDown("social", session.userId, ACTION_LIMITS.social);
+  if (limited) return fail(limited);
+
+  const db = await getDb();
+  const post = await visiblePost(db, postId, session.userId);
+  if (!post) return fail("Post not found");
+
+  if (liked) {
+    const inserted = await db
+      .insert(likes)
+      .values({ userId: session.userId, postId })
+      .onConflictDoNothing()
+      .returning({ postId: likes.postId });
+    if (inserted.length > 0) await notifyLike(db, post, session);
+  } else {
+    await db.delete(likes).where(and(eq(likes.userId, session.userId), eq(likes.postId, postId)));
+  }
+
+  const likeCount = await syncLikeCount(db, postId);
+  revalidatePath("/feed");
+  revalidatePath(`/feed/${postId}`);
   return { ok: true, data: { liked, likeCount } };
 }
 
@@ -176,13 +273,8 @@ export async function addComment(postId: string, body: string): Promise<ActionRe
   if (limited) return fail(limited);
 
   const db = await getDb();
-  const [post] = await db
-    .select({ id: posts.id, authorId: posts.authorId, agentId: posts.agentId })
-    .from(posts)
-    .where(eq(posts.id, postId))
-    .limit(1);
+  const post = await visiblePost(db, postId, session.userId);
   if (!post) return fail("Post not found");
-  if (!(await postIsVisible(db, post.agentId, session.userId))) return fail("Post not found");
 
   const id = newId("cmt");
   await db.insert(comments).values({ id, postId, authorId: session.userId, body: text });
@@ -200,11 +292,12 @@ export async function addComment(postId: string, body: string): Promise<ActionRe
       kind: "comment",
       title: `@${session.handle} commented on your post`,
       body: text.slice(0, 140),
-      href: `/feed`,
+      href: `/feed/${postId}`,
     });
   }
 
   revalidatePath("/feed");
+  revalidatePath(`/feed/${postId}`);
   return { ok: true, data: { id } };
 }
 

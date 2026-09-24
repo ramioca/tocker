@@ -3,17 +3,25 @@ import { CalendarHeatmap } from "@/components/spectrumui/charts/calendar-heatmap
 import { EmptyState } from "@/components/common/empty-state";
 
 /**
- * Trades per day for the last year.
+ * Trades per day for the last year, over the same agents the profile header counts.
  *
- * There is no query for this yet — the page passes mock data. See the report:
- * `getUserTradeActivity(handle, days)` → `Array<{ t: number; value: number }>`.
+ * The empty state has to agree with the header above it. It used to say "hasn't run
+ * an agent yet" directly under "2 agents · 72 trades", so it only claims that when the
+ * header shows no agents — and a visitor never sees private agents, so it says
+ * "published", not "run".
  */
 export function ActivityPanel({
   data,
   handle,
+  isSelf = false,
+  agentCount,
+  tradeCount,
 }: {
   data: Array<{ t: number; value: number }>;
   handle: string;
+  isSelf?: boolean;
+  agentCount: number;
+  tradeCount: number;
 }) {
   const total = data.reduce((sum, day) => sum + day.value, 0);
   const activeDays = data.filter((day) => day.value > 0).length;
@@ -22,8 +30,14 @@ export function ActivityPanel({
     return (
       <EmptyState
         icon={<CalendarRange />}
-        title="No trading days yet"
-        description={`@${handle} hasn't run an agent yet, so there is nothing to plot. The heatmap fills in one square per day of fills.`}
+        title={tradeCount > 0 ? "No fills in the last year" : "No trading days yet"}
+        description={
+          tradeCount > 0
+            ? "Every trade on record is older than a year. The heatmap fills in one square per day of fills."
+            : agentCount > 0
+              ? `${isSelf ? "Your agents haven't" : `@${handle}'s agents haven't`} filled a trade yet. The heatmap fills in one square per day of fills.`
+              : `${isSelf ? "You haven't built an agent" : `@${handle} hasn't published an agent`} yet, so there is nothing to plot.`
+        }
       />
     );
   }

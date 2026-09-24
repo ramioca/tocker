@@ -20,6 +20,7 @@ import { viewerSession } from "@/components/common/data-access";
 import { agentRefs, getTokenPage, myAgentsForBlocklist } from "@/server/queries/tokens";
 import { myTokenMarkers, receiptsFor, tokenActivityCount, type TokenMarker } from "@/server/queries/trading";
 import type { Chain, TokenPage } from "@/server/types";
+import { isTokenAddress } from "./address";
 
 /**
  * `/tokens/[chain]/[address]` — the public record on one token.
@@ -41,11 +42,25 @@ function parseChain(value: string): Chain | null {
   return value === "solana" || value === "base" ? value : null;
 }
 
-export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { chain: rawChain, address } = await params;
+/** The chain and address, or null when the URL cannot name a token (→ 404). */
+async function parseParams(params: Params["params"]): Promise<{ chain: Chain; address: string } | null> {
+  const { chain: rawChain, address: rawAddress } = await params;
   const chain = parseChain(rawChain);
-  if (!chain) return { title: "Token not found" };
-  const page = await getTokenPage(chain, decodeURIComponent(address));
+  if (!chain) return null;
+  let address: string;
+  try {
+    address = decodeURIComponent(rawAddress);
+  } catch {
+    return null;
+  }
+  return isTokenAddress(chain, address) ? { chain, address } : null;
+}
+
+export async function generateMetadata({ params }: Params): Promise<Metadata> {
+  const parsed = await parseParams(params);
+  if (!parsed) return { title: "Token not found" };
+  const { chain, address } = parsed;
+  const page = await getTokenPage(chain, address);
   if (!page) return { title: "Token not found" };
   const score = page.score;
   return {
@@ -57,10 +72,9 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 export default async function TokenPageRoute({ params }: Params) {
-  const { chain: rawChain, address: rawAddress } = await params;
-  const chain = parseChain(rawChain);
-  if (!chain) notFound();
-  const address = decodeURIComponent(rawAddress);
+  const parsed = await parseParams(params);
+  if (!parsed) notFound();
+  const { chain, address } = parsed;
 
   const session = await viewerSession();
   const viewerId = session?.userId ?? null;
@@ -91,7 +105,14 @@ export default async function TokenPageRoute({ params }: Params) {
         {page.score ? (
           <ScoreHero score={page.score} />
         ) : (
-          <ScoreTokenPanel chain={chain} address={address} signedIn={Boolean(viewerId)} />
+          <ScoreTokenPanel
+            chain={chain}
+            address={address}
+            signedIn={Boolean(viewerId)}
+            // History keeps every reading; the public verdict only shows one taken under
+            // the default rules. A chart full of points under "Not scored yet" was a lie.
+            lastScoredAt={page.history.at(-1)?.at ?? null}
+          />
         )}
 
         <History page={page} markers={markers} agentCount={agentCount} />

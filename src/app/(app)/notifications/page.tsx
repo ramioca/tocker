@@ -3,11 +3,13 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { getNotifications } from "@/server/queries/users";
 import { listMyProposals } from "@/server/queries/proposals";
+import { receiptsFor } from "@/server/queries/trading";
 import { withMock } from "@/lib/data";
 import { NOW, mockNotifications, mockSession } from "@/mocks/social";
 import { referenceNow } from "@/components/social-common/format";
-import { NotificationList } from "@/components/notifications/notification-list";
+import { NotificationList, tradeIdFrom } from "@/components/notifications/notification-list";
 import { MarkAllRead } from "@/components/notifications/mark-all-read";
+import { markNotificationRead } from "@/server/actions/users";
 
 export const metadata: Metadata = { title: "Notifications" }; // the root layout appends " · Tocker"
 
@@ -21,11 +23,23 @@ export default async function NotificationsPage() {
   );
 
   // Proposals still awaiting a decision, so a "proposal" notification is a card with
-  // Approve / Reject on it rather than a link to somewhere else.
-  const proposals = await withMock(
-    () => listMyProposals(session.userId),
-    () => [],
-  );
+  // Approve / Reject on it rather than a link to somewhere else. Fill rows get their
+  // receipt inline, so how the trade actually went is on the row, not a page away.
+  // Fills are only ever written to the trade owner, so every id here is the viewer's own.
+  const fillTradeIds = page.items
+    .filter((item) => item.kind === "fill")
+    .map((item) => tradeIdFrom(item.href))
+    .filter((id): id is string => id !== null);
+  const [proposals, receipts] = await Promise.all([
+    withMock(
+      () => listMyProposals(session.userId),
+      () => [],
+    ),
+    withMock(
+      () => receiptsFor(fillTradeIds),
+      () => new Map(),
+    ),
+  ]);
 
   // Mock fixtures are anchored to a fixed clock so relative times stay stable in dev.
   const now = referenceNow(process.env.MOCK_DATA === "1" ? NOW : undefined);
@@ -50,7 +64,13 @@ export default async function NotificationsPage() {
         spacing; the list keeps its own anatomy.
       */}
       <div className="mt-8">
-        <NotificationList items={page.items} now={now} proposals={proposals} />
+        <NotificationList
+          items={page.items}
+          now={now}
+          proposals={proposals}
+          receipts={receipts}
+          markRead={markNotificationRead}
+        />
       </div>
     </div>
   );

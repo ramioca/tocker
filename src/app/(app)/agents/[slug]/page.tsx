@@ -13,7 +13,7 @@ import { RunsTimeline } from "@/components/agents/runs-timeline";
 import { TradesTable } from "@/components/agents/trades-table";
 import { PerformancePanel } from "@/components/agents/analytics";
 import { EquityChart } from "@/components/charts/equity-chart";
-import { agentBySlug, equitySeries, viewerSession } from "@/components/common/data-access";
+import { accountPaused, agentBySlug, equitySeries, viewerSession } from "@/components/common/data-access";
 import { getAgentStatus } from "@/server/queries/agent-status";
 import { listProposals } from "@/server/queries/proposals";
 import { getAgentAnalyticsWindows } from "@/server/queries/analytics";
@@ -53,7 +53,7 @@ export default async function AgentPage({ params }: Params) {
   const agent = await agentBySlug(slug, session?.userId ?? null);
   if (!agent) notFound();
 
-  const [equity, analytics, proposals, status] = await Promise.all([
+  const [equity, analytics, proposals, status, paused] = await Promise.all([
     equitySeries(agent.id, "all"),
     // The record is public, so a provider hiccup here must cost the tab, not the page.
     getAgentAnalyticsWindows(agent.id, session?.userId ?? null).catch(() => null),
@@ -62,11 +62,12 @@ export default async function AgentPage({ params }: Params) {
     // Same shape of lock: `getAgentStatus` returns [] for anyone but the owner, because
     // a blocker quotes the agent's own thresholds, which are strategy.
     agent.isOwner ? getAgentStatus(agent.id, session?.userId ?? null) : Promise.resolve([]),
+    agent.isOwner ? accountPaused(session?.userId ?? null) : Promise.resolve(false),
   ]);
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
-      <AgentHeader agent={agent} />
+      <AgentHeader agent={agent} accountPaused={paused} />
 
       <div className="mt-6 space-y-6">
         {/* Why it is not trading, above everything it is not trading with. Renders
@@ -107,8 +108,10 @@ export default async function AgentPage({ params }: Params) {
               </section>
             </div>
           }
-          trades={<TradesTable agentId={agent.id} />}
-          performance={analytics ? <PerformancePanel windows={analytics} /> : null}
+          trades={<TradesTable agentId={agent.id} agentSlug={agent.slug} />}
+          performance={
+            analytics ? <PerformancePanel windows={analytics} isOwner={agent.isOwner} /> : null
+          }
           runs={<RunsTimeline agentId={agent.id} agentSlug={agent.slug} />}
           configLabel={agent.config ? "Config" : "Strategy"}
           /**

@@ -2,6 +2,7 @@
 
 import { PetriMark } from "@/components/brand/petri-mark";
 
+import { useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Plus, Search } from "lucide-react";
@@ -12,10 +13,18 @@ import { AccountMenu } from "./account-menu";
 import { NAV_ITEMS, isActivePath } from "./nav-items";
 import { WalletChip } from "./wallet-chip";
 
-/** The links that live in the bar itself; the rest hang off the avatar menu. */
+/**
+ * The links that live in the bar itself; the rest hang off the avatar menu. Money is
+ * here because it is a primary tab on the phone — on desktop the bar is the only
+ * place a primary destination can live.
+ */
 const BAR_NAV = NAV_ITEMS.filter((item) =>
-  ["/home", "/feed", "/discover", "/agents"].includes(item.href),
+  ["/home", "/feed", "/discover", "/agents", "/money"].includes(item.href),
 );
+
+const noSubscribe = () => () => {};
+/** The palette opens on ⌘K or Ctrl+K; the hint names the one this keyboard has. */
+const isApplePlatform = () => /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
 
 /**
  * The whole app frame in one bar, fomo-style: brand and primary links on the
@@ -25,12 +34,17 @@ const BAR_NAV = NAV_ITEMS.filter((item) =>
 export function TopBar({
   unreadCount,
   onOpenSearch,
+  ownedSlugs,
 }: {
   unreadCount: number;
   onOpenSearch: () => void;
+  ownedSlugs?: ReadonlySet<string>;
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  // Server and first client render agree on ⌘K; a non-Apple keyboard swaps after hydration.
+  const apple = useSyncExternalStore(noSubscribe, isApplePlatform, () => true);
+  const onNotifications = isActivePath(pathname, "/notifications");
 
   return (
     <header className="glass-bar sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border/60 px-4">
@@ -45,7 +59,7 @@ export function TopBar({
 
       <nav aria-label="Primary" className="ml-2 hidden items-center gap-1 md:flex">
         {BAR_NAV.map((item) => {
-          const active = isActivePath(pathname, item.href);
+          const active = isActivePath(pathname, item.href, ownedSlugs);
           return (
             <Link
               key={item.href}
@@ -68,6 +82,8 @@ export function TopBar({
       <button
         type="button"
         onClick={onOpenSearch}
+        aria-label="Search"
+        aria-keyshortcuts={apple ? "Meta+K" : "Control+K"}
         className={cn(
           "ml-auto flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-muted/30 px-2.5 text-sm text-muted-foreground sm:max-w-56",
           "transition-colors duration-150 hover:bg-muted/60 hover:text-foreground",
@@ -75,16 +91,21 @@ export function TopBar({
         )}
       >
         <Search aria-hidden className="size-4 shrink-0" />
-        <span className="truncate">Search</span>
-        <kbd className="ml-auto hidden shrink-0 rounded border border-border bg-background px-1 font-mono text-[10px] text-muted-foreground sm:inline">
-          ⌘K
+        {/* md–lg is where the five links, the button and the chip all compete; the
+            magnifier alone still reads as search there. */}
+        <span className="truncate md:hidden lg:inline">Search</span>
+        <kbd
+          aria-hidden
+          className="ml-auto hidden shrink-0 rounded border border-border bg-background px-1 font-mono text-[10px] text-muted-foreground sm:inline md:hidden lg:inline"
+        >
+          {apple ? "⌘K" : "Ctrl K"}
         </kbd>
       </button>
 
       {/* Visibility lives on this wrapper, not on the MetalFx root: the library's own
           display rules (inline style on the fallback, an injected stylesheet on the live
           root) outrank Tailwind's `hidden`, so at phone widths the button showed anyway. */}
-      <div className="hidden shrink-0 md:block">
+      <div className="hidden shrink-0 lg:block">
       <LiquidMetal preset="chromatic" theme="dark" strength={0.85}>
         <Link
           href="/agents/new"
@@ -105,7 +126,7 @@ export function TopBar({
         href="/agents/new"
         aria-label="New agent"
         className={cn(
-          "inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/30 text-foreground md:hidden",
+          "inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/30 text-foreground lg:hidden",
           "transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted/60 active:scale-[0.97]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         )}
@@ -115,12 +136,20 @@ export function TopBar({
 
       <WalletChip />
 
-      <NotificationBell
-        count={unreadCount}
-        size="sm"
-        onClick={() => router.push("/notifications")}
-        className="shrink-0"
-      />
+      {/* The bell is Notifications' only entry in the bar, so it carries the "you are
+          here" the nav links do. Its own button takes no aria-current, hence the span. */}
+      <span aria-current={onNotifications ? "page" : undefined} className="flex shrink-0">
+        <NotificationBell
+          count={unreadCount}
+          size="sm"
+          onClick={() => router.push("/notifications")}
+          className={cn(
+            "shrink-0",
+            onNotifications &&
+              "border-primary/40 bg-accent text-accent-foreground dark:border-primary/40 dark:bg-accent dark:text-accent-foreground",
+          )}
+        />
+      </span>
 
       <AccountMenu />
     </header>

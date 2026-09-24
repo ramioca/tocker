@@ -61,6 +61,10 @@ export function ProposalCard({
   const { refreshProposals } = useRunStatus();
   const [decision, setDecision] = useState<ApprovalDecision | null>(null);
   const [settledMessage, setSettledMessage] = useState<string | null>(null);
+  // The decision in flight. The card settles only once the server has said yes, so a
+  // refused approval never flashes "Approved" first. A refusal remounts the hold button.
+  const [pending, setPending] = useState<ApprovalDecision | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   const expiresAt = new Date(proposal.expiresAt).getTime();
   const proposedAt = new Date(proposal.proposedAt ?? proposal.createdAt).getTime();
@@ -72,15 +76,19 @@ export function ProposalCard({
   const blocked = !proposal.stillValid || expired;
 
   const decide = async (next: ApprovalDecision) => {
-    // Optimistic: the card settles at once, and reverts only if the server disagrees.
-    setDecision(next);
-    const result = await decideProposalAction(proposal.id, next === "approved" ? "approve" : "reject");
+    if (pending !== null) return;
+    setPending(next);
+    const result = await decideProposalAction(proposal.id, next === "approved" ? "approve" : "reject").catch(
+      () => ({ ok: false as const, error: "Could not reach Tocker. Nothing was decided." }),
+    );
     if (!result.ok) {
-      setDecision(null);
+      setPending(null);
+      setAttempt((n) => n + 1);
       toast.error(next === "approved" ? "Not approved" : "Not rejected", { description: result.error });
       throw new Error(result.error);
     }
     setSettledMessage(result.data.message);
+    setDecision(next);
     // The island counts proposals, so it has to hear about this immediately.
     refreshProposals();
     onDecided?.(proposal.id, result.data.status);
@@ -172,20 +180,23 @@ export function ProposalCard({
         <button
           type="button"
           onClick={() => void decide("rejected").catch(() => undefined)}
+          disabled={pending !== null}
+          aria-busy={pending === "rejected" || undefined}
           className={cn(
             "inline-flex h-8 items-center rounded-lg px-3 text-xs font-medium text-muted-foreground",
             "transition-[background-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]",
             "hover:bg-muted hover:text-foreground active:scale-[0.97]",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "disabled:pointer-events-none disabled:opacity-50",
           )}
         >
-          Reject
+          {pending === "rejected" ? "Rejecting…" : "Reject"}
         </button>
 
         {proposal.isPaper ? (
           <MorphButton
             size="sm"
-            disabled={blocked}
+            disabled={blocked || pending === "rejected"}
             loadingLabel="Approving…"
             successLabel="Filled"
             errorLabel="Refused"
@@ -195,11 +206,13 @@ export function ProposalCard({
           </MorphButton>
         ) : (
           <HoldToConfirmButton
+            key={attempt}
             size="sm"
-            disabled={blocked}
+            disabled={blocked || pending === "rejected"}
             duration={1_400}
             label="Hold to approve"
-            confirmedLabel="Approved"
+            confirmedLabel="Approving…"
+            resetDelay={0}
             icon={<ArrowUpRight size={12} strokeWidth={2} />}
             onConfirm={() => void decide("approved").catch(() => undefined)}
             className="border-primary/40 bg-primary/10 text-foreground hover:bg-primary/15 dark:border-primary/40 dark:bg-primary/10 dark:text-foreground dark:hover:bg-primary/15"

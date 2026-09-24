@@ -34,12 +34,20 @@ import type { MfaMethod, MfaStatus } from "./types";
 
 export type { MfaMethod, MfaStatus } from "./types";
 
+/**
+ * What a user is told when there is nothing to enrol in. Whether that is because Privy
+ * is not configured or because the app has no methods switched on is the operator's
+ * problem, and the operator's wording lives in `operatorNote`.
+ */
+const UNAVAILABLE_TO_USERS = "Two-factor sign-in isn't available on Tocker yet.";
+
 const OFFLINE: MfaStatus = {
   available: false,
   appMethods: [],
   userMethods: [],
   enrolled: false,
-  blockedReason:
+  blockedReason: UNAVAILABLE_TO_USERS,
+  operatorNote:
     "Privy is not configured on this deployment (NEXT_PUBLIC_PRIVY_APP_ID / PRIVY_APP_SECRET), so no second factor can be enrolled or checked. A second factor is optional, so nothing is blocked by this — but nothing can be enrolled either.",
 };
 
@@ -75,6 +83,7 @@ export async function getMfaStatus(userId: string): Promise<MfaStatus> {
       enrolled: false,
       blockedReason:
         "Could not reach Privy to check your second factor. It is optional, so nothing is blocked — refresh in a moment to see its status.",
+      operatorNote: null,
     };
   }
   void appId;
@@ -85,7 +94,8 @@ export async function getMfaStatus(userId: string): Promise<MfaStatus> {
     appMethods,
     userMethods,
     enrolled,
-    blockedReason: appMethods.length === 0 && !enrolled ? NO_APP_METHODS : null,
+    blockedReason: appMethods.length === 0 && !enrolled ? UNAVAILABLE_TO_USERS : null,
+    operatorNote: appMethods.length === 0 ? NO_APP_METHODS : null,
   };
 }
 

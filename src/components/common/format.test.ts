@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatPriceUsd, formatUsd } from "./format";
+import { formatPriceUsd, formatSignedPct, formatUsd } from "./format";
 
 /**
  * The finding: `toPrecision(2)` returns exponential notation for anything below 1e-6, so
@@ -24,8 +24,18 @@ describe("formatPriceUsd", () => {
     expect(formatPriceUsd(0.009)).toBe("$0.009");
   });
 
-  it("is ordinary currency at a cent and above", () => {
+  it("keeps three significant digits between a cent and a dollar", () => {
+    // A $300 buy of 25,381.94 DEGEN filled at $0.01182; "$0.01" was 15% off.
+    expect(formatPriceUsd(0.01182)).toBe("$0.0118");
+    expect(formatPriceUsd(0.1412)).toBe("$0.141");
+    expect(formatPriceUsd(0.0999)).toBe("$0.0999");
+    expect(formatPriceUsd(0.5)).toBe("$0.50");
+    expect(formatPriceUsd(0.14)).toBe("$0.14");
     expect(formatPriceUsd(0.01)).toBe("$0.01");
+  });
+
+  it("is ordinary currency from a dollar up", () => {
+    expect(formatPriceUsd(1)).toBe("$1.00");
     expect(formatPriceUsd(1.5)).toBe("$1.50");
     expect(formatPriceUsd(1234.5)).toBe("$1,234.50");
   });
@@ -56,5 +66,19 @@ describe("formatUsd sub-cent amounts", () => {
     expect(formatUsd(10)).toBe("$10.00");
     expect(formatUsd(12_345, { compact: true })).toBe("$12.3K");
     expect(formatUsd(null)).toBe("—");
+  });
+});
+
+describe("formatSignedPct", () => {
+  it("signs the number as printed, so a rounding-to-zero move is not a red minus", () => {
+    expect(formatSignedPct(-0.004, 1)).toBe("0.0%");
+    expect(formatSignedPct(0.004, 2)).toBe("0.00%");
+    expect(formatSignedPct(0, 1)).toBe("0.0%");
+  });
+
+  it("keeps the typographic minus and the plus once the move shows", () => {
+    expect(formatSignedPct(-0.06, 1)).toBe("−0.1%");
+    expect(formatSignedPct(7.591, 2)).toBe("+7.59%");
+    expect(formatSignedPct(null)).toBe("—");
   });
 });

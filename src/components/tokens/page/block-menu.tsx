@@ -7,7 +7,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -80,10 +79,12 @@ export function BlockMenu({
         }
       />
       <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">
+        {/* A description, not a group label: Base UI's GroupLabel throws outside a Group,
+            and that took the whole token page down to the error screen. */}
+        <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
           Your agents will never trade {symbol}. This is the only list in Tocker, and it only
           subtracts.
-        </DropdownMenuLabel>
+        </p>
         <DropdownMenuSeparator />
         {agents.map((agent) => {
           const blocked = state[agent.id] === true;

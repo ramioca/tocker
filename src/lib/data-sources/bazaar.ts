@@ -22,6 +22,7 @@ const inputSchema = z.object({
 export const bazaar = defineSource({
   id: "bazaar",
   name: "x402 Bazaar resource",
+  summary: "Lets the agent find and pay for other x402 data sources itself, within the run's data budget.",
   description:
     "Call any x402 resource discovered via search_data_sources. Price is read from the resource's own 402 response and charged against the run's data budget.",
   category: "other",

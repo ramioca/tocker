@@ -29,8 +29,11 @@ const WINDOWS: Array<{ value: LeaderboardWindow; label: string }> = [
  */
 export function PerformancePanel({
   windows,
+  isOwner = false,
 }: {
   windows: Record<LeaderboardWindow, AgentAnalytics>;
+  /** Whether advice about the agent's own settings is addressed to this viewer. */
+  isOwner?: boolean;
 }) {
   const [window, setWindow] = useState<LeaderboardWindow>("30d");
   const analytics = windows[window];
@@ -67,7 +70,8 @@ export function PerformancePanel({
           })}
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Closed trades are matched FIFO, so each exit carries the score of the entry it closed.
+          Realized PnL and win rate use average cost, like the rest of the page; calibration matches each exit
+          FIFO to the entry it closed.
         </p>
       </div>
 
@@ -80,8 +84,13 @@ export function PerformancePanel({
       ) : (
         <>
           <AnalyticsStats analytics={analytics} />
-          <CalibrationChart bands={analytics.calibration} />
-          <TradeHighlights best={analytics.bestTrade} worst={analytics.worstTrade} />
+          <CalibrationChart bands={analytics.calibration} isOwner={isOwner} />
+          <TradeHighlights
+            best={analytics.bestTrade}
+            worst={analytics.worstTrade}
+            bestPnlUsd={analytics.bestTradePnlUsd}
+            worstPnlUsd={analytics.worstTradePnlUsd}
+          />
           <ExitsBreakdown exits={analytics.exits} totalClosed={closedExits} />
           <SplitTables analytics={analytics} />
         </>

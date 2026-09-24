@@ -2,6 +2,7 @@ import { Cpu, Database, Receipt } from "lucide-react";
 import { formatUsd } from "@/components/common/format";
 import { MODEL_PRICES } from "@/server/queries/money";
 import type { MoneySummary } from "@/server/queries/money";
+import type { CostTotals } from "./cost-totals";
 
 /**
  * What each cost actually is, in sentences.
@@ -20,11 +21,14 @@ function Item({
   icon: Icon,
   title,
   amount,
+  qualifier,
   children,
 }: {
   icon: React.ElementType;
   title: string;
   amount: string;
+  /** A word after the amount that changes what it means, e.g. "simulated". */
+  qualifier?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -35,7 +39,10 @@ function Item({
       <div className="min-w-0 flex-1">
         <p className="flex flex-wrap items-baseline justify-between gap-x-3">
           <span className="text-sm font-medium">{title}</span>
-          <span className="tnum text-sm">{amount}</span>
+          <span className="tnum text-sm">
+            {amount}
+            {qualifier ? <span className="ml-1.5 text-xs text-muted-foreground">{qualifier}</span> : null}
+          </span>
         </p>
         <div className="mt-1 space-y-1.5 text-[13px] leading-5 text-muted-foreground">{children}</div>
       </div>
@@ -45,24 +52,58 @@ function Item({
 
 export function CostsNote({
   summary,
+  scope = "live",
+  totals: override,
   feeUsd,
   settleMinUsd,
 }: {
   summary: MoneySummary;
+  /**
+   * Whose costs these are. "paper" is for an account with no live agent yet: the
+   * page's own totals are live-only and would print $0.00 under a paper table that
+   * plainly has costs in it.
+   */
+  scope?: "live" | "paper";
+  /** The sums to print when they are not the live totals — see `sumCosts`. */
+  totals?: CostTotals;
   /** `PLATFORM_FEE_USD` as the server actually reads it — never a hardcoded $0.10. */
   feeUsd: number;
   settleMinUsd: number;
 }) {
-  const { totals, live } = summary;
-  const accrued = live.reduce((sum, agent) => sum + agent.feesAccruedUsd, 0);
-  const simulated = live.reduce((sum, agent) => sum + agent.dataSpendSimulatedUsd, 0);
+  const { live } = summary;
+  const paper = scope === "paper";
+  const totals: CostTotals = override ?? {
+    feesUsd: summary.totals.feesUsd,
+    dataSpendUsd: summary.totals.dataSpendUsd,
+    dataSpendSimulatedUsd: live.reduce((sum, agent) => sum + agent.dataSpendSimulatedUsd, 0),
+    modelSpendUsd: summary.totals.modelSpendUsd,
+    unpricedAgents: summary.totals.unpricedAgents,
+  };
+  // Owed fees only exist in a real wallet. A paper book has no cash to deduct them from.
+  const accrued = paper ? 0 : live.reduce((sum, agent) => sum + agent.feesAccruedUsd, 0);
+  const simulated = totals.dataSpendSimulatedUsd;
 
   return (
     <div className="glass-card overflow-hidden rounded-2xl">
+      {paper ? (
+        <p className="border-b border-[var(--glass-hairline)] px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground sm:px-5">
+          Paper agents
+        </p>
+      ) : null}
       <ul className="divide-y divide-[var(--glass-hairline)]">
-        <Item icon={Receipt} title="Tocker fee" amount={formatUsd(totals.feesUsd)}>
+        <Item
+          icon={Receipt}
+          title="Tocker fee"
+          amount={formatUsd(totals.feesUsd)}
+          qualifier={paper ? "simulated" : undefined}
+        >
           <p>
-            {feeUsd > 0 ? (
+            {feeUsd > 0 && paper ? (
+              <>
+                A flat {formatUsd(feeUsd)} on every simulated fill, taken out of the paper book so its P&amp;L
+                compares with a live one. Nothing is collected until an agent trades live.
+              </>
+            ) : feeUsd > 0 ? (
               <>
                 A flat {formatUsd(feeUsd)} on every executed fill — buy or sell, whether the agent placed it, you
                 approved it, or the exit engine took it. Flat rather than a percentage, so we never want a bigger
@@ -116,7 +157,8 @@ export function CostsNote({
           </ul>
           {totals.unpricedAgents > 0 ? (
             <p>
-              {totals.unpricedAgents} live agent{totals.unpricedAgents === 1 ? " runs" : "s run"} a model with no
+              {totals.unpricedAgents} {paper ? "paper" : "live"} agent
+              {totals.unpricedAgents === 1 ? " runs" : "s run"} a model with no
               published price here, so {totals.unpricedAgents === 1 ? "its" : "their"} tokens are not counted in
               this total.
             </p>

@@ -66,7 +66,7 @@ export function TokenScoreCard({
             <Fact
               label="24h"
               value={formatSignedPct(score.priceChange24hPct, 1)}
-              className={pnlTone(score.priceChange24hPct)}
+              className={pnlTone(score.priceChange24hPct, 1)}
             />
           </dl>
         </div>

@@ -1,3 +1,4 @@
+import { cache } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -13,7 +14,28 @@ import { cn } from "@/lib/utils";
 
 type Params = { params: Promise<{ slug: string; runId: string }> };
 
-export const metadata: Metadata = { title: "Run" };
+/**
+ * The agent and the run, or nothing. Both ids are in the URL, so a run is shown only
+ * under the agent that made it — otherwise any link could hang one agent's trades and
+ * reasoning under another's name and avatar. `cache` so the metadata and the page
+ * share one load.
+ */
+const loadRun = cache(async (slug: string, runId: string) => {
+  const session = await viewerSession();
+  const [agent, run] = await Promise.all([
+    agentBySlug(slug, session?.userId ?? null),
+    runDetail(runId, session?.userId ?? null),
+  ]);
+  if (!agent || !run || run.agentId !== agent.id) return null;
+  return { agent, run };
+});
+
+export async function generateMetadata({ params }: Params): Promise<Metadata> {
+  const { slug, runId } = await params;
+  const loaded = await loadRun(slug, runId);
+  if (!loaded) return { title: "Run not found" };
+  return { title: `${loaded.agent.name} · run` };
+}
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
@@ -26,12 +48,9 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 export default async function RunPage({ params }: Params) {
   const { slug, runId } = await params;
-  const session = await viewerSession();
-  const [agent, run] = await Promise.all([
-    agentBySlug(slug, session?.userId ?? null),
-    runDetail(runId, session?.userId ?? null),
-  ]);
-  if (!agent || !run) notFound();
+  const loaded = await loadRun(slug, runId);
+  if (!loaded) notFound();
+  const { agent, run } = loaded;
 
   const elapsed =
     run.startedAt && run.finishedAt
@@ -40,8 +59,9 @@ export default async function RunPage({ params }: Params) {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
+      {/* Back to the Runs tab, not Overview: that is where the reader came from. */}
       <Link
-        href={`/agents/${agent.slug}`}
+        href={`/agents/${agent.slug}?tab=runs`}
         className="inline-flex items-center gap-1.5 rounded text-xs text-muted-foreground transition-colors duration-150 hover:text-foreground focus-ring"
       >
         <ArrowLeft aria-hidden className="size-3.5" />

@@ -24,10 +24,11 @@ import { formatUsd } from "@/components/common/format";
  * from the same {@link sizeOrder} the risk guard calls — not a re-implementation of it,
  * the same function — which is what stops the form and the guard from ever disagreeing.
  *
- * Presentational and self-contained: it owns its draft state and calls `onSave`. The
- * agent settings form and the builder can both drop it in; `src/components/agents/
- * manual-trade.tsx` uses the read-only half ({@link SizingSummary}) to explain the
- * ceiling next to the amount field.
+ * Presentational: it owns its draft state and either saves it itself (`onSave`, with its
+ * own button) or reports every change to a form that saves it (`onChange`, no button —
+ * the agent settings form, so sizing and the caps above it share one Save).
+ * `src/components/agents/manual-trade.tsx` uses the read-only half ({@link SizingSummary})
+ * to explain the ceiling next to the amount field.
  */
 
 const MODES: PositionSizingMode[] = ["fixed_usd", "percent_equity", "volatility_scaled"];
@@ -37,14 +38,18 @@ export function SizingControls({
   maxTradeUsd,
   equityUsd,
   onSave,
+  onChange,
   className,
 }: {
+  /** The starting point; the draft is local after that so a half-typed number is not clamped. */
   value: PositionSizingConfig | null | undefined;
   /** The hard ceiling. Shown, never editable here — it belongs to the risk form. */
   maxTradeUsd: number;
   equityUsd: number | null;
   /** Persist. Returns an error message, or null on success. */
-  onSave: (next: PositionSizingConfig) => Promise<string | null>;
+  onSave?: (next: PositionSizingConfig) => Promise<string | null>;
+  /** Part of a larger form: every change is reported, and the form's own Save persists it. */
+  onChange?: (next: PositionSizingConfig) => void;
   className?: string;
 }) {
   const [draft, setDraft] = useState<PositionSizingConfig>(value ?? DEFAULT_SIZING);
@@ -53,6 +58,7 @@ export function SizingControls({
   const [pending, startTransition] = useTransition();
 
   const save = () => {
+    if (!onSave) return;
     setError(null);
     setSaved(false);
     startTransition(async () => {
@@ -64,7 +70,9 @@ export function SizingControls({
 
   const set = <K extends keyof PositionSizingConfig>(key: K, next: PositionSizingConfig[K]) => {
     setSaved(false);
-    setDraft((d) => ({ ...d, [key]: next }));
+    const updated = { ...draft, [key]: next };
+    setDraft(updated);
+    onChange?.(updated);
   };
 
   return (
@@ -96,7 +104,7 @@ export function SizingControls({
             );
           })}
         </div>
-        <p className="text-sm leading-6 text-muted-foreground">{SIZING_EXPLANATIONS[draft.mode]}</p>
+        <p className="text-xs leading-5 text-muted-foreground">{SIZING_EXPLANATIONS[draft.mode]}</p>
       </fieldset>
 
       {draft.mode === "fixed_usd" ? null : (
@@ -153,27 +161,29 @@ export function SizingControls({
 
       <SizingSummary sizing={draft} maxTradeUsd={maxTradeUsd} equityUsd={equityUsd} />
 
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={save}
-          disabled={pending}
-          className={cn(
-            "inline-flex items-center gap-2 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground",
-            "transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]",
-            "disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-          )}
-        >
-          {pending ? <Loader2 aria-hidden className="size-3.5 animate-spin" /> : null}
-          {pending ? "Saving" : "Save sizing"}
-        </button>
-        {saved && !pending ? (
-          <span className="inline-flex items-center gap-1.5 text-xs text-positive">
-            <Check aria-hidden className="size-3.5" /> Saved
-          </span>
-        ) : null}
-        {error ? <span className="text-xs text-destructive">{error}</span> : null}
-      </div>
+      {onSave && !onChange ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={save}
+            disabled={pending}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground",
+              "transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]",
+              "disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+            )}
+          >
+            {pending ? <Loader2 aria-hidden className="size-3.5 animate-spin" /> : null}
+            {pending ? "Saving" : "Save sizing"}
+          </button>
+          {saved && !pending ? (
+            <span className="inline-flex items-center gap-1.5 text-xs text-positive">
+              <Check aria-hidden className="size-3.5" /> Saved
+            </span>
+          ) : null}
+          {error ? <span className="text-xs text-destructive">{error}</span> : null}
+        </div>
+      ) : null}
     </div>
   );
 }

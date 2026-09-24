@@ -1,4 +1,3 @@
-import Link from "next/link";
 import {
   ArrowLeftRight,
   AtSign,
@@ -19,6 +18,7 @@ import type { TradeReceiptData } from "@/db/schema";
 import { dayBucket, formatAgo } from "@/components/social-common/format";
 import { ProposalCard } from "@/components/agents/proposals/proposal-card";
 import { TradeReceiptRow } from "@/components/trading";
+import { NotificationLink } from "./notification-link";
 
 const ICONS: Record<string, typeof Bell> = {
   trade: ArrowLeftRight,
@@ -43,7 +43,7 @@ const ICONS: Record<string, typeof Bell> = {
 };
 
 /** `?trade=<id>` on a fill notification's href — how a row finds its own receipt. */
-function tradeIdFrom(href: string | null): string | null {
+export function tradeIdFrom(href: string | null): string | null {
   if (!href) return null;
   const match = /[?&]trade=([^&]+)/.exec(href);
   return match?.[1] ?? null;
@@ -70,11 +70,14 @@ export function NotificationList({
    * `ids` are the trade ids parsed out of the fill rows' hrefs.
    */
   receipts,
+  /** Marks one notification read when its row is opened; see NotificationLink. */
+  markRead,
 }: {
   items: NotificationRow[];
   now: number;
   proposals?: ProposalRow[];
   receipts?: Map<string, TradeReceiptData>;
+  markRead?: (id: string) => Promise<{ ok: boolean }>;
 }) {
   if (items.length === 0) {
     return (
@@ -122,7 +125,12 @@ export function NotificationList({
                       <ProposalCard proposal={pending} showAgent />
                     </div>
                   ) : (
-                    <Row row={row} now={now} receipt={receipts?.get(tradeIdFrom(row.href) ?? "") ?? null} />
+                    <Row
+                      row={row}
+                      now={now}
+                      receipt={receipts?.get(tradeIdFrom(row.href) ?? "") ?? null}
+                      markRead={markRead}
+                    />
                   )}
                 </li>
               );
@@ -138,10 +146,12 @@ function Row({
   row,
   now,
   receipt = null,
+  markRead,
 }: {
   row: NotificationRow;
   now: number;
   receipt?: TradeReceiptData | null;
+  markRead?: (id: string) => Promise<{ ok: boolean }>;
 }) {
   const Icon = ICONS[row.kind] ?? Bell;
   const unread = row.readAt === null;
@@ -173,7 +183,13 @@ function Row({
           {formatAgo(row.createdAt, now)}
         </time>
         {unread ? (
-          <span className="size-1.5 rounded-full bg-primary" aria-label="Unread" role="status" />
+          <>
+            <span
+              aria-hidden
+              className="size-1.5 rounded-full bg-primary group-data-[read]/notification:hidden"
+            />
+            <span className="sr-only group-data-[read]/notification:hidden">Unread</span>
+          </>
         ) : null}
       </div>
     </div>
@@ -182,13 +198,16 @@ function Row({
   if (!row.href) return <div className={unread ? "bg-primary/[0.04]" : undefined}>{content}</div>;
 
   return (
-    <Link
+    <NotificationLink
+      id={row.id}
       href={row.href}
+      unread={unread}
+      markRead={markRead}
       className={`block transition-colors duration-150 hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:-outline-offset-2 ${
         unread ? "bg-primary/[0.04]" : ""
       }`}
     >
       {content}
-    </Link>
+    </NotificationLink>
   );
 }

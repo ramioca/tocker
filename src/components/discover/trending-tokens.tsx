@@ -135,7 +135,9 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
               : "border-border/70 text-muted-foreground hover:bg-muted hover:text-foreground",
           )}
         >
-          Hide blocked
+          {/* "avoid", the verdict the chips above count — not "blocked", which is the
+              blocklist's word and means something an owner did. */}
+          Hide avoid
         </button>
 
         <p className="tnum ml-auto text-xs text-muted-foreground">
@@ -158,7 +160,12 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
             sized around it.
           */
           <div key={score.tokenId} className="group/row flex items-start">
-            <TokenScoreRow score={score} showTopBlocker className="min-w-0 flex-1" />
+            <TokenScoreRow
+              score={score}
+              showTopBlocker
+              href={`/tokens/${score.chain}/${score.address}`}
+              className="min-w-0 flex-1"
+            />
             <Link
               href={`/tokens/${score.chain}/${score.address}`}
               aria-label={`Open the ${score.symbol} token page`}
@@ -166,6 +173,7 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
               className={cn(
                 // Hidden on a phone, where the row is two dense lines and the chevron —
                 // opening the breakdown — is the thing you actually want on that screen.
+                // The open breakdown carries its own "Open token page" link there.
                 "mt-2 mr-2 hidden shrink-0 items-center gap-1 rounded-md px-1.5 py-1 sm:inline-flex",
                 // Permanently visible at 70% rather than hover-only: a link nobody can
                 // see is a link nobody uses.
@@ -191,11 +199,13 @@ function Heading() {
         className="flex items-center gap-2 text-lg font-medium tracking-tight"
       >
         <Sparkles className="size-4.5 text-primary" aria-hidden />
-        Fresh off the mint
+        On the sweep&rsquo;s radar
       </h2>
+      {/* The sweep reads the trending and top-organic feeds as well as new launches, so
+          a three-year-old token can sit here. The copy says what it is, not "fresh". */}
       <p className="mt-1 text-sm text-muted-foreground">
-        Everything the discovery feeds turned up recently, scored 0-100. Tap a row for the
-        breakdown and the gates it failed.
+        New launches, trending and top organic tokens from the discovery feeds, scored 0-100.
+        Tap a row for the breakdown and the gates it failed.
       </p>
     </div>
   );

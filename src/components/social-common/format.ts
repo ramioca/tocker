@@ -13,15 +13,19 @@ export function formatUsd(value: number | null | undefined, opts?: { compact?: b
   if (value == null || !Number.isFinite(value)) return "—";
   const abs = Math.abs(value);
   const sign = opts?.signed ? (value > 0 ? "+" : value < 0 ? "−" : "") : value < 0 ? "−" : "";
-  if (opts?.compact && abs >= 10_000) return `${sign}$${COMPACT.format(abs)}`;
+  // Compact from four figures, not five: sibling cards read "$5.2K" and "$10.8K", not
+  // "$5,218" next to "$10.8K".
+  if (opts?.compact && abs >= 1_000) return `${sign}$${COMPACT.format(abs)}`;
   return `${sign}${abs >= 1000 ? USD_WHOLE.format(abs) : USD.format(abs)}`;
 }
 
 export function formatPct(value: number | null | undefined, opts?: { signed?: boolean; dp?: number }): string {
   if (value == null || !Number.isFinite(value)) return "—";
   const dp = opts?.dp ?? 1;
-  const sign = opts?.signed !== false ? (value > 0 ? "+" : value < 0 ? "−" : "") : "";
-  return `${sign}${Math.abs(value).toFixed(dp)}%`;
+  // Sign the number as printed: −0.004 at 1dp is "0.0%", not "−0.0%".
+  const rounded = Number(Math.abs(value).toFixed(dp));
+  const sign = opts?.signed !== false && rounded !== 0 ? (value > 0 ? "+" : "−") : "";
+  return `${sign}${rounded.toFixed(dp)}%`;
 }
 
 export function formatCount(value: number | null | undefined): string {

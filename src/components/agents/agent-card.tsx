@@ -14,10 +14,13 @@ export function AgentCard({
   agent,
   className,
   index = 0,
+  accountPaused = false,
 }: {
   agent: AgentCardModel;
   className?: string;
   index?: number;
+  /** The viewer's own agents only: trading is paused account-wide. */
+  accountPaused?: boolean;
 }) {
   return (
     <Link
@@ -42,7 +45,7 @@ export function AgentCard({
             </span>
           </p>
         </div>
-        <StatusBadge status={agent.status} />
+        <StatusBadge status={agent.status} accountPaused={accountPaused} short />
       </div>
 
       {agent.tagline ? (
@@ -64,7 +67,7 @@ export function AgentCard({
         <div className="text-right">
           <PnlText usd={agent.pnlUsd} pct={agent.pnlPct} size="sm" className="block" />
           <p className="tnum text-[11px] text-muted-foreground">
-            {agent.tradeCount} trades ·{" "}
+            {agent.tradeCount} trade{agent.tradeCount === 1 ? "" : "s"} ·{" "}
             {agent.lastRunAt ? <RelativeTime iso={agent.lastRunAt} className="text-[11px]" /> : "never run"}
           </p>
         </div>

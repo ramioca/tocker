@@ -74,6 +74,7 @@ export function parseGate402Launches(data: unknown): PaidLaunch[] {
 export const gate402BaseRadar = defineSource({
   id: "gate402-base-radar",
   name: "gate402 Base radar",
+  summary: "New Base launches, pre-screened, plus a momentum read on a single token.",
   description:
     "Base-chain launch radar and momentum read, $0.02 a call. mode 'launches' returns the newest Base DEX pools pre-screened by liquidity, age and flow with quickFlags for obvious junk; mode 'momentum' classifies one Base token RISING/FALLING/FLAT and ACCUMULATION/DISTRIBUTION from 5m-24h price, buy/sell pressure and volume trend, behind a live honeypot check.",
   category: "onchain",

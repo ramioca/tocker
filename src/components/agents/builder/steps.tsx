@@ -35,7 +35,9 @@ import { SimpleSelect } from "./simple-select";
 import {
   AVATAR_SEEDS,
   INTERVAL_PRESETS,
+  LLM_BOUNDS,
   PAPER_BALANCES,
+  RISK_BOUNDS,
   STRATEGY_PRESETS,
   type BuilderDraft,
 } from "./types";
@@ -69,6 +71,8 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
           value={draft.name}
           maxLength={48}
           placeholder="Momentum Mike"
+          aria-invalid={Boolean(errors.name)}
+          aria-describedby={errors.name ? "agent-name-error" : undefined}
           onChange={(event) => update({ name: event.target.value })}
         />
       </Field>
@@ -134,9 +138,31 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
 
 // --------------------------------------------------------------------- brain
 
-export function AddKeyInline({ onAdded }: { onAdded: (key: LlmKeyRow) => void }) {
+const PROVIDER_LABELS: Record<LlmKeyRow["provider"], string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  openrouter: "OpenRouter",
+};
+
+/**
+ * Adds a key for the provider the agent already thinks with. There is deliberately no
+ * provider picker in here: a second one, independent of the Brain's, let an Anthropic
+ * key be attached to an OpenAI agent, where the key select could not even show it and
+ * every run failed. Switch the Brain's provider to add a key for another one.
+ */
+export function AddKeyInline({
+  provider,
+  onAdded,
+  id,
+  describedBy,
+}: {
+  provider: LlmKeyRow["provider"];
+  onAdded: (key: LlmKeyRow) => void;
+  /** Set on whichever control is the next thing to press — the trigger, or the key box once open. */
+  id?: string;
+  describedBy?: string;
+}) {
   const [open, setOpen] = useState(false);
-  const [provider, setProvider] = useState<"anthropic" | "openai" | "openrouter">("anthropic");
   const [value, setValue] = useState("");
   const [label, setLabel] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
@@ -145,12 +171,14 @@ export function AddKeyInline({ onAdded }: { onAdded: (key: LlmKeyRow) => void })
   if (!open) {
     return (
       <button
+        id={id}
         type="button"
+        aria-describedby={describedBy}
         onClick={() => setOpen(true)}
         className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <Plus aria-hidden className="size-3.5" />
-        Add a key
+        Add an {PROVIDER_LABELS[provider]} key
       </button>
     );
   }
@@ -159,7 +187,7 @@ export function AddKeyInline({ onAdded }: { onAdded: (key: LlmKeyRow) => void })
     <div className="space-y-2 rounded-xl border border-border bg-card/40 p-3">
       <div className="flex items-center gap-2">
         <KeyRound aria-hidden className="size-3.5 text-muted-foreground" />
-        <p className="text-xs font-medium">New API key</p>
+        <p className="text-xs font-medium">New {PROVIDER_LABELS[provider]} key</p>
         <button
           type="button"
           onClick={() => {
@@ -174,17 +202,14 @@ export function AddKeyInline({ onAdded }: { onAdded: (key: LlmKeyRow) => void })
         </button>
       </div>
 
-      <SimpleSelect
-        value={provider}
-        onChange={(next) => setProvider(next as typeof provider)}
-        options={[
-          { value: "anthropic", label: "Anthropic" },
-          { value: "openai", label: "OpenAI" },
-          { value: "openrouter", label: "OpenRouter" },
-        ]}
-      />
       <Input
+        id={id}
         type="password"
+        aria-label={`${PROVIDER_LABELS[provider]} API key`}
+        aria-describedby={describedBy}
+        // Mounted only by pressing "Add", which unmounts that button: without this,
+        // focus would fall back to the page.
+        autoFocus
         value={value}
         placeholder="sk-…"
         // "new-password" is the value Chrome actually honours on a password field;
@@ -308,10 +333,13 @@ export function BrainStep({
         </Field>
       </div>
 
-      <Field label="API key" error={errors.llmKeyId}>
+      <Field label="API key" htmlFor="llm-key" error={errors.llmKeyId}>
         <div className="space-y-2">
           {keysForProvider.length > 0 ? (
             <SimpleSelect
+              id="llm-key"
+              invalid={Boolean(errors.llmKeyId)}
+              describedBy={errors.llmKeyId ? "llm-key-error" : undefined}
               value={draft.llmKeyId}
               placeholder="Choose a key"
               options={keysForProvider.map((key) => ({
@@ -327,6 +355,10 @@ export function BrainStep({
             </p>
           )}
           <AddKeyInline
+            provider={provider}
+            // With no key to choose, adding one is the fix, so it is what an error focuses.
+            id={keysForProvider.length > 0 ? undefined : "llm-key-add"}
+            describedBy={keysForProvider.length === 0 && errors.llmKeyId ? "llm-key-error" : undefined}
             onAdded={(key) => {
               onKeyAdded(key);
               update({ llmKeyId: key.id });
@@ -366,8 +398,7 @@ export function BrainStep({
           id="llm-max-steps"
           label="Max steps per run"
           value={draft.config.llm.maxSteps}
-          min={2}
-          max={40}
+          {...LLM_BOUNDS.maxSteps}
           format={(value) => String(Math.round(value))}
           meaning={`Up to ${Math.round(draft.config.llm.maxSteps)} tool calls before the run is cut off. More steps means deeper research and a bigger token bill.`}
           onChange={(maxSteps) =>
@@ -412,6 +443,8 @@ export function BrainStep({
           <Textarea
             id="strategy-prompt"
             value={draft.config.strategyPrompt}
+            aria-invalid={Boolean(errors.strategyPrompt)}
+            aria-describedby={errors.strategyPrompt ? "strategy-prompt-error" : undefined}
             rows={9}
             onChange={(event) => updateConfig({ strategyPrompt: event.target.value })}
             className="font-mono text-xs leading-relaxed"
@@ -525,9 +558,7 @@ export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
           id="risk-max-trade"
           label="Max per trade"
           value={risk.maxTradeUsd}
-          min={1}
-          max={5_000}
-          step={1}
+          {...RISK_BOUNDS.maxTradeUsd}
           format={(value) => formatUsd(value)}
           meaning={
             fundedUsd > 0 && risk.maxTradeUsd > fundedUsd

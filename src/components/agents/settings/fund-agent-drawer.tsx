@@ -336,7 +336,8 @@ export function FundAgentDrawer({
           )
         }
       />
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-md">
+      {/* Same-variant classes, so tailwind-merge replaces the primitive's 75% width. */}
+      <SheetContent side="right" className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md">
         <SheetHeader>
           <SheetTitle className="text-sm">Fund {agentName}</SheetTitle>
           <SheetDescription className="text-xs">

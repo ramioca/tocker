@@ -15,9 +15,12 @@ import type { HomeOverview } from "@/server/queries/home";
 export function AgentsOverview({
   agents,
   counts,
+  accountPaused = false,
 }: {
   agents: HomeOverview["agents"];
   counts: HomeOverview["counts"];
+  /** Trading is paused account-wide, so no agent here is actually running. */
+  accountPaused?: boolean;
 }) {
   return (
     <section aria-labelledby="home-agents-heading" id="agents" className="scroll-mt-20">
@@ -33,7 +36,9 @@ export function AgentsOverview({
           <p className="tnum mt-1 text-sm text-muted-foreground">
             {counts.total === 0
               ? "Nothing deployed yet."
-              : `${counts.active} active · ${counts.paused} paused · ${counts.live} trading live money.`}
+              : accountPaused
+                ? `${counts.total} agent${counts.total === 1 ? "" : "s"} · all trading paused account-wide.`
+                : `${counts.active} active · ${counts.paused} paused · ${counts.live} trading live money.`}
           </p>
         </div>
 
@@ -74,7 +79,7 @@ export function AgentsOverview({
         <ul className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {agents.slice(0, 6).map((agent, index) => (
             <li key={agent.id}>
-              <AgentCard agent={agent} index={index} />
+              <AgentCard agent={agent} index={index} accountPaused={accountPaused} />
             </li>
           ))}
         </ul>

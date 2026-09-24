@@ -62,7 +62,7 @@ export function AgentsHolding({ holders }: { holders: Holder[] }) {
               <span className="tnum shrink-0 text-right text-xs text-muted-foreground">
                 {formatUsd(holder.valueUsd, { compact: true })}
               </span>
-              <PnlText pct={holder.unrealizedPnlPct} size="xs" className="w-16 shrink-0 text-right" />
+              <PnlText pct={holder.unrealizedPnlPct} dp={1} size="xs" className="w-16 shrink-0 text-right" />
             </Link>
           </li>
         ))}

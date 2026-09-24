@@ -11,6 +11,7 @@ import { ProfileTabs } from "@/components/profile/profile-tabs";
 import { ActivityPanel } from "@/components/profile/activity-panel";
 import { AgentGridCard } from "@/components/discover/agent-grid-card";
 import { EmptyState } from "@/components/common/empty-state";
+import { tradeActivity } from "./trade-activity";
 
 async function loadProfile(handle: string) {
   const session = await withMock(getSession, mockSession).catch(() => null);
@@ -37,14 +38,13 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
   const profile = await loadProfile(handle);
   if (!profile) notFound();
 
-  // No real query for daily trade activity yet. In mock mode show the sample
-  // heatmap; in production return nothing so ActivityPanel renders its honest
-  // empty state rather than fabricating a track record. Replace the real branch
-  // with getUserTradeActivity(handle) once it lands.
+  // Counted over the agents this header already shows (public ones, plus private ones
+  // on your own profile), so the heatmap and the "Trades" tile agree.
   const activity = await withMock(
-    async () => [] as Array<{ t: number; value: number }>,
+    () => tradeActivity(profile.agents.map((agent) => agent.id)),
     () => mockTradeActivity(profile.handle),
   );
+  const totalTrades = profile.agents.reduce((sum, agent) => sum + agent.tradeCount, 0);
 
   return (
     <div className="mx-auto w-full max-w-5xl px-5 py-8 sm:py-10">
@@ -84,7 +84,15 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
               </ul>
             )
           }
-          activitySlot={<ActivityPanel data={activity} handle={profile.handle} />}
+          activitySlot={
+            <ActivityPanel
+              data={activity}
+              handle={profile.handle}
+              isSelf={profile.isSelf}
+              agentCount={profile.agents.length}
+              tradeCount={totalTrades}
+            />
+          }
         />
       </div>
     </div>

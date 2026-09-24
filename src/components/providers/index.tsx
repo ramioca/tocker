@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CSPProvider } from "@base-ui/react/csp-provider";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { AppPrivyProvider } from "./privy-provider";
 import { RunStatusProvider } from "./run-status";
 
@@ -38,15 +39,31 @@ export function Providers({ children, nonce }: { children: ReactNode; nonce?: st
         <RunStatusProvider>
           <TooltipProvider delay={350} closeDelay={100}>
             {children}
+            {/*
+              Bottom clearance is one variable so it can follow the app's chrome, and
+              falls back to Sonner's own 24px / 16px where there is none (the landing
+              page, sign-in). Below `md` it clears the phone tab bar — Sonner's mobile
+              breakpoint is 600px, so both offsets read it — and at any width it clears
+              a docked run/approvals island, which would otherwise sit on the same spot.
+              The island rule chains both :has() so it outranks the tab-bar one.
+            */}
             <Toaster
               theme="dark"
               position="bottom-right"
               closeButton
               richColors={false}
+              offset={{ bottom: "var(--toast-bottom, 24px)" }}
+              mobileOffset={{ bottom: "var(--toast-bottom, 16px)" }}
+              className={cn(
+                "max-md:[body:has([data-tab-bar])_&]:[--toast-bottom:calc(4.5rem+env(safe-area-inset-bottom))]",
+                "max-md:[body:has([data-tab-bar]):has([data-run-island])_&]:[--toast-bottom:calc(8rem+env(safe-area-inset-bottom))]",
+                "md:[body:has([data-run-island])_&]:[--toast-bottom:6rem]",
+              )}
               toastOptions={{
                 classNames: {
+                  // Near-opaque: at 75% the tab labels and page text read through the message.
                   toast:
-                    "!bg-popover/75 !backdrop-blur-xl !text-popover-foreground !border-border/60 !rounded-xl !shadow-lg",
+                    "!bg-popover/95 !backdrop-blur-xl !text-popover-foreground !border-border/60 !rounded-xl !shadow-lg",
                   description: "!text-muted-foreground",
                   actionButton: "!bg-primary !text-primary-foreground",
                 },

@@ -1,17 +1,26 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useId, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { KeyRound, Lock, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
-import { FloatingLabelInput } from "@/components/spectrumui/floating-label-input";
+import { Input } from "@/components/ui/input";
 import { MorphButton } from "@/components/spectrumui/morph-button";
 import { RelativeTime } from "@/components/common/relative-time";
 import { EmptyState } from "@/components/common/empty-state";
 import { removeLlmKey, rotateLlmKey } from "@/server/actions/users";
 import type { LlmKeyDetail } from "@/lib/security/types";
 import { cn } from "@/lib/utils";
+import { MORPH_FOCUS, enterSubmits, useMorphAction } from "../use-morph-action";
+
+// The server refuses anything shorter (src/server/actions/users.ts), so the client does too.
+const KEY_MIN = 16;
+
+function agentsWithoutKey(n: number): string {
+  return n === 1 ? "1 agent now has no key and cannot run." : `${n} agents now have no key and cannot run.`;
+}
 
 const PROVIDER_LABEL: Record<LlmKeyDetail["provider"], string> = {
   anthropic: "Anthropic",
@@ -29,9 +38,17 @@ const PROVIDER_LABEL: Record<LlmKeyDetail["provider"], string> = {
  * actually does it. Revoke takes a deliberate hold and says out loud how many
  * agents it will leave without a brain.
  */
-export function LlmKeyInventory({ keys: initial, encryptionOk }: { keys: LlmKeyDetail[]; encryptionOk: boolean }) {
+export function LlmKeyInventory({ keys: initial, isAdmin = false }: { keys: LlmKeyDetail[]; isAdmin?: boolean }) {
   const router = useRouter();
   const [keys, setKeys] = useState(initial);
+  // Follow the server whenever it sends a fresh list. A key removed on the Account tab is
+  // committed as that tab unmounts, so this page can render a beat before the removal
+  // lands; the action's revalidation then brings the corrected list here.
+  const [synced, setSynced] = useState(initial);
+  if (initial !== synced) {
+    setSynced(initial);
+    setKeys(initial);
+  }
   const [rotating, setRotating] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
@@ -43,11 +60,9 @@ export function LlmKeyInventory({ keys: initial, encryptionOk }: { keys: LlmKeyD
         return;
       }
       setKeys((current) => current.filter((k) => k.id !== key.id));
+      const detached = result.data.detachedAgents;
       toast.success(`Revoked the ${PROVIDER_LABEL[key.provider]} key ending ${key.last4}`, {
-        description:
-          key.agentCount > 0
-            ? `${key.agentCount} agent${key.agentCount === 1 ? "" : "s"} now has no key and cannot run.`
-            : "No agent was using it.",
+        description: detached > 0 ? agentsWithoutKey(detached) : "No agent was using it.",
       });
       router.refresh();
     });
@@ -70,7 +85,12 @@ export function LlmKeyInventory({ keys: initial, encryptionOk }: { keys: LlmKeyD
                 <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border border-border/70 bg-muted/40 text-muted-foreground">
                   <KeyRound aria-hidden className="size-4" />
                 </span>
-                <div className="min-w-0 flex-1">
+                {/*
+                  A real basis, not flex-1: with a zero basis this column never forced the
+                  actions to wrap, so on a phone it shrank to nothing and hid which key the
+                  revoke button belongs to.
+                */}
+                <div className="min-w-0 grow basis-48">
                   <p className="truncate text-sm font-medium">
                     {key.label ?? `${PROVIDER_LABEL[key.provider]} key`}
                   </p>
@@ -100,7 +120,7 @@ export function LlmKeyInventory({ keys: initial, encryptionOk }: { keys: LlmKeyD
                     </div>
                   </dl>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="ml-11 flex shrink-0 items-center gap-2 sm:ml-0">
                   <button
                     type="button"
                     onClick={() => setRotating((current) => (current === key.id ? null : key.id))}
@@ -146,12 +166,15 @@ export function LlmKeyInventory({ keys: initial, encryptionOk }: { keys: LlmKeyD
         <p className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
           <Lock aria-hidden className="mt-0.5 size-3.5 shrink-0" />
           <span>
-            <span className="font-medium text-foreground">How these are stored.</span> AES-256-GCM at rest, as{" "}
-            <code className="font-mono">base64(iv|tag|ciphertext)</code>, keyed by the deployment&rsquo;s{" "}
-            <code className="font-mono">ENCRYPTION_KEY</code>
-            {encryptionOk ? " (configured)" : " — which is NOT configured on this deployment"}. The plaintext is
-            decrypted in exactly one place, inside the agent run loop, and never reaches a server component, an
-            action result, a run transcript or your browser. Only these last four characters are ever rendered.
+            Encrypted at rest (AES-256-GCM); only the last four characters are ever shown.
+            {isAdmin ? (
+              <>
+                {" "}
+                <Link href="/settings/admin#operator" className="rounded underline underline-offset-2 hover:text-foreground focus-ring">
+                  Storage details
+                </Link>
+              </>
+            ) : null}
           </span>
         </p>
       </div>
@@ -172,46 +195,85 @@ function RotateForm({
 }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const errorId = useId();
 
   const submit = async () => {
     setError(null);
+    if (value.trim().length < KEY_MIN) {
+      setError("That doesn’t look like a full API key — paste the whole thing.");
+      throw new Error("invalid key");
+    }
     const result = await rotateLlmKey({ id: keyId, key: value.trim() });
     if (!result.ok) {
       setError(result.error);
       throw new Error(result.error);
     }
     toast.success(`Rotated the ${provider} key`, {
-      description: `Now ending ${result.data.last4}. ${agentCount} agent${agentCount === 1 ? "" : "s"} kept running.`,
+      description: `Now ending ${result.data.last4}.${
+        agentCount > 0 ? ` ${agentCount} agent${agentCount === 1 ? "" : "s"} kept running.` : ""
+      }`,
     });
     setValue("");
     onDone(result.data.last4);
   };
 
+  const { state, run, reset } = useMorphAction(submit);
+
   return (
     <form
       className="mt-4 space-y-3 rounded-lg border border-border/60 bg-background/40 p-3"
-      onSubmit={(event) => event.preventDefault()}
+      noValidate
+      onKeyDown={enterSubmits(() => {
+        if (value.trim().length > 0) void run();
+      })}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (value.trim().length > 0) void run();
+      }}
     >
       <p className="text-xs leading-5 text-muted-foreground">
         Paste the replacement. The old ciphertext is overwritten in place — no previous secret is kept — and the
-        key keeps its id, so the {agentCount} agent{agentCount === 1 ? "" : "s"} pointed at it never loses a tick.
+        key keeps its id
+        {agentCount > 0
+          ? agentCount === 1
+            ? ", so the 1 agent pointed at it never loses a tick."
+            : `, so the ${agentCount} agents pointed at it never lose a tick.`
+          : "."}
       </p>
-      <FloatingLabelInput
-        id={`rotate-${keyId}`}
-        label={`New ${provider} API key`}
-        type="password"
-        value={value}
-        autoComplete="off"
-        spellCheck={false}
-        onChange={(event) => setValue(event.target.value)}
-        className="font-mono"
-      />
-      {error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      ) : null}
-      <MorphButton size="sm" onAction={submit} successLabel="Rotated" errorLabel="Rejected">
+      <div>
+        <label htmlFor={`rotate-${keyId}`} className="text-sm font-medium">
+          New {provider} API key
+        </label>
+        <Input
+          id={`rotate-${keyId}`}
+          type="password"
+          value={value}
+          autoComplete="off"
+          spellCheck={false}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
+          onChange={(event) => {
+            setValue(event.target.value);
+            setError(null);
+            reset();
+          }}
+          className="mt-2 h-9 font-mono"
+        />
+        {error ? (
+          <p id={errorId} role="alert" className="mt-1.5 text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+      </div>
+      <MorphButton
+        size="sm"
+        state={state}
+        onClick={() => void run()}
+        successLabel="Rotated"
+        errorLabel="Rejected"
+        disabled={state === "idle" && value.trim().length === 0}
+        className={MORPH_FOCUS}
+      >
         Replace key
       </MorphButton>
     </form>

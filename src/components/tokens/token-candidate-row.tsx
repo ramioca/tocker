@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, ChevronDown } from "lucide-react";
 import type { DiscoveryFeed, TokenCandidate, TokenScore } from "@/server/types";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { TokenIcon } from "@/components/common/token-icon";
@@ -37,12 +38,18 @@ export function TokenScoreRow({
   defaultOpen = false,
   /** Surface the first hard-gate failure in the collapsed row, not just on open. */
   showTopBlocker = false,
+  /**
+   * Where the full record lives. Rendered inside the open panel, so it is reachable on
+   * a phone too — the row's own side link is hidden there to keep rows to two lines.
+   */
+  href,
   className,
 }: {
   score: TokenScore;
   origin?: DiscoveryFeed;
   defaultOpen?: boolean;
   showTopBlocker?: boolean;
+  href?: string;
   className?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -91,7 +98,7 @@ export function TokenScoreRow({
         </span>
 
         <span
-          className={cn("tnum hidden w-16 text-right font-mono text-xs sm:block", pnlTone(score.priceChange24hPct))}
+          className={cn("tnum hidden w-16 text-right font-mono text-xs sm:block", pnlTone(score.priceChange24hPct, 1))}
         >
           {formatSignedPct(score.priceChange24hPct, 1)}
         </span>
@@ -130,6 +137,19 @@ export function TokenScoreRow({
           <p className="text-[11px] text-muted-foreground">
             Scored from {score.sources.join(", ")}.
           </p>
+
+          {href ? (
+            <Link
+              href={href}
+              className={cn(
+                "-mx-1.5 inline-flex min-h-8 items-center gap-1 rounded-md px-1.5 text-xs font-medium",
+                "text-foreground/90 transition-colors duration-150 hover:bg-muted hover:text-foreground focus-ring",
+              )}
+            >
+              Open token page
+              <ArrowRight aria-hidden className="size-3.5" />
+            </Link>
+          ) : null}
         </div>
       ) : null}
     </div>

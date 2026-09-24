@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { getFreshLaunches, getLeaderboard, getTopDataSources } from "@/server/queries/discover";
+import { getFreshLaunches, getLeaderboard, getTopDataSources, viewerFollowedAgentIds } from "@/server/queries/discover";
 import { listPublicAgents } from "@/server/queries/agents";
 import { withMock } from "@/lib/data";
 import { mockLeaderboard, mockPublicAgents, mockTopDataSources } from "@/mocks/social";
@@ -9,6 +9,7 @@ import { Leaderboard } from "@/components/discover/leaderboard";
 import { TrendingTokens } from "@/components/discover/trending-tokens";
 import { TopDataSources } from "@/components/discover/top-data-sources";
 import { PublicAgents } from "@/components/discover/public-agents";
+import { viewerSession } from "@/components/common/data-access";
 
 export const metadata: Metadata = {
   // The root layout template already appends " · Tocker" (src/app/layout.tsx:20).
@@ -18,9 +19,12 @@ export const metadata: Metadata = {
 };
 
 export default async function DiscoverPage() {
+  const session = await viewerSession();
+  const viewerId = session?.userId ?? null;
+
   // All three windows are fetched up front so switching tabs is instant — a tab is a
   // hot path and should never wait on a request.
-  const [sevenDay, thirtyDay, allTime, sources, agents] = await Promise.all([
+  const [sevenDay, thirtyDay, allTime, sources, agents, followedIds] = await Promise.all([
     withMock(
       () => getLeaderboard("7d", 12),
       () => mockLeaderboard("7d", 12),
@@ -40,6 +44,10 @@ export default async function DiscoverPage() {
     withMock(
       () => listPublicAgents({ limit: 9, sort: "pnl" }),
       () => mockPublicAgents({ limit: 9, sort: "pnl" }),
+    ),
+    withMock(
+      () => viewerFollowedAgentIds(viewerId),
+      () => [] as string[],
     ),
   ]);
 
@@ -67,7 +75,7 @@ export default async function DiscoverPage() {
       </header>
 
       <div className="mt-10 space-y-14">
-        <Leaderboard data={leaderboard} />
+        <Leaderboard data={leaderboard} followedIds={followedIds} viewerId={viewerId} />
         <TrendingTokens scores={freshLaunches} />
         <TopDataSources sources={sources} />
         <PublicAgents initial={agents} />

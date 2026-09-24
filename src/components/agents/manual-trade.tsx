@@ -170,7 +170,10 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
         }
       />
 
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-md">
+      {/* The primitive sizes a right sheet with `data-[side=right]:` classes, so the
+          override has to use the same variant for tailwind-merge to replace them; a
+          bare `w-full` lost to its 75% and left 292px on a phone. */}
+      <SheetContent side="right" className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Trade on {agent.name}</SheetTitle>
           <SheetDescription>
@@ -248,13 +251,21 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
 
           <Field label="Size" htmlFor="manual-amount" hint={`Capped at ${formatUsd(agent.config?.risk.maxTradeUsd ?? 0)} per trade by this agent's own risk rules.`}>
             <div className="space-y-2">
-              <Input
-                id="manual-amount"
-                value={amount}
-                inputMode="decimal"
-                onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ""))}
-                className="tnum font-mono"
-              />
+              <div className="relative">
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-y-0 left-2.5 grid place-items-center font-mono text-sm text-muted-foreground"
+                >
+                  $
+                </span>
+                <Input
+                  id="manual-amount"
+                  value={amount}
+                  inputMode="decimal"
+                  onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ""))}
+                  className="tnum pl-6 font-mono"
+                />
+              </div>
               <div className="flex flex-wrap gap-1.5">
                 {SIZE_PRESETS.map((preset) => (
                   <button
@@ -290,7 +301,14 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
             equityUsd={agent.equityUsd}
           />
 
-          <PreviewPanel preview={preview} error={previewError} loading={previewing} ready={ready} />
+          <PreviewPanel
+            preview={preview}
+            side={side}
+            amountUsd={amountUsd}
+            error={previewError}
+            loading={previewing}
+            ready={ready}
+          />
 
           {receipt ? (
             <section aria-label="Fill receipt" className="space-y-2">
@@ -344,11 +362,15 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
 /** Score, guard verdict and quote — the three things worth knowing before committing. */
 function PreviewPanel({
   preview,
+  side,
+  amountUsd,
   error,
   loading,
   ready,
 }: {
   preview: TradePreview | null;
+  side: "buy" | "sell";
+  amountUsd: number;
   error: string | null;
   loading: boolean;
   ready: boolean;
@@ -380,6 +402,11 @@ function PreviewPanel({
 
   if (preview === null) return null;
 
+  const tokens =
+    preview.estimatedToken === null
+      ? "—"
+      : `${preview.estimatedToken.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${preview.token.symbol}`;
+
   return (
     <div className="space-y-2.5 rounded-xl border border-border/70 bg-card/30 p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -395,16 +422,12 @@ function PreviewPanel({
         {loading ? <Loader2 aria-hidden className="size-3 text-muted-foreground motion-safe:animate-spin" /> : null}
       </div>
 
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+      {/* One column: a token count like 157,232,704.4 BONK needs the width. A buy gets
+          tokens; a sell gives them up and gets dollars, so it says both. */}
+      <dl className="grid gap-y-1.5 text-xs">
         <Row label="Price" value={formatUsd(preview.priceUsd)} />
-        <Row
-          label="You get"
-          value={
-            preview.estimatedToken === null
-              ? "—"
-              : `${preview.estimatedToken.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${preview.token.symbol}`
-          }
-        />
+        <Row label={side === "buy" ? "You get ≈" : "You sell ≈"} value={tokens} />
+        {side === "sell" ? <Row label="You receive ≈" value={formatUsd(amountUsd)} /> : null}
         <Row label="Cash" value={formatUsd(preview.cashUsd)} />
         <Row label="Equity" value={formatUsd(preview.equityUsd)} />
       </dl>
@@ -426,9 +449,9 @@ function PreviewPanel({
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-2">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="tnum font-mono">{value}</dd>
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="shrink-0 text-muted-foreground">{label}</dt>
+      <dd className="tnum min-w-0 text-right font-mono break-words">{value}</dd>
     </div>
   );
 }

@@ -2,6 +2,7 @@
  * Chain + model + mode chips. Small, monochrome, never green/red.
  * OWNER: ui-social — dedupe with UI-CORE's equivalent at merge if one exists.
  */
+import { knownModelLabel } from "@/lib/agent/models";
 import { cn } from "@/lib/utils";
 import type { AgentMode, Chain } from "@/server/types";
 
@@ -33,8 +34,14 @@ export function ChainBadges({ chains, className }: { chains: Chain[]; className?
   );
 }
 
-/** Strips the provider prefix and date suffix so model ids read as labels. */
+/**
+ * The builder's own name for a model ("GPT-5 mini", "Claude Haiku 4.5"). The chip already
+ * sits next to the chain badges, so the "(OpenRouter)" routing note is dropped. Only an
+ * id the builder does not offer falls back to prettifying the raw id.
+ */
 export function modelLabel(model: string): string {
+  const known = knownModelLabel(model);
+  if (known) return known.replace(/\s*\(OpenRouter\)$/, "");
   const bare = model.includes("/") ? model.split("/").slice(1).join("/") : model;
   return bare.replace(/-\d{8}$/, "").replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }

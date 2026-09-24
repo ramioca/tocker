@@ -336,7 +336,7 @@ function StepRow({ step, last }: { step: TranscriptStep; last: boolean }) {
               running
             </span>
           ) : elapsed !== null ? (
-            <span className="tnum shrink-0 font-mono text-[10px] text-muted-foreground/70">
+            <span className="tnum shrink-0 font-mono text-[10px] text-muted-foreground">
               {elapsed}
             </span>
           ) : null}
@@ -361,7 +361,7 @@ function StepRow({ step, last }: { step: TranscriptStep; last: boolean }) {
           onClick={() => setRawOpen((open) => !open)}
           aria-expanded={rawOpen}
           aria-controls={rawId}
-          className="focus-ring -ml-0.5 mt-1 flex items-center gap-0.5 rounded px-0.5 py-px font-mono text-[10px] uppercase tracking-wide text-muted-foreground/60 transition-colors duration-150 hover:text-foreground"
+          className="focus-ring -ml-0.5 mt-1 flex items-center gap-0.5 rounded px-0.5 py-px font-mono text-[10px] uppercase tracking-wide text-muted-foreground transition-colors duration-150 hover:text-foreground"
         >
           <ChevronRight
             aria-hidden
@@ -375,6 +375,8 @@ function StepRow({ step, last }: { step: TranscriptStep; last: boolean }) {
 
         <div
           id={rawId}
+          // Collapsed to zero height is still focusable; inert takes it out of the Tab order.
+          inert={!rawOpen}
           className="grid transition-[grid-template-rows] duration-[240ms] ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none"
           style={{ gridTemplateRows: rawOpen ? "1fr" : "0fr" }}
         >
@@ -395,7 +397,7 @@ function StepRow({ step, last }: { step: TranscriptStep; last: boolean }) {
 function RawBlock({ label, value }: { label: string; value: unknown }) {
   return (
     <div>
-      <p className="font-mono text-[9.5px] uppercase tracking-wide text-muted-foreground/60">{label}</p>
+      <p className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <pre className="tnum mt-0.5 max-h-56 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-[1.5] text-muted-foreground">
         {json(value)}
       </pre>

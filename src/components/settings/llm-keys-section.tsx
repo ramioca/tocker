@@ -1,14 +1,16 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { KeyRound, Plus } from "lucide-react";
+import { toast } from "sonner";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { SwipeToDelete } from "@/components/spectrumui/swipe-to-delete";
 import { UndoPill } from "@/components/spectrumui/undo-pill";
+import { RelativeTime } from "@/components/common/relative-time";
 import { removeLlmKey } from "@/server/actions/users";
 import type { LlmKeyRow } from "@/server/types";
-import { formatJoined } from "@/components/social-common/format";
 import { AddLlmKeyForm } from "./add-llm-key-form";
+import { clip, reinsert } from "./key-removal";
 
 const PROVIDER_LABEL: Record<LlmKeyRow["provider"], string> = {
   anthropic: "Anthropic",
@@ -16,38 +18,91 @@ const PROVIDER_LABEL: Record<LlmKeyRow["provider"], string> = {
   openrouter: "OpenRouter",
 };
 
+type PendingRemoval = { key: LlmKeyRow; index: number };
+
+function keyName(key: LlmKeyRow) {
+  return key.label ?? `${PROVIDER_LABEL[key.provider]} key`;
+}
+
 export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
   const [keys, setKeys] = useState(initialKeys);
-  const [pending, setPending] = useState<{ key: LlmKeyRow; index: number } | null>(null);
+  const [pending, setPending] = useState<PendingRemoval | null>(null);
+  // Bumped when a second removal replaces the first in the pill, so the pill remounts
+  // with a full countdown instead of inheriting what was left of the previous one.
+  const [pillRound, setPillRound] = useState(0);
   const [adding, setAdding] = useState(initialKeys.length === 0);
+  // The same pending removal, readable from the unmount and pagehide handlers, which
+  // run outside render and would otherwise see a stale closure.
+  const pendingRef = useRef<PendingRemoval | null>(null);
+
+  const track = useCallback((entry: PendingRemoval | null) => {
+    pendingRef.current = entry;
+    setPending(entry);
+  }, []);
+
+  // Until this runs a removal is only a hidden row. If the server refuses, the row
+  // comes back where it was and says why, instead of looking removed and not being.
+  const commitRemoval = useCallback(async (entry: PendingRemoval) => {
+    let error: string | null = null;
+    try {
+      const result = await removeLlmKey(entry.key.id);
+      if (!result.ok) error = result.error;
+      else if (result.data.detachedAgents > 0) {
+        const n = result.data.detachedAgents;
+        toast(n === 1 ? "1 agent now has no key and cannot run." : `${n} agents now have no key and cannot run.`);
+      }
+    } catch {
+      error = "Could not reach Tocker. The key is still there.";
+    }
+    if (error === null) return;
+    setKeys((current) => reinsert(current, entry.key, entry.index));
+    toast.error("Key not removed", { description: error });
+  }, []);
 
   const softDelete = useCallback(
     (key: LlmKeyRow) => {
+      // Only the newest removal is undoable. One still waiting is committed now rather
+      // than overwritten — overwriting it used to cancel it without a word.
+      const previous = pendingRef.current;
+      if (previous) {
+        void commitRemoval(previous);
+        setPillRound((round) => round + 1);
+      }
       const index = keys.findIndex((k) => k.id === key.id);
-      setPending({ key, index: index < 0 ? keys.length : index });
+      track({ key, index: index < 0 ? keys.length : index });
       setKeys((current) => current.filter((k) => k.id !== key.id));
     },
-    [keys],
+    [keys, commitRemoval, track],
   );
 
   const undo = useCallback(() => {
-    if (!pending) return;
-    const { key, index } = pending;
-    setKeys((current) => {
-      const next = [...current];
-      next.splice(index, 0, key);
-      return next;
-    });
-    setPending(null);
-  }, [pending]);
+    const entry = pendingRef.current;
+    track(null);
+    if (entry) setKeys((current) => reinsert(current, entry.key, entry.index));
+  }, [track]);
 
-  const commit = useCallback(() => {
-    if (!pending) return;
-    void removeLlmKey(pending.key.id).catch(() => {
-      // Foundation's action is still a stub; the row stays removed in dev.
-    });
-    setPending(null);
-  }, [pending]);
+  const expire = useCallback(() => {
+    const entry = pendingRef.current;
+    track(null);
+    if (entry) void commitRemoval(entry);
+  }, [commitRemoval, track]);
+
+  // Leaving ends the undo window: switching to the Security tab unmounts this, closing
+  // or reloading the page fires pagehide. Either way the removal goes through rather
+  // than quietly never happening.
+  useEffect(() => {
+    const flush = () => {
+      const entry = pendingRef.current;
+      if (!entry) return;
+      track(null);
+      void commitRemoval(entry);
+    };
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      flush();
+    };
+  }, [commitRemoval, track]);
 
   return (
     <div className="space-y-5">
@@ -75,12 +130,10 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
                     <KeyRound className="size-4" aria-hidden />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
-                      {key.label ?? `${PROVIDER_LABEL[key.provider]} key`}
-                    </p>
-                    <p className="truncate font-mono text-xs text-muted-foreground">
-                      {PROVIDER_LABEL[key.provider]} · sk-••••{key.last4} · added{" "}
-                      {formatJoined(key.createdAt)}
+                    <p className="truncate text-sm font-medium">{keyName(key)}</p>
+                    <p className="tnum truncate font-mono text-xs text-muted-foreground">
+                      {PROVIDER_LABEL[key.provider]} · ••••{key.last4} · added{" "}
+                      <RelativeTime iso={key.createdAt} />
                     </p>
                   </div>
                   <HoldToConfirmButton
@@ -115,20 +168,24 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
           className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-sm transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           <Plus className="size-4" aria-hidden />
-          Add another key
+          {keys.length === 0 ? "Add a key" : "Add another key"}
         </button>
       )}
 
-      <p className="text-xs text-muted-foreground sm:hidden">Swipe a key left to remove it.</p>
+      {keys.length > 0 ? (
+        <p className="text-xs text-muted-foreground sm:hidden">Swipe a key left to remove it.</p>
+      ) : null}
 
-      <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4">
+      {/* Above the mobile tab bar (md:hidden), not on top of it. */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4 md:bottom-6">
         <div className="pointer-events-auto">
           <UndoPill
+            key={pillRound}
             open={pending !== null}
-            label={`Removed ${pending?.key.label ?? "the key"}`}
+            label={`Removed ${pending ? clip(keyName(pending.key), 24) : "the key"}`}
             duration={5}
             onUndo={undo}
-            onExpire={commit}
+            onExpire={expire}
           />
         </div>
       </div>

@@ -25,7 +25,7 @@ export function AdminTradesTable({ rows }: { rows: AdminTradeRow[] }) {
       <DataTable label="Recent fills" minWidth="56rem">
         <thead>
           <tr>
-            <Th>Time</Th>
+            <Th sticky>Time</Th>
             <Th>Agent</Th>
             <Th>Side</Th>
             <Th>Token</Th>
@@ -43,7 +43,7 @@ export function AdminTradesTable({ rows }: { rows: AdminTradeRow[] }) {
           ) : (
             rows.map((row) => (
               <tr key={row.id} className="hover:bg-muted/25">
-                <Td muted>
+                <Td sticky muted>
                   <RelativeTime iso={row.createdAt} />
                 </Td>
                 <Td className="max-w-[12rem]">
@@ -76,7 +76,7 @@ export function AdminTradesTable({ rows }: { rows: AdminTradeRow[] }) {
                 <Td muted className="font-sans text-xs">
                   {chainLabel(row.chain)}
                 </Td>
-                <Td numeric>{formatUsd(row.notionalUsd, { compact: true })}</Td>
+                <Td numeric>{formatUsd(row.notionalUsd)}</Td>
                 <Td numeric muted>
                   {row.platformFeeUsd === null ? "—" : formatUsd(row.platformFeeUsd)}
                 </Td>

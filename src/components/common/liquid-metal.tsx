@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useReducedMotion } from "motion/react";
 import {
   MetalFx,
   getSharedPreset,
@@ -49,11 +50,15 @@ export function LiquidMetal(props: MetalFxProps) {
   return <LiquidMetalLive {...props} />;
 }
 
-function LiquidMetalLive(props: MetalFxProps) {
+function LiquidMetalLive({ paused, ...props }: MetalFxProps) {
   const ref = useRef<HTMLDivElement>(null);
+  // Reduced motion freezes the flow rather than removing the ring: `paused` keeps the
+  // last painted frame, so the chrome stays on screen and simply stops running. It
+  // used to redraw forever on every page with no way to stop it (WCAG 2.2.2).
+  const reduced = Boolean(useReducedMotion());
   useMetalBend(ref);
-  useLivelyIdle();
-  return <MetalFx ref={ref} {...props} />;
+  useLivelyIdle(!reduced);
+  return <MetalFx ref={ref} {...props} paused={reduced || Boolean(paused)} />;
 }
 
 const subscribeNever = () => () => {};
@@ -72,8 +77,9 @@ const getServerSnapshot = () => false;
  */
 const IDLE_FLOW_SPEED = 1.5;
 
-function useLivelyIdle() {
+function useLivelyIdle(enabled: boolean) {
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     const tune = () => {
       if (cancelled) return;
@@ -89,5 +95,5 @@ function useLivelyIdle() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [enabled]);
 }

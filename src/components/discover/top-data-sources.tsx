@@ -1,7 +1,7 @@
 import { Database } from "lucide-react";
 import type { DataSourceInfo } from "@/server/types";
 import { EmptyState } from "@/components/common/empty-state";
-import { formatCount, formatUsd } from "@/components/social-common/format";
+import { formatCount, formatPrice, formatUsd } from "@/components/social-common/format";
 
 type Row = DataSourceInfo & { agentCount: number; spendUsd: number };
 
@@ -13,6 +13,25 @@ const CATEGORY_LABEL: Record<DataSourceInfo["category"], string> = {
   social: "Social",
   other: "Other",
 };
+
+/**
+ * A source we paid but no longer register comes back from the query named by its raw
+ * id ("token-intel-sol"). The host it was paid at is the more honest label.
+ */
+function displayName(source: Row): string {
+  if (source.name !== source.id || !source.url) return source.name;
+  try {
+    return new URL(source.url).host || source.name;
+  } catch {
+    return source.name;
+  }
+}
+
+/** Per-call prices live under a cent: "$0.006", not "$0.01" (rounded up) or "$0.0060". */
+function perCall(priceUsd: number): string {
+  if (priceUsd > 0 && priceUsd < 0.01) return `$${priceUsd.toPrecision(2).replace(/(\.\d*?)0+$/, "$1")}`;
+  return formatPrice(priceUsd);
+}
 
 export function TopDataSources({ sources }: { sources: Row[] }) {
   if (sources.length === 0) {
@@ -47,23 +66,34 @@ export function TopDataSources({ sources }: { sources: Row[] }) {
               className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary/[0.14] to-transparent"
               style={{ width: `${(source.spendUsd / maxSpend) * 100}%` }}
             />
-            <div className="relative flex flex-wrap items-center gap-x-3 gap-y-1">
-              <p className="text-sm font-medium">{source.name}</p>
-              <span className="rounded-full border border-border/70 px-2 py-0.5 text-[10px] tracking-wide text-muted-foreground uppercase">
-                {CATEGORY_LABEL[source.category]}
-              </span>
-              {source.experimental ? (
-                <span className="rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] tracking-wide text-primary uppercase">
-                  Experimental
+            {/* Price in its own column, so it sits top-right on every row instead of
+                wrapping under the badges on some rows and not others. */}
+            <div className="relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                <p className="min-w-0 truncate text-sm font-medium">{displayName(source)}</p>
+                <span className="rounded-full border border-border/70 px-2 py-0.5 text-[10px] tracking-wide text-muted-foreground uppercase">
+                  {CATEGORY_LABEL[source.category]}
                 </span>
-              ) : null}
-              <span className="ml-auto font-mono text-xs tabular-nums text-muted-foreground">
-                {source.priceUsd == null ? "market rate" : `$${source.priceUsd.toFixed(2)}/call`}
+                {source.experimental ? (
+                  <span className="rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] tracking-wide text-primary uppercase">
+                    Experimental
+                  </span>
+                ) : null}
+              </div>
+              <span className="pt-0.5 font-mono text-xs tabular-nums text-muted-foreground">
+                {source.priceUsd == null ? "market rate" : `${perCall(source.priceUsd)}/call`}
               </span>
             </div>
-            <p className="relative mt-1 max-w-prose text-xs leading-5 text-muted-foreground">
-              {source.description}
-            </p>
+            {/*
+              `summary` is the plain sentence written for people. `description` is written
+              for the model — modes, prices, vendor quirks, operator notes — and is never
+              public copy, so a row without a summary shows no line rather than that.
+            */}
+            {source.summary ? (
+              <p className="relative mt-1 max-w-prose text-xs leading-5 text-muted-foreground">
+                {source.summary}
+              </p>
+            ) : null}
             {/*
               A source nobody has bought yet is padding — the list is ranked by spend and
               backfilled from the registry so it is never a one-line page. Saying

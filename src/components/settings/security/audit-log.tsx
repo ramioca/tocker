@@ -92,7 +92,7 @@ export function AuditLog({ events }: { events: AuditRow[] }) {
                 ) : null}
               </p>
               {event.userAgent ? (
-                <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/70" title={event.userAgent}>
+                <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground" title={event.userAgent}>
                   {event.userAgent}
                 </p>
               ) : null}

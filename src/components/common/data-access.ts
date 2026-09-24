@@ -21,6 +21,7 @@ import {
 import { getComments, getFeed } from "@/server/queries/feed";
 import { getMyLlmKeys, getUnreadNotificationCount } from "@/server/queries/users";
 import { getAgentWalletBalances } from "@/server/actions/wallets";
+import { getKillSwitch } from "@/lib/security/kill-switch";
 import { eq } from "drizzle-orm";
 import { agents, getDb, type WalletBudget } from "@/db";
 import {
@@ -64,6 +65,19 @@ import type { CommandIndex } from "@/components/shell/command-index";
 
 export function viewerSession(): Promise<Session | null> {
   return withMock(() => getSession(), () => mockSession);
+}
+
+/**
+ * Whether the viewer has paused all trading from Security → Stop everything. Their own
+ * agents then read "Paused (account)" rather than "Active". A failed read reports not
+ * paused: this only labels agents, it never gates a trade (the run loop checks itself).
+ */
+export async function accountPaused(userId: string | null): Promise<boolean> {
+  if (!userId) return false;
+  return withMock(
+    async () => (await getKillSwitch(userId)).paused,
+    () => false,
+  ).catch(() => false);
 }
 
 export function unreadNotifications(userId: string | null): Promise<number> {

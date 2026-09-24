@@ -108,19 +108,28 @@ export function PositionsTable({
 
   return (
     <div className="glass-card overflow-x-auto rounded-xl">
+      {/*
+        Below `sm` the row is Token / Value / Unrealised: the two numbers people check
+        first. Amount, cost and mark are how you got there, and at 390px they pushed
+        the answer off the right edge.
+      */}
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead>Token</TableHead>
-            <TableHead className="text-right">Amount</TableHead>
-            <TableHead className="text-right">Avg cost</TableHead>
-            <TableHead className="text-right">Mark</TableHead>
+            <TableHead className="hidden text-right sm:table-cell">Amount</TableHead>
+            <TableHead className="hidden text-right sm:table-cell">Avg cost</TableHead>
+            <TableHead className="hidden text-right sm:table-cell">Mark</TableHead>
             <TableHead className="hidden text-right lg:table-cell" title="Score at entry → latest score">
               Score
             </TableHead>
             <TableHead className="text-right">Value</TableHead>
             <TableHead className="text-right">Unrealised</TableHead>
-            {sellable ? <TableHead className="w-0" /> : null}
+            {sellable ? (
+              <TableHead className="w-0">
+                <span className="sr-only">Actions</span>
+              </TableHead>
+            ) : null}
             {showExits ? (
               <TableHead className="text-right" title="Percentage points to the stop loss / to the take-profit">
                 Stop / TP
@@ -139,13 +148,15 @@ export function PositionsTable({
                   <GeckoTerminalLink chain={position.token.chain} address={position.token.address} symbol={position.token.symbol} />
                 </span>
               </TableCell>
-              <TableCell className="tnum text-right text-muted-foreground">
+              <TableCell className="tnum hidden text-right text-muted-foreground sm:table-cell">
                 {formatTokenAmount(position.amountToken)}
               </TableCell>
-              <TableCell className="tnum text-right text-muted-foreground">
+              <TableCell className="tnum hidden text-right text-muted-foreground sm:table-cell">
                 {formatPriceUsd(position.avgCostUsd)}
               </TableCell>
-              <TableCell className="tnum text-right">{formatPriceUsd(position.markPriceUsd)}</TableCell>
+              <TableCell className="tnum hidden text-right sm:table-cell">
+                {formatPriceUsd(position.markPriceUsd)}
+              </TableCell>
               <TableCell className="hidden text-right lg:table-cell">
                 <ScoreDrift position={position} />
               </TableCell>
@@ -174,9 +185,9 @@ export function PositionsTable({
           {cashUsd !== null ? (
             <TableRow className="bg-muted/20">
               <TableCell className="font-medium text-muted-foreground">Cash (USDC)</TableCell>
-              <TableCell />
-              <TableCell />
-              <TableCell />
+              <TableCell className="hidden sm:table-cell" />
+              <TableCell className="hidden sm:table-cell" />
+              <TableCell className="hidden sm:table-cell" />
               <TableCell className="hidden lg:table-cell" />
               <TableCell className="tnum text-right font-medium">{formatUsd(cashUsd)}</TableCell>
               <TableCell />

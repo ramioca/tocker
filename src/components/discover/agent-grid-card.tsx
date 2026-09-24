@@ -27,7 +27,12 @@ export function AgentGridCard({ agent }: { agent: AgentCardType }) {
           </h3>
           <p className="truncate text-xs text-muted-foreground">
             by{" "}
-            <span className="relative z-10 hover:text-foreground">@{agent.owner.handle}</span>
+            <Link
+              href={`/u/${agent.owner.handle}`}
+              className="relative z-10 rounded hover:text-foreground focus-ring"
+            >
+              @{agent.owner.handle}
+            </Link>
           </p>
         </div>
         <ModeBadge mode={agent.mode} />

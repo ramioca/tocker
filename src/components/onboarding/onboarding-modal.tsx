@@ -7,15 +7,21 @@
  * entrance (scale + fade, centered origin — modals aren't anchored to a trigger) and
  * direction-aware step transitions. Both collapse to a plain fade under reduced motion.
  *
+ * The shell is Base UI's Dialog, which owns the focus trap, Escape, outside press, scroll
+ * lock and focus return; the entrance is CSS transitions on its starting/ending styles,
+ * so a close mid-entrance reverses from where it is instead of restarting.
+ *
  * UI-CORE mounts this in the app shell; the placeholder `(app)/layout.tsx` mounts it here.
  * Force it open in dev with `?onboarding=1`.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { Dialog } from "@base-ui/react/dialog";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowRight, Bot, KeyRound, Sparkles, X } from "lucide-react";
 import { useSession } from "@/hooks/use-session";
 import { AddLlmKeyForm } from "@/components/settings/add-llm-key-form";
+import { cn } from "@/lib/utils";
 import type { LlmKeyRow } from "@/server/types";
 
 const STORAGE_KEY = "tocker:onboarding-dismissed";
@@ -32,6 +38,8 @@ export function OnboardingModal() {
   const [direction, setDirection] = useState(1);
   const reduce = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
+  // Whatever had focus when the app (not the user) opened this; usually nothing.
+  const returnFocusRef = useRef<HTMLElement | null>(null);
 
   const dismiss = useCallback(() => {
     dismissedRef.current = true;
@@ -68,7 +76,9 @@ export function OnboardingModal() {
 
     shouldOpen()
       .then((show) => {
-        if (show) setOpen(true);
+        if (!show) return;
+        returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        setOpen(true);
       })
       .catch(() => {
         // Offline or the route isn't there — never block the app on onboarding.
@@ -77,21 +87,14 @@ export function OnboardingModal() {
     return () => controller.abort();
   }, [ready, session]);
 
-  // Escape closes; focus moves into the panel when it opens.
-  useEffect(() => {
-    if (!open) return;
-    panelRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") dismiss();
-    };
-    document.addEventListener("keydown", onKey);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [open, dismiss]);
+  // There is no trigger to hand focus back to. Return it to what had it, and when that
+  // was nothing, to the start of the page's content (Base UI lands on the first
+  // tabbable element inside <main>) rather than dropping it on <body>.
+  const finalFocus = useCallback((): HTMLElement | null => {
+    const previous = returnFocusRef.current;
+    if (previous && previous !== document.body && previous.isConnected) return previous;
+    return document.getElementById("main");
+  }, []);
 
   function go(next: Step) {
     setDirection(STEPS.indexOf(next) > STEPS.indexOf(step) ? 1 : -1);
@@ -101,41 +104,39 @@ export function OnboardingModal() {
   const travel = reduce ? 0 : 12;
 
   return (
-    <AnimatePresence>
-      {open ? (
-        <motion.div
-          className="fixed inset-0 z-[100] grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
-          onClick={(event) => {
-            if (event.target === event.currentTarget) dismiss();
-          }}
-        >
-          <motion.div
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) dismiss();
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm transition-opacity duration-[180ms] ease-[cubic-bezier(0.23,1,0.32,1)] data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        {/* The viewport centres the panel; the panel caps itself at the screen and
+            scrolls inside, so a tall step on a small phone never pushes the close
+            button or the last action off-screen while the page behind is locked. */}
+        <Dialog.Viewport className="fixed inset-0 z-[100] grid place-items-center p-4">
+          <Dialog.Popup
             ref={panelRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="onboarding-title"
-            tabIndex={-1}
-            initial={{ opacity: 0, transform: `scale(${reduce ? 1 : 0.96})` }}
-            animate={{ opacity: 1, transform: "scale(1)" }}
-            exit={{ opacity: 0, transform: `scale(${reduce ? 1 : 0.98})` }}
-            transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
-            className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-card shadow-2xl outline-none"
+            initialFocus={panelRef}
+            finalFocus={finalFocus}
+            className={cn(
+              "relative max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl border border-border bg-card shadow-2xl outline-none",
+              "transition-[opacity,scale] duration-[220ms] ease-[cubic-bezier(0.23,1,0.32,1)]",
+              "data-ending-style:opacity-0 data-starting-style:opacity-0",
+              "motion-safe:data-ending-style:scale-[0.98] motion-safe:data-starting-style:scale-[0.96]",
+            )}
           >
-            <button
-              type="button"
-              onClick={dismiss}
+            <Dialog.Close
               aria-label="Close onboarding"
               className="absolute top-3 right-3 grid size-8 place-items-center rounded-lg text-muted-foreground transition-[color,background-color,transform] duration-150 hover:bg-muted hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
               <X className="size-4" aria-hidden />
-            </button>
+            </Dialog.Close>
 
             <div className="px-6 pt-6 pb-5 sm:px-7">
-              <ol className="flex items-center gap-1.5" aria-label="Onboarding progress">
+              {/* pr-10 keeps the track clear of the close button beside it. */}
+              <ol className="flex items-center gap-1.5 pr-10" aria-label="Onboarding progress">
                 {STEPS.map((id) => (
                   <li
                     key={id}
@@ -170,10 +171,10 @@ export function OnboardingModal() {
                 </AnimatePresence>
               </div>
             </div>
-          </motion.div>
-        </motion.div>
-      ) : null}
-    </AnimatePresence>
+          </Dialog.Popup>
+        </Dialog.Viewport>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -183,10 +184,8 @@ function StepHeader({ icon, title, body }: { icon: React.ReactNode; title: strin
       <span className="grid size-10 place-items-center rounded-xl border border-primary/30 bg-primary/10 text-primary">
         {icon}
       </span>
-      <h2 id="onboarding-title" className="mt-4 text-lg font-semibold tracking-tight">
-        {title}
-      </h2>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">{body}</p>
+      <Dialog.Title className="mt-4 text-lg font-semibold tracking-tight">{title}</Dialog.Title>
+      <Dialog.Description className="mt-2 text-sm leading-6 text-muted-foreground">{body}</Dialog.Description>
     </>
   );
 }

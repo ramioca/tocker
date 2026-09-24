@@ -4,9 +4,14 @@
  * Both link to the token page, because the follow-up question is always "what was
  * that thing, and what did it score" — and the entry-score chip answers half of it
  * before the click.
+ *
+ * The headline number is what the exit *made*, because that is what picked it. The
+ * sale proceeds sit under it, labelled: printed alone, "$777" on the worst exit reads
+ * as a profit.
  */
 import Link from "next/link";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
+import { PnlText } from "@/components/common/pnl-text";
 import { RelativeTime } from "@/components/common/relative-time";
 import { TokenIcon } from "@/components/common/token-icon";
 import { formatUsd } from "@/components/common/format";
@@ -17,20 +22,33 @@ import { cn } from "@/lib/utils";
 export function TradeHighlights({
   best,
   worst,
+  bestPnlUsd = null,
+  worstPnlUsd = null,
 }: {
   best: TradeRow | null;
   worst: TradeRow | null;
+  /** Realized PnL of each exit, the number that ranked it. */
+  bestPnlUsd?: number | null;
+  worstPnlUsd?: number | null;
 }) {
   if (!best && !worst) return null;
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      {best ? <Highlight trade={best} tone="best" /> : null}
-      {worst ? <Highlight trade={worst} tone="worst" /> : null}
+      {best ? <Highlight trade={best} pnlUsd={bestPnlUsd} tone="best" /> : null}
+      {worst ? <Highlight trade={worst} pnlUsd={worstPnlUsd} tone="worst" /> : null}
     </div>
   );
 }
 
-function Highlight({ trade, tone }: { trade: TradeRow; tone: "best" | "worst" }) {
+function Highlight({
+  trade,
+  pnlUsd,
+  tone,
+}: {
+  trade: TradeRow;
+  pnlUsd: number | null;
+  tone: "best" | "worst";
+}) {
   const Icon = tone === "best" ? ArrowUpRight : ArrowDownRight;
   return (
     <Link
@@ -59,7 +77,12 @@ function Highlight({ trade, tone }: { trade: TradeRow; tone: "best" | "worst" })
         {trade.entryScore === null ? null : (
           <ScoreBadge total={trade.entryScore} verdict={trade.score?.verdict} size="xs" />
         )}
-        <span className="tnum ml-auto text-sm font-medium">{formatUsd(trade.amountUsd)}</span>
+        <span className="ml-auto text-right">
+          {pnlUsd === null ? null : <PnlText usd={pnlUsd} size="sm" className="block" />}
+          <span className="tnum block text-[11px] text-muted-foreground">
+            sold {formatUsd(trade.amountUsd)}
+          </span>
+        </span>
       </div>
 
       {trade.rationale ? (

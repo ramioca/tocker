@@ -13,48 +13,26 @@ export function ProfileHeader({ profile }: { profile: UserProfile }) {
 
   return (
     <header className="glass-panel glass-grain rounded-2xl p-5 sm:p-6">
-      <div className="flex flex-wrap items-start gap-5">
+      {/*
+        A grid, not a wrapping flex row: with the text column at flex-basis 0 nothing
+        ever wrapped, so on a phone the bio got whatever the avatar and the buttons
+        left over — about 90px, one word per line.
+
+        Phone: avatar and actions share the first row, then name, then bio and facts at
+        the full card width. sm+: avatar | name, bio, facts | actions. Share sits left
+        of Follow in both, so its fan opens over the row's empty middle, not the pill.
+      */}
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-x-5 sm:gap-y-0">
         <AgentAvatar
           seed={profile.handle}
           label={profile.displayName ?? profile.handle}
-          size="xl"
+          size="lg"
           rounded="rounded-2xl"
+          className="col-start-1 row-start-1 sm:row-span-2 sm:size-24 sm:text-3xl"
         />
 
-        <div className="min-w-0 flex-1">
-          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
-            {profile.displayName ?? profile.handle}
-          </h1>
-          <p className="font-mono text-sm text-muted-foreground">@{profile.handle}</p>
-
-          {profile.bio ? (
-            <p className="mt-3 max-w-prose text-sm leading-6 text-foreground/85">{profile.bio}</p>
-          ) : null}
-
-          <dl className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-            <div className="flex items-baseline gap-1.5">
-              <dt className="sr-only">Followers</dt>
-              <dd className="font-mono font-medium tabular-nums">
-                {formatCount(profile.followerCount)}
-              </dd>
-              <span className="text-muted-foreground">followers</span>
-            </div>
-            <div className="flex items-baseline gap-1.5">
-              <dt className="sr-only">Following</dt>
-              <dd className="font-mono font-medium tabular-nums">
-                {formatCount(profile.followingCount)}
-              </dd>
-              <span className="text-muted-foreground">following</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-muted-foreground">
-              <CalendarDays className="size-3.5" aria-hidden />
-              <dt className="sr-only">Joined</dt>
-              <dd>Joined {formatJoined(profile.createdAt)}</dd>
-            </div>
-          </dl>
-        </div>
-
-        <div className="flex items-center gap-2">
+        <div className="col-start-2 row-start-1 flex items-center gap-2 self-center justify-self-end sm:col-start-3 sm:self-start">
+          <ProfileShare handle={profile.handle} />
           {profile.isSelf ? (
             <Link
               href="/settings"
@@ -71,7 +49,44 @@ export function ProfileHeader({ profile }: { profile: UserProfile }) {
               size="sm"
             />
           )}
-          <ProfileShare handle={profile.handle} />
+        </div>
+
+        <div className="col-span-2 row-start-2 min-w-0 sm:col-span-1 sm:col-start-2 sm:row-start-1">
+          <h1 className="text-xl font-semibold tracking-tight break-words sm:text-2xl">
+            {profile.displayName ?? profile.handle}
+          </h1>
+          <p className="truncate font-mono text-sm text-muted-foreground">@{profile.handle}</p>
+        </div>
+
+        <div className="col-span-2 row-start-3 min-w-0 sm:col-span-1 sm:col-start-2 sm:row-start-2">
+          {profile.bio ? (
+            <p className="max-w-prose text-sm leading-6 text-foreground/85 sm:mt-3">{profile.bio}</p>
+          ) : null}
+
+          <dl className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm sm:mt-4">
+            {/* Each group holds only its dt and dd; the unit words live inside the dd. */}
+            <div>
+              <dt className="sr-only">Followers</dt>
+              <dd className="font-mono font-medium tabular-nums">
+                {formatCount(profile.followerCount)}{" "}
+                <span className="font-sans font-normal text-muted-foreground">followers</span>
+              </dd>
+            </div>
+            <div>
+              <dt className="sr-only">Following</dt>
+              <dd className="font-mono font-medium tabular-nums">
+                {formatCount(profile.followingCount)}{" "}
+                <span className="font-sans font-normal text-muted-foreground">following</span>
+              </dd>
+            </div>
+            <div className="text-muted-foreground">
+              <dt className="sr-only">Joined</dt>
+              <dd className="flex items-center gap-1.5">
+                <CalendarDays className="size-3.5" aria-hidden />
+                Joined {formatJoined(profile.createdAt)}
+              </dd>
+            </div>
+          </dl>
         </div>
       </div>
 

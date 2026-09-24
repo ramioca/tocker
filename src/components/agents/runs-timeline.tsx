@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import Link from "next/link";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { ChevronDown, ExternalLink, History } from "lucide-react";
@@ -23,6 +23,7 @@ function RunRow({
   run: RunSummary;
 }) {
   const [open, setOpen] = useState(false);
+  const toggleId = useId();
 
   // Steps are only fetched when a row is opened — a timeline of forty runs
   // should not pull forty transcripts.
@@ -37,11 +38,13 @@ function RunRow({
     run.startedAt && run.finishedAt
       ? new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()
       : null;
+  const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
   return (
     <li>
       <div className="flex items-center gap-3 px-3 py-2.5">
         <button
+          id={toggleId}
           type="button"
           onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
@@ -54,33 +57,54 @@ function RunRow({
               open && "rotate-180",
             )}
           />
-          <RunStatusBadge status={run.status} />
+          {/*
+            On a phone the SUCCEEDED pill on every row costs the summary its width and
+            says nothing — success is the normal case. Only a dot is left for it there;
+            anything else keeps its full badge.
+          */}
+          {run.status === "succeeded" ? (
+            <>
+              <RunStatusBadge status={run.status} className="max-sm:hidden" />
+              <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-positive/70 sm:hidden" />
+              <span className="sr-only sm:hidden">{run.status}</span>
+            </>
+          ) : (
+            <RunStatusBadge status={run.status} />
+          )}
           {/*
             `run.error` is already redacted for non-owners in the query (`visibleError`),
             so whatever arrives here is safe to print. Tone it as a failure though: a red
             status pill next to a line in the ordinary body colour reads like a summary
             that happens to sit beside a badge.
           */}
-          <span
-            className={cn(
-              "min-w-0 flex-1 truncate text-sm",
-              run.error ? "text-destructive/90" : "text-foreground/85",
-            )}
-          >
-            {run.error ?? run.summary ?? (run.status === "running" ? "Working…" : "No summary")}
+          <span className="min-w-0 flex-1">
+            <span
+              className={cn(
+                "block text-sm max-sm:line-clamp-2 sm:truncate",
+                run.error ? "text-destructive/90" : "text-foreground/85",
+              )}
+            >
+              {run.error ?? run.summary ?? (run.status === "running" ? "Working…" : "No summary")}
+            </span>
+            <span className="tnum mt-0.5 block font-mono text-[11px] text-muted-foreground sm:hidden">
+              {plural(run.tradeCount, "trade")} · {formatUsd(run.dataSpendUsd)}
+            </span>
           </span>
           <span className="hidden shrink-0 items-center gap-3 font-mono text-[11px] text-muted-foreground sm:flex">
-            <span className="tnum">{run.stepCount} steps</span>
-            <span className="tnum">{run.tradeCount} trades</span>
+            <span className="tnum">{plural(run.stepCount, "step")}</span>
+            <span className="tnum">{plural(run.tradeCount, "trade")}</span>
             <span className="tnum">{formatUsd(run.dataSpendUsd)}</span>
             {elapsed !== null ? <span className="tnum">{formatDuration(elapsed)}</span> : null}
           </span>
           <RelativeTime iso={run.createdAt} className="shrink-0 text-[11px]" />
         </button>
 
+        {/* Described by the toggle beside it, so twenty of these are not twenty
+            identical "Open full run"s to a screen reader. */}
         <Link
           href={`/agents/${agentSlug}/runs/${run.id}`}
           aria-label="Open full run"
+          aria-describedby={toggleId}
           className="grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-ring"
         >
           <ExternalLink aria-hidden className="size-3.5" />
@@ -88,8 +112,10 @@ function RunRow({
       </div>
 
       {/* grid-template-rows collapse keeps the transition on a compositable
-          property path and avoids measuring the content. */}
+          property path and avoids measuring the content. `inert` while closed: a
+          zero-height row must not keep its transcript controls in the Tab order. */}
       <div
+        inert={!open}
         className="grid transition-[grid-template-rows] duration-[240ms] ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none"
         style={{ gridTemplateRows: open ? "1fr" : "0fr" }}
       >

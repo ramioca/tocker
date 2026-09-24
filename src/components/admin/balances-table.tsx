@@ -49,7 +49,7 @@ export function AdminBalancesTable({ snapshot }: { snapshot: AdminBalancesSnapsh
       <DataTable label="Agent wallet balances" minWidth="52rem">
         <thead>
           <tr>
-            <Th>Agent</Th>
+            <Th sticky>Agent</Th>
             <Th>Chain</Th>
             <Th>Address</Th>
             <Th numeric>USDC</Th>
@@ -64,7 +64,7 @@ export function AdminBalancesTable({ snapshot }: { snapshot: AdminBalancesSnapsh
           ) : (
             rows.map((row) => (
               <tr key={row.walletId} className="hover:bg-muted/25">
-                <Td className="max-w-[14rem]">
+                <Td sticky className="max-w-[14rem]">
                   <Link
                     href={`/agents/${row.agentSlug}`}
                     className="truncate underline-offset-2 hover:underline focus-visible:underline"

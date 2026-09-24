@@ -2,19 +2,48 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useInfiniteQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useQueryClient,
+  type InfiniteData,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { Radio } from "lucide-react";
 import { EmptyState, ErrorState } from "@/components/common/empty-state";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CommentSheet } from "./comment-sheet";
 import { FeedCard } from "./feed-card";
 import { FeedSkeleton } from "./feed-skeleton";
-import { fetchFeedPage, likePost, type FeedPage } from "./feed-actions";
+import { fetchFeedPage, type FeedPage } from "./feed-actions";
+import { useSaveLike, type LikeState } from "./use-save-like";
 import type { FeedItem } from "@/server/types";
 
 type Scope = "global" | "following";
 
 const PAGE_SIZE = 12;
+
+/**
+ * Patch one post in every loaded scope, in place. A post can sit in Global and
+ * Following at once, and switching tabs must not show it in two states. Patching
+ * rather than invalidating keeps every loaded page where it is — a refetch of an
+ * infinite query re-requests all of them, one after another.
+ */
+function patchPost(
+  queryClient: QueryClient,
+  postId: string,
+  patch: (item: FeedItem) => Partial<FeedItem>,
+) {
+  queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: ["feed"] }, (old) => {
+    if (!old) return old;
+    return {
+      ...old,
+      pages: old.pages.map((page) => ({
+        ...page,
+        items: page.items.map((item) => (item.id === postId ? { ...item, ...patch(item) } : item)),
+      })),
+    };
+  });
+}
 
 export function FeedList({ initialPage }: { initialPage: FeedPage }) {
   const [scope, setScope] = useState<Scope>("global");
@@ -33,13 +62,15 @@ export function FeedList({ initialPage }: { initialPage: FeedPage }) {
         : undefined,
   });
 
-  const { fetchNextPage, hasNextPage, isFetchingNextPage } = query;
+  const { fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } = query;
 
   // Infinite scroll. No animation on the appended rows: the feed is scrolled
   // dozens of times a session and motion on arrival reads as jank, not polish.
+  // After a failed page the sentinel stands down — it is still on screen, and
+  // re-observing it would retry in a loop; the Retry row below hands that to the user.
   useEffect(() => {
     const node = sentinelRef.current;
-    if (!node || !hasNextPage) return;
+    if (!node || !hasNextPage || isFetchNextPageError) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting && !isFetchingNextPage) void fetchNextPage();
@@ -48,38 +79,32 @@ export function FeedList({ initialPage }: { initialPage: FeedPage }) {
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError]);
 
-  /**
-   * Optimistic like: the card already flipped its own state, so all this does
-   * is keep the cache honest and roll back if the server disagrees.
-   */
-  const onLike = useCallback(
-    async (postId: string, liked: boolean) => {
-      const key = ["feed", scope];
-      queryClient.setQueryData(key, (old: InfiniteData<FeedPage> | undefined) => {
-        if (!old) return old;
-        return {
-          ...old,
-          pages: old.pages.map((page) => ({
-            ...page,
-            items: page.items.map((item) =>
-              item.id === postId
-                ? {
-                    ...item,
-                    likedByViewer: liked,
-                    likeCount: Math.max(0, item.likeCount + (liked ? 1 : -1)),
-                  }
-                : item,
-            ),
-          })),
-        };
-      });
-
-      const result = await likePost(postId);
-      if (!result.ok) void queryClient.invalidateQueries({ queryKey: key });
-    },
+  // The card renders straight from this cache, so this is the only copy of the heart.
+  const readLike = useCallback(
+    (postId: string) =>
+      queryClient
+        .getQueryData<InfiniteData<FeedPage>>(["feed", scope])
+        ?.pages.flatMap((page) => page.items)
+        .find((item) => item.id === postId),
     [queryClient, scope],
+  );
+  const writeLike = useCallback(
+    (postId: string, state: LikeState) => patchPost(queryClient, postId, () => state),
+    [queryClient],
+  );
+  const onLike = useSaveLike({ read: readLike, write: writeLike, returnTo: "/feed" });
+
+  /** A posted comment counts on the card straight away, not after the next refetch. */
+  const onCommented = useCallback(
+    (postId: string) => {
+      patchPost(queryClient, postId, (item) => ({ commentCount: item.commentCount + 1 }));
+      setCommentTarget((target) =>
+        target?.id === postId ? { ...target, commentCount: target.commentCount + 1 } : target,
+      );
+    },
+    [queryClient],
   );
 
   const items = query.data?.pages.flatMap((page) => page.items) ?? [];
@@ -93,7 +118,7 @@ export function FeedList({ initialPage }: { initialPage: FeedPage }) {
     <div className="px-4 sm:px-5">
       {/* The only blurred surface in the feed viewport: the cards underneath are
           `.glass`, which carries the same tint with no backdrop-filter. */}
-      <div className="glass-bar sticky top-14 z-20 -mx-4 border-b border-b-[var(--glass-hairline)] px-4 py-2 sm:-mx-5 sm:px-5">
+      <div data-sticky-subnav className="glass-bar sticky top-14 z-20 -mx-4 border-b border-b-[var(--glass-hairline)] px-4 py-2 sm:-mx-5 sm:px-5">
         <Tabs value={scope} onValueChange={(value) => setScope(value as Scope)}>
           <TabsList variant="line" className="h-8">
             <TabsTrigger value="global" className="px-3">
@@ -108,16 +133,18 @@ export function FeedList({ initialPage }: { initialPage: FeedPage }) {
 
       {query.isPending ? (
         <FeedSkeleton />
-      ) : query.isError ? (
+      ) : query.isError && items.length === 0 ? (
+        // Only when there is nothing to show. A failed older page, or a failed
+        // background refetch, must never take away the cards already on screen.
         <ErrorState
           className="mt-4"
           title="The feed did not load"
-          description={(query.error as Error).message}
+          description="Check your connection and try again."
           action={
             <button
               type="button"
               onClick={() => void query.refetch()}
-              className="rounded-lg border border-border px-3 py-1.5 text-xs transition-colors duration-150 hover:bg-muted"
+              className="focus-ring rounded-lg border border-border px-3 py-1.5 text-xs transition-colors duration-150 hover:bg-muted"
             >
               Try again
             </button>
@@ -160,6 +187,17 @@ export function FeedList({ initialPage }: { initialPage: FeedPage }) {
 
           {isFetchingNextPage ? (
             <FeedSkeleton count={2} />
+          ) : isFetchNextPageError ? (
+            <div role="alert" className="flex items-center justify-center gap-3 py-8">
+              <p className="text-xs text-muted-foreground">Couldn&rsquo;t load older posts</p>
+              <button
+                type="button"
+                onClick={() => void fetchNextPage()}
+                className="focus-ring rounded-lg border border-border px-3 py-1.5 text-xs transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.97]"
+              >
+                Retry
+              </button>
+            </div>
           ) : !hasNextPage ? (
             <p className="py-8 text-center text-xs text-muted-foreground">
               That is the whole feed.
@@ -174,6 +212,7 @@ export function FeedList({ initialPage }: { initialPage: FeedPage }) {
         onOpenChange={(open) => {
           if (!open) setCommentTarget(null);
         }}
+        onCommented={onCommented}
       />
     </div>
   );

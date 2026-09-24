@@ -75,6 +75,8 @@ export interface DataSource extends DataSourceInfo {
 export function defineSource<S extends z.ZodType>(def: {
   id: string;
   name: string;
+  /** What the owner reads in the picker. One plain sentence — see `DataSourceInfo.summary`. */
+  summary: string;
   description: string;
   category: DataSourceInfo["category"];
   network: string;
@@ -93,6 +95,7 @@ export function defineSource<S extends z.ZodType>(def: {
   return {
     id: def.id,
     name: def.name,
+    summary: def.summary,
     description: def.description,
     category: def.category,
     network: def.network,

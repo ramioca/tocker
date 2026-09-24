@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useRef, useState, type RefObject } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, SendHorizontal } from "lucide-react";
-import { toast } from "sonner";
 import {
   Sheet,
   SheetContent,
@@ -18,125 +19,200 @@ import { fetchComments, submitComment } from "./feed-actions";
 import type { CommentRow, FeedItem, Page } from "@/server/types";
 import { cn } from "@/lib/utils";
 
-export function CommentSheet({
-  item,
-  open,
-  onOpenChange,
+/** The server's cap (`submitComment`), enforced here so Send never offers a doomed post. */
+const MAX_COMMENT = 1_000;
+/** The counter stays out of the way until the cap is close enough to matter. */
+const SHOW_COUNT_FROM = 800;
+
+const SIGNED_OUT = "Sign in to comment";
+
+/**
+ * The thread under a post and the box to add to it — in the feed's sheet, or inline
+ * on the post's own page. Key it by post id: the draft and any error belong to the
+ * post they were written for, and must not follow the reader to the next one.
+ */
+export function CommentThread({
+  postId,
+  enabled = true,
+  scrollable = false,
+  listRef,
+  onCommented,
 }: {
-  item: FeedItem | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  postId: string;
+  enabled?: boolean;
+  /** In the sheet the list scrolls and the composer stays pinned under it. */
+  scrollable?: boolean;
+  listRef?: RefObject<HTMLDivElement | null>;
+  onCommented?: (postId: string) => void;
 }) {
   const [draft, setDraft] = useState("");
   const queryClient = useQueryClient();
-  const postId = item?.id ?? null;
+  const pathname = usePathname();
+  const inputId = useId();
+  const countId = useId();
 
   const query = useInfiniteQuery({
     queryKey: ["comments", postId],
-    enabled: open && postId !== null,
+    enabled,
     initialPageParam: null as string | null,
-    queryFn: ({ pageParam }) => fetchComments(postId!, pageParam),
+    queryFn: ({ pageParam }) => fetchComments(postId, pageParam),
     getNextPageParam: (last: Page<CommentRow>) => last.nextCursor,
   });
 
   const mutation = useMutation({
     mutationFn: async (body: string) => {
-      const result = await submitComment(postId!, body);
+      let result: Awaited<ReturnType<typeof submitComment>>;
+      try {
+        result = await submitComment(postId, body);
+      } catch {
+        // A thrown action is the network or a deploy, never the comment itself; its raw
+        // message is framework text, not something to show a person.
+        throw new Error("Your comment was not posted. Check your connection and try again.");
+      }
       if (!result.ok) throw new Error(result.error);
       return result.data;
     },
     onSuccess: () => {
       setDraft("");
       void queryClient.invalidateQueries({ queryKey: ["comments", postId] });
+      onCommented?.(postId);
     },
-    onError: (error: Error) => toast.error("Comment not posted", { description: error.message }),
   });
 
   const comments = query.data?.pages.flatMap((page) => page.items) ?? [];
+  const showCount = draft.length >= SHOW_COUNT_FROM;
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-md">
-        <SheetHeader className="border-b border-border px-5 py-4">
-          <SheetTitle className="text-sm">Comments</SheetTitle>
-          <SheetDescription className="line-clamp-2 text-xs">
-            {item?.agent ? item.agent.name : item?.author.handle} ·{" "}
-            {item?.body ?? "No description"}
-          </SheetDescription>
-        </SheetHeader>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {query.isPending ? (
-            <div className="space-y-4" role="status" aria-label="Loading comments">
-              {Array.from({ length: 4 }, (_, i) => (
-                <div key={i} className="flex gap-2.5">
-                  <span className="size-7 shrink-0 rounded-full bg-muted/70 motion-safe:animate-pulse" />
-                  <span className="h-10 flex-1 rounded-lg bg-muted/70 motion-safe:animate-pulse" />
-                </div>
-              ))}
-            </div>
-          ) : query.isError ? (
-            <p className="py-8 text-center text-sm text-destructive">
-              Comments failed to load. Close and reopen to retry.
-            </p>
-          ) : comments.length === 0 ? (
-            <EmptyState
-              title="No comments yet"
-              description="Be the first to ask this agent's owner why."
-              className="border-0 py-10"
-            />
-          ) : (
-            <ul className="space-y-4">
-              {comments.map((comment) => (
-                <li key={comment.id} className="flex gap-2.5">
-                  <UserAvatar handle={comment.author.handle} size="sm" />
-                  <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-1.5 text-xs">
-                      <span className="font-medium">
-                        {comment.author.displayName ?? comment.author.handle}
-                      </span>
-                      <RelativeTime iso={comment.createdAt} />
-                    </p>
-                    <p className="mt-0.5 text-sm leading-relaxed text-foreground/85">
-                      {comment.body}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {query.hasNextPage ? (
+    <>
+      <div
+        ref={listRef}
+        // Focus lands here when the sheet opens: inside the dialog for keyboard and
+        // screen-reader users, without raising a phone keyboard over the thread
+        // the reader came to read.
+        tabIndex={-1}
+        className={cn("px-5 py-4 outline-none", scrollable && "min-h-0 flex-1 overflow-y-auto")}
+      >
+        {query.isPending ? (
+          <div className="space-y-4" role="status" aria-label="Loading comments">
+            {Array.from({ length: 4 }, (_, i) => (
+              <div key={i} className="flex gap-2.5">
+                <span className="size-7 shrink-0 rounded-full bg-muted/70 motion-safe:animate-pulse" />
+                <span className="h-10 flex-1 rounded-lg bg-muted/70 motion-safe:animate-pulse" />
+              </div>
+            ))}
+          </div>
+        ) : query.isError && comments.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 py-8 text-center">
+            <p className="text-sm text-muted-foreground">Comments did not load.</p>
             <button
               type="button"
-              onClick={() => void query.fetchNextPage()}
-              disabled={query.isFetchingNextPage}
-              className="mt-4 w-full rounded-lg border border-border py-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
+              onClick={() => void query.refetch()}
+              disabled={query.isFetching}
+              className="focus-ring rounded-lg border border-border px-3 py-1.5 text-xs transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.97] disabled:opacity-50"
             >
-              {query.isFetchingNextPage ? "Loading…" : "Load older comments"}
+              {query.isFetching ? "Retrying…" : "Retry"}
             </button>
-          ) : null}
-        </div>
+          </div>
+        ) : comments.length === 0 ? (
+          <EmptyState
+            title="No comments yet"
+            description="Be the first to ask this agent's owner why."
+            className="border-0 py-10"
+          />
+        ) : (
+          <ul className="space-y-4">
+            {comments.map((comment) => (
+              <li key={comment.id} className="flex gap-2.5">
+                <UserAvatar handle={comment.author.handle} size="sm" />
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-1.5 text-xs">
+                    <span className="font-medium">
+                      {comment.author.displayName ?? comment.author.handle}
+                    </span>
+                    <RelativeTime iso={comment.createdAt} />
+                  </p>
+                  <p className="mt-0.5 break-words text-sm leading-relaxed text-foreground/85">
+                    {comment.body}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
 
+        {query.hasNextPage ? (
+          <button
+            type="button"
+            onClick={() => void query.fetchNextPage()}
+            disabled={query.isFetchingNextPage}
+            className="focus-ring mt-4 w-full rounded-lg border border-border py-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
+          >
+            {query.isFetchingNextPage
+              ? "Loading…"
+              : query.isFetchNextPageError
+                ? "Older comments did not load — retry"
+                : "Load older comments"}
+          </button>
+        ) : null}
+      </div>
+
+      <div className="border-t border-border px-5 py-3">
+        {/* Inline, not a toast: on a phone a toast lands on top of this very box. */}
+        {mutation.isError ? (
+          <p role="alert" className="mb-2 text-xs text-destructive">
+            {mutation.error.message === SIGNED_OUT ? (
+              <>
+                <Link
+                  href={`/login?next=${encodeURIComponent(pathname)}`}
+                  className="focus-ring rounded font-medium underline underline-offset-2"
+                >
+                  Sign in
+                </Link>{" "}
+                to comment.
+              </>
+            ) : (
+              mutation.error.message
+            )}
+          </p>
+        ) : null}
         <form
-          className="flex items-end gap-2 border-t border-border px-5 py-3"
+          className="flex items-end gap-2"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!postId || draft.trim().length === 0) return;
+            if (draft.trim().length === 0) return;
             mutation.mutate(draft);
           }}
         >
-          <label htmlFor="comment-input" className="sr-only">
-            Write a comment
-          </label>
-          <textarea
-            id="comment-input"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            rows={2}
-            placeholder="Ask why it made this trade…"
-            className="min-h-[2.5rem] flex-1 resize-none rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
-          />
+          <div className="min-w-0 flex-1">
+            <label htmlFor={inputId} className="sr-only">
+              Write a comment
+            </label>
+            <textarea
+              id={inputId}
+              value={draft}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                // The error was about the text that was there; editing it retires it.
+                if (mutation.isError) mutation.reset();
+              }}
+              rows={2}
+              maxLength={MAX_COMMENT}
+              aria-describedby={showCount ? countId : undefined}
+              placeholder="Ask why it made this trade…"
+              className="block min-h-[2.5rem] w-full resize-none rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
+            {showCount ? (
+              <p
+                id={countId}
+                className={cn(
+                  "tnum mt-1 text-right text-[11px]",
+                  draft.length >= MAX_COMMENT ? "text-destructive" : "text-muted-foreground",
+                )}
+              >
+                {draft.length.toLocaleString("en-US")}/{MAX_COMMENT.toLocaleString("en-US")}
+              </p>
+            ) : null}
+          </div>
           <button
             type="submit"
             disabled={mutation.isPending || draft.trim().length === 0}
@@ -155,6 +231,56 @@ export function CommentSheet({
             <span className="sr-only">Post comment</span>
           </button>
         </form>
+      </div>
+    </>
+  );
+}
+
+export function CommentSheet({
+  item,
+  open,
+  onOpenChange,
+  onCommented,
+}: {
+  item: FeedItem | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Called after a comment is saved, so the card's count can move with it. */
+  onCommented?: (postId: string) => void;
+}) {
+  const listRef = useRef<HTMLDivElement | null>(null);
+  // The parent clears `item` the moment the sheet starts closing. Keep painting the
+  // last post until the exit animation is done, rather than an empty header.
+  const [shown, setShown] = useState(item);
+  if (item && item !== shown) setShown(item);
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        initialFocus={listRef}
+        // The primitive's own `w-3/4` is scoped to data-side, so only a width scoped the
+        // same way replaces it: full width on a phone, a comfortable column above.
+        className="flex flex-col gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md"
+      >
+        <SheetHeader className="border-b border-border px-5 py-4">
+          <SheetTitle className="text-sm">Comments</SheetTitle>
+          <SheetDescription className="line-clamp-2 text-xs">
+            {shown?.agent ? shown.agent.name : shown?.author.handle} ·{" "}
+            {shown?.body ?? "No description"}
+          </SheetDescription>
+        </SheetHeader>
+
+        {shown ? (
+          <CommentThread
+            key={shown.id}
+            postId={shown.id}
+            enabled={open}
+            scrollable
+            listRef={listRef}
+            onCommented={onCommented}
+          />
+        ) : null}
       </SheetContent>
     </Sheet>
   );

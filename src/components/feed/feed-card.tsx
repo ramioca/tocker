@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 import Link from "next/link";
-import { ArrowUpRight, MessageCircle, Rocket, Sparkles, Trophy } from "lucide-react";
+import { ArrowUpRight, MessageCircle, Rocket, Share, Sparkles, Trophy } from "lucide-react";
 import { LikeButton } from "@/components/spectrumui/like-button";
 import { ShareButton } from "@/components/spectrumui/share-button";
 import { AgentAvatar } from "@/components/common/agent-avatar";
@@ -11,7 +11,7 @@ import { ModeBadge } from "@/components/common/mode-badge";
 import { PnlText } from "@/components/common/pnl-text";
 import { RelativeTime } from "@/components/common/relative-time";
 import { TokenIcon } from "@/components/common/token-icon";
-import { formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
+import { formatPriceUsd, formatSignedPct, formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
 import { TradeReceiptRow } from "@/components/trading";
 import { cn } from "@/lib/utils";
@@ -19,8 +19,9 @@ import { cn } from "@/lib/utils";
 // would work (types are erased) but this is the boundary the split exists to make
 // obvious, so a later value import cannot quietly pull `postgres` into the bundle.
 import type { TradeReceiptData } from "@/lib/trading/receipt-format";
-import type { FeedItem, TradeRow } from "@/server/types";
+import type { AgentMode, FeedItem, TradeRow } from "@/server/types";
 import { txExplorerUrl } from "@/lib/tokens/links";
+import { formatFeedTokenAmount } from "./trade-amount";
 
 function explorerUrl(trade: TradeRow): string | null {
   return txExplorerUrl(trade.chain, trade.txHash);
@@ -41,10 +42,22 @@ function SideChip({ side }: { side: "buy" | "sell" }) {
   );
 }
 
-function TradeBlock({ trade, receipt }: { trade: TradeRow; receipt: TradeReceiptData | null }) {
+function TradeBlock({
+  trade,
+  receipt,
+  agentMode,
+}: {
+  trade: TradeRow;
+  receipt: TradeReceiptData | null;
+  /** The posting agent's mode, already badged in the card header. */
+  agentMode?: AgentMode;
+}) {
   const url = explorerUrl(trade);
   const failed = trade.status === "failed" || trade.status === "rejected";
   const entryScore = trade.entryScore ?? trade.score?.total ?? null;
+  // The header already says PAPER or LIVE for the agent. The fill only repeats it when
+  // it disagrees — a paper fill from an agent that has since gone live, say.
+  const showMode = agentMode === undefined || trade.isPaper !== (agentMode === "paper");
 
   return (
     <div
@@ -53,27 +66,36 @@ function TradeBlock({ trade, receipt }: { trade: TradeRow; receipt: TradeReceipt
         failed && "border-destructive/30",
       )}
     >
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+      {/* Two rows, not one wrapping row: what was traded where, then the numbers.
+          A single flex-wrap line broke at arbitrary points on a phone and left the
+          chain badge stranded on a line of its own. */}
+      <div className="flex items-center gap-2">
         <SideChip side={trade.side} />
         <TokenIcon token={trade.token} size="sm" />
         {/* The symbol is the way into the token's own record: score, history, who else holds it. */}
         <Link
           href={`/tokens/${trade.token.chain}/${trade.token.address}`}
-          className="focus-ring rounded text-sm font-semibold hover:underline"
+          className="focus-ring min-w-0 truncate rounded text-sm font-semibold hover:underline"
         >
           {trade.token.symbol}
         </Link>
-        <span className="tnum text-sm text-muted-foreground">
-          {formatTokenAmount(trade.amountToken)}
-        </span>
-        <span className="text-muted-foreground/50">·</span>
-        <span className="tnum text-sm font-medium">{formatUsd(trade.amountUsd)}</span>
-        <span className="tnum text-xs text-muted-foreground">@ {formatPriceUsd(trade.priceUsd)}</span>
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <ChainBadge chain={trade.chain} />
-          <ModeBadge mode={trade.isPaper ? "paper" : "live"} size="xs" />
+          {showMode ? <ModeBadge mode={trade.isPaper ? "paper" : "live"} size="xs" /> : null}
         </div>
       </div>
+
+      {/* Each item after the first draws its own dot, so a wrapped line starts with
+          one instead of the previous line ending on a dangling separator. */}
+      <p className="tnum mt-1.5 flex flex-wrap items-baseline gap-x-2 text-sm">
+        <span className="font-medium">{formatUsd(trade.amountUsd)}</span>
+        <span className="text-muted-foreground before:mr-2 before:text-muted-foreground/50 before:content-['·']">
+          {formatFeedTokenAmount(trade.amountToken)} {trade.token.symbol}
+        </span>
+        <span className="text-xs text-muted-foreground before:mr-2 before:text-muted-foreground/50 before:content-['·']">
+          @ {formatPriceUsd(trade.priceUsd)}
+        </span>
+      </p>
 
       {/*
         The frozen score, not today's. A trade's record is what the agent knew when it
@@ -119,11 +141,22 @@ function TradeBlock({ trade, receipt }: { trade: TradeRow; receipt: TradeReceipt
           <ArrowUpRight aria-hidden className="size-3" />
         </a>
       ) : (
-        <p className="mt-2 font-mono text-[11px] text-muted-foreground">
-          Simulated fill · no on-chain transaction
+        <p className="mt-2 whitespace-nowrap font-mono text-[11px] text-muted-foreground">
+          Simulated fill
         </p>
       )}
     </div>
+  );
+}
+
+// Whether the browser has a native share sheet. Read after hydration, never during
+// server render, so the fan's action list cannot differ between the two.
+const noSubscribe = () => () => {};
+function useCanNativeShare(): boolean {
+  return useSyncExternalStore(
+    noSubscribe,
+    () => typeof navigator !== "undefined" && typeof navigator.share === "function",
+    () => false,
   );
 }
 
@@ -145,20 +178,31 @@ export function FeedCard({
   onLike: (postId: string, liked: boolean) => void;
   onOpenComments: (item: FeedItem) => void;
 }) {
-  const [liked, setLiked] = useState(item.likedByViewer);
-  const [likeCount, setLikeCount] = useState(item.likeCount);
+  // No local copy of the heart: the owner of `item` saves it optimistically and rolls
+  // it back, and a card that kept its own state would keep a like the server refused.
+  const liked = item.likedByViewer;
+  const likeCount = item.likeCount;
+  const canNativeShare = useCanNativeShare();
 
   const agent = item.agent;
+  // The post's own page, not an anchor in the feed: the feed is newest-first and
+  // paginated, so `/feed#id` stopped resolving as soon as the post left page one.
+  const sharePath = `/feed/${item.id}`;
   const shareUrl =
-    typeof window === "undefined"
-      ? `/feed#${item.id}`
-      : `${window.location.origin}/feed#${item.id}`;
-
-  const handleLike = (next: boolean) => {
-    setLiked(next);
-    setLikeCount((count) => Math.max(0, count + (next ? 1 : -1)));
-    onLike(item.id, next);
-  };
+    typeof window === "undefined" ? sharePath : `${window.location.origin}${sharePath}`;
+  const shareActions = canNativeShare
+    ? [
+        {
+          icon: <Share aria-hidden className="size-3.5" />,
+          label: "Share via…",
+          onSelect: () => {
+            const title = agent ? `${agent.name} on Tocker` : "A post on Tocker";
+            // AbortError is the user closing the sheet; nothing to report.
+            navigator.share({ title, url: shareUrl }).catch(() => {});
+          },
+        },
+      ]
+    : [];
 
   const Icon = item.kind === "trade" ? null : KIND_ICON[item.kind];
 
@@ -169,10 +213,13 @@ export function FeedCard({
     >
       <div className="flex gap-3">
         {agent ? (
+          // A pointer shortcut only: the name link right after it goes to the same
+          // place, so keyboard and screen-reader users get one stop, not two.
           <Link
             href={`/agents/${agent.slug}`}
-            className="focus-ring shrink-0 rounded-lg"
-            aria-label={agent.name}
+            className="shrink-0 self-start rounded-lg"
+            tabIndex={-1}
+            aria-hidden
           >
             <AgentAvatar seed={agent.avatarSeed} name={agent.name} size="md" />
           </Link>
@@ -203,13 +250,26 @@ export function FeedCard({
               ·
             </span>
             <RelativeTime iso={item.createdAt} className="text-xs" />
+            {/* The agent's record, not this trade's result — labelled, or a green
+                number beside "Stop hit, small loss" reads as a contradiction. */}
             {agent?.pnlPct !== null && agent?.pnlPct !== undefined ? (
-              <PnlText pct={agent.pnlPct} size="xs" className="ml-auto" />
+              <span
+                className="ml-auto inline-flex items-baseline gap-1 whitespace-nowrap text-[11px] text-muted-foreground"
+                title="Agent all-time return"
+              >
+                <span aria-hidden className="inline-flex items-baseline gap-1">
+                  <PnlText pct={agent.pnlPct} size="xs" />
+                  all-time
+                </span>
+                <span className="sr-only">
+                  Agent all-time return {formatSignedPct(agent.pnlPct, 2)}
+                </span>
+              </span>
             ) : null}
           </div>
 
           {item.kind === "trade" && item.trade ? (
-            <TradeBlock trade={item.trade} receipt={receipt} />
+            <TradeBlock trade={item.trade} receipt={receipt} agentMode={agent?.mode} />
           ) : null}
 
           {item.body ? (
@@ -233,7 +293,7 @@ export function FeedCard({
               // LikeButton adds +1 for the viewer's own like, so pass the count excluding it.
               count={Math.max(0, likeCount - (liked ? 1 : 0))}
               size="sm"
-              onLikedChange={handleLike}
+              onLikedChange={(next) => onLike(item.id, next)}
               label="Like"
               className="!px-2"
             />
@@ -253,7 +313,7 @@ export function FeedCard({
               copyValue={shareUrl}
               direction="right"
               label="Share this post"
-              actions={[]}
+              actions={shareActions}
             />
           </div>
         </div>

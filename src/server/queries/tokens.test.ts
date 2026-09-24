@@ -272,6 +272,7 @@ describe("getTokenPage", () => {
     const page = await getTokenPage("base", "0x000000000000000000000000000000000000dEaD");
     expect(page).not.toBeNull();
     expect(page!.score).toBeNull();
+    expect(page!.marketFacts).toBeNull();
     expect(page!.history).toEqual([]);
     expect(page!.holders).toEqual([]);
     expect(page!.recentTrades).toEqual([]);
@@ -294,6 +295,10 @@ describe("getTokenPage", () => {
     const page = await getTokenPage("solana", "Fq".repeat(20));
     // The row exists, but its verdict was computed against someone else's floor.
     expect(page!.score).toBeNull();
+    // Its market facts are universe-independent and still shown — and only those.
+    expect(page!.marketFacts).toMatchObject({ liquidityUsd: 1_250_000, marketCapUsd: 2_100_000_000, holderCount: 812_000 });
+    expect(Object.keys(page!.marketFacts!)).not.toContain("blockers");
+    expect(Object.keys(page!.marketFacts!)).not.toContain("verdict");
   });
 });
 

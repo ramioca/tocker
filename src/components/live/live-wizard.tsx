@@ -9,6 +9,7 @@ import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { RunSteps } from "@/components/agents/run-steps";
 import { formatUsd } from "@/components/common/format";
+import { chainLabelFor } from "@/lib/wallets/funding";
 import {
   applyFirstTradePresetAction,
   checkLiveReadinessAction,
@@ -64,6 +65,10 @@ export function LiveWizard({
   const [starting, setStarting] = useState(false);
   const [paused, setPaused] = useState(agent.status === "paused");
   const [receipt, setReceipt] = useState<TradeReceiptData | null>(null);
+  // A hold only says the gesture finished, not that the server agreed. Each button shows
+  // a pending verb until the answer comes back, and remounts (fresh, holdable) if it is no.
+  const [goLiveAttempt, setGoLiveAttempt] = useState(0);
+  const [pauseAttempt, setPauseAttempt] = useState(0);
 
   const cap = readiness.caps.maxTradeUsd;
 
@@ -111,9 +116,13 @@ export function LiveWizard({
   }, [agent.id, router]);
 
   const goLive = useCallback(async () => {
-    const result = await goLiveAction({ agentId: agent.id, capUsd: cap });
+    const result = await goLiveAction({ agentId: agent.id, capUsd: cap }).catch(() => ({
+      ok: false as const,
+      error: "Could not reach Tocker. Nothing changed.",
+    }));
     if (!result.ok) {
       toast.error("Still on paper", { description: result.error });
+      setGoLiveAttempt((n) => n + 1);
       recheck();
       return;
     }
@@ -173,7 +182,11 @@ export function LiveWizard({
   });
 
   const pause = useCallback(async () => {
-    const result = await pauseAgentAction(agent.id);
+    const result = await pauseAgentAction(agent.id).catch(() => ({
+      ok: false as const,
+      error: "Could not reach Tocker. It is still running.",
+    }));
+    setPauseAttempt((n) => n + 1);
     if (!result.ok) {
       toast.error("Not paused", { description: result.error });
       return;
@@ -300,7 +313,8 @@ export function LiveWizard({
               ? "every order it wants to place comes to you as a proposal first, and nothing is signed until you approve one."
               : "it signs each order itself, without asking."}{" "}
             Its risk caps — {formatUsd(readiness.caps.maxTradeUsd)} a trade, {readiness.caps.maxDailyTrades} a day
-            on {readiness.caps.chains.join(" and ")} — are enforced in code before the executor, not by the prompt.
+            on {readiness.caps.chains.map(chainLabelFor).join(" and ")} — are enforced in code before the executor,
+            not by the prompt.
           </p>
         ) : (
           <>
@@ -316,14 +330,16 @@ export function LiveWizard({
                 ? "It is set to ask before it trades: each order becomes a proposal you approve, and the moment you approve one it signs a real transaction from its own wallet."
                 : "From then on it signs real transactions from its own wallet without asking you first."}{" "}
               Up to {formatUsd(readiness.caps.maxTradeUsd)} per trade and {readiness.caps.maxDailyTrades} per day
-              on {readiness.caps.chains.join(" and ") || "no chain"}. The server re-checks every item above before
+              on {readiness.caps.chains.map(chainLabelFor).join(" and ") || "no chain"}. The server re-checks every item above before
               it agrees.
             </p>
             {readiness.ready ? (
               <HoldToConfirmButton
+                key={goLiveAttempt}
                 duration={2_200}
                 label={`Hold to put ${agent.name} live`}
-                confirmedLabel="Live"
+                confirmedLabel="Going live…"
+                resetDelay={0}
                 icon={<Zap className="size-4" />}
                 onConfirm={() => void goLive()}
               />
@@ -449,10 +465,12 @@ export function LiveWizard({
             {fill ? (
               <FirstFillPanel trade={fill} receipt={receipt}>
                 <HoldToConfirmButton
+                  key={pauseAttempt}
                   size="sm"
                   duration={1_200}
                   label={paused ? "Already paused" : "Hold to pause this agent"}
-                  confirmedLabel="Paused"
+                  confirmedLabel="Pausing…"
+                  resetDelay={0}
                   icon={<Pause className="size-3.5" />}
                   disabled={paused}
                   onConfirm={() => void pause()}

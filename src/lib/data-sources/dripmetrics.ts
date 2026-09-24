@@ -46,6 +46,7 @@ const summaryInput = z.object({
 export const dripmetricsSummary = defineSource({
   id: "dripmetrics-summary",
   name: "DripMetrics market summary",
+  summary: "A read on the overall BTC market: order flow, liquidity and volatility.",
   description:
     "One-call BTC market regime read: order-flow toxicity (VPIN vs its baseline), buy/sell imbalance, liquidity in dollars-per-basis-point, realized vol, dealer gamma and an AI-written paragraph explaining the tape. Use it to decide whether this is a tick to take risk at all, not to pick a token.",
   category: "prices",
@@ -164,6 +165,7 @@ const metricInput = z
 export const dripmetricsMetric = defineSource({
   id: "dripmetrics-metric",
   name: "DripMetrics metric",
+  summary: "Order-flow and liquidity metrics for BTC, ETH and SOL, including what an order would cost to fill.",
   description:
     "One microstructure metric for BTC/ETH/SOL: buy-sell-volume-imbalance, cvd, amihud-illiquidity, realized-vol, momentum ($0.05 each), or orderbook/execution-impact ($0.25) — what a given order size would actually cost to fill. execution-impact is the sizing tool: buy it before a clip that is large against the book, not for every candidate.",
   category: "prices",

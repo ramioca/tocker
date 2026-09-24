@@ -5,7 +5,8 @@ import { isPrivyConfigured } from "@/lib/privy";
 import { getAgentWalletBalances, isPaperWallet } from "@/lib/wallets";
 // Constants and the pure helper only — the effectful half of `gas.ts` is workstream A's.
 import { LAMPORTS_PER_SOL, MIN_PLATFORM_SOL, sponsoredFundingLamports } from "@/lib/wallets/gas";
-import { FEES_COVERED, feeFailureKind } from "@/lib/wallets/funding";
+import { FEES_COVERED, chainLabelFor, feeFailureKind } from "@/lib/wallets/funding";
+import { fmtUsd } from "@/lib/money";
 import { dataChainsFor, getDataSource } from "@/lib/data-sources/registry";
 import { isMockMode } from "@/lib/x402/paidFetch";
 import { getMfaStatus } from "./mfa";
@@ -40,6 +41,11 @@ import type { Chain } from "@/server/types";
  */
 export type { LiveReadiness, ReadinessStep, ReadinessStepId, StepState } from "./types";
 import type { LiveReadiness, ReadinessStep } from "./types";
+
+/** "Solana and Base". Chain ids are for code; this checklist is read by the owner. */
+function chainNames(chains: readonly Chain[]): string {
+  return chains.map(chainLabelFor).join(" and ");
+}
 
 /** Enough USDC for one small trade plus slippage. There is no native minimum: fees are Tocker's. */
 export const MIN_USDC = 5;
@@ -100,11 +106,11 @@ export function evaluateFirstTradeRisk(config: AgentConfig, capUsd: number): Ris
   if (!(capUsd > 0)) {
     problems.push("the per-trade cap you entered must be greater than zero");
   } else if (risk.maxTradeUsd > capUsd) {
-    problems.push(`its max per trade is $${risk.maxTradeUsd} but you asked for a cap of $${capUsd}`);
+    problems.push(`its max per trade is ${fmtUsd(risk.maxTradeUsd)} but you asked for a cap of ${fmtUsd(capUsd)}`);
   }
   if (risk.maxTradeUsd > FIRST_TRADE_PRESET.maxTradeUsd) {
     cautions.push(
-      `its max per trade is $${risk.maxTradeUsd}, above the $${FIRST_TRADE_PRESET.maxTradeUsd} preset — allowed; the preset button shrinks it if you would rather prove the pipeline with less`,
+      `its max per trade is ${fmtUsd(risk.maxTradeUsd)}, above the ${fmtUsd(FIRST_TRADE_PRESET.maxTradeUsd)} preset — allowed; the preset button shrinks it if you would rather prove the pipeline with less`,
     );
   }
   if (risk.maxDailyTrades > FIRST_TRADE_PRESET.maxDailyTrades) {
@@ -209,8 +215,8 @@ export async function simulateFirstTrade(config: AgentConfig, usdc: number): Pro
   if (verdict.ok) return null;
   const fee = platformFeeUsd();
   return (
-    `A $${amountUsd.toFixed(2)} buy against the $${usdc.toFixed(2)} this agent holds` +
-    `${fee > 0 ? ` (plus the $${fee.toFixed(2)} Tocker fee)` : ""} would be refused by the risk guard: ${verdict.reason}`
+    `A ${fmtUsd(amountUsd)} buy against the ${fmtUsd(usdc)} this agent holds` +
+    `${fee > 0 ? ` (plus the ${fmtUsd(fee)} Tocker fee)` : ""} would be refused by the risk guard: ${verdict.reason}`
   );
 }
 
@@ -229,20 +235,24 @@ export async function evaluateLiveReadiness(input: ReadinessInput): Promise<Live
   const capUsd = input.capUsd ?? FIRST_TRADE_PRESET.maxTradeUsd;
   const settings = `/agents/${input.slug}/settings`;
 
+  // The checklist is owner-only, so the owner is the viewer. Deployment details (env
+  // var names, Tocker's own wallets) are for an admin; everyone else gets the outcome.
+  const viewerIsAdmin = await ownerIsAdmin(input.ownerId);
+
   const [database, privy, mfa, wallets, killSwitch, data] = await Promise.all([
     checkDatabase(),
-    Promise.resolve(checkPrivy()),
+    Promise.resolve(checkPrivy(viewerIsAdmin)),
     checkMfa(input.ownerId),
     checkWallets(input.agentId, input.config.chains, settings),
     getKillSwitch(input.ownerId),
-    checkData(input.config, settings),
+    checkData(input.config, settings, viewerIsAdmin),
   ]);
 
   // The risk step is the only one that has to wait for a balance, because the whole
   // point of it now is to run the real guard against the real number.
   const [risk, gas] = await Promise.all([
     checkRisk(input.config, capUsd, wallets.usdc, settings),
-    checkGas(input.config, input.ownerId),
+    checkGas(input.config, viewerIsAdmin),
   ]);
 
   const steps: ReadinessStep[] = [
@@ -320,7 +330,10 @@ async function checkDatabase(): Promise<ReadinessStep> {
   }
 }
 
-function checkPrivy(): ReadinessStep {
+/** What an owner is told when the deployment itself cannot hold real wallets. */
+const NO_REAL_WALLETS = "Real wallets aren't available on this deployment yet, so there is nothing to trade from.";
+
+function checkPrivy(viewerIsAdmin: boolean): ReadinessStep {
   const configured = isPrivyConfigured();
   const hasAuthKey = Boolean(process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY?.trim());
   if (!configured) {
@@ -328,7 +341,9 @@ function checkPrivy(): ReadinessStep {
       id: "privy",
       title: "Wallet infrastructure",
       state: "fail",
-      detail: "NEXT_PUBLIC_PRIVY_APP_ID and PRIVY_APP_SECRET are not both set, so there are no real wallets to trade from.",
+      detail: viewerIsAdmin
+        ? "NEXT_PUBLIC_PRIVY_APP_ID and PRIVY_APP_SECRET are not both set, so there are no real wallets to trade from."
+        : NO_REAL_WALLETS,
       fix: null,
     };
   }
@@ -337,8 +352,9 @@ function checkPrivy(): ReadinessStep {
       id: "privy",
       title: "Wallet infrastructure",
       state: "fail",
-      detail:
-        "PRIVY_AUTHORIZATION_PRIVATE_KEY is missing. The server owns agent wallets with that key; without it it cannot sign a trade.",
+      detail: viewerIsAdmin
+        ? "PRIVY_AUTHORIZATION_PRIVATE_KEY is missing. The server owns agent wallets with that key; without it it cannot sign a trade."
+        : NO_REAL_WALLETS,
       fix: null,
     };
   }
@@ -408,7 +424,7 @@ async function checkWallets(
           id: "wallets",
           title: "Real agent wallets",
           state: "fail",
-          detail: `No wallet on ${missing.join(" and ")}. The agent cannot trade a chain it has no wallet for.`,
+          detail: `No wallet on ${chainNames(missing)}. The agent cannot trade a chain it has no wallet for.`,
           fix: { label: "Agent settings → Wallets", href: `${settings}#wallets` },
         }
       : paper.length > 0
@@ -416,14 +432,14 @@ async function checkWallets(
             id: "wallets",
             title: "Real agent wallets",
             state: "fail",
-            detail: `${paper.map((w) => w.chain).join(" and ")} still has a \`paper_\` placeholder wallet, created before wallets were available in this environment. It holds nothing and can sign nothing.`,
+            detail: `${chainNames(paper.map((w) => w.chain))} still ${paper.length === 1 ? "has a placeholder wallet" : "have placeholder wallets"} from paper mode, created before real wallets were available here. ${paper.length === 1 ? "It holds" : "They hold"} nothing and can sign nothing.`,
             fix: { label: "Agent settings → Wallets", href: `${settings}#wallets` },
           }
         : {
             id: "wallets",
             title: "Real agent wallets",
             state: "pass",
-            detail: `Tocker-managed wallets on ${relevant.map((w) => w.chain).join(" and ")}, signed only by the app's own authorization key.`,
+            detail: `Tocker-managed wallets on ${chainNames(relevant.map((w) => w.chain))}, signed only by the app's own authorization key.`,
             fix: null,
           };
 
@@ -450,7 +466,7 @@ async function checkWallets(
         .limit(1);
       if (intent) {
         const amount = Number(intent.amountUsd ?? intent.amount);
-        const label = Number.isFinite(amount) && amount > 0 ? `$${amount.toFixed(2)}` : "your";
+        const label = Number.isFinite(amount) && amount > 0 ? fmtUsd(amount) : "your";
         if (intent.status === "failed") {
           const feeKind = feeFailureKind(intent.error);
           fixLabel = `Retry the ${label} funding`;
@@ -614,8 +630,7 @@ async function ownerIsAdmin(ownerId: string): Promise<boolean> {
  * flight is reported as such and finished on the next tick. Base-only agents skip the
  * reads entirely: Base fees are sponsored, and there is no wallet of ours to check.
  */
-async function checkGas(config: AgentConfig, ownerId: string): Promise<ReadinessStep> {
-  const viewerIsAdmin = await ownerIsAdmin(ownerId);
+async function checkGas(config: AgentConfig, viewerIsAdmin: boolean): Promise<ReadinessStep> {
   if (!config.chains.includes("solana")) {
     return gasStep({
       chains: config.chains,
@@ -704,14 +719,14 @@ function checkBudget(
   const { risk } = config;
   const dailyMax = risk.maxTradeUsd * risk.maxDailyTrades;
   const appWithinCap = risk.maxTradeUsd <= capUsd;
-  const appLayer = `Per trade $${risk.maxTradeUsd} (your cap: $${capUsd}), at most ${risk.maxDailyTrades} a day — $${dailyMax.toFixed(2)} of turnover, plus $${risk.maxDataSpendUsdPerRun} of data per run, enforced before the executor.`;
+  const appLayer = `Per trade ${fmtUsd(risk.maxTradeUsd)} (your cap: ${fmtUsd(capUsd)}), at most ${risk.maxDailyTrades} a day — ${fmtUsd(dailyMax)} of turnover, plus ${fmtUsd(risk.maxDataSpendUsdPerRun)} of data per run, enforced before the executor.`;
 
   if (!appWithinCap) {
     return {
       id: "budget",
       title: "Spend caps applied",
       state: "fail",
-      detail: `Its per-trade cap is $${risk.maxTradeUsd}, above the $${capUsd} you entered.`,
+      detail: `Its per-trade cap is ${fmtUsd(risk.maxTradeUsd)}, above the ${fmtUsd(capUsd)} you entered.`,
       fix: { label: "Agent settings → Risk", href: `${settings}#risk` },
     };
   }
@@ -730,7 +745,7 @@ function checkBudget(
       id: "budget",
       title: "Spend caps applied",
       state: "warn",
-      detail: `${appLayer} ${ceiling} The wallet policy underneath allows up to $${walletBudget.perTxUsd} a transfer — looser than the app cap, which is the one that binds.`,
+      detail: `${appLayer} ${ceiling} The wallet policy underneath allows up to ${fmtUsd(walletBudget.perTxUsd)} a transfer — looser than the app cap, which is the one that binds.`,
       fix: { label: "Agent settings → Wallet budget", href: `${settings}#budget` },
     };
   }
@@ -738,7 +753,7 @@ function checkBudget(
     id: "budget",
     title: "Spend caps applied",
     state: "pass",
-    detail: `${appLayer} Underneath it, a wallet-level budget makes the wallet itself refuse any USDC transfer above $${walletBudget.perTxUsd} — enforced when it signs, whatever this app asks for.`,
+    detail: `${appLayer} Underneath it, a wallet-level budget makes the wallet itself refuse any USDC transfer above ${fmtUsd(walletBudget.perTxUsd)} — enforced when it signs, whatever this app asks for.`,
     fix: null,
   };
 }
@@ -767,8 +782,8 @@ async function checkRisk(
   const verdict = evaluateFirstTradeRisk(config, capUsd);
   const mode =
     config.execution.mode === "auto"
-      ? "Execution mode is **auto**: the first tick can sign and fill on its own."
-      : `Execution mode is **approve**: the first tick will write a proposal with a ${config.execution.proposalTtlMinutes}-minute window and wait for you, not fill.`;
+      ? "Execution mode is auto: the first tick can sign and fill on its own."
+      : `Execution mode is approve: the first tick will write a proposal with a ${config.execution.proposalTtlMinutes}-minute window and wait for you, not fill.`;
 
   if (!verdict.ok) {
     return {
@@ -780,7 +795,8 @@ async function checkRisk(
     };
   }
 
-  const shape = `One chain (${config.chains.join("")}), $${config.risk.maxTradeUsd} a trade, ${config.risk.maxDailyTrades} a day, at most ${config.risk.maxPositionPct}% of equity in one token, with an exit rule in place.`;
+  const chains = config.chains.length === 1 ? `One chain (${chainNames(config.chains)})` : chainNames(config.chains);
+  const shape = `${chains}, ${fmtUsd(config.risk.maxTradeUsd)} a trade, ${config.risk.maxDailyTrades} a day, at most ${config.risk.maxPositionPct}% of equity in one token, with an exit rule in place.`;
 
   if (usdc === null) {
     return {
@@ -808,7 +824,7 @@ async function checkRisk(
       id: "risk",
       title: "Risk config sane for a first trade",
       state: "warn",
-      detail: `${shape} Simulated against the $${usdc.toFixed(2)} it holds, a $${config.risk.maxTradeUsd.toFixed(2)} buy clears the risk guard. ${mode} Worth knowing: ${verdict.cautions.join("; ")}.`,
+      detail: `${shape} Simulated against the ${fmtUsd(usdc)} it holds, a ${fmtUsd(config.risk.maxTradeUsd)} buy clears the risk guard. ${mode} Worth knowing: ${verdict.cautions.join("; ")}.`,
       fix: { label: "Agent settings → Risk", href: `${settings}#risk` },
     };
   }
@@ -817,7 +833,7 @@ async function checkRisk(
     id: "risk",
     title: "Risk config sane for a first trade",
     state: "pass",
-    detail: `${shape} Simulated against the $${usdc.toFixed(2)} it holds, a $${config.risk.maxTradeUsd.toFixed(2)} buy clears the risk guard. ${mode}`,
+    detail: `${shape} Simulated against the ${fmtUsd(usdc)} it holds, a ${fmtUsd(config.risk.maxTradeUsd)} buy clears the risk guard. ${mode}`,
     fix: null,
   };
 }
@@ -829,20 +845,26 @@ async function checkRisk(
  * places, so the step reports whichever is wrong and sends the operator to the right
  * screen for it.
  */
-async function checkData(config: AgentConfig, settings: string): Promise<ReadinessStep> {
-  const step = checkDataSources(config, settings);
+async function checkData(config: AgentConfig, settings: string, viewerIsAdmin: boolean): Promise<ReadinessStep> {
+  const step = checkDataSources(config, settings, viewerIsAdmin);
   // Mock mode already fails the step for a better reason, and there is no wallet
   // question when nothing is being paid.
   if (isMockMode() || step.state === "fail") return step;
 
   const platform = await checkPlatformDataWallets(config);
   if (platform) {
+    // Tocker's data wallets are Tocker's to fund. An owner is told what it means for
+    // them; the addresses, the admin page and the instructions are for an admin.
     return {
       id: "data",
       title: "Data sources live",
       state: platform.state,
-      detail: platform.detail,
-      fix: PLATFORM_CARD,
+      detail: viewerIsAdmin
+        ? platform.detail
+        : platform.state === "fail"
+          ? "Tocker's wallet that pays for this agent's data isn't ready yet, so its paid sources would fail. That is on us, not you."
+          : "Tocker couldn't confirm the wallet that pays for this agent's data just now. Paid sources may fail on the first run.",
+      fix: viewerIsAdmin ? PLATFORM_CARD : null,
     };
   }
   return { ...step, detail: `${step.detail} ${dataWalletSummary(config)}`.trimEnd() };
@@ -866,8 +888,8 @@ function dataWalletSummary(config: AgentConfig): string {
   const chains = dataChainsFor(config.dataSources, config.chains);
   if (chains.length === 0) return "";
   return chains.length === 1
-    ? `They all price on ${chains[0]}, and the platform's ${chains[0]} wallet is funded to pay for them.`
-    : `They price on ${chains.join(" and ")}, and the platform's wallets on both are funded to pay for them.`;
+    ? `They all price on ${chainNames(chains)}, and Tocker's ${chainNames(chains)} wallet is funded to pay for them.`
+    : `They price on ${chainNames(chains)}, and Tocker's wallets on both are funded to pay for them.`;
 }
 
 /**
@@ -915,9 +937,9 @@ async function checkPlatformDataWallets(
       }
       const reading = await readPlatformBalance(wallet);
       if (reading.usdc === null) {
-        unreadable.push(`${chain} (${wallet.address})${reading.error ? ` — ${reading.error}` : ""}`);
+        unreadable.push(`${chainLabelFor(chain)} (${wallet.address})${reading.error ? ` — ${reading.error}` : ""}`);
       } else if (!(reading.usdc > 0)) {
-        empty.push(`${chain} (${wallet.address})`);
+        empty.push(`${chainLabelFor(chain)} (${wallet.address})`);
       }
     }
 
@@ -925,8 +947,8 @@ async function checkPlatformDataWallets(
       return {
         state: "fail",
         detail:
-          `This agent's sources price on ${chains.join(" and ")}, but there is no platform wallet on ` +
-          `${missing.join(" or ")} yet. Create both from Settings → Admin and send USDC to the addresses it ` +
+          `This agent's sources price on ${chainNames(chains)}, but there is no platform wallet on ` +
+          `${missing.map(chainLabelFor).join(" or ")} yet. Create both from Settings → Admin and send USDC to the addresses it ` +
           `shows — a wallet that does not exist cannot be funded, and a paid call on that chain can only 402.`,
       };
     }
@@ -955,7 +977,7 @@ async function checkPlatformDataWallets(
   }
 }
 
-function checkDataSources(config: AgentConfig, settings: string): ReadinessStep {
+function checkDataSources(config: AgentConfig, settings: string, viewerIsAdmin: boolean): ReadinessStep {
   // `isMockMode()` is the authority on what the runtime actually does: mock only
   // when X402_MOCK is exactly "1". Reading it rather than re-deriving the rule is
   // the point — a checklist that disagrees with the code it is checking is worse
@@ -967,7 +989,9 @@ function checkDataSources(config: AgentConfig, settings: string): ReadinessStep 
       id: "data",
       title: "Data sources live",
       state: "fail",
-      detail: "X402_MOCK=1, so every paid source returns a fixture. The agent would trade real money on canned data.",
+      detail: viewerIsAdmin
+        ? "X402_MOCK=1, so every paid source returns a fixture. The agent would trade real money on canned data."
+        : "Paid data runs on sample responses on this deployment, so the agent would trade real money on canned data.",
       fix: null,
     };
   }
@@ -993,7 +1017,7 @@ function checkDataSources(config: AgentConfig, settings: string): ReadinessStep 
     id: "data",
     title: "Data sources live",
     state: "pass",
-    detail: `Real x402 payments are on, and ${config.dataSources.length} registered source${config.dataSources.length === 1 ? "" : "s"} will be paid for, capped at $${config.risk.maxDataSpendUsdPerRun} a run.`,
+    detail: `Real x402 payments are on, and ${config.dataSources.length} registered source${config.dataSources.length === 1 ? "" : "s"} will be paid for, capped at ${fmtUsd(config.risk.maxDataSpendUsdPerRun)} a run.`,
     fix: null,
   };
 }

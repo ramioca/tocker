@@ -27,6 +27,8 @@ export function SimpleSelect({
   placeholder = "Select…",
   className,
   disabled,
+  invalid,
+  describedBy,
 }: {
   id?: string;
   value: string | null;
@@ -35,6 +37,9 @@ export function SimpleSelect({
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  /** Marks the trigger invalid (the trigger styles `aria-invalid`) and ties it to its error. */
+  invalid?: boolean;
+  describedBy?: string;
 }) {
   return (
     <Select
@@ -45,7 +50,12 @@ export function SimpleSelect({
       }}
       disabled={disabled}
     >
-      <SelectTrigger id={id} className={cn("w-full", className)}>
+      <SelectTrigger
+        id={id}
+        aria-invalid={invalid || undefined}
+        aria-describedby={describedBy}
+        className={cn("w-full", className)}
+      >
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>

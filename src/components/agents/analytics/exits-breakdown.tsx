@@ -48,10 +48,28 @@ export function ExitsBreakdown({ exits, totalClosed }: { exits: AgentAnalytics["
         ) : null}
       </div>
 
+      {/*
+        `exits` counts only rule-tagged sells. An agent that closes its own positions has
+        exits, just no automatic ones — "No exits yet" beside a chain split of 23 would
+        read as a contradiction.
+      */}
       {exits.length === 0 ? (
-        <p className="mt-4 rounded-lg border border-dashed border-border py-8 text-center text-sm text-muted-foreground">
-          No exits yet. Stops, targets and the trailing rules tag their fills with a reason — nothing
-          has fired in this window.
+        <p className="mt-4 rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+          {totalClosed > 0 ? (
+            <>
+              {totalClosed === 1 ? (
+                "The one exit in this window was not automatic — it"
+              ) : (
+                <>
+                  None of the <span className="tnum">{totalClosed}</span> exits in this window were
+                  automatic — each
+                </>
+              )}{" "}
+              was a decision, not a stop, target or trailing rule firing.
+            </>
+          ) : (
+            "No exits yet. Stops, targets and the trailing rules tag their fills with a reason — nothing has fired in this window."
+          )}
         </p>
       ) : (
         <ul className="mt-4 space-y-2.5">

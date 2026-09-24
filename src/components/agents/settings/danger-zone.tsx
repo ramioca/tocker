@@ -60,11 +60,18 @@ export function DangerZone({ agent, balances = [] }: { agent: AgentDetail; balan
   const hasPositions = holdings.some((h) => h.kind === "token");
   const hasWithdrawable = holdings.some((h) => h.kind !== "token");
 
+  // The hold says "Deleting…" until the server answers; a refusal remounts it, holdable again.
+  const [attempt, setAttempt] = useState(0);
+
   const remove = async () => {
     if (!confirmed || stranded) return;
-    const result = await deleteAgentAction(agent.id);
+    const result = await deleteAgentAction(agent.id).catch(() => ({
+      ok: false as const,
+      error: "Could not reach Tocker. Nothing was deleted.",
+    }));
     if (!result.ok) {
       toast.error("Not deleted", { description: result.error });
+      setAttempt((n) => n + 1);
       return;
     }
     toast.success(`${agent.name} deleted`);
@@ -122,12 +129,14 @@ export function DangerZone({ agent, balances = [] }: { agent: AgentDetail; balan
         />
         <div className="pt-1">
           <HoldToConfirmButton
+            key={attempt}
             size="sm"
             duration={2_000}
             label={
               stranded ? "Empty the wallet first" : confirmed ? `Hold to delete ${agent.name}` : "Type the name first"
             }
-            confirmedLabel="Deleted"
+            confirmedLabel="Deleting…"
+            resetDelay={0}
             icon={<Trash2 className="size-3.5" />}
             disabled={!confirmed || Boolean(stranded)}
             onConfirm={() => void remove()}

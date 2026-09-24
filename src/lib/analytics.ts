@@ -18,7 +18,17 @@
  * FIFO rather than the weighted-average basis used by {@link module:lib/pnl}:
  * average cost cannot tell you *which* buy a sell closed, and calibration needs
  * exactly that — the score at the entry being closed, not the position's mean.
- * Total realized PnL is identical either way; only the attribution differs.
+ *
+ * ## …and why the headline numbers are not FIFO
+ *
+ * The two bases only agree once a position is fully closed. While any of it is
+ * still open they split the same total differently between realized and
+ * unrealized, and a sell can be a FIFO loss and an average-cost win. The rest of
+ * the product — the positions ledger, the agent's stat cards, `/money`, `/home` —
+ * is average cost, and the unrealized number handed in here is too. So realized
+ * PnL, win rate, best/worst and the chain/origin/exit splits are per *sell* on the
+ * average-cost ledger ({@link closedSells}); FIFO slices are used only where the
+ * entry itself matters: calibration and hold time.
  *
  * Everything is windowed by the **sell**: a position opened 40 days ago and sold
  * yesterday is a closed trade in the 7-day window. Lots are always replayed from
@@ -32,7 +42,7 @@ import type {
   ScoreBandStat,
   TradeOrigin,
 } from "@/server/types";
-import { WINDOW_DAYS } from "@/lib/pnl";
+import { applyFill, WINDOW_DAYS, type PositionState } from "@/lib/pnl";
 
 /** The shape analytics needs from a `trades` row. Deliberately not `TradeRow`. */
 export interface AnalyticsFill {
@@ -70,6 +80,17 @@ export interface ClosedTrade {
   origin: TradeOrigin;
   exitReason: ExitReason | null;
   openedAt: string;
+  closedAt: string;
+}
+
+/** One exit on the average-cost ledger — the same number `positions.realized_pnl_usd` books. */
+export interface ClosedSell {
+  sellId: string;
+  tokenId: string;
+  chain: Chain;
+  realizedPnlUsd: number;
+  origin: TradeOrigin;
+  exitReason: ExitReason | null;
   closedAt: string;
 }
 
@@ -176,6 +197,42 @@ export function closedTrades(fills: readonly AnalyticsFill[]): ClosedTrade[] {
   return closed;
 }
 
+/**
+ * Replay every fill on the weighted-average basis (`applyFill`, the ledger the
+ * positions table and the stat cards read) and return one row per sell that
+ * closed something. A sell with nothing open behind it closes nothing and is
+ * left out, as in {@link closedTrades}.
+ */
+export function closedSells(fills: readonly AnalyticsFill[]): ClosedSell[] {
+  const ordered = fills
+    .filter((f) => f.status === "filled")
+    .slice()
+    .sort((a, b) => ms(a.createdAt) - ms(b.createdAt));
+
+  const book = new Map<string, PositionState>();
+  const out: ClosedSell[] = [];
+  for (const fill of ordered) {
+    const res = applyFill(book.get(fill.tokenId), {
+      side: fill.side,
+      amountToken: safe(fill.amountToken),
+      priceUsd: safe(fill.priceUsd),
+      feeUsd: safe(fill.feeUsd),
+    });
+    book.set(fill.tokenId, res.position);
+    if (fill.side !== "sell" || res.filledAmountToken <= 0) continue;
+    out.push({
+      sellId: fill.id,
+      tokenId: fill.tokenId,
+      chain: fill.chain,
+      realizedPnlUsd: res.realizedDeltaUsd,
+      origin: fill.origin,
+      exitReason: fill.exitReason,
+      closedAt: new Date(ms(fill.createdAt)).toISOString(),
+    });
+  }
+  return out;
+}
+
 /** Quantity-weighted mean hold time across closed round trips. */
 export function avgHoldHours(closed: readonly ClosedTrade[]): number | null {
   let weight = 0;
@@ -190,10 +247,13 @@ export function avgHoldHours(closed: readonly ClosedTrade[]): number | null {
 }
 
 /**
- * Share of *sells* that booked a profit, so this agrees with the win rate on the
- * agent overview: one exit is one outcome, however many lots it closed.
+ * Share of *sells* that booked a profit: one exit is one outcome, however many lots
+ * it closed. Takes FIFO slices or {@link closedSells} rows; `computeAnalytics` passes
+ * the latter so it agrees with the win rate on the agent overview.
  */
-export function winRateOf(closed: readonly ClosedTrade[]): { rate: number | null; wins: number; losses: number; closed: number } {
+export function winRateOf(
+  closed: ReadonlyArray<Pick<ClosedTrade, "sellId" | "realizedPnlUsd">>,
+): { rate: number | null; wins: number; losses: number; closed: number } {
   const bySell = new Map<string, number>();
   for (const c of closed) bySell.set(c.sellId, (bySell.get(c.sellId) ?? 0) + c.realizedPnlUsd);
   let wins = 0;
@@ -237,19 +297,29 @@ export function calibration(closed: readonly ClosedTrade[]): ScoreBandStat[] {
  * The sentence under the calibration chart. Reads the two bands that matter —
  * the best-populated high band and the worst-performing one — because "your 80+
  * picks averaged +12.4% over 9 trades" is the whole point of the chart.
+ *
+ * `owner: false` is for a visitor reading someone else's agent: the subject becomes
+ * "This agent's", since the picks are not theirs.
  */
-export function calibrationSentence(bands: readonly ScoreBandStat[]): string | null {
+export function calibrationSentence(
+  bands: readonly ScoreBandStat[],
+  { owner = true }: { owner?: boolean } = {},
+): string | null {
   const populated = bands.filter((b) => b.trades > 0 && b.avgReturnPct !== null);
   if (populated.length === 0) return null;
 
+  // "lost 12.2%", never "lost −12.2%": the verb already carries the sign.
   const phrase = (b: ScoreBandStat, noun = "") =>
-    `${b.band}${noun} ${b.avgReturnPct! >= 0 ? "averaged" : "lost"} ${signedPct(b.avgReturnPct!)} over ${b.trades} trade${b.trades === 1 ? "" : "s"}`;
+    `${b.band}${noun} ${
+      b.avgReturnPct! >= 0 ? `averaged ${signedPct(b.avgReturnPct!)}` : `lost ${Math.abs(b.avgReturnPct!).toFixed(1)}%`
+    } over ${b.trades} trade${b.trades === 1 ? "" : "s"}`;
 
   const best = populated.reduce((a, b) => (b.avgReturnPct! > a.avgReturnPct! ? b : a));
   const worst = populated.reduce((a, b) => (b.avgReturnPct! < a.avgReturnPct! ? b : a));
 
-  if (best.band === worst.band) return `Your ${phrase(best, " picks")}.`;
-  return `Your ${phrase(best, " picks")}; ${phrase(worst)}.`;
+  const subject = owner ? "Your" : "This agent's";
+  if (best.band === worst.band) return `${subject} ${phrase(best, " picks")}.`;
+  return `${subject} ${phrase(best, " picks")}; ${phrase(worst)}.`;
 }
 
 function signedPct(value: number): string {
@@ -280,7 +350,7 @@ export function maxDrawdownPct(points: ReadonlyArray<{ at: Date | string | numbe
   return sawPositivePeak ? worst : null;
 }
 
-function sumBy<K>(rows: readonly ClosedTrade[], key: (row: ClosedTrade) => K): Map<K, { trades: number; pnlUsd: number }> {
+function sumBy<K>(rows: readonly ClosedSell[], key: (row: ClosedSell) => K): Map<K, { trades: number; pnlUsd: number }> {
   const out = new Map<K, { trades: number; pnlUsd: number }>();
   for (const row of rows) {
     const k = key(row);
@@ -320,15 +390,18 @@ export function computeAnalytics(input: AnalyticsInput): Omit<AgentAnalytics, "b
   const days = WINDOW_DAYS[input.window];
   const cutoff = days === null ? null : now - days * 86_400_000;
 
-  const all = closedTrades(input.fills);
-  const closed = cutoff === null ? all : all.filter((c) => ms(c.closedAt) >= cutoff);
+  const inWindow = (closedAt: string) => cutoff === null || ms(closedAt) >= cutoff;
+  // FIFO slices: calibration and hold time only (see the module comment).
+  const closed = closedTrades(input.fills).filter((c) => inWindow(c.closedAt));
+  // Average-cost exits: every PnL total and the win rate.
+  const sells = closedSells(input.fills).filter((c) => inWindow(c.closedAt));
 
-  const realizedPnlUsd = closed.reduce((sum, c) => sum + c.realizedPnlUsd, 0);
-  const wr = winRateOf(closed);
+  const realizedPnlUsd = sells.reduce((sum, c) => sum + c.realizedPnlUsd, 0);
+  const wr = winRateOf(sells);
 
   // Best / worst are whole exits, not lot slices — an operator thinks in trades.
   const bySell = new Map<string, number>();
-  for (const c of closed) bySell.set(c.sellId, (bySell.get(c.sellId) ?? 0) + c.realizedPnlUsd);
+  for (const c of sells) bySell.set(c.sellId, c.realizedPnlUsd);
   let bestTradeId: string | null = null;
   let worstTradeId: string | null = null;
   let best = -Infinity;
@@ -346,15 +419,15 @@ export function computeAnalytics(input: AnalyticsInput): Omit<AgentAnalytics, "b
   // With a single closed trade, best and worst are the same row; show it once.
   if (bestTradeId !== null && bestTradeId === worstTradeId) worstTradeId = null;
 
-  const byChain = [...sumBy(closed, (c) => c.chain)]
+  const byChain = [...sumBy(sells, (c) => c.chain)]
     .map(([chain, v]) => ({ chain, ...v }))
     .sort((a, b) => b.trades - a.trades);
 
-  const byOrigin = [...sumBy(closed, (c) => c.origin)]
+  const byOrigin = [...sumBy(sells, (c) => c.origin)]
     .map(([origin, v]) => ({ origin, ...v }))
     .sort((a, b) => b.trades - a.trades);
 
-  const exits = [...sumBy(closed.filter((c) => c.exitReason !== null), (c) => c.exitReason as ExitReason)]
+  const exits = [...sumBy(sells.filter((c) => c.exitReason !== null), (c) => c.exitReason as ExitReason)]
     .map(([reason, v]) => ({ reason, count: v.trades, pnlUsd: v.pnlUsd }))
     .sort((a, b) => b.count - a.count);
 
@@ -373,6 +446,8 @@ export function computeAnalytics(input: AnalyticsInput): Omit<AgentAnalytics, "b
     dataSpendUsd: safe(input.dataSpendUsd),
     bestTradeId,
     worstTradeId,
+    bestTradePnlUsd: bestTradeId === null ? null : best,
+    worstTradePnlUsd: worstTradeId === null ? null : worst,
     closed,
   };
 }

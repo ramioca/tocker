@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
+import { accountPaused } from "@/components/common/data-access";
 import { getHomeActivity, getHomeOverview } from "@/server/queries/home";
 import { PortfolioHero } from "@/components/home/portfolio-hero";
 import { AgentsOverview } from "@/components/home/agents-overview";
@@ -27,9 +28,10 @@ export default async function HomePage() {
   const session = await getSession();
   if (!session) redirect(`/login?next=${encodeURIComponent("/home")}`);
 
-  const [overview, activity] = await Promise.all([
+  const [overview, activity, paused] = await Promise.all([
     getHomeOverview(session.userId),
     getHomeActivity(session.userId, 8),
+    accountPaused(session.userId),
   ]);
 
   const pendingCount = activity.filter((item) => item.kind === "proposal").length;
@@ -47,7 +49,7 @@ export default async function HomePage() {
 
       <div className="mt-6 space-y-10 sm:mt-8 sm:space-y-12">
         <PortfolioHero overview={overview} />
-        <AgentsOverview agents={overview.agents} counts={overview.counts} />
+        <AgentsOverview agents={overview.agents} counts={overview.counts} accountPaused={paused} />
         <ActivityStrip items={activity} pendingCount={pendingCount} />
       </div>
     </div>

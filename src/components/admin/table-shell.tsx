@@ -63,14 +63,25 @@ export function DataTable({
   );
 }
 
+/**
+ * `sticky` pins the column to the left edge of the scroll container. Each table pins its
+ * first column, so on a phone the row's identity stays in view while the money columns
+ * scroll under it — without it, a 300px window onto a 900px table showed three columns
+ * of names and no hint that anything else existed. The hairline on its right edge is the
+ * cue that the rest of the row slides beneath; from `lg` every table fits, so it goes.
+ */
+const STICKY_COLUMN = "sticky left-0 max-lg:shadow-[inset_-1px_0_0_var(--glass-hairline)]";
+
 export function Th({
   children,
   className,
   numeric,
+  sticky,
 }: {
   children: ReactNode;
   className?: string;
   numeric?: boolean;
+  sticky?: boolean;
 }) {
   return (
     <th
@@ -79,6 +90,8 @@ export function Th({
         "sticky top-0 z-1 bg-[var(--card)] px-3 py-2 text-[10px] font-semibold tracking-wide whitespace-nowrap text-muted-foreground uppercase",
         "after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-[var(--glass-hairline)] after:content-['']",
         numeric && "text-right",
+        // Above both the other headers and the pinned cells it scrolls over.
+        sticky && cn(STICKY_COLUMN, "z-2"),
         className,
       )}
     >
@@ -92,11 +105,13 @@ export function Td({
   className,
   numeric,
   muted,
+  sticky,
 }: {
   children: ReactNode;
   className?: string;
   numeric?: boolean;
   muted?: boolean;
+  sticky?: boolean;
 }) {
   return (
     <td
@@ -104,6 +119,10 @@ export function Td({
         "px-3 py-2 align-middle whitespace-nowrap",
         numeric && "font-mono text-right",
         muted && "text-muted-foreground",
+        // Opaque so the scrolled cells do not show through; the row's hover tint is
+        // mixed in by hand, since a translucent one would let them show through again.
+        sticky &&
+          cn(STICKY_COLUMN, "z-1 bg-[var(--card)] [tr:hover_&]:bg-[color-mix(in_oklch,var(--card),var(--muted)_25%)]"),
         className,
       )}
     >

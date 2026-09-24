@@ -5,6 +5,8 @@ import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { PlatformCard } from "@/components/settings/platform-card";
 import { CreatePlatformWallets } from "@/components/settings/create-platform-wallets";
 import { listPlatformWallets } from "@/lib/platform/wallets";
+import { getMfaStatus } from "@/lib/security/mfa";
+import { encryptionConfigured } from "@/lib/security/llm-keys";
 import { HeadlineTiles } from "@/components/admin/headline-tiles";
 import { DailyBars } from "@/components/admin/daily-bars";
 import { AdminUsersTable } from "@/components/admin/users-table";
@@ -58,7 +60,7 @@ export default async function AdminSettingsPage() {
     balanceError = err instanceof Error ? err.message : "Could not read the agent wallets.";
   }
 
-  const [headline, series, userRows, agentRows, tradeRows, auditRows, platformHasWallets] = await Promise.all([
+  const [headline, series, userRows, agentRows, tradeRows, auditRows, platformHasWallets, mfa] = await Promise.all([
     getAdminHeadline(),
     getAdminSeries(),
     listAdminUsers(),
@@ -68,7 +70,9 @@ export default async function AdminSettingsPage() {
     listPlatformWallets()
       .then((rows) => rows.length > 0)
       .catch(() => false),
+    getMfaStatus(session.userId),
   ]);
+  const encryptionOk = encryptionConfigured();
 
   const sum = (points: Array<{ value: number }>) => points.reduce((a, p) => a + p.value, 0);
 
@@ -101,7 +105,7 @@ export default async function AdminSettingsPage() {
         <SettingsSection
           id="trend"
           title="Last 30 days"
-          description="One bar per UTC day. Hover a bar for its number; an empty day is an empty day, not a gap in a line."
+          description="One bar per UTC day. An empty day is an empty day, not a gap in a line."
         >
           <div className="grid min-w-0 gap-6 sm:grid-cols-2 lg:grid-cols-3">
             <DailyBars
@@ -178,6 +182,39 @@ export default async function AdminSettingsPage() {
         >
           <PlatformCard />
           <CreatePlatformWallets hasWallets={platformHasWallets} />
+        </SettingsSection>
+
+        {/*
+          Deployment detail that only an operator can act on. Tenants see a one-line
+          version of each on their own Security tab.
+        */}
+        <SettingsSection
+          id="operator"
+          title="Deployment"
+          description="How this deployment stores secrets and what it offers for sign-in. Users see a plain one-line version of each."
+        >
+          <dl className="space-y-4 text-sm">
+            <div>
+              <dt className="font-medium">LLM key storage</dt>
+              <dd className="mt-1 leading-6 text-muted-foreground">
+                AES-256-GCM at rest, as <code className="font-mono text-foreground">base64(iv|tag|ciphertext)</code>,
+                keyed by <code className="font-mono text-foreground">ENCRYPTION_KEY</code>
+                {encryptionOk ? (
+                  " (configured)"
+                ) : (
+                  <span className="text-destructive"> — which is NOT configured on this deployment</span>
+                )}
+                . The plaintext is decrypted in exactly one place, inside the agent run loop, and never reaches a
+                server component, an action result, a run transcript or a browser.
+              </dd>
+            </div>
+            {mfa.operatorNote ? (
+              <div>
+                <dt className="font-medium">Second factor</dt>
+                <dd className="mt-1 leading-6 text-muted-foreground">{mfa.operatorNote}</dd>
+              </div>
+            ) : null}
+          </dl>
         </SettingsSection>
       </div>
     </div>

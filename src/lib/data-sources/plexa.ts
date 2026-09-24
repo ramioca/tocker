@@ -68,6 +68,7 @@ function money(n: number | null): string {
 export const plexaPretrade = defineSource({
   id: "plexa-pretrade",
   name: "Plexa pre-trade check",
+  summary: "Simulates selling a Base token at your size, so the agent never buys something it can't exit.",
   description:
     "Live sell simulation for a Base (or Polygon/Arbitrum) token at YOUR size: can the position actually be exited, and for how much. Returns avoid only when a trap is proven on-chain at this block — no exit venue, exit liquidity drained, or trading disabled — plus the exit pot in dollars, ownership, concentration and transfer restrictions. A proven 'avoid' raises the cannot_sell hard gate and makes the token unbuyable.",
   category: "onchain",

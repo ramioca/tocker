@@ -1,3 +1,4 @@
+import { useId } from "react";
 import Link from "next/link";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { formatPct, formatSignedUsd, formatUsd } from "@/components/common/format";
@@ -16,13 +17,36 @@ import type { MoneyAgentRow, MoneyTotals } from "@/server/queries/money";
  * surface, and every number is `tabular-nums` so a column of them does not jitter.
  */
 
-function Th({ children, numeric }: { children: React.ReactNode; numeric?: boolean }) {
+/**
+ * The agent column stays put while the numbers scroll under it: on a phone the table
+ * is twice the card's width, and a row of figures with its name scrolled away is a
+ * row of figures about nobody. It has to be opaque or the cells sliding beneath show
+ * through, so it paints `.glass-card`'s own mix pre-composited on the page ground —
+ * plain `bg-card` read as a lighter stripe. The hairline is the column's edge.
+ */
+const STICKY_BG =
+  "[--sticky-bg:color-mix(in_oklch,var(--glass-tint)_var(--glass-card-alpha),var(--background))]";
+const STICKY_CELL = "sticky left-0 z-10 bg-[var(--sticky-bg)] shadow-[1px_0_0_var(--glass-hairline)]";
+/** The row's hover tint, which an opaque cell would otherwise hide. Same mix as `bg-muted/30`. */
+const STICKY_HOVER =
+  "transition-colors duration-100 group-hover:bg-[color-mix(in_oklab,var(--muted)_30%,var(--sticky-bg))]";
+
+function Th({
+  children,
+  numeric,
+  className,
+}: {
+  children: React.ReactNode;
+  numeric?: boolean;
+  className?: string;
+}) {
   return (
     <th
       scope="col"
       className={cn(
         "px-3 py-2 text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap text-muted-foreground",
         numeric ? "text-right" : "text-left",
+        className,
       )}
     >
       {children}
@@ -73,16 +97,28 @@ export function AgentMoneyTable({
   caption?: string;
   label: string;
 }) {
+  const captionId = useId();
   return (
     <div className="glass-card overflow-hidden rounded-2xl">
+      {/* Outside the scroller: as a <caption> it took the table's 52rem width and was
+          cut off mid-sentence on a phone. */}
+      {caption ? (
+        <p
+          id={captionId}
+          className="border-b border-[var(--glass-hairline)] px-4 py-2.5 text-[11px] text-muted-foreground"
+        >
+          {caption}
+        </p>
+      ) : null}
       <div className="w-full overflow-x-auto overscroll-x-contain">
-        <table className="tnum w-full border-collapse text-left text-[13px]" style={{ minWidth: "52rem" }}>
-          {caption ? (
-            <caption className="px-4 py-2.5 text-left text-[11px] text-muted-foreground">{caption}</caption>
-          ) : null}
+        <table
+          className={cn("tnum w-full border-collapse text-left text-[13px]", STICKY_BG)}
+          style={{ minWidth: "52rem" }}
+          aria-describedby={caption ? captionId : undefined}
+        >
           <thead className="border-b border-[var(--glass-hairline)]">
             <tr>
-              <Th>{label}</Th>
+              <Th className={STICKY_CELL}>{label}</Th>
               <Th numeric>Equity</Th>
               <Th numeric>P&amp;L</Th>
               <Th numeric>Fees</Th>
@@ -95,8 +131,8 @@ export function AgentMoneyTable({
 
           <tbody className="divide-y divide-[var(--glass-hairline)]">
             {rows.map((row) => (
-              <tr key={row.id} className="transition-colors duration-100 hover:bg-muted/30">
-                <Td>
+              <tr key={row.id} className="group transition-colors duration-100 hover:bg-muted/30">
+                <Td className={cn(STICKY_CELL, STICKY_HOVER, "max-w-[11rem]")}>
                   <span className="flex min-w-0 items-center gap-2">
                     <Link
                       href={`/agents/${row.slug}`}
@@ -149,7 +185,7 @@ export function AgentMoneyTable({
           {totals ? (
             <tfoot className="border-t border-[var(--glass-hairline)]">
               <tr className="text-[13px] font-medium">
-                <Td>Total</Td>
+                <Td className={STICKY_CELL}>Total</Td>
                 <Td numeric>{formatUsd(totals.equityUsd)}</Td>
                 <Td numeric className={pnlTone(totals.pnlUsd)}>
                   {formatSignedUsd(totals.pnlUsd)}

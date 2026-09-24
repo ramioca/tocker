@@ -9,15 +9,19 @@ import { formatSignedPct, formatSignedUsd } from "./format";
 export function PnlText({
   usd,
   pct,
+  dp = 2,
   className,
   size = "sm",
 }: {
   usd?: number | null;
   pct?: number | null;
+  /** Decimals on the percentage. Most PnL percentages in the app are printed at 1. */
+  dp?: number;
   className?: string;
   size?: "xs" | "sm" | "md" | "lg";
 }) {
-  const basis = usd ?? pct ?? 0;
+  // Tone follows what is printed: a −0.004% move reads "0.00%", so it is neutral too.
+  const basis = usd ?? (pct === null || pct === undefined ? 0 : Number(pct.toFixed(dp)));
   const tone =
     basis > 0 ? "text-positive" : basis < 0 ? "text-negative" : "text-muted-foreground";
 
@@ -32,15 +36,20 @@ export function PnlText({
     <span className={cn("tnum font-medium", tone, sizes[size], className)}>
       {usd !== undefined && usd !== null ? formatSignedUsd(usd) : null}
       {usd !== undefined && usd !== null && pct !== undefined && pct !== null ? (
-        <span className="ml-1.5 opacity-70">{formatSignedPct(pct)}</span>
+        <span className="ml-1.5 opacity-70">{formatSignedPct(pct, dp)}</span>
       ) : pct !== undefined && pct !== null ? (
-        formatSignedPct(pct)
+        formatSignedPct(pct, dp)
       ) : null}
     </span>
   );
 }
 
-export function pnlTone(value: number | null | undefined): string {
-  if (value === null || value === undefined || value === 0) return "text-muted-foreground";
-  return value > 0 ? "text-positive" : "text-negative";
+/**
+ * Green, red or neutral for a signed number. Pass the `dp` the number is printed at so
+ * the colour matches the text: a −0.03% move printed "0.0%" is flat, not a red loss.
+ */
+export function pnlTone(value: number | null | undefined, dp?: number): string {
+  const shown = value === null || value === undefined || dp === undefined ? value : Number(value.toFixed(dp));
+  if (shown === null || shown === undefined || shown === 0 || Number.isNaN(shown)) return "text-muted-foreground";
+  return shown > 0 ? "text-positive" : "text-negative";
 }

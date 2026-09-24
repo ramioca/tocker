@@ -21,7 +21,8 @@ export function PnlText({
   className?: string;
   size?: "sm" | "md" | "lg";
 }) {
-  const primary = pct ?? usd ?? null;
+  // Colour what is printed: a pct that rounds to "0.0%" is flat, not a red loss.
+  const primary = pct != null ? Number(pct.toFixed(1)) : (usd ?? null);
   const sizes = { sm: "text-xs", md: "text-sm", lg: "text-lg" } as const;
   return (
     <span

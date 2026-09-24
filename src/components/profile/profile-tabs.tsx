@@ -25,6 +25,27 @@ export function ProfileTabs({
   const [active, setActive] = useState<TabId>("agents");
   const index = TABS.findIndex((t) => t.id === active);
 
+  // Roving focus per the ARIA tabs pattern: one tab stop, arrows move between tabs.
+  function onTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, i: number) {
+    const last = TABS.length - 1;
+    const next =
+      event.key === "ArrowRight"
+        ? (i + 1) % TABS.length
+        : event.key === "ArrowLeft"
+          ? (i + last) % TABS.length
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? last
+              : null;
+    if (next === null) return;
+    event.preventDefault();
+    setActive(TABS[next].id);
+    event.currentTarget.parentElement
+      ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+      [next]?.focus();
+  }
+
   return (
     <div>
       <div
@@ -37,7 +58,7 @@ export function ProfileTabs({
           className="absolute inset-y-0.5 left-0.5 rounded-[7px] bg-muted transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]"
           style={{ width: `calc((100% - 4px) / ${TABS.length})`, transform: `translateX(${index * 100}%)` }}
         />
-        {TABS.map((tab) => (
+        {TABS.map((tab, i) => (
           <button
             key={tab.id}
             type="button"
@@ -45,7 +66,9 @@ export function ProfileTabs({
             id={`profile-tab-${tab.id}`}
             aria-selected={active === tab.id}
             aria-controls="profile-panel"
+            tabIndex={active === tab.id ? 0 : -1}
             onClick={() => setActive(tab.id)}
+            onKeyDown={(event) => onTabKeyDown(event, i)}
             className={`relative z-10 h-7 rounded-[7px] px-3.5 text-xs font-medium transition-colors duration-150 focus-ring ${
               active === tab.id ? "text-foreground" : "text-muted-foreground hover:text-foreground"
             }`}
@@ -66,6 +89,7 @@ export function ProfileTabs({
         aria-labelledby={`profile-tab-${active}`}
         className="mt-6"
       >
+        {active === "agents" ? <h2 className="sr-only">Agents</h2> : null}
         {active === "agents" ? agentsSlot : activitySlot}
       </div>
     </div>
