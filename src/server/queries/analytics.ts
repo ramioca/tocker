@@ -6,6 +6,7 @@ import { toNum } from "@/lib/money";
 import { unrealized } from "@/lib/pnl";
 import type { AgentAnalytics, Chain, ExitReason, LeaderboardWindow, TradeRow } from "@/server/types";
 import { loadTokens, snapshotInCurrentMode, toTradeRow } from "./_shared";
+import { isAgentOwner } from "./visibility";
 
 type TradeRecord = typeof trades.$inferSelect;
 
@@ -97,6 +98,7 @@ async function build(
   rows: AnalyticsRows,
   fills: AnalyticsFill[],
   now: number,
+  isOwner: boolean,
 ): Promise<AgentAnalytics> {
   const span = WINDOW_MS[window];
   const cutoff = span === null ? null : now - span;
@@ -125,7 +127,7 @@ async function build(
   const byId = new Map(
     picked.flatMap((row) => {
       const token = tokenMap.get(row.tokenId);
-      return token ? ([[row.id, toTradeRow(row, token)]] as Array<[string, TradeRow]>) : [];
+      return token ? ([[row.id, toTradeRow(row, token, { isOwner })]] as Array<[string, TradeRow]>) : [];
     }),
   );
 
@@ -147,12 +149,30 @@ async function build(
 export async function getAgentAnalytics(
   agentId: string,
   window: LeaderboardWindow = "30d",
+  viewerId?: string | null,
 ): Promise<AgentAnalytics | null> {
   const db = await getDb();
-  const [agent] = await db.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId)).limit(1);
-  if (!agent) return null;
+  const viewer = await viewerOf(db, agentId, viewerId);
+  if (!viewer) return null;
   const rows = await loadRows(db, agentId);
-  return build(db, agentId, window, rows, toFills(rows.trades), Date.now());
+  return build(db, agentId, window, rows, toFills(rows.trades), Date.now(), viewer.isOwner);
+}
+
+/**
+ * Who is asking. A private agent's record is owner-only — every caller today runs
+ * behind the page's own `agentBySlug` gate, and this is the second lock. The owner flag
+ * also decides how much of the best/worst trade's score snapshot is shown.
+ */
+async function viewerOf(db: Db, agentId: string, viewerId?: string | null): Promise<{ isOwner: boolean } | null> {
+  const [agent] = await db
+    .select({ ownerId: agents.ownerId, isPublic: agents.isPublic })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .limit(1);
+  if (!agent) return null;
+  const isOwner = isAgentOwner(agent.ownerId, viewerId);
+  if (!agent.isPublic && !isOwner) return null;
+  return { isOwner };
 }
 
 /**
@@ -161,18 +181,19 @@ export async function getAgentAnalytics(
  */
 export async function getAgentAnalyticsWindows(
   agentId: string,
+  viewerId?: string | null,
 ): Promise<Record<LeaderboardWindow, AgentAnalytics> | null> {
   const db = await getDb();
-  const [agent] = await db.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId)).limit(1);
-  if (!agent) return null;
+  const viewer = await viewerOf(db, agentId, viewerId);
+  if (!viewer) return null;
 
   const rows = await loadRows(db, agentId);
   const fills = toFills(rows.trades);
   const now = Date.now();
   const [sevenDay, thirtyDay, allTime] = await Promise.all([
-    build(db, agentId, "7d", rows, fills, now),
-    build(db, agentId, "30d", rows, fills, now),
-    build(db, agentId, "all", rows, fills, now),
+    build(db, agentId, "7d", rows, fills, now, viewer.isOwner),
+    build(db, agentId, "30d", rows, fills, now, viewer.isOwner),
+    build(db, agentId, "all", rows, fills, now, viewer.isOwner),
   ]);
   return { "7d": sevenDay, "30d": thirtyDay, all: allTime };
 }

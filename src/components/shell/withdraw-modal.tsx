@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
+import { FullAddress } from "@/components/common/address";
 import { formatUsd, truncateAddress } from "@/components/common/format";
 import { useRefreshCash } from "@/components/wallets/use-cash";
 import { useTransfer } from "@/components/wallets/use-transfer";
@@ -258,6 +259,12 @@ export function WithdrawModal({
               value={destination}
               placeholder={chain === "base" ? "0x…" : "Solana address"}
               onChange={(event) => setDestination(event.target.value)}
+              // Addresses are pasted, never suggested from form history — that is where
+              // a poisoned look-alike would come from.
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
               className="font-mono text-xs"
             />
             {target && !destinationOk ? (
@@ -284,6 +291,12 @@ export function WithdrawModal({
               aria-live="polite"
               className="space-y-1.5 rounded-xl border border-border/60 bg-muted/20 px-3 py-2.5 text-xs"
             >
+              {/* Every character, before the hold: the hold label can only fit 6…6, and a
+                  vanity look-alike matches exactly those. */}
+              <div className="space-y-0.5 border-b border-border/60 pb-1.5">
+                <span className="text-muted-foreground">Sending to</span>
+                <FullAddress address={target} className="flex" />
+              </div>
               <FeeRow label="Network fee" value="Covered by Tocker" />
               {quoteLoading ? (
                 <FeeRow

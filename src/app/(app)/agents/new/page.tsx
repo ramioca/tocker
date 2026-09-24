@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 export default async function NewAgentPage() {
   const session = await viewerSession();
   if (!session) redirect(`/login?next=${encodeURIComponent("/agents/new")}`);
-  const [sources, keys] = await Promise.all([dataSources(), llmKeys(session?.userId ?? null)]);
+  const [sources, keys] = await Promise.all([dataSources(), llmKeys(session.userId)]);
 
-  return <AgentBuilder sources={sources} initialKeys={keys} />;
+  return <AgentBuilder userId={session.userId} sources={sources} initialKeys={keys} />;
 }

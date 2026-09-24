@@ -286,7 +286,8 @@ export async function getHomeActivity(userId: string, limit = 8): Promise<HomeAc
       avatarSeed: agent.avatarSeed,
       mode: agent.mode,
     },
-    trade: toTradeRow(trade, toTokenRef(token)),
+    // Home is the signed-in user's own agents only (`trades.ownerId = userId` above).
+    trade: toTradeRow(trade, toTokenRef(token), { isOwner: true }),
   }));
 
   items.sort((a, b) => {

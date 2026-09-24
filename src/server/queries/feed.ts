@@ -81,7 +81,10 @@ async function hydrate(db: Db, rows: PostJoin[], viewerId?: string | null): Prom
             pnlPct: agg?.pnlPct ?? null,
           }
         : null,
-      trade: r.trade && token ? toTradeRow(r.trade, token) : null,
+      trade:
+        r.trade && token
+          ? toTradeRow(r.trade, token, { isOwner: Boolean(viewerId) && r.agent?.ownerId === viewerId })
+          : null,
       likeCount: r.post.likeCount,
       commentCount: r.post.commentCount,
       likedByViewer: liked.has(r.post.id),
@@ -139,8 +142,22 @@ export async function getPost(postId: string, viewerId?: string | null): Promise
   return item ?? null;
 }
 
-export async function getComments(postId: string, cursor?: string | null): Promise<Page<CommentRow>> {
+export async function getComments(
+  postId: string,
+  cursor?: string | null,
+  viewerId?: string | null,
+): Promise<Page<CommentRow>> {
   const db = await getDb();
+  // Same rule as `getPost`: a post about a private agent (including one that went
+  // private after the fact) is owner-only, and so is the thread under it.
+  const [parent] = await db
+    .select({ isPublic: agents.isPublic, ownerId: agents.ownerId })
+    .from(posts)
+    .leftJoin(agents, eq(agents.id, posts.agentId))
+    .where(eq(posts.id, postId))
+    .limit(1);
+  if (!parent) return { items: [], nextCursor: null };
+  if (parent.isPublic === false && parent.ownerId !== viewerId) return { items: [], nextCursor: null };
   const limit = 30;
   const c = decodeCursor(cursor);
   const rows = await db

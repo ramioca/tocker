@@ -162,7 +162,11 @@ export function AddKeyInline({ onAdded }: { onAdded: (key: LlmKeyRow) => void })
         <p className="text-xs font-medium">New API key</p>
         <button
           type="button"
-          onClick={() => setOpen(false)}
+          onClick={() => {
+            // Cancel means gone: the secret must not sit in state and reappear on reopen.
+            setValue("");
+            setOpen(false);
+          }}
           aria-label="Cancel"
           className="ml-auto rounded p-0.5 text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
@@ -183,12 +187,17 @@ export function AddKeyInline({ onAdded }: { onAdded: (key: LlmKeyRow) => void })
         type="password"
         value={value}
         placeholder="sk-…"
-        autoComplete="off"
+        // "new-password" is the value Chrome actually honours on a password field;
+        // "off" still offers to save the key into the password manager.
+        autoComplete="new-password"
+        spellCheck={false}
+        maxLength={512}
         onChange={(event) => setValue(event.target.value)}
       />
       <Input
         value={label}
         placeholder="Label (optional)"
+        maxLength={40}
         onChange={(event) => setLabel(event.target.value)}
       />
       {provider === "anthropic" ? (

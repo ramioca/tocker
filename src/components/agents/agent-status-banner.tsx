@@ -99,7 +99,7 @@ function ActionLink({ action, className }: { action: AgentStatusAction; classNam
 
   if (external) {
     return (
-      <a href={action.href} target="_blank" rel="noreferrer" className={classes}>
+      <a href={action.href} target="_blank" rel="noopener noreferrer" className={classes}>
         {action.label}
         <ArrowUpRight aria-hidden className="size-3" />
       </a>

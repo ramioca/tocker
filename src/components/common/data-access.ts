@@ -151,8 +151,11 @@ export function feedPage(opts: {
   return withMock(() => getFeed(opts), () => mockFeed(opts));
 }
 
-export function commentsPage(postId: string, cursor?: string | null): Promise<Page<CommentRow>> {
-  return withMock(() => getComments(postId, cursor), () => mockComments(postId, cursor));
+export async function commentsPage(postId: string, cursor?: string | null): Promise<Page<CommentRow>> {
+  // The viewer comes from the session, never from the caller: this is reached from a
+  // server action, and a thread under a private agent's post is owner-only.
+  const viewerId = (await viewerSession())?.userId ?? null;
+  return withMock(() => getComments(postId, cursor, viewerId), () => mockComments(postId, cursor));
 }
 
 /** The agent's wallet-layer budget, straight from the db. Owner pages only. */

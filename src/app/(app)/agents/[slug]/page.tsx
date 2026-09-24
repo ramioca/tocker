@@ -56,7 +56,7 @@ export default async function AgentPage({ params }: Params) {
   const [equity, analytics, proposals, status] = await Promise.all([
     equitySeries(agent.id, "all"),
     // The record is public, so a provider hiccup here must cost the tab, not the page.
-    getAgentAnalyticsWindows(agent.id).catch(() => null),
+    getAgentAnalyticsWindows(agent.id, session?.userId ?? null).catch(() => null),
     // Owner-gated inside the query too — this is the second lock, not the only one.
     agent.isOwner ? listProposals(agent.id, session?.userId ?? null) : Promise.resolve([]),
     // Same shape of lock: `getAgentStatus` returns [] for anyone but the owner, because
@@ -102,6 +102,7 @@ export default async function AgentPage({ params }: Params) {
                   cashUsd={agent.cashUsd}
                   agentId={agent.id}
                   canTrade={agent.isOwner && agent.status !== "draft"}
+                  showExits={agent.isOwner}
                 />
               </section>
             </div>

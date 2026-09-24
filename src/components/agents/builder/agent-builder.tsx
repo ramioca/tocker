@@ -238,14 +238,16 @@ function RuleCard({
 }
 
 export function AgentBuilder({
+  userId,
   sources,
   initialKeys,
 }: {
+  userId: string;
   sources: DataSourceInfo[];
   initialKeys: LlmKeyRow[];
 }) {
   const router = useRouter();
-  const { draft, update, updateConfig, clear, restored } = useDraft();
+  const { draft, update, updateConfig, clear, restored } = useDraft(userId);
   const [keys, setKeys] = useState(initialKeys);
   const [attempted, setAttempted] = useState(false);
   /** An agent that exists whose funding did not go through: offered the signature again, here. */

@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
 import { truncateAddress } from "@/components/common/format";
+import { FullAddress } from "@/components/common/address";
 import { useUserWallets } from "@/components/wallets/use-cash";
 import { useSession } from "@/hooks/use-session";
 import { secureWithdrawAction } from "@/server/actions/security";
@@ -101,14 +102,25 @@ export function WithdrawForm({
    */
   const send = async () => {
     setPending(true);
-    const result = await secureWithdrawAction({
-      agentId: agent.id,
-      chain,
-      asset: selected,
-      amount: amountNum,
-      toAddress: toAddress.trim(),
-    });
-    setPending(false);
+    let result: Awaited<ReturnType<typeof secureWithdrawAction>>;
+    try {
+      result = await secureWithdrawAction({
+        agentId: agent.id,
+        chain,
+        asset: selected,
+        amount: amountNum,
+        toAddress: toAddress.trim(),
+      });
+    } catch {
+      // The request itself failed (network drop, deploy): the server may or may not
+      // have signed. Say so rather than leaving the button on "Sending…" forever.
+      toast.error("Withdrawal status unknown", {
+        description: "The connection dropped before Tocker answered. Check the wallet balance and the audit log before retrying.",
+      });
+      return;
+    } finally {
+      setPending(false);
+    }
 
     if (!result.ok) {
       // Never the server's raw text: a fee failure there can still read "send SOL to the
@@ -182,9 +194,11 @@ export function WithdrawForm({
                 <dd>{NETWORK_WORDING[chain].fees}</dd>
               </div>
             )}
-            <div className="flex items-center justify-between gap-3">
-              <dt className="text-muted-foreground">To</dt>
-              <dd className="font-mono text-xs">{truncateAddress(toAddress.trim(), 6, 6)}</dd>
+            <div className="flex items-start justify-between gap-3">
+              <dt className="shrink-0 text-muted-foreground">To</dt>
+              <dd className="min-w-0 text-right">
+                <FullAddress address={toAddress.trim()} className="justify-end" />
+              </dd>
             </div>
           </dl>
           <p className="text-xs text-destructive">
@@ -319,6 +333,12 @@ export function WithdrawForm({
               placeholder={chain === "solana" ? "7xKX…MpTqL" : "0x9A3f…8d90"}
               aria-invalid={!addressValid}
               onChange={(event) => setToAddress(event.target.value)}
+              // Browser form history is where a poisoned look-alike address would be
+              // suggested from; addresses are pasted, never autocompleted.
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
               className="font-mono text-xs"
             />
             {!addressValid ? (

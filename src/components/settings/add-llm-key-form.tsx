@@ -59,7 +59,9 @@ export function AddLlmKeyForm({
       onAdded?.({ ...optimistic, id: result.data.id, last4: result.data.last4 });
     } catch (e) {
       const message = e instanceof Error ? e.message : "Could not add the key";
-      if (!message.includes("not implemented")) {
+      // Only ever in development: in production a server error that happened to contain
+      // these words would otherwise render a key row that does not exist.
+      if (process.env.NODE_ENV === "production" || !message.includes("not implemented")) {
         setError(message);
         throw e;
       }
@@ -117,8 +119,9 @@ export function AddLlmKeyForm({
           label={`API key (${hint})`}
           type={revealed ? "text" : "password"}
           value={key}
-          autoComplete="off"
+          autoComplete="new-password"
           spellCheck={false}
+          maxLength={512}
           onChange={(event) => setKey(event.target.value)}
           className="pr-10 font-mono"
         />

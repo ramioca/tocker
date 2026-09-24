@@ -12,6 +12,7 @@ import {
   slippageText,
   type TradeReceiptData,
 } from "@/lib/trading/receipt-format";
+import { isTrustedExplorerUrl } from "@/lib/tokens/links";
 
 /**
  * The receipt, in two densities.
@@ -66,7 +67,7 @@ function SlippageValue({ receipt, className }: { receipt: TradeReceiptData; clas
 }
 
 function ExplorerLink({ receipt, className }: { receipt: TradeReceiptData; className?: string }) {
-  if (receipt.simulated || !receipt.explorerUrl) {
+  if (receipt.simulated || !isTrustedExplorerUrl(receipt.explorerUrl)) {
     return <span className={cn("tnum font-mono text-muted-foreground", className)}>{SIMULATED_FILL_TEXT}</span>;
   }
   return (

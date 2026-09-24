@@ -30,6 +30,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { MorphButton } from "@/components/spectrumui/morph-button";
 import { ChainBadge } from "@/components/common/chain-badge";
+import { Address } from "@/components/common/address";
 import { formatUsd } from "@/components/common/format";
 import { Field } from "@/components/agents/builder/field";
 import { ScoreBadge } from "@/components/tokens";
@@ -96,7 +97,15 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   const previewError = current?.error ?? null;
   const previewing = key !== null && current === null;
 
-  const submit = useCallback(async () => {
+  /**
+   * In flight. A live swap can take longer than the hold button's re-arm, and a second
+   * hold during it would be a second real-money order — so the button stays disabled
+   * until the server answers, and is remounted (`holdKey`) to re-arm afterwards.
+   */
+  const [submitting, setSubmitting] = useState(false);
+  const [holdKey, setHoldKey] = useState(0);
+
+  const place = useCallback(async () => {
     const placed = await placeManualTrade({
       agentId: agent.id,
       chain,
@@ -124,7 +133,17 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
     router.refresh();
   }, [agent.id, chain, side, address, amountUsd, note, router]);
 
-  const blocked = !ready || previewing || preview === null || !preview.allowed;
+  const submit = useCallback(async () => {
+    setSubmitting(true);
+    try {
+      await place();
+    } finally {
+      setSubmitting(false);
+      setHoldKey((k) => k + 1);
+    }
+  }, [place]);
+
+  const blocked = submitting || !ready || previewing || preview === null || !preview.allowed;
 
   return (
     <Sheet
@@ -292,11 +311,13 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
           ) : null}
           {isLive ? (
             <HoldToConfirmButton
+              key={holdKey}
               size="md"
               disabled={blocked}
+              resetDelay={0}
               duration={1_600}
               label={`Hold to ${side} ${formatUsd(Number.isFinite(amountUsd) ? amountUsd : 0)}`}
-              confirmedLabel="Sent"
+              confirmedLabel="Sending…"
               icon={<ArrowLeftRight size={14} strokeWidth={2} />}
               onConfirm={() => void submit().catch(() => undefined)}
               className="w-full justify-center border-primary/40 bg-primary/10 text-foreground hover:bg-primary/15 dark:border-primary/40 dark:bg-primary/10 dark:text-foreground dark:hover:bg-primary/15"
@@ -364,6 +385,8 @@ function PreviewPanel({
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium">{preview.token.symbol}</span>
         <ChainBadge chain={preview.token.chain} />
+        {/* A symbol can resolve to a copycat; the address is what actually gets bought. */}
+        <Address address={preview.token.address} lead={4} tail={4} label={`${preview.token.symbol} address`} />
         {preview.score ? (
           <ScoreBadge total={preview.score.total} verdict={preview.score.verdict} blockers={preview.score.blockers} />
         ) : (

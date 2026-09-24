@@ -77,12 +77,19 @@ export function PositionsTable({
   cashUsd,
   agentId,
   canTrade = false,
+  showExits = false,
 }: {
   positions: Position[];
   cashUsd: number | null;
   /** With `canTrade`, each row gets a Sell control that trades on this agent's book. */
   agentId?: string;
   canTrade?: boolean;
+  /**
+   * The Stop / TP column. Owner-only: the distances are the owner's risk rules seen
+   * from one side, and the query nulls them for everyone else anyway — a column of
+   * dashes would only read as "this agent has no stops", which is not what it means.
+   */
+  showExits?: boolean;
 }) {
   const sellable = canTrade && agentId !== undefined;
   if (positions.length === 0) {
@@ -114,9 +121,11 @@ export function PositionsTable({
             <TableHead className="text-right">Value</TableHead>
             <TableHead className="text-right">Unrealised</TableHead>
             {sellable ? <TableHead className="w-0" /> : null}
-            <TableHead className="text-right" title="Percentage points to the stop loss / to the take-profit">
-              Stop / TP
-            </TableHead>
+            {showExits ? (
+              <TableHead className="text-right" title="Percentage points to the stop loss / to the take-profit">
+                Stop / TP
+              </TableHead>
+            ) : null}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -155,9 +164,11 @@ export function PositionsTable({
                   <SellPositionButton agentId={agentId} position={position} />
                 </TableCell>
               ) : null}
-              <TableCell className="text-right">
-                <ExitDistance position={position} />
-              </TableCell>
+              {showExits ? (
+                <TableCell className="text-right">
+                  <ExitDistance position={position} />
+                </TableCell>
+              ) : null}
             </TableRow>
           ))}
           {cashUsd !== null ? (
@@ -170,7 +181,7 @@ export function PositionsTable({
               <TableCell className="tnum text-right font-medium">{formatUsd(cashUsd)}</TableCell>
               <TableCell />
               {sellable ? <TableCell /> : null}
-              <TableCell />
+              {showExits ? <TableCell /> : null}
             </TableRow>
           ) : null}
         </TableBody>

@@ -21,6 +21,7 @@ import { ScoreBadge } from "@/components/tokens/score-badge";
 import { fetchAgentTrades } from "./agent-actions";
 import { cn } from "@/lib/utils";
 import type { Page, TradeRow } from "@/server/types";
+import { txExplorerUrl } from "@/lib/tokens/links";
 
 function TableSkeleton() {
   return (
@@ -37,10 +38,7 @@ function TableSkeleton() {
 }
 
 function explorerUrl(trade: TradeRow): string | null {
-  if (!trade.txHash) return null;
-  return trade.chain === "solana"
-    ? `https://solscan.io/tx/${trade.txHash}`
-    : `https://basescan.org/tx/${trade.txHash}`;
+  return txExplorerUrl(trade.chain, trade.txHash);
 }
 
 export function TradesTable({

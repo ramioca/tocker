@@ -153,7 +153,8 @@ async function buildRow(
     symbol: token.symbol,
     amountUsd: requestedUsd,
   };
-  const base = toTradeRow(trade, toTokenRef(token));
+  // Proposals are listed only to the agent's owner.
+  const base = toTradeRow(trade, toTokenRef(token), { isOwner: true });
 
   // The guard re-check and the market read are independent, so they race rather than
   // queue: an operator with three proposals open waits for the slowest one, not the sum.

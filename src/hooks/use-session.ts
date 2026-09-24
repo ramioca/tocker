@@ -2,9 +2,10 @@
 import { useCallback, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { usePrivy } from "@privy-io/react-auth";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { PRIVY_APP_ID } from "@/components/providers/privy-provider";
 import { ME_WALLETS_QUERY_KEY } from "@/components/wallets/use-cash";
+import { clearAllDrafts } from "@/components/agents/builder/use-draft";
 import type { Session } from "@/server/types";
 
 export interface UseSession {
@@ -40,6 +41,19 @@ export interface UseSession {
 export const POST_LOGIN_HOME = "/home";
 
 export const SESSION_QUERY_KEY = ["session"] as const;
+
+/**
+ * Forget everything the previous account left in this tab. The query cache holds owner-only
+ * data — run transcripts, unredacted trade errors, balances, proposals — and a shared device
+ * must not replay it to whoever signs in (or just looks) next. The builder draft holds a
+ * strategy prompt. `clear()` rather than invalidating keys one by one: a key added later is
+ * covered without anyone remembering to list it here.
+ */
+function purgeSignedOutState(queryClient: QueryClient): void {
+  queryClient.clear();
+  queryClient.setQueryData(SESSION_QUERY_KEY, null);
+  clearAllDrafts();
+}
 
 async function fetchSession(): Promise<Session | null> {
   const res = await fetch("/api/me", { credentials: "include", cache: "no-store" });
@@ -123,17 +137,22 @@ function usePrivySession(): UseSession {
 
   useEffect(() => {
     if (privy.ready && !privy.authenticated && syncedFor.current) {
+      // Signed out elsewhere (another tab, an expired session): drop this account's
+      // cached data and re-render the server tree, which is still showing it.
       syncedFor.current = null;
-      queryClient.setQueryData(SESSION_QUERY_KEY, null);
-      queryClient.setQueryData(ME_WALLETS_QUERY_KEY, undefined);
+      purgeSignedOutState(queryClient);
+      router.refresh();
     }
-  }, [privy.ready, privy.authenticated, queryClient]);
+  }, [privy.ready, privy.authenticated, queryClient, router]);
 
   const logout = useCallback(async () => {
     await privy.logout();
-    queryClient.setQueryData(SESSION_QUERY_KEY, null);
-    await queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
-  }, [privy, queryClient]);
+    purgeSignedOutState(queryClient);
+    // Owner pages (settings, transcripts) are server-rendered with the old session and
+    // would otherwise stay on screen after sign-out. Leave for the public landing page.
+    router.replace("/");
+    router.refresh();
+  }, [privy, queryClient, router]);
 
   const prepareRedirect = useCallback(
     (target?: string) => {
@@ -168,7 +187,7 @@ function useFallbackSession(): UseSession {
   const query = useSessionQuery();
 
   const logout = useCallback(async () => {
-    queryClient.setQueryData(SESSION_QUERY_KEY, null);
+    purgeSignedOutState(queryClient);
   }, [queryClient]);
 
   const login = useCallback(() => {

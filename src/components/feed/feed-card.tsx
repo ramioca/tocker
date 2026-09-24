@@ -20,12 +20,10 @@ import { cn } from "@/lib/utils";
 // obvious, so a later value import cannot quietly pull `postgres` into the bundle.
 import type { TradeReceiptData } from "@/lib/trading/receipt-format";
 import type { FeedItem, TradeRow } from "@/server/types";
+import { txExplorerUrl } from "@/lib/tokens/links";
 
 function explorerUrl(trade: TradeRow): string | null {
-  if (!trade.txHash) return null;
-  return trade.chain === "solana"
-    ? `https://solscan.io/tx/${trade.txHash}`
-    : `https://basescan.org/tx/${trade.txHash}`;
+  return txExplorerUrl(trade.chain, trade.txHash);
 }
 
 function SideChip({ side }: { side: "buy" | "sell" }) {

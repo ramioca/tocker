@@ -16,6 +16,7 @@ import type { TradeScoreSnapshot } from "@/db/schema";
 import { toNum, toNumOrNull } from "@/lib/money";
 import { pnlOverWindow } from "@/lib/pnl";
 import type { AgentCard, Chain, ScoreComponents, TokenRef, TradeRow, TradeScore, UserCard } from "@/server/types";
+import { visibleError, visibleScore } from "./visibility";
 
 // ---------- ids & slugs ----------
 
@@ -146,7 +147,17 @@ export function toTradeScore(snapshot: TradeScoreSnapshot | null | undefined): T
   };
 }
 
-export function toTradeRow(row: typeof trades.$inferSelect, token: TokenRef): TradeRow {
+/**
+ * A trade as `viewer` may see it. Redacted unless the viewer is the agent's owner: the
+ * provider error (`visibleError`) and the parts of the score snapshot that describe the
+ * agent's own rules and paid sources (`visibleScore`). Defaulting to the non-owner view
+ * means a new caller that forgets the argument under-shares instead of leaking.
+ */
+export function toTradeRow(
+  row: typeof trades.$inferSelect,
+  token: TokenRef,
+  viewer: { isOwner: boolean } = { isOwner: false },
+): TradeRow {
   return {
     id: row.id,
     agentId: row.agentId,
@@ -168,8 +179,8 @@ export function toTradeRow(row: typeof trades.$inferSelect, token: TokenRef): Tr
     isPaper: row.isPaper,
     txHash: row.txHash,
     rationale: row.rationale,
-    score: toTradeScore(row.scoreSnapshot),
-    error: row.error,
+    score: visibleScore(toTradeScore(row.scoreSnapshot), viewer.isOwner),
+    error: visibleError(row.error, viewer.isOwner),
     createdAt: row.createdAt.toISOString(),
     filledAt: iso(row.filledAt),
   };

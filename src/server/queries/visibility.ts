@@ -10,7 +10,7 @@
  * once and can be unit-tested without a database.
  */
 import type { AgentConfig } from "@/db/schema";
-import type { AgentDetail, Chain, RunStep } from "@/server/types";
+import type { AgentDetail, Chain, RunStep, TradeScore } from "@/server/types";
 
 export type PublicProfile = AgentDetail["publicProfile"];
 
@@ -75,4 +75,40 @@ export const REDACTED_ERROR = "This run failed. The details are visible to the o
 export function visibleError(error: string | null | undefined, isOwner: boolean): string | null {
   if (!error) return null;
   return isOwner ? error : REDACTED_ERROR;
+}
+
+/**
+ * Blockers that describe the token itself, whoever scored it. Every other hard gate is
+ * the agent's universe answering back — `liquidity_below_floor` next to the snapshot's
+ * public `liquidityUsd` bounds `minLiquidityUsd`, `blocklisted` reveals the blocklist,
+ * `mint_authority_active` reveals `requireMintRevoked` — so those are owner-only.
+ */
+const INTRINSIC_BLOCKERS = new Set(["honeypot", "cannot_sell"]);
+
+/**
+ * A trade's score snapshot as a non-owner may see it. The total, the verdict and the free
+ * components stay public: they are the verdict on a token at one moment. What goes:
+ *  - `sentiment` and `smartMoney`, which are non-null only when the agent *paid* for
+ *    those x402 sources — which sources an operator buys is owner-only (SPEC rule 1);
+ *  - every universe-relative blocker (see `INTRINSIC_BLOCKERS`).
+ */
+export function visibleScore(score: TradeScore | null, isOwner: boolean): TradeScore | null {
+  if (!score || isOwner) return score;
+  return {
+    ...score,
+    components: { ...score.components, sentiment: null, smartMoney: null },
+    blockers: score.blockers.filter((b) => INTRINSIC_BLOCKERS.has(b)),
+  };
+}
+
+/**
+ * How far a position is from its stop and its target. Both are computed from the agent's
+ * `stopLossPct` / `takeProfitPct`, and the row also carries `unrealizedPnlPct`, so the
+ * threshold is one subtraction away. Owner-only.
+ */
+export function visibleExitDistances<T extends { stopDistancePct: number | null; takeProfitDistancePct: number | null }>(
+  position: T,
+  isOwner: boolean,
+): T {
+  return isOwner ? position : { ...position, stopDistancePct: null, takeProfitDistancePct: null };
 }

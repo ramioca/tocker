@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import type { AgentConfig } from "@/db/schema";
-import type { RunStep } from "@/server/types";
-import { isAgentOwner, REDACTED_ERROR, toPublicProfile, visibleConfig, visibleError, visibleSteps } from "./visibility";
+import type { RunStep, TradeScore } from "@/server/types";
+import {
+  isAgentOwner,
+  REDACTED_ERROR,
+  toPublicProfile,
+  visibleConfig,
+  visibleError,
+  visibleExitDistances,
+  visibleScore,
+  visibleSteps,
+} from "./visibility";
 
 const OWNER = "did:privy:owner";
 const OTHER = "did:privy:someone-else";
@@ -148,5 +157,56 @@ describe("visibleError", () => {
 
   it("still tells a stranger that it failed — the record keeps its losses", () => {
     expect(visibleError("boom", false)).toBeTruthy();
+  });
+});
+
+describe("visibleScore", () => {
+  const score: TradeScore = {
+    total: 74,
+    verdict: "candidate",
+    components: { safety: 90, liquidity: 70, gecko: 61, sentiment: 82, smartMoney: 40 },
+    blockers: ["blocklisted", "liquidity_below_floor", "age_above_max", "top10_holders_72pct", "honeypot", "cannot_sell"],
+    warnings: ["parabolic_1h_move"],
+    liquidityUsd: 41_000,
+    ageHours: 30,
+    scoredAt: "2026-09-01T00:00:00.000Z",
+  };
+
+  it("gives the owner the snapshot untouched", () => {
+    expect(visibleScore(score, true)).toBe(score);
+  });
+
+  it("hides which paid sources the agent bought from everyone else", () => {
+    const shown = visibleScore(score, false)!;
+    expect(shown.components.sentiment).toBeNull();
+    expect(shown.components.smartMoney).toBeNull();
+    // The free components and the verdict are the public record.
+    expect(shown.total).toBe(74);
+    expect(shown.components.safety).toBe(90);
+    expect(shown.components.gecko).toBe(61);
+  });
+
+  it("keeps only blockers about the token, never ones that echo the universe", () => {
+    expect(visibleScore(score, false)!.blockers).toEqual(["honeypot", "cannot_sell"]);
+  });
+
+  it("passes null through", () => {
+    expect(visibleScore(null, false)).toBeNull();
+  });
+});
+
+describe("visibleExitDistances", () => {
+  const position = { unrealizedPnlPct: -4, stopDistancePct: 11, takeProfitDistancePct: 44 };
+
+  it("strips the distances that would give away stop-loss and take-profit", () => {
+    expect(visibleExitDistances(position, false)).toEqual({
+      unrealizedPnlPct: -4,
+      stopDistancePct: null,
+      takeProfitDistancePct: null,
+    });
+  });
+
+  it("keeps them for the owner", () => {
+    expect(visibleExitDistances(position, true)).toBe(position);
   });
 });

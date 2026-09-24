@@ -69,3 +69,27 @@ export function Address({
     </button>
   );
 }
+
+/**
+ * The whole address, for the moment before money moves.
+ *
+ * A truncated `7xKX…pTqL` is exactly what address poisoning forges: the attacker grinds
+ * a vanity address with the same first and last characters and plants it in the
+ * victim's history. So every confirm step shows every character, in groups of four with
+ * alternating weight so the eye can walk it against the source instead of skimming it.
+ */
+export function FullAddress({ address, className }: { address: string; className?: string }) {
+  const groups = address.match(/.{1,4}/g) ?? [];
+  return (
+    <span
+      className={cn("inline-flex flex-wrap gap-x-1 font-mono text-xs leading-relaxed break-all", className)}
+      aria-label={address}
+    >
+      {groups.map((group, index) => (
+        <span key={index} aria-hidden className={index % 2 === 0 ? "text-foreground" : "text-muted-foreground"}>
+          {group}
+        </span>
+      ))}
+    </span>
+  );
+}

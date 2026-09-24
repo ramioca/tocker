@@ -4,6 +4,8 @@
  * Format: base64( iv(12) | tag(16) | ciphertext ) with AES-256-GCM.
  * Key: `ENCRYPTION_KEY` — 32 raw bytes, base64 encoded (`openssl rand -base64 32`).
  */
+// The encryption key and every plaintext LLM key pass through here: never in a client bundle.
+import "server-only";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
 const IV_BYTES = 12;

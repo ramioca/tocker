@@ -1,6 +1,6 @@
 import "server-only";
 import type { Portfolio } from "@/lib/agent/portfolio";
-import { and, asc, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, ne, or, sql } from "drizzle-orm";
 import {
   agentRunSteps,
   agentRuns,
@@ -45,7 +45,14 @@ import {
   type AgentRow,
 } from "./_shared";
 import { loadCachedScores } from "@/lib/trading/score-cache";
-import { isAgentOwner, toPublicProfile, visibleConfig, visibleError, visibleSteps } from "./visibility";
+import {
+  isAgentOwner,
+  toPublicProfile,
+  visibleConfig,
+  visibleError,
+  visibleExitDistances,
+  visibleSteps,
+} from "./visibility";
 
 /**
  * A live agent's book as it stands now — wallet cash and positions at live marks — or
@@ -162,6 +169,9 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
       };
     })
     .sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0));
+  // Both branches above attach stop/target distances computed from the owner's risk
+  // rules; a non-owner could subtract `unrealizedPnlPct` and read the thresholds back.
+  const visiblePositions = livePositions.map((p) => visibleExitDistances(p, isOwner));
 
   const equity: EquityPoint[] = equityRows.map((r) => ({
     at: r.at.toISOString(),
@@ -214,9 +224,11 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
     isFollowedByViewer: followed,
     paperStartingUsd: toNum(agent.paperStartingUsd),
     cashUsd,
-    positions: livePositions,
+    positions: visiblePositions,
     equity,
-    wallets: walletRows.map((w) => ({ chain: w.chain as Chain, address: w.address, walletId: w.id })),
+    // Owner-only: every consumer is a funding/withdraw surface, and `walletId` is the
+    // Privy wallet id, which no other viewer has a use for.
+    wallets: isOwner ? walletRows.map((w) => ({ chain: w.chain as Chain, address: w.address, walletId: w.id })) : [],
     nextRunAt: iso(agent.nextRunAt),
     llmKeyLabel: isOwner && key ? (key.label ?? `${key.provider} ····${key.last4}`) : null,
     llmKeyId: isOwner ? agent.llmKeyId : null,
@@ -428,7 +440,7 @@ export async function getRun(runId: string, viewerId?: string | null): Promise<R
     transcriptVisible: isOwner,
     trades: tradeRows.flatMap((t) => {
       const token = tokenMap.get(t.tokenId);
-      return token ? [{ ...toTradeRow(t, token), error: visibleError(t.error, isOwner) }] : [];
+      return token ? [toTradeRow(t, token, { isOwner })] : [];
     }),
   };
 }
@@ -454,16 +466,17 @@ export async function getAgentTrades(
   if (!agent.isPublic && !isOwner) return { items: [], nextCursor: null };
   const limit = 25;
   const c = decodeCursor(cursor);
+  // A proposal awaiting the owner's approval is the agent's *next* trade: showing it to
+  // everyone opens a front-running window and reveals approval mode. Owner-only until it
+  // is decided; once filled or rejected it is track record like any other row.
+  const scope = isOwner ? eq(trades.agentId, agentId) : and(eq(trades.agentId, agentId), ne(trades.status, "proposed"));
   const rows = await db
     .select()
     .from(trades)
     .where(
       c
-        ? and(
-            eq(trades.agentId, agentId),
-            or(lt(trades.createdAt, c.at), and(eq(trades.createdAt, c.at), lt(trades.id, c.id))),
-          )
-        : eq(trades.agentId, agentId),
+        ? and(scope, or(lt(trades.createdAt, c.at), and(eq(trades.createdAt, c.at), lt(trades.id, c.id))))
+        : scope,
     )
     .orderBy(desc(trades.createdAt), desc(trades.id))
     .limit(limit + 1);
@@ -474,7 +487,7 @@ export async function getAgentTrades(
   return {
     items: page.flatMap((t) => {
       const token = tokenMap.get(t.tokenId);
-      return token ? [{ ...toTradeRow(t, token), error: visibleError(t.error, isOwner) }] : [];
+      return token ? [toTradeRow(t, token, { isOwner })] : [];
     }),
     nextCursor: rows.length > limit && last ? encodeCursor(last.createdAt, last.id) : null,
   };

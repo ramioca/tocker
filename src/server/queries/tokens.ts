@@ -132,7 +132,7 @@ export async function getTokenPage(
       .innerJoin(agents, eq(agents.id, positions.agentId))
       .where(and(eq(positions.tokenId, id), visibleAgent, ne(agents.status, "draft"))),
     db
-      .select({ trade: trades })
+      .select({ trade: trades, ownerId: agents.ownerId })
       .from(trades)
       .innerJoin(agents, eq(agents.id, trades.agentId))
       .where(and(eq(trades.tokenId, id), eq(trades.status, "filled"), visibleAgent))
@@ -175,7 +175,7 @@ export async function getTokenPage(
   const tokenMap = await loadTokens(db, tradeRows.map((r) => r.trade.tokenId));
   const recentTrades: TradeRow[] = tradeRows.flatMap((r) => {
     const ref = tokenMap.get(r.trade.tokenId) ?? token;
-    return [toTradeRow(r.trade, ref)];
+    return [toTradeRow(r.trade, ref, { isOwner: Boolean(viewerId) && r.ownerId === viewerId })];
   });
 
   const flow = flowRows[0];

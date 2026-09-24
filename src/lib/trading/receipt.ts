@@ -28,6 +28,7 @@ import { toNumeric } from "@/lib/money";
 import type { Chain, ScoreComponents, TokenScore, TradeScore } from "@/server/types";
 import type { Fill, Quote } from "./executor";
 import { SIMULATED_FILL_TEXT, SIMULATED_TX, exceededTolerance, slippageText } from "./receipt-format";
+import { txExplorerUrl } from "@/lib/tokens/links";
 
 export { SIMULATED_FILL_TEXT, SIMULATED_TX, exceededTolerance, slippageText };
 
@@ -48,7 +49,7 @@ export function venueLabel(venue: TradeReceiptVenue): string {
 /** Block explorer for a transaction hash. Null when there is nothing on a chain. */
 export function explorerUrl(chain: Chain, txHash: string | null): string | null {
   if (!txHash || txHash === SIMULATED_TX) return null;
-  return chain === "solana" ? `https://solscan.io/tx/${txHash}` : `https://basescan.org/tx/${txHash}`;
+  return txExplorerUrl(chain, txHash);
 }
 
 /**
