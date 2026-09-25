@@ -83,7 +83,52 @@ export interface OrderIntent {
   rangePct?: number | null;
 }
 
-export type RiskVerdict = { ok: true } | { ok: false; reason: string };
+/**
+ * Which rule refused an order. `reason` is written for the model — it names config keys
+ * (`maxTradeUsd`), gate codes and the tool to call next, because that is what lets an
+ * agent correct itself — and narrate.ts classifies it by those words. A person needs
+ * different words for the same fact, so the rule and its numbers travel alongside and
+ * `ownerRiskMessage` (./risk-copy.ts) writes the owner's sentence from them.
+ */
+export type RiskCode =
+  | "bad_size"
+  | "chain_disabled"
+  | "blocklisted"
+  | "max_trade"
+  | "sizing"
+  | "daily_limit"
+  | "no_score"
+  | "hard_gates"
+  | "avoid"
+  | "min_score"
+  | "cash"
+  | "concentration"
+  | "no_position"
+  | "unpriced"
+  | "oversell";
+
+/** The numbers behind a refusal. Only the ones its `code` uses are set. */
+export interface RiskParams {
+  symbol?: string;
+  chain?: Chain;
+  enabled?: Chain[];
+  amountUsd?: number;
+  capUsd?: number;
+  /** Sizing mode that bound the ticket, e.g. "pct equity". */
+  mode?: string;
+  pct?: number;
+  capPct?: number;
+  blockers?: string[];
+  total?: number;
+  minScore?: number;
+  cashUsd?: number;
+  feeUsd?: number;
+  tradesToday?: number;
+  maxDailyTrades?: number;
+  positionUsd?: number;
+}
+
+export type RiskVerdict = { ok: true } | { ok: false; reason: string; code?: RiskCode; params?: RiskParams };
 
 function sameAddress(a: string, b: string): boolean {
   return a === b || a.toLowerCase() === b.toLowerCase();
@@ -109,6 +154,8 @@ export function universeGate(config: AgentConfig, order: OrderIntent, score: Tok
     return {
       ok: false,
       reason: `No score for ${order.symbol}. Call score_token({ chain: "${order.chain}", address: "${order.tokenAddress}" }) first — this agent never buys a token it has not scored.`,
+      code: "no_score",
+      params: { symbol: order.symbol },
     };
   }
 
@@ -117,6 +164,8 @@ export function universeGate(config: AgentConfig, order: OrderIntent, score: Tok
     return {
       ok: false,
       reason: `${order.symbol} fails ${score.blockers.length === 1 ? "a hard gate" : "hard gates"}: ${explained}. Hard gates cannot be outscored.`,
+      code: "hard_gates",
+      params: { symbol: order.symbol, blockers: [...score.blockers] },
     };
   }
 
@@ -124,6 +173,8 @@ export function universeGate(config: AgentConfig, order: OrderIntent, score: Tok
     return {
       ok: false,
       reason: `${order.symbol} scores ${score.total.toFixed(1)}/100 with verdict "avoid". This agent does not buy tokens it has judged avoidable.`,
+      code: "avoid",
+      params: { symbol: order.symbol, total: score.total },
     };
   }
 
@@ -131,6 +182,8 @@ export function universeGate(config: AgentConfig, order: OrderIntent, score: Tok
     return {
       ok: false,
       reason: `${order.symbol} scores ${score.total.toFixed(1)}/100, below this agent's minScore of ${universe.minScore} (safety ${score.components.safety}, liquidity ${score.components.liquidity}, organic ${score.components.organic}, distribution ${score.components.distribution}, momentum ${score.components.momentum}).`,
+      code: "min_score",
+      params: { symbol: order.symbol, total: score.total, minScore: universe.minScore },
     };
   }
 
@@ -183,7 +236,7 @@ export function riskGuard(
   const { risk } = agent.config;
 
   if (!Number.isFinite(order.amountUsd) || order.amountUsd <= 0) {
-    return { ok: false, reason: "Trade size must be a positive USD amount." };
+    return { ok: false, reason: "Trade size must be a positive USD amount.", code: "bad_size" };
   }
 
   const position = portfolio.positions.find((p) => p.tokenId === order.tokenId);
@@ -194,6 +247,8 @@ export function riskGuard(
       return {
         ok: false,
         reason: `Chain ${order.chain} is not enabled for this agent (enabled: ${agent.config.chains.join(", ") || "none"}).`,
+        code: "chain_disabled",
+        params: { symbol: order.symbol, chain: order.chain, enabled: [...agent.config.chains] },
       };
     }
 
@@ -202,6 +257,8 @@ export function riskGuard(
       return {
         ok: false,
         reason: `${order.symbol} (${order.tokenAddress}) is on this agent's blocklist. Remove it from the blocklist in settings to trade it.`,
+        code: "blocklisted",
+        params: { symbol: order.symbol },
       };
     }
 
@@ -209,6 +266,8 @@ export function riskGuard(
       return {
         ok: false,
         reason: `Trade size ${fmtUsd(order.amountUsd)} exceeds maxTradeUsd ${fmtUsd(risk.maxTradeUsd)}.`,
+        code: "max_trade",
+        params: { symbol: order.symbol, amountUsd: order.amountUsd, capUsd: risk.maxTradeUsd },
       };
     }
 
@@ -224,6 +283,13 @@ export function riskGuard(
           /_/g,
           " ",
         )} sizing allows right now (${fmtUsd(ceiling.amountUsd)}): ${ceiling.explanation}`,
+        code: "sizing",
+        params: {
+          symbol: order.symbol,
+          amountUsd: order.amountUsd,
+          capUsd: ceiling.amountUsd,
+          mode: ceiling.effectiveMode.replace(/_/g, " "),
+        },
       };
     }
 
@@ -231,6 +297,8 @@ export function riskGuard(
       return {
         ok: false,
         reason: `Daily buy limit reached (${portfolio.tradesToday}/${risk.maxDailyTrades} buys today; sells and exits never count). It resets at 00:00 UTC, or raise Max trades per day under Risk.`,
+        code: "daily_limit",
+        params: { tradesToday: portfolio.tradesToday, maxDailyTrades: risk.maxDailyTrades },
       };
     }
 
@@ -249,6 +317,8 @@ export function riskGuard(
           feeUsd > 0
             ? `Insufficient cash: ${fmtUsd(portfolio.cashUsd)} available, ${fmtUsd(order.amountUsd)} requested plus the ${fmtUsd(feeUsd)} Tocker fee.`
             : `Insufficient cash: ${fmtUsd(portfolio.cashUsd)} available, ${fmtUsd(order.amountUsd)} requested.`,
+        code: "cash",
+        params: { symbol: order.symbol, amountUsd: order.amountUsd, cashUsd: portfolio.cashUsd, feeUsd },
       };
     }
     const equity = portfolio.equityUsd > 0 ? portfolio.equityUsd : portfolio.cashUsd;
@@ -259,6 +329,8 @@ export function riskGuard(
         return {
           ok: false,
           reason: `Position would be ${pct.toFixed(1)}% of equity, above maxPositionPct ${risk.maxPositionPct}%.`,
+          code: "concentration",
+          params: { symbol: order.symbol, pct, capPct: risk.maxPositionPct },
         };
       }
     }
@@ -266,15 +338,22 @@ export function riskGuard(
   }
 
   if (!position || position.amountToken <= 0) {
-    return { ok: false, reason: `No ${order.symbol} position to sell.` };
+    return { ok: false, reason: `No ${order.symbol} position to sell.`, code: "no_position", params: { symbol: order.symbol } };
   }
   if (position.valueUsd === null) {
-    return { ok: false, reason: `Cannot price the ${order.symbol} position, refusing to sell blind.` };
+    return {
+      ok: false,
+      reason: `Cannot price the ${order.symbol} position, refusing to sell blind.`,
+      code: "unpriced",
+      params: { symbol: order.symbol },
+    };
   }
   if (order.amountUsd > position.valueUsd + 1e-9) {
     return {
       ok: false,
       reason: `Sell size ${fmtUsd(order.amountUsd)} exceeds the ${order.symbol} position value ${fmtUsd(position.valueUsd)}.`,
+      code: "oversell",
+      params: { symbol: order.symbol, amountUsd: order.amountUsd, positionUsd: position.valueUsd },
     };
   }
   return { ok: true };

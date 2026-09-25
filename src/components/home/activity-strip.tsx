@@ -52,11 +52,19 @@ function Row({ item }: { item: HomeActivityItem }) {
   // A trade that never filled says why instead of why it was wanted. Home is the
   // owner's own agents only, so the error is theirs to read.
   const note = unfilled ? trade.error : trade.rationale;
+  const verb = unfilled ? `${meta.label} ${trade.origin === "guardian" ? "exit" : trade.side}` : meta.label;
+  // The link is named by a one-line summary and the time, and the rationale is only its
+  // description: named by its contents, one row read out as a 330-character paragraph
+  // to anyone moving through the page by links.
+  const summaryId = `act-${item.id}`;
+  const hasNote = Boolean(trade.exitReason || note);
 
   return (
     <li className="relative">
       <Link
         href={href}
+        aria-labelledby={`${summaryId} ${summaryId}-time`}
+        aria-describedby={hasNote ? `${summaryId}-note` : undefined}
         className={cn(
           "focus-ring-inset flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:px-5",
           "transition-colors duration-150",
@@ -69,6 +77,9 @@ function Row({ item }: { item: HomeActivityItem }) {
           className={cn("grid size-7 shrink-0 place-items-center rounded-lg", meta.ring, meta.tone)}
         >
           <Icon className="size-3.5" />
+        </span>
+        <span id={summaryId} className="sr-only">
+          {`${agent.name}, ${agent.mode}, ${verb} ${trade.token.symbol}, ${formatUsd(usd)}`}
         </span>
 
         <span className="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
@@ -83,7 +94,10 @@ function Row({ item }: { item: HomeActivityItem }) {
           and time — do not fit across 390px without colliding. From `sm` up the
           order flips back so it reads as one dense line.
         */}
-        <span className="tnum ml-auto shrink-0 text-[11px] text-muted-foreground sm:order-3">
+        <span
+          id={`${summaryId}-time`}
+          className="tnum ml-auto shrink-0 text-[11px] text-muted-foreground sm:order-3"
+        >
           {kind === "proposal" && item.expiresAt ? (
             <span className="text-primary">
               expires <RelativeTime iso={item.expiresAt} className="text-[11px]" />
@@ -96,7 +110,7 @@ function Row({ item }: { item: HomeActivityItem }) {
         <span className="flex w-full min-w-0 items-center gap-1.5 pl-10 text-sm sm:order-2 sm:w-auto sm:flex-1 sm:pl-0">
           <span className={cn("shrink-0 font-medium", meta.tone)}>
             {/* The verb carries the side, since the icon no longer does. */}
-            {unfilled ? `${meta.label} ${trade.origin === "guardian" ? "exit" : trade.side}` : meta.label}
+            {verb}
           </span>
           <TokenIcon token={trade.token} size="xs" />
           <span className="truncate font-medium">{trade.token.symbol}</span>
@@ -114,12 +128,18 @@ function Row({ item }: { item: HomeActivityItem }) {
           Inside the link and last in order, so the whole row is one target with one
           hover and one focus ring. Indented to the avatar at every width.
         */}
-        {trade.exitReason || note ? (
-          <span className="block w-full basis-full pl-10 text-xs leading-5 text-muted-foreground sm:order-4">
+        {hasNote ? (
+          <span
+            id={`${summaryId}-note`}
+            className="block w-full basis-full pl-10 text-xs leading-5 text-muted-foreground sm:order-4"
+          >
+            {/* A real space after the chip, or it and the note are read as one word. */}
             {trade.exitReason ? (
-              <span className="mr-1.5 rounded border border-border/70 px-1.5 py-px text-[10px] uppercase tracking-wide">
-                {trade.exitReason.replace(/_/g, " ")}
-              </span>
+              <>
+                <span className="mr-1 rounded border border-border/70 px-1.5 py-px text-[10px] uppercase tracking-wide">
+                  {trade.exitReason.replace(/_/g, " ")}
+                </span>{" "}
+              </>
             ) : null}
             {note}
           </span>

@@ -8,7 +8,7 @@ import { AgentAvatar } from "@/components/common/agent-avatar";
 import { RelativeTime } from "@/components/common/relative-time";
 import { RunStatusBadge } from "@/components/common/status-badge";
 import { TokenIcon } from "@/components/common/token-icon";
-import { formatDuration, formatPriceUsd, formatUsd } from "@/components/common/format";
+import { formatCount, formatDuration, formatPriceUsd, formatUsd } from "@/components/common/format";
 import { agentBySlug, runDetail, viewerSession } from "@/components/common/data-access";
 import { cn } from "@/lib/utils";
 
@@ -37,9 +37,9 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   return { title: `${loaded.agent.name} · run` };
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, className }: { label: string; value: React.ReactNode; className?: string }) {
   return (
-    <div className="glass-inset rounded-lg px-3 py-2">
+    <div className={cn("glass-inset rounded-lg px-3 py-2", className)}>
       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="tnum mt-0.5 text-sm font-medium">{value}</p>
     </div>
@@ -94,15 +94,28 @@ export default async function RunPage({ params }: Params) {
         </p>
       ) : null}
 
-      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+      {/* The token tile is a little wider than the rest: its value is two numbers. */}
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.4fr)_minmax(0,1fr)]">
         <Stat label="Steps" value={String(run.transcriptVisible ? run.steps.length || run.stepCount : run.stepCount)} />
         <Stat label="Trades" value={String(run.tradeCount)} />
         <Stat label="Data spend" value={formatUsd(run.dataSpendUsd)} />
+        {/* "LLM", and in/out spelled out: on a trading page a bare "Tokens" reads as coins. */}
         <Stat
-          label="Tokens"
-          value={`${(run.inputTokens / 1000).toFixed(1)}k / ${(run.outputTokens / 1000).toFixed(1)}k`}
+          label="LLM tokens"
+          value={
+            <>
+              {formatCount(run.inputTokens)} <span className="text-xs font-normal text-muted-foreground">in</span>
+              {" · "}
+              {formatCount(run.outputTokens)} <span className="text-xs font-normal text-muted-foreground">out</span>
+            </>
+          }
         />
-        <Stat label="Duration" value={elapsed === null ? "running" : formatDuration(elapsed)} />
+        {/* Five tiles in two columns leave the last one alone; let it take the row. */}
+        <Stat
+          label="Duration"
+          value={elapsed === null ? "running" : formatDuration(elapsed)}
+          className="max-sm:col-span-2"
+        />
       </div>
 
       {run.trades.length > 0 ? (
@@ -111,34 +124,59 @@ export default async function RunPage({ params }: Params) {
             Trades from this run
           </h2>
           <ul className="mt-2 space-y-2">
-            {run.trades.map((trade) => (
-              <li
-                key={trade.id}
-                className="flex flex-wrap items-center gap-2.5 glass-inset rounded-xl px-3 py-2.5"
-              >
-                <span
+            {run.trades.map((trade) => {
+              // As in the Trades tab: a proposal, or an order that was refused or expired,
+              // is listed but dimmed and labelled, so it never reads as a fill.
+              const unfilled = trade.status !== "filled";
+              const failed = trade.status === "failed" || trade.status === "rejected" || trade.status === "expired";
+              return (
+                <li
+                  key={trade.id}
                   className={cn(
-                    "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider",
-                    trade.side === "buy"
-                      ? "bg-positive/15 text-positive"
-                      : "bg-negative/15 text-negative",
+                    "flex flex-wrap items-center gap-2.5 glass-inset rounded-xl px-3 py-2.5",
+                    unfilled && "opacity-60",
                   )}
                 >
-                  {trade.side}
-                </span>
-                <TokenIcon token={trade.token} size="sm" />
-                <span className="text-sm font-medium">{trade.token.symbol}</span>
-                <span className="tnum text-sm">{formatUsd(trade.amountUsd)}</span>
-                <span className="tnum text-xs text-muted-foreground">
-                  @ {formatPriceUsd(trade.priceUsd)}
-                </span>
-                {trade.rationale ? (
-                  <p className="w-full border-l-2 border-primary/40 pl-3 text-sm leading-relaxed text-foreground/80">
-                    {trade.rationale}
-                  </p>
-                ) : null}
-              </li>
-            ))}
+                  <span
+                    className={cn(
+                      "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider",
+                      trade.side === "buy"
+                        ? "bg-positive/15 text-positive"
+                        : "bg-negative/15 text-negative",
+                    )}
+                  >
+                    {trade.side}
+                  </span>
+                  {unfilled ? (
+                    <span
+                      title={trade.error ?? undefined}
+                      className={cn(
+                        "rounded border px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider",
+                        failed ? "border-destructive/40 text-destructive" : "border-border text-muted-foreground",
+                      )}
+                    >
+                      {trade.status}
+                    </span>
+                  ) : null}
+                  <Link
+                    href={`/tokens/${trade.token.chain}/${trade.token.address}`}
+                    className="inline-flex items-center gap-2 rounded hover:underline focus-ring"
+                  >
+                    <TokenIcon token={trade.token} size="sm" />
+                    <span className="text-sm font-medium">{trade.token.symbol}</span>
+                  </Link>
+                  <span className="tnum text-sm">{formatUsd(trade.amountUsd)}</span>
+                  <span className="tnum text-xs text-muted-foreground">
+                    @ {formatPriceUsd(trade.priceUsd)}
+                  </span>
+                  {trade.rationale ? (
+                    <p className="w-full border-l-2 border-primary/40 pl-3 text-sm leading-relaxed text-foreground/80">
+                      {trade.rationale}
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </section>
       ) : null}

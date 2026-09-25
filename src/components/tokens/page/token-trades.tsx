@@ -17,7 +17,10 @@
  * Below `sm`: When / Agent / Side / Value / Score, the same cut the agent page makes.
  * Amount and price multiply out to Value, and at 390px the full eight columns pushed
  * Value, Score and Receipt past a sideways scroll nobody knew to do. The receipt gets
- * its own line under the row instead.
+ * a line under the row instead.
+ *
+ * That line under the row also carries the rationale, at every width. It used to live
+ * only in the agent link's `title`, which touch and keyboard users never see.
  *
  * `focusTradeId` is the fill a `?trade=` link named. It is tinted, marked
  * `aria-current`, scrolled to the middle of the screen, and its receipt line is shown
@@ -44,8 +47,6 @@ import { TradeReceiptSheet } from "@/components/trading";
 import { cn } from "@/lib/utils";
 import { ScrollIntoView } from "./scroll-into-view";
 
-/** When, Agent, Side, Value, Score. */
-const PHONE_COLUMNS = 5;
 /**
  * Phone cells give up 2px a side. Five columns at the table's 8px padding measured
  * 362px — past a 360px phone's 326px card — and the column that falls off is Score.
@@ -107,13 +108,16 @@ export function TokenTrades({
             const receipt = receipts?.get(trade.id) ?? null;
             const focused = trade.id === focusTradeId;
             const title = `${trade.side.toUpperCase()} ${trade.token.symbol}${agent ? ` · ${agent.name}` : ""}`;
+            // One line under the row: the rationale at every width, and the receipt on a
+            // phone (where its column is gone) or on the focused fill.
+            const followUp = trade.rationale ? "all" : receipt ? (focused ? "all" : "phone") : null;
             return (
               <Fragment key={trade.id}>
                 <TableRow
                   aria-current={focused ? "true" : undefined}
                   className={cn(
-                    receipt && "max-sm:border-b-0",
-                    receipt && focused && "border-b-0",
+                    followUp === "all" && "border-b-0",
+                    followUp === "phone" && "max-sm:border-b-0",
                     focused && "bg-primary/10 hover:bg-primary/15",
                   )}
                 >
@@ -124,12 +128,14 @@ export function TokenTrades({
                     <RelativeTime iso={trade.filledAt ?? trade.createdAt} />
                     {focused ? <ScrollIntoView /> : null}
                   </TableCell>
-                  <TableCell className={cn("max-w-[5.5rem] sm:max-w-[9rem]", CELL)}>
+                  {/* A phone name wraps to two lines: "Momentum M…" was the column
+                      giving up a name while When beside it had room to spare. */}
+                  <TableCell className={cn("max-w-[5.5rem] max-sm:whitespace-normal sm:max-w-[9rem]", CELL)}>
                     {agent ? (
                       <Link
                         href={`/agents/${agent.slug}`}
-                        className="block truncate rounded text-xs font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        title={trade.rationale ?? agent.name}
+                        className="line-clamp-2 rounded text-xs font-medium break-words hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:whitespace-normal sm:truncate"
+                        title={agent.name}
                       >
                         {agent.name}
                       </Link>
@@ -178,25 +184,33 @@ export function TokenTrades({
                     </TableCell>
                   ) : null}
                 </TableRow>
-                {receipt ? (
-                  <>
-                    {/* Phone: the receipt line under its row, where the column no longer fits. */}
-                    <TableRow
-                      className={cn("sm:hidden", focused ? "bg-primary/10 hover:bg-primary/15" : "hover:bg-transparent")}
+                {followUp ? (
+                  <TableRow
+                    className={cn(
+                      followUp === "phone" && "sm:hidden",
+                      focused ? "bg-primary/10 hover:bg-primary/15" : "hover:bg-transparent",
+                    )}
+                  >
+                    {/* Spans every desktop column; on a phone the hidden ones take no
+                        width, so the same cell spans the five that are left. The focused
+                        accent runs down it too, so the fill reads as one block. */}
+                    <TableCell
+                      colSpan={desktopColumns}
+                      className={cn("pt-0 whitespace-normal", CELL, focused && "shadow-[inset_2px_0_0_var(--primary)]")}
                     >
-                      <TableCell colSpan={PHONE_COLUMNS} className="pt-0 whitespace-normal">
-                        <TradeReceiptSheet receipt={receipt} trigger="row" title={title} />
-                      </TableCell>
-                    </TableRow>
-                    {/* Desktop: only the focused fill spells its receipt out in full. */}
-                    {focused ? (
-                      <TableRow className="hidden bg-primary/10 hover:bg-primary/15 sm:table-row">
-                        <TableCell colSpan={desktopColumns} className="pt-0 whitespace-normal">
+                      {trade.rationale ? (
+                        <p className="line-clamp-2 max-w-[40rem] text-[11px] leading-snug text-muted-foreground">
+                          {trade.rationale}
+                        </p>
+                      ) : null}
+                      {/* Desktop has the receipt column; only the focused fill spells it out. */}
+                      {receipt ? (
+                        <div className={cn(trade.rationale && "mt-1", !focused && "sm:hidden")}>
                           <TradeReceiptSheet receipt={receipt} trigger="row" title={title} />
-                        </TableCell>
-                      </TableRow>
-                    ) : null}
-                  </>
+                        </div>
+                      ) : null}
+                    </TableCell>
+                  </TableRow>
                 ) : null}
               </Fragment>
             );

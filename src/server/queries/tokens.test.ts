@@ -300,6 +300,27 @@ describe("getTokenPage", () => {
     expect(Object.keys(page!.marketFacts!)).not.toContain("blockers");
     expect(Object.keys(page!.marketFacts!)).not.toContain("verdict");
   });
+
+  it("never publishes a reading no provider answered as the token's verdict", async () => {
+    const address = "Nd".repeat(20);
+    await writeScoreRow(
+      score({
+        tokenId: `solana:${address}`,
+        address,
+        symbol: "OUTAGE",
+        total: 0,
+        verdict: "avoid",
+        blockers: ["mint_authority_unknown", "liquidity_unknown"],
+        sources: [],
+        priceUsd: null,
+        liquidityUsd: null,
+        holderCount: null,
+      }),
+      universeKey(DEFAULT_AGENT_CONFIG.universe),
+    );
+    const page = await getTokenPage("solana", address);
+    expect(page!.score).toBeNull();
+  });
 });
 
 describe("searchTokens", () => {

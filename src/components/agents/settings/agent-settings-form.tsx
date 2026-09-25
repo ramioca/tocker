@@ -15,9 +15,9 @@ import { Field, RiskSlider, Toggle } from "@/components/agents/builder/field";
 import { UniverseControls } from "@/components/agents/builder/universe-controls";
 import { UniversePreview } from "@/components/agents/settings/universe-preview";
 import { sameConfig } from "@/components/agents/settings/same-config";
-import { AddKeyInline } from "@/components/agents/builder/steps";
+import { AddKeyInline, PROVIDER_LABELS } from "@/components/agents/builder/steps";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
-import { DEFAULT_MODELS } from "@/lib/agent/config";
+import { DEFAULT_MODELS, agentConfigSchema } from "@/lib/agent/config";
 import { DataSourcePicker } from "@/components/agents/data-source-picker";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
 import { ExitRulesFields } from "@/components/agents/exit-rules";
@@ -106,6 +106,7 @@ function SettingsForm({
   const router = useRouter();
   const [name, setName] = useState(agent.name);
   const [nameError, setNameError] = useState<string | null>(null);
+  const [strategyError, setStrategyError] = useState<string | null>(null);
   const [tagline, setTagline] = useState(agent.tagline ?? "");
   const [isPublic, setIsPublic] = useState(agent.isPublic);
   const [config, setConfig] = useState<AgentConfig>(initialConfig);
@@ -164,6 +165,18 @@ function SettingsForm({
       setNameError(problem);
       requestAnimationFrame(() => {
         const input = document.getElementById("settings-name");
+        input?.scrollIntoView({ behavior: "smooth", block: "center" });
+        input?.focus({ preventScroll: true });
+      });
+      throw new Error("invalid");
+    }
+    // The same schema the server applies, checked here so an empty or oversized prompt is
+    // marked at the box — scrolled out of view above Save — rather than only in a toast.
+    const strategy = agentConfigSchema.shape.strategyPrompt.safeParse(config.strategyPrompt);
+    if (!strategy.success) {
+      setStrategyError(strategy.error.issues[0]?.message ?? "Describe the strategy in at least a sentence.");
+      requestAnimationFrame(() => {
+        const input = document.getElementById("settings-strategy");
         input?.scrollIntoView({ behavior: "smooth", block: "center" });
         input?.focus({ preventScroll: true });
       });
@@ -310,21 +323,45 @@ function SettingsForm({
         />
       </section>
 
-      <section className="space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
+      <section id="strategy" className="scroll-mt-20 space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
         <h2 className="text-sm font-medium">Strategy</h2>
-        <Textarea
-          value={config.strategyPrompt}
-          rows={8}
-          onChange={(event) =>
-            setConfig((current) => ({ ...current, strategyPrompt: event.target.value }))
-          }
-          // A focused text field only scrolls its caret into view, so a tall prompt whose
-          // first line was visible stayed half under the Save bar. "nearest" honours the
-          // bar's scroll padding and does nothing when the box is already clear.
-          onFocus={(event) => event.currentTarget.scrollIntoView({ block: "nearest" })}
-          className="font-mono text-xs leading-relaxed"
-          aria-label="Strategy prompt"
-        />
+        <div className="space-y-1.5">
+          <Textarea
+            id="settings-strategy"
+            value={config.strategyPrompt}
+            rows={8}
+            aria-invalid={Boolean(strategyError)}
+            aria-describedby={strategyError ? "settings-strategy-error" : undefined}
+            onChange={(event) => {
+              const strategyPrompt = event.target.value;
+              setConfig((current) => ({ ...current, strategyPrompt }));
+              setStrategyError(null);
+            }}
+            // A focused text field only scrolls its caret into view, so a tall prompt whose
+            // first line was visible stayed half under the Save bar. "nearest" honours the
+            // bar's scroll padding and does nothing when the box is already clear.
+            onFocus={(event) => event.currentTarget.scrollIntoView({ block: "nearest" })}
+            className="font-mono leading-relaxed"
+            aria-label="Strategy prompt"
+          />
+          {/* The heading above already names the box, so the error and the builder's
+              counter sit under it without a second "Strategy" label. */}
+          <div className="flex items-start gap-3">
+            {strategyError ? (
+              <p id="settings-strategy-error" role="alert" className="text-xs text-destructive">
+                {strategyError}
+              </p>
+            ) : null}
+            <p
+              className={cn(
+                "tnum ml-auto shrink-0 text-right text-[11px] text-muted-foreground",
+                config.strategyPrompt.length > 8000 && "text-destructive",
+              )}
+            >
+              {config.strategyPrompt.length} / 8000
+            </p>
+          </div>
+        </div>
       </section>
 
       <section id="brain" className="scroll-mt-20 space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
@@ -400,13 +437,13 @@ function SettingsForm({
               placeholder="Choose a key"
               options={keysForProvider.map((key) => ({
                 value: key.id,
-                label: key.label ?? `${key.provider} key`,
+                label: key.label ?? `${PROVIDER_LABELS[key.provider]} key`,
                 hint: `••••${key.last4}`,
               }))}
               onChange={(next) => setLlmKeyId(next)}
             />
           ) : (
-            <p className="text-xs text-muted-foreground">No {config.llm.provider} key on file yet.</p>
+            <p className="text-xs text-muted-foreground">No {PROVIDER_LABELS[config.llm.provider]} key on file yet.</p>
           )}
           <AddKeyInline
             provider={config.llm.provider}
@@ -424,7 +461,7 @@ function SettingsForm({
         </div>
       </section>
 
-      <section className="space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
+      <section id="universe" className="scroll-mt-20 space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
         <div>
           <h2 className="text-sm font-medium">Universe</h2>
           <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">

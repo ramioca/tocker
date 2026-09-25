@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import Link from "next/link";
 import { CircleStop } from "lucide-react";
 import { RelativeTime } from "@/components/common/relative-time";
+import { useRunStatus } from "@/components/providers/run-status";
 import { CommandMenu } from "./command-menu";
 import { MobileTabBar } from "./mobile-tab-bar";
+import { isApplePlatform } from "./platform";
 import { RunIsland } from "./run-island";
 import { TopBar } from "./top-bar";
 import type { CommandIndex } from "./command-index";
@@ -39,7 +41,9 @@ export function AppShell({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() !== "k") return;
-      if (!event.metaKey && !event.ctrlKey) return;
+      // ⌘K on Apple keyboards and Ctrl+K elsewhere — never Ctrl+K on a Mac, where it is
+      // "delete to end of line" in every text field, the strategy prompt included.
+      if (!(isApplePlatform() ? event.metaKey : event.ctrlKey)) return;
       // Another modal (onboarding, Withdraw, a sheet) owns the screen: the palette would
       // open underneath it and take the focus with it. Popovers are dialogs too, but
       // non-modal ones — the Cash panel should not stop ⌘K. ⌘K still closes the palette.
@@ -54,6 +58,26 @@ export function AppShell({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  // The layout reads the unread count once and is not re-rendered by navigation, so the
+  // bell is fed by the 15s poll instead; the server's number covers the first paint.
+  // When a refresh brings a new server number, the poll is re-read so the two agree.
+  const { unreadNotifications: liveUnread, refreshProposals } = useRunStatus();
+  const badge = liveUnread ?? unreadCount;
+  const serverUnread = useRef(unreadCount);
+  useEffect(() => {
+    if (serverUnread.current === unreadCount) return;
+    serverUnread.current = unreadCount;
+    refreshProposals();
+  }, [unreadCount, refreshProposals]);
+
+  // Notification days are grouped on the server, which only knows the viewer's zone if
+  // the browser says so. Written on every app load; it changes when the traveller does.
+  useEffect(() => {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!zone) return;
+    document.cookie = `tz=${encodeURIComponent(zone)}; path=/; max-age=31536000; samesite=lax`;
   }, []);
 
   return (
@@ -71,7 +95,7 @@ export function AppShell({
         Skip to content
       </a>
 
-      <TopBar unreadCount={unreadCount} onOpenSearch={() => setPaletteOpen(true)} ownedSlugs={owned} />
+      <TopBar unreadCount={badge} onOpenSearch={() => setPaletteOpen(true)} ownedSlugs={owned} />
       {tradingPaused ? <TradingPausedBanner pausedAt={pausedAt} /> : null}
       {/* While an island is docked at the bottom, the end of every page scrolls clear of it. */}
       <main
@@ -82,7 +106,7 @@ export function AppShell({
         {children}
       </main>
 
-      <MobileTabBar unreadCount={unreadCount} ownedSlugs={owned} />
+      <MobileTabBar unreadCount={badge} ownedSlugs={owned} />
       <RunIsland />
       <CommandMenu open={paletteOpen} onClose={closePalette} index={index} />
     </div>

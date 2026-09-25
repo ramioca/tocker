@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { ScoreBadge } from "./score-badge";
 import { ScoreBreakdown } from "./score-breakdown";
 import { BlockerList, describeBlocker } from "./blocker-list";
-import { formatAge, formatCompactUsd, formatHolders } from "./format";
+import { formatAge, formatCompactUsd, formatHolders, providerLabel } from "./format";
 
 /** Same warm amber the blocker list uses — never the PnL red. */
 const BLOCKER_COLOR = "oklch(0.7 0.16 45)";
@@ -167,7 +167,7 @@ export function TokenScoreRow({
           <BlockerList blockers={score.blockers} warnings={score.warnings} audience={AUDIENCE} />
 
           <p className="text-[11px] text-muted-foreground">
-            Scored from {score.sources.join(", ")}.
+            Scored from {score.sources.map(providerLabel).join(", ")}.
           </p>
 
           {href ? (

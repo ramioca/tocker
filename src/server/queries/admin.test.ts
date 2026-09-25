@@ -190,14 +190,19 @@ describe("getAdminHeadline", () => {
 
     // The 20-day-old fill is inside 30d and outside 7d.
     expect(h.volume.d30.notionalUsd).toBeCloseTo(375, 6);
+    // The tile's 30 days are the chart's 30 days.
+    const series = await getAdminSeries();
+    expect(series.volumeUsd.reduce((a, p) => a + p.value, 0)).toBeCloseTo(h.volume.d30.notionalUsd, 6);
     expect(h.volume.d7.notionalUsd).toBeCloseTo(350, 6);
     expect(h.volume.d7.count).toBe(3);
   });
 
-  it("splits fees accrued from collected", async () => {
+  it("splits fees accrued from collected, and keeps paper fees out of both", async () => {
     const h = await getAdminHeadline();
-    expect(h.fees.collectedUsd).toBeCloseTo(0.2, 6);
+    // The two paper fees are written settled, but no money moved: they are not revenue.
+    expect(h.fees.collectedUsd).toBeCloseTo(0, 6);
     expect(h.fees.accruedUsd).toBeCloseTo(0.1, 6);
+    expect(h.fees.paperUsd).toBeCloseTo(0.2, 6);
   });
 
   it("counts real x402 spend only, and reports fixtures separately", async () => {
@@ -222,7 +227,8 @@ describe("getAdminSeries", () => {
     const sum = (points: Array<{ value: number }>) => points.reduce((a, p) => a + p.value, 0);
     expect(sum(series.signups)).toBe(3);
     expect(sum(series.volumeUsd)).toBeCloseTo(375, 6);
-    expect(sum(series.feesUsd)).toBeCloseTo(0.3, 6);
+    // Live fees only.
+    expect(sum(series.feesUsd)).toBeCloseTo(0.1, 6);
     // Ascending, one bucket per UTC day, ending today.
     expect(series.signups[29].day).toBe(new Date().toISOString().slice(0, 10));
     expect(series.signups[0].day < series.signups[29].day).toBe(true);

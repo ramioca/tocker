@@ -85,7 +85,8 @@ function SellPositionDialog({
   const [pending, start] = useTransition();
 
   const amountUsd = Number(amountText);
-  const valid = Number.isFinite(amountUsd) && amountUsd > 0 && amountUsd <= valueUsd * 1.0001;
+  // A cent is the floor the hint below promises; "$0.001" was accepted and offered as a sell.
+  const valid = Number.isFinite(amountUsd) && amountUsd >= 0.01 && amountUsd <= valueUsd * 1.0001;
   const pct = valueUsd > 0 && valid ? Math.min(100, (amountUsd / valueUsd) * 100) : 0;
   // Asking for the whole value is asking for everything. The server is told so
   // explicitly and sells the balance, not a dollar figure that the mark has outrun.

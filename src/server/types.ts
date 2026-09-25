@@ -83,8 +83,17 @@ export interface Position {
   peakPriceUsd: number | null;
   entryScore: number | null;
   entryLiquidityUsd: number | null;
-  /** Current score for the held token, when one is cached. */
+  /**
+   * The latest score for the held token that this viewer may see: produced under the
+   * agent's own universe for its owner, the public default's for everyone else. Null
+   * when there is none, never another operator's verdict.
+   */
   currentScore: number | null;
+  /**
+   * Owner-only: the hard gates that reading failed, so an "Avoid" can say why. Absent
+   * for everyone else and when the score came from history (which keeps no universe).
+   */
+  currentBlockers?: string[] | null;
   /** Distance to the configured stop / take-profit in %, negative = below. Null when off. */
   stopDistancePct: number | null;
   takeProfitDistancePct: number | null;
@@ -184,7 +193,14 @@ export interface RunSummary {
   dataSpendUsd: number;
   inputTokens: number;
   outputTokens: number;
+  /** Filled trades only. A proposal, or one that was rejected or expired, is not a trade. */
   tradeCount: number;
+  /**
+   * Orders the risk guard or the venue turned down in this run. Owner-only (the reasons
+   * quote the owner's caps, and even the count says the guard is binding): `null` or
+   * absent for everyone else.
+   */
+  refusedCount?: number | null;
   stepCount: number;
   createdAt: string;
 }
@@ -330,6 +346,11 @@ export interface LeaderboardRow {
   pnlPct: number;
   pnlUsd: number;
   tradeCount: number;
+  /**
+   * Equity over this row's window, from the same baseline as `pnlPct`. Draw this, not
+   * `agent.sparkline` (the card's last month), beside the window's PnL.
+   */
+  sparkline: number[];
 }
 
 export interface TrendingToken {
@@ -576,6 +597,8 @@ export interface PendingProposalsSummary {
     requestedUsd: number;
     expiresAt: string;
   } | null;
+  /** Unread notifications, so the bell can update between navigations. The poll route always sends it. */
+  unreadNotifications?: number;
 }
 
 /** `previewTrade`: what a manual order would do, without doing it. */

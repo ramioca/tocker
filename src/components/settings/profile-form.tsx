@@ -10,6 +10,7 @@ import type { Session } from "@/server/types";
 import { AgentAvatar } from "@/components/social-common/agent-avatar";
 import { SESSION_QUERY_KEY } from "@/hooks/use-session";
 import { MORPH_FOCUS, enterSubmits, useMorphAction } from "./use-morph-action";
+import { cleanHandle, removedNote } from "./handle-filter";
 
 const BIO_MAX = 240;
 // Mirrors HANDLE_RE in src/server/actions/users.ts, so a bad handle is caught before the round trip.
@@ -30,6 +31,9 @@ export function ProfileForm({ session, bio: initialBio }: { session: Session; bi
   const [displayName, setDisplayName] = useState(session.displayName ?? "");
   const [bio, setBio] = useState(initialBio);
   const [error, setError] = useState<{ field: Field; message: string } | null>(null);
+  // What the last keystroke dropped from Handle, said in place of its hint until the next
+  // one: characters that vanished without a word read as a broken field.
+  const [dropped, setDropped] = useState<string | null>(null);
   // What the server last accepted. Save stays disabled until something differs from it:
   // saving an untouched form played the whole save and said "Saved" about nothing.
   const [saved, setSaved] = useState({
@@ -86,6 +90,16 @@ export function ProfileForm({ session, bio: initialBio }: { session: Session; bi
   const invalid = (field: Field) =>
     error?.field === field ? { "aria-invalid": true, "aria-describedby": `profile-${field}-error` } : {};
 
+  // The handle is the profile's address, so a valid new one orphans every link to the old.
+  const renaming = HANDLE_RE.test(handle) && handle !== saved.handle;
+  const handleDescribedBy = [
+    dropped ? "profile-handle-dropped" : "profile-handle-hint",
+    renaming ? "profile-handle-rename" : null,
+    error?.field === "handle" ? "profile-handle-error" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <form
       className="space-y-5"
@@ -117,12 +131,41 @@ export function ProfileForm({ session, bio: initialBio }: { session: Session; bi
             autoComplete="username"
             maxLength={20}
             {...invalid("handle")}
+            aria-describedby={handleDescribedBy}
             onChange={(event) => {
-              setHandle(event.target.value.replace(/[^a-zA-Z0-9_]/g, "").toLowerCase());
+              const { value, removed } = cleanHandle(event.target.value);
+              setHandle(value);
+              setDropped(removedNote(removed));
               edited("handle");
             }}
             className="mt-2 h-9 dark:bg-transparent"
           />
+          {/* The note takes the hint's place in one grid cell, so the fields below don't
+              jump as it comes and goes. Its live region is always mounted, so it is
+              announced; the hint is not live, or every keystroke would read the address back. */}
+          <div className="mt-1.5 grid text-xs">
+            <p
+              id="profile-handle-hint"
+              className={`col-start-1 row-start-1 text-muted-foreground${dropped ? " invisible" : ""}`}
+            >
+              Your profile: <span className="whitespace-nowrap text-foreground/80">/u/{handle || "…"}</span> ·{" "}
+              <span className="whitespace-nowrap">
+                letters, numbers and _ · <span className="tnum">2–20</span>
+              </span>
+            </p>
+            <div aria-live="polite" className="col-start-1 row-start-1">
+              {dropped ? (
+                <p id="profile-handle-dropped" className="text-amber-700 dark:text-amber-400">
+                  {dropped}
+                </p>
+              ) : null}
+            </div>
+          </div>
+          {renaming ? (
+            <p id="profile-handle-rename" className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+              Links to /u/{saved.handle} will stop working.
+            </p>
+          ) : null}
           {errorFor("handle")}
         </div>
         <div>
@@ -159,7 +202,7 @@ export function ProfileForm({ session, bio: initialBio }: { session: Session; bi
             setBio(event.target.value);
             edited("bio");
           }}
-          className="mt-2 w-full resize-y rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive"
+          className="mt-2 w-full resize-y rounded-lg border border-input bg-transparent px-3 py-2 text-base outline-none md:text-sm transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive"
           placeholder="What do your agents do?"
         />
         <p className="mt-1.5 text-right font-mono text-[11px] tabular-nums text-muted-foreground">

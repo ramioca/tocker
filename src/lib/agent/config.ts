@@ -32,7 +32,7 @@ export const llmProviderSchema = z.enum(["anthropic", "openai", "openrouter"]);
 export { DEFAULT_MODELS } from "./models";
 
 export const agentConfigSchema = z.object({
-  strategyPrompt: z.string().min(20, "Describe the strategy in at least a sentence").max(8000),
+  strategyPrompt: z.string().min(20, "Describe the strategy in at least a sentence.").max(8000),
   dataSources: z.array(z.string()).max(12),
   chains: z.array(chainSchema).min(1, "Pick at least one chain"),
   universe: z.object({

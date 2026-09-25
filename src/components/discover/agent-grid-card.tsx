@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Users } from "lucide-react";
+import { Lock, Users } from "lucide-react";
 import type { AgentCard as AgentCardType } from "@/server/types";
 import { AgentAvatar } from "@/components/common/agent-avatar";
 import { ChainBadges, ModeBadge, ModelChip } from "@/components/social-common/chain-badge";
@@ -37,7 +37,17 @@ export function AgentGridCard({ agent }: { agent: AgentCardType }) {
             </Link>
           </p>
         </div>
-        <ModeBadge mode={agent.mode} />
+        {/* Only an owner is ever sent a private agent (their own profile lists them);
+            without the mark it read exactly like one visitors can see. */}
+        <div className="flex shrink-0 items-center gap-1">
+          {!agent.isPublic ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2 py-0.5 text-[11px] leading-4 font-medium text-muted-foreground">
+              <Lock className="size-3" aria-hidden />
+              Private
+            </span>
+          ) : null}
+          <ModeBadge mode={agent.mode} />
+        </div>
       </div>
 
       {agent.tagline ? (

@@ -47,7 +47,10 @@ export function BeamSearchInput({
           onChange={(event) => onValueChange(event.target.value)}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          className="h-10 w-full bg-transparent pr-9 pl-9 text-sm outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
+          enterKeyHint="search"
+          autoComplete="off"
+          // 16px on phones: iOS Safari zooms the page into any focused field smaller than that.
+          className="h-10 w-full bg-transparent pr-9 pl-9 text-base outline-none sm:text-sm placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
         />
         {value ? (
           <button

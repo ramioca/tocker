@@ -1,7 +1,7 @@
 import { formatSignedPct, formatSignedUsd } from "@/components/common/format";
 import { cn } from "@/lib/utils";
 import type { PnlDay } from "@/server/queries/money";
-import { tallyDays } from "./day-tally";
+import { dayNote, movedMoney, tallyDays } from "./day-tally";
 
 /**
  * Thirty days of P&L as one row each: the date, a bar either side of zero, the number.
@@ -61,36 +61,51 @@ export function PnlByDay({ days }: { days: PnlDay[] }) {
       </div>
 
       <ul className="divide-y divide-[var(--glass-hairline)]">
-        {days.map((day) => {
+        {days.map((day, index) => {
           const pnl = day.pnlUsd;
           const share = peak > 0 && pnl !== null ? Math.min(1, Math.abs(pnl) / peak) : 0;
           const width = `${(share * 50).toFixed(2)}%`;
           const isToday = day.day === today;
+          // Money in or out, or an agent joining or leaving: the number is net of it, but
+          // the bar is muted and the row says what moved, so a deposit is never read as a win.
+          const previous = days[index - 1];
+          const moved = movedMoney(day, previous);
+          const note = moved ? dayNote(day, previous) : null;
 
           return (
             <li
               key={day.day}
               className={cn(
-                "grid grid-cols-[3.75rem_1fr_auto] items-center gap-3 px-4 py-1.5 sm:grid-cols-[4.5rem_1fr_auto]",
+                // One label width at every size: 3.75rem wrapped "Sep 25 NOW" onto two
+                // lines on a phone and made today's row twice the height of the rest.
+                "grid grid-cols-[4.5rem_1fr_auto] items-center gap-3 px-4 py-1.5",
                 isToday && "bg-muted/25",
               )}
             >
-              <span className="tnum text-[11px] text-muted-foreground">
+              <span className="tnum whitespace-nowrap text-[11px] text-muted-foreground">
                 {label(day.day)}
                 {isToday ? <span className="ml-1 text-[9px] uppercase tracking-wide">now</span> : null}
               </span>
 
               {/* One track, zero in the middle: left of the line is red, right is green. */}
-              <span aria-hidden className="relative block h-2 rounded-full bg-muted/35">
-                <span className="absolute inset-y-[-2px] left-1/2 w-px -translate-x-1/2 bg-[var(--glass-hairline)]" />
-                {pnl !== null && pnl !== 0 ? (
-                  <span
-                    className={cn(
-                      "absolute inset-y-0 block",
-                      pnl > 0 ? "left-1/2 rounded-r-full bg-positive" : "right-1/2 rounded-l-full bg-negative",
-                    )}
-                    style={{ width }}
-                  />
+              <span className="min-w-0">
+                <span aria-hidden className="relative block h-2 rounded-full bg-muted/35">
+                  <span className="absolute inset-y-[-2px] left-1/2 w-px -translate-x-1/2 bg-[var(--glass-hairline)]" />
+                  {pnl !== null && pnl !== 0 ? (
+                    <span
+                      className={cn(
+                        "absolute inset-y-0 block",
+                        pnl > 0 ? "left-1/2 rounded-r-full" : "right-1/2 rounded-l-full",
+                        moved ? "bg-muted-foreground/45" : pnl > 0 ? "bg-positive" : "bg-negative",
+                      )}
+                      style={{ width }}
+                    />
+                  ) : null}
+                </span>
+                {note ? (
+                  <span className="tnum mt-1 block truncate text-center text-[10px] leading-3 text-muted-foreground">
+                    {note}
+                  </span>
                 ) : null}
               </span>
 

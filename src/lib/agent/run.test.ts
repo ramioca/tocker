@@ -108,7 +108,10 @@ describe("runAgent with the scripted mock model", () => {
     expect(Number(trade?.amountUsd)).toBeCloseTo(50, 6);
     expect(Number(trade?.amountToken)).toBeGreaterThan(0);
     expect(Number(trade?.feeUsd)).toBeCloseTo(0.15, 6);
-    expect(trade?.rationale).toContain("SentimentAlpha");
+    // The paid reading is quoted; the vendor it was bought from is not — the rationale is
+    // public, and which sources an operator pays for is theirs.
+    expect(trade?.rationale).toContain("X sentiment");
+    expect(trade?.rationale).not.toContain("SentimentAlpha");
 
     // Position + cash.
     const held = await db.select().from(schema.positions).where(eq(schema.positions.agentId, agentId));

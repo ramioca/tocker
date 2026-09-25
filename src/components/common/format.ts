@@ -149,6 +149,27 @@ export function formatRelative(isoDate: string, now = Date.now()): string {
   return relativeFormatter.format(Math.round(diff / 60_000), "minute");
 }
 
+/**
+ * The exact moment, in the reader's own zone and saying which: "Sep 24, 6:58:59 PM PDT".
+ * For audit trails, where "1h ago" on ten rows in a row tells nobody anything. Call it
+ * in the browser only (see `LocalTime`): on the server it would print the server's zone,
+ * and hydration keeps the server's text.
+ */
+export function formatExact(isoDate: string, timeZone?: string): string {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+    ...(timeZone ? { timeZone } : {}),
+  });
+}
+
 export function formatAbsolute(isoDate: string): string {
   const date = new Date(isoDate);
   if (Number.isNaN(date.getTime())) return "—";

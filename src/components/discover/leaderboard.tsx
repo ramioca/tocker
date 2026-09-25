@@ -14,6 +14,7 @@ import { EmptyState } from "@/components/common/empty-state";
 import type { LeaderboardRow, LeaderboardWindow } from "@/server/types";
 import { NumberTicker } from "@/components/spectrumui/number-ticker";
 import { AgentAvatar } from "@/components/common/agent-avatar";
+import { ModeBadge } from "@/components/common/mode-badge";
 import { ChainBadges, ModelChip } from "@/components/social-common/chain-badge";
 import { Sparkline } from "@/components/social-common/sparkline";
 import { pnlColor } from "@/components/social-common/pnl-text";
@@ -179,12 +180,17 @@ function Row({
         >
           {agent.name}
         </Link>
-        <Link
-          href={`/u/${agent.owner.handle}`}
-          className="relative z-10 block truncate rounded text-xs text-muted-foreground hover:text-foreground focus-ring"
-        >
-          @{agent.owner.handle}
-        </Link>
+        {/* Every public book is ranked on one board, so each row says whether its money
+            is real — the badge sits beside the handle (not inside a link) at every width. */}
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Link
+            href={`/u/${agent.owner.handle}`}
+            className="relative z-10 truncate rounded text-xs text-muted-foreground hover:text-foreground focus-ring"
+          >
+            @{agent.owner.handle}
+          </Link>
+          <ModeBadge mode={agent.mode} size="xs" />
+        </div>
       </div>
 
       <div className="hidden shrink-0 items-center gap-1 lg:flex">
@@ -194,12 +200,16 @@ function Row({
 
       <Sparkline
         id={`lb-${win}-${agent.id}`}
-        points={agent.sparkline}
+        // The window's own line, from the same baseline as its PnL: the card's month-long
+        // line beside a 7-day figure could slope the other way.
+        points={row.sparkline}
         pnl={row.pnlPct}
         className="hidden shrink-0 md:block"
       />
 
-      <div className="w-20 shrink-0 text-right sm:w-24">
+      {/* A floor, not a fixed width: "+$930.75 paper" is wider than a phone's 80px, and
+          wrapping "paper" onto a third line made that row taller than the rest. */}
+      <div className="min-w-20 shrink-0 text-right whitespace-nowrap sm:min-w-24">
         <span
           className="font-mono text-sm font-medium tabular-nums"
           style={{ color: pnlColor(printed === 0 ? 0 : row.pnlPct) }}
@@ -216,6 +226,7 @@ function Row({
         </span>
         <p className="font-mono text-[11px] tabular-nums text-muted-foreground">
           {formatUsd(row.pnlUsd, { signed: true, compact: true })}
+          {agent.mode === "paper" ? " paper" : ""}
         </p>
       </div>
 

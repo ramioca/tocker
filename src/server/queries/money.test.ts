@@ -102,7 +102,45 @@ describe("pnlByDay", () => {
       now: DAY0 + DAY + 20 * 3_600_000,
     });
     expect(days[0]).toMatchObject({ equityUsd: 100, agents: 1 });
-    expect(days[1]).toMatchObject({ equityUsd: 600, pnlUsd: 500, agents: 2 });
+    // b's $500 opening book is money in, not a $500 day.
+    expect(days[1]).toMatchObject({ equityUsd: 600, pnlUsd: 0, pnlPct: 0, flowUsd: 500, agents: 2 });
+  });
+
+  it("takes a deposit out of the day's P&L and measures the percentage against what came in", () => {
+    // a: 100 → deposit 500 at 14:00 → closes at 630. 30 of that is a gain, 500 is money moved.
+    const days = pnlByDay([point("a", 0, 12, 100), point("a", 1, 12, 100), point("a", 1, 20, 630)], {
+      now: DAY0 + DAY + 21 * 3_600_000,
+      flows: [{ agentId: "a", at: DAY0 + DAY + 14 * 3_600_000, amountUsd: 500 }],
+    });
+    expect(days[1]).toMatchObject({ equityUsd: 630, pnlUsd: 30, flowUsd: 500 });
+    expect(days[1].pnlPct).toBeCloseTo(5, 10); // 30 on 100 + 500
+  });
+
+  it("takes a withdrawal out of the day's P&L, so money taken out is not a loss", () => {
+    const days = pnlByDay([point("a", 0, 12, 600), point("a", 1, 20, 110)], {
+      now: DAY0 + DAY + 21 * 3_600_000,
+      flows: [{ agentId: "a", at: DAY0 + DAY + 9 * 3_600_000, amountUsd: -500 }],
+    });
+    expect(days[1]).toMatchObject({ equityUsd: 110, pnlUsd: 10, flowUsd: -500 });
+    expect(days[1].pnlPct).toBeCloseTo((10 / 600) * 100, 10);
+  });
+
+  it("does not count a deposit twice when it is already inside the agent's opening book", () => {
+    // b is funded at 11:50 and first marked at 12:00: the 500 is its opening book.
+    const days = pnlByDay([point("a", 0, 12, 100), point("a", 1, 12, 100), point("b", 1, 12, 500), point("b", 1, 20, 520)], {
+      now: DAY0 + DAY + 21 * 3_600_000,
+      flows: [{ agentId: "b", at: DAY0 + DAY + 11 * 3_600_000 + 50 * 60_000, amountUsd: 500 }],
+      resolutionMs: EQUITY_BUCKET_MS,
+    });
+    expect(days[1]).toMatchObject({ equityUsd: 620, pnlUsd: 20, flowUsd: 500 });
+  });
+
+  it("ignores flows for agents it has no book for", () => {
+    const days = pnlByDay([point("a", 0, 12, 100), point("a", 1, 12, 110)], {
+      now: DAY0 + DAY + 13 * 3_600_000,
+      flows: [{ agentId: "ghost", at: DAY0 + DAY, amountUsd: 900 }],
+    });
+    expect(days[1]).toMatchObject({ pnlUsd: 10, flowUsd: 0 });
   });
 
   it("runs the days up to now even when nothing has been marked since", () => {
@@ -142,7 +180,7 @@ describe("pnlByDay", () => {
       ],
       { now: DAY0 + 12 * 3_600_000 },
     );
-    expect(days).toEqual([{ day: "2026-09-20", equityUsd: 100, pnlUsd: null, pnlPct: null, agents: 1 }]);
+    expect(days).toEqual([{ day: "2026-09-20", equityUsd: 100, pnlUsd: null, pnlPct: null, flowUsd: 0, agents: 1 }]);
   });
 });
 
@@ -244,5 +282,55 @@ describe("getMoney", () => {
     expect(money.equity).toHaveLength(1);
     expect(money.equity[0].equityUsd).toBe(112);
     expect(money.live[0]).toMatchObject({ equityUsd: 112, stale: true });
+  });
+
+  it("reads deposits and withdrawals as flows, not as the day's P&L", async () => {
+    const { userId, agentId } = await seedAgent(db, { mode: "live" });
+    const today = Math.floor(Date.now() / DAY) * DAY;
+    const yesterday = today - DAY;
+    await snapshot(agentId, yesterday + 12 * 3_600_000, 100, "live");
+    // Today: $500 funded, $40 withdrawn, and the book closes at 575 — a $15 day.
+    const at = Math.min(Date.now() - 60_000, today + 60_000);
+    await db.insert(schema.agentFundingIntents).values({
+      id: nanoid(),
+      agentId,
+      userId,
+      chain: "base",
+      asset: "usdc",
+      amount: "500",
+      status: "sent",
+      toAddress: "0x0000000000000000000000000000000000000001",
+      createdAt: new Date(at),
+      settledAt: new Date(at),
+    });
+    await db.insert(schema.auditEvents).values([
+      {
+        id: nanoid(),
+        userId,
+        kind: "withdraw",
+        agentId,
+        summary: "Withdrew 40 USDC.",
+        metadata: { chain: "base", asset: "usdc", amount: 40, to: "0x1", txHash: "0x2" },
+        createdAt: new Date(at),
+      },
+      {
+        // Fee settlement shares the kind, but it is a cost, not the owner taking money out.
+        id: nanoid(),
+        userId,
+        kind: "withdraw",
+        agentId,
+        summary: "Settled fees.",
+        metadata: { reason: "platform_fee_settlement", chain: "base", amountUsd: 0.3 },
+        createdAt: new Date(at),
+      },
+    ]);
+    await snapshot(agentId, Math.min(Date.now() - 30_000, today + 120_000), 575, "live");
+
+    const money = await getMoney(userId);
+
+    expect(money.today.flowUsd).toBeCloseTo(460, 6);
+    expect(money.today.pnlUsd).toBeCloseTo(15, 6);
+    // Postgres prints a timestamptz as "… +00", which `Date` cannot parse.
+    expect(money.live[0].firstFundedAt).toBe(new Date(at).toISOString());
   });
 });

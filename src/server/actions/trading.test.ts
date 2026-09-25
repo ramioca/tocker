@@ -133,7 +133,7 @@ describe("placeManualTrade", () => {
     if (result.ok) return;
     expect(result.error).toContain("minimum score is 99");
     expect(result.error).toMatch(/BONK scores \d/);
-    expect(result.error).toContain("settings");
+    expect(result.error).toContain("Settings");
 
     // Refused before anything was written.
     const rows = await db.select().from(schema.trades).where(eq(schema.trades.agentId, agentId));
@@ -165,7 +165,7 @@ describe("placeManualTrade", () => {
     const result = await placeManualTrade({ agentId, chain: "solana", side: "sell", tokenAddress: BONK, amountUsd: 10 });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toContain("No BONK position");
+    expect(result.error).toContain("holds no BONK");
   });
 
   it("refuses a stranger and refuses an anonymous caller", async () => {
@@ -224,7 +224,9 @@ describe("previewTrade", () => {
     expect(preview.ok).toBe(true);
     if (!preview.ok) return;
     expect(preview.data.allowed).toBe(false);
-    expect(preview.data.reason).toContain("maxTradeUsd");
+    // The owner's words, with both numbers, never the config key the model reads.
+    expect(preview.data.reason).toBe("$500 is over this agent's $20 per-trade cap. Lower the size or raise Max per trade in Settings.");
+    expect(preview.data.reason).not.toContain("maxTradeUsd");
   });
 
   it("flags an approve-mode agent so the sheet can say the order becomes a proposal", async () => {

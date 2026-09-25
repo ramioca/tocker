@@ -9,7 +9,7 @@ import { FEES_COVERED, chainLabelFor, feeFailureKind } from "@/lib/wallets/fundi
 import { fmtUsd } from "@/lib/money";
 import { dataChainsFor, getDataSource } from "@/lib/data-sources/registry";
 import { isMockMode } from "@/lib/x402/paidFetch";
-import { getMfaStatus } from "./mfa";
+import { UNAVAILABLE_TO_USERS, getMfaStatus } from "./mfa";
 import { getKillSwitch } from "./kill-switch";
 import type { AgentConfig, WalletBudget } from "@/db/schema";
 import type { Chain } from "@/server/types";
@@ -416,7 +416,12 @@ async function checkMfa(ownerId: string): Promise<ReadinessStep> {
     id: "mfa",
     title: "Second factor (optional)",
     state: "pass",
-    detail: status.blockedReason ?? "No second factor enrolled. Optional — enrol one in Settings → Security if you want it.",
+    // Beside a green check, "isn't available" read like a failure that had passed.
+    detail:
+      status.blockedReason === UNAVAILABLE_TO_USERS
+        ? "Optional — Tocker doesn't offer two-factor sign-in yet, so there is nothing to enrol."
+        : (status.blockedReason ??
+          "No second factor enrolled. Optional — enrol one in Settings → Security if you want it."),
     fix: null,
   };
 }

@@ -237,7 +237,7 @@ function KeyStep({ onAdded, onSkip }: { onAdded: () => void; onSkip: () => void 
         body="Anthropic, OpenAI or OpenRouter. You can add more later, and any agent can use any key you own."
       />
       <div className="mt-5">
-        <AddLlmKeyForm submitLabel="Save key" onAdded={onAdded} />
+        <AddLlmKeyForm compact submitLabel="Save key" onAdded={onAdded} />
       </div>
       <div className="mt-6 flex justify-end">
         <button type="button" onClick={onSkip} className={ghostButton}>

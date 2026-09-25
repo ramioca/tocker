@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { RelativeTime } from "@/components/common/relative-time";
+import { LocalTime, RelativeTime } from "@/components/common/relative-time";
 import { formatCount } from "@/components/common/format";
 import type { AdminUserRow } from "@/server/queries/admin";
 import { DataTable, EmptyRow, TableShell, Td, Th } from "./table-shell";
@@ -47,7 +47,7 @@ export function AdminUsersTable({ rows }: { rows: AdminUserRow[] }) {
                   {row.email ?? "—"}
                 </Td>
                 <Td muted>
-                  <RelativeTime iso={row.createdAt} />
+                  <LocalTime iso={row.createdAt} dateOnly className="whitespace-nowrap" />
                 </Td>
                 <Td numeric>{formatCount(row.agentCount)}</Td>
                 <Td numeric className={row.liveAgentCount > 0 ? "text-primary" : "text-muted-foreground"}>

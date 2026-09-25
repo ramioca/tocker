@@ -30,7 +30,7 @@ import { deepestGeckoPool, getGeckoTokenInfo, getGeckoTokenPools } from "./provi
 import { getGoPlusSecurity } from "./providers/goplus";
 import { getJupiterToken } from "./providers/jupiter";
 import { getRugcheckSummary } from "./providers/rugcheck";
-import { recordScore } from "./history";
+import { isNoData, recordScore } from "./history";
 import { scoreToken, type Universe } from "./score";
 import type { ScoreInput, SellCheckInput, SentimentInput, SmartMoneyInput } from "./types";
 
@@ -445,7 +445,10 @@ export async function getTokenScore(input: GetTokenScoreInput): Promise<TokenSco
   }
 
   const score = scoreToken(gathered, input.universe);
-  await writeCache(score, key);
+  // A reading no provider answered is an outage, not a verdict: caching it would replace
+  // the token's last real score (and, under the public universe, its public page) with
+  // "0 · avoid". The caller still gets it, so a buy is still refused on it.
+  if (!isNoData(score)) await writeCache(score, key);
   await recordScore(score); // append-only history for token pages; deduped, never throws
   return score;
 }

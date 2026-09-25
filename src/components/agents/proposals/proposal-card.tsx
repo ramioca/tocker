@@ -66,6 +66,11 @@ export function ProposalCard({
   // refused approval never flashes "Approved" first. A refusal remounts the hold button.
   const [pending, setPending] = useState<ApprovalDecision | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // Whether the decision was made from this card's own controls with focus still on them.
+  // Settling swaps the card out, which would drop that focus to <body>; the settled card
+  // takes it instead.
+  const [focusSettled, setFocusSettled] = useState(false);
+  const articleRef = useRef<HTMLElement>(null);
 
   const expiresAt = new Date(proposal.expiresAt).getTime();
   const proposedAt = new Date(proposal.proposedAt ?? proposal.createdAt).getTime();
@@ -78,6 +83,8 @@ export function ProposalCard({
 
   const decide = async (next: ApprovalDecision) => {
     if (pending !== null) return;
+    // Read at the press: Reject disables while pending, and a disabled button lets go of focus.
+    const focusedAtPress = articleRef.current?.contains(document.activeElement) ?? false;
     setPending(next);
     const result = await decideProposalAction(proposal.id, next === "approved" ? "approve" : "reject").catch(
       () => ({ ok: false as const, error: "Could not reach Tocker. Nothing was decided." }),
@@ -89,6 +96,11 @@ export function ProposalCard({
       throw new Error(result.error);
     }
     setSettledMessage(result.data.message);
+    // Unless the operator has since moved on to something else on the page.
+    const active = document.activeElement;
+    setFocusSettled(
+      focusedAtPress && (active === null || active === document.body || (articleRef.current?.contains(active) ?? false)),
+    );
     setDecision(next);
     // The island counts proposals, so it has to hear about this immediately.
     refreshProposals();
@@ -99,6 +111,8 @@ export function ProposalCard({
   if (decision !== null) {
     return (
       <SettledCard
+        id={proposal.id}
+        autoFocus={focusSettled}
         decision={decision}
         message={settledMessage}
         symbol={proposal.token.symbol}
@@ -110,9 +124,13 @@ export function ProposalCard({
 
   return (
     <article
+      ref={articleRef}
       id={`proposal-${proposal.id}`}
+      data-proposal-card=""
+      // Focusable from script only: the list hands focus here when a decided card leaves.
+      tabIndex={-1}
       className={cn(
-        "flex h-full flex-col rounded-xl border bg-card/40 p-4",
+        "flex h-full flex-col rounded-xl border bg-card/40 p-4 outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
         "transition-[border-color,box-shadow] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]",
         highlighted ? "border-primary/60 ring-2 ring-primary/30" : "border-border/70",
       )}
@@ -276,12 +294,17 @@ function Rationale({ text, className }: { text: string; className?: string }) {
 
 /** The settled state: the decision reads for a beat before the list drops the card. */
 function SettledCard({
+  id,
+  autoFocus = false,
   decision,
   message,
   symbol,
   side,
   requestedUsd,
 }: {
+  id: string;
+  /** Take focus on mount: the button that decided it was focused and has just unmounted. */
+  autoFocus?: boolean;
   decision: ApprovalDecision;
   message: string | null;
   symbol: string;
@@ -289,10 +312,18 @@ function SettledCard({
   requestedUsd: number;
 }) {
   const approved = decision === "approved";
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (autoFocus) ref.current?.focus({ preventScroll: true });
+  }, [autoFocus]);
   return (
     <article
+      ref={ref}
+      id={`proposal-${id}`}
+      data-proposal-card=""
+      tabIndex={-1}
       className={cn(
-        "h-full rounded-xl border p-4 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200",
+        "h-full rounded-xl border p-4 outline-none focus-visible:ring-2 focus-visible:ring-ring/50 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200",
         approved ? "border-[oklch(0.72_0.17_150)]/40 bg-[oklch(0.72_0.17_150)]/[0.06]" : "border-border/70 bg-card/30",
       )}
     >

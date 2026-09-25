@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Wallet } from "lucide-react";
 import { GeckoTerminalLink } from "@/components/common/chart-link";
 import {
@@ -15,6 +16,7 @@ import { TokenIcon } from "@/components/common/token-icon";
 import { formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { SellPositionButton } from "@/components/agents/sell-position";
 import { ScoreBadge } from "@/components/tokens/score-badge";
+import { describeBlocker } from "@/components/tokens/blocker-copy";
 import { cn } from "@/lib/utils";
 import type { Position } from "@/server/types";
 
@@ -88,6 +90,9 @@ function ExitDistance({ position, labelled = false }: { position: Position; labe
 /** "74 → 62" — the score at entry against the score now, when we have both. */
 function ScoreDrift({ position }: { position: Position }) {
   const { entryScore, currentScore } = position;
+  // Present only for the owner (null or absent for anyone else).
+  const blockers = position.currentBlockers ?? [];
+  const blockerTitles = blockers.map((code) => describeBlocker(code).title);
   if (entryScore === null && currentScore === null) {
     return <span className="text-muted-foreground">—</span>;
   }
@@ -98,6 +103,20 @@ function ScoreDrift({ position }: { position: Position }) {
       {/* Coloured from the number alone: a reading of what a visitor already sees, not a new fact. */}
       {currentScore === null ? (
         <span className="text-muted-foreground">—</span>
+      ) : blockers.length > 0 ? (
+        // Owner-only: the gates the owner's own universe failed, so an "Avoid" on a
+        // decent number says why rather than looking like a bug.
+        <>
+          <ScoreBadge
+            total={currentScore}
+            blockers={blockers}
+            size="xs"
+            numberOnly
+            className="align-middle"
+            title={`${Math.round(currentScore)} / 100 — Avoid. Failed: ${blockerTitles.join("; ")}.`}
+          />
+          <span className="sr-only">. Failed: {blockerTitles.join("; ")}.</span>
+        </>
       ) : (
         <ScoreBadge total={currentScore} size="xs" numberOnly className="align-middle" />
       )}
@@ -178,8 +197,15 @@ export function PositionsTable({
             <TableRow key={position.token.id}>
               <TableCell>
                 <span className="flex items-center gap-2">
-                  <TokenIcon token={position.token} size="sm" />
-                  <span className="font-medium">{position.token.symbol}</span>
+                  {/* The token's page first — its score and the reasons for it, which a
+                      phone has no column for. GeckoTerminal is the secondary way out. */}
+                  <Link
+                    href={`/tokens/${position.token.chain}/${position.token.address}`}
+                    className="inline-flex items-center gap-2 rounded hover:underline focus-ring"
+                  >
+                    <TokenIcon token={position.token} size="sm" />
+                    <span className="font-medium">{position.token.symbol}</span>
+                  </Link>
                   <ChainBadge chain={position.token.chain} className="hidden sm:inline-flex" />
                   <GeckoTerminalLink chain={position.token.chain} address={position.token.address} symbol={position.token.symbol} />
                 </span>

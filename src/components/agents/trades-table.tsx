@@ -68,6 +68,26 @@ export function TradesTable({
 
   const trades = query.data?.pages.flatMap((page) => page.items) ?? [];
 
+  // Offline before the first page arrived: React Query pauses rather than fails, so
+  // without this the skeleton would pulse until the connection came back.
+  if (query.fetchStatus === "paused" && !query.data) {
+    return (
+      <ErrorState
+        title="You're offline"
+        description="Trade history loads when you reconnect."
+        action={
+          <button
+            type="button"
+            onClick={() => void query.refetch()}
+            className="focus-ring rounded-lg border border-border px-3 py-1.5 text-xs transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.97]"
+          >
+            Try again
+          </button>
+        }
+      />
+    );
+  }
+
   // Only when there is nothing to show. `isError` is also true when just an older page
   // failed, and the pages already loaded are still in `query.data` — those must stay.
   if (query.isError && !query.data) {
@@ -90,7 +110,9 @@ export function TradesTable({
 
   return (
     <SkeletonReveal loading={query.isPending} skeleton={<TableSkeleton />}>
-      {trades.length === 0 ? (
+      {/* Nothing behind the skeleton while it loads: the skeleton is aria-hidden, so an
+          empty state rendered under it was read out as "No trades yet" mid-load. */}
+      {query.isPending ? null : trades.length === 0 ? (
         <EmptyState
           icon={<Receipt />}
           title="No trades yet"

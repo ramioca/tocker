@@ -72,7 +72,8 @@ function EditableValue({
         }
       }}
       className={cn(
-        "tnum w-[8.5ch] rounded-md border border-transparent bg-transparent px-1 text-right font-mono text-sm",
+        // 16px on phones (iOS zooms into anything smaller), and wide enough for it there.
+        "tnum w-20 rounded-md border border-transparent bg-transparent px-1 text-right font-mono text-base md:w-[8.5ch] md:text-sm",
         "transition-colors duration-150 hover:border-border/70 focus:border-border focus:bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
       )}
     />

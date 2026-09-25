@@ -3,6 +3,7 @@ import { and, asc, desc, eq, exists, ilike, inArray, isNull, lt, notInArray, or,
 import { agents, follows, getDb, llmKeys, notifications, users, type Db } from "@/db";
 import type { LlmKeyRow, NotificationRow, Page, UserProfile } from "@/server/types";
 import { buildAgentCards, decodeCursor, encodeCursor, isFollowing, pageSize } from "./_shared";
+import { visibleRationale } from "./visibility";
 import { mutedKinds, sanitizePrefs, type NotificationPrefs } from "@/lib/notifications/prefs";
 
 async function readPrefs(db: Db, userId: string): Promise<NotificationPrefs> {
@@ -121,6 +122,19 @@ export async function getMyLlmKeys(userId: string): Promise<LlmKeyRow[]> {
   }));
 }
 
+/**
+ * How many of this user's agents have no LLM key and so cannot run. Owner-only by
+ * construction: it counts the caller's own agents.
+ */
+export async function countKeylessAgents(userId: string): Promise<number> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(agents)
+    .where(and(eq(agents.ownerId, userId), isNull(agents.llmKeyId)));
+  return Number(row?.n ?? 0);
+}
+
 export async function getNotifications(userId: string, cursor?: string | null): Promise<Page<NotificationRow>> {
   const db = await getDb();
   const limit = pageSize(30);
@@ -151,7 +165,9 @@ export async function getNotifications(userId: string, cursor?: string | null): 
       id: n.id,
       kind: n.kind,
       title: n.title,
-      body: n.body,
+      // A `trade` notification goes to followers. Rows written before follower bodies
+      // were redacted can still carry an exit threshold or a paid source's name.
+      body: n.kind === "trade" ? visibleRationale(n.body, { isOwner: false }) : n.body,
       href: n.href,
       readAt: n.readAt ? n.readAt.toISOString() : null,
       createdAt: n.createdAt.toISOString(),

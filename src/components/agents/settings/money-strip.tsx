@@ -92,17 +92,17 @@ export function MoneyStrip({
             type an address and press send is a second place to get it wrong, and the
             form below already knows the balances and the chain rules.
           */}
-          <a
-            href="#withdraw"
-            aria-disabled={canWithdraw ? undefined : true}
-            className={cn(
-              ACTION,
-              "border-border hover:bg-muted",
-              !canWithdraw && "pointer-events-none opacity-40",
-            )}
-          >
-            Withdraw
-          </a>
+          {canWithdraw ? (
+            <a href="#withdraw" className={cn(ACTION, "border-border hover:bg-muted")}>
+              Withdraw
+            </a>
+          ) : (
+            // A disabled button, not a dead link: out of the Tab order, and said as
+            // "dimmed" rather than offered as somewhere to go.
+            <button type="button" disabled className={cn(ACTION, "border-border opacity-40")}>
+              Withdraw
+            </button>
+          )}
         </div>
       </div>
     </section>

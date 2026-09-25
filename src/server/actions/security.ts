@@ -22,6 +22,7 @@ import { agents, getDb, trades } from "@/db";
 import { getSession } from "@/lib/auth";
 import { agentConfigSchema, chainSchema } from "@/lib/agent/config";
 import { withdrawFromAgent as sendWithdrawal, type WithdrawResult } from "@/lib/wallets";
+import { addressProblemForChain, normalizeAddressForChain } from "@/lib/wallet-address";
 import { recordAudit, listAuditEvents, type AuditRow } from "@/lib/security/audit";
 import { getKillSwitch, setTradingPaused } from "@/lib/security/kill-switch";
 import { getMfaStatus, rememberMfaStatus, secondFactorBlock, type MfaStatus } from "@/lib/security/mfa";
@@ -410,12 +411,13 @@ export async function secureWithdrawAction(input: {
   if (!chainSchema.safeParse(input.chain).success) return fail("Unknown chain");
   if (input.asset !== "usdc" && input.asset !== "native") return fail("Unknown asset");
   if (!(input.amount > 0) || !Number.isFinite(input.amount)) return fail("Enter an amount greater than zero");
-  const to = input.toAddress?.trim();
-  if (!to) return fail("Enter a destination address");
-  if (input.chain === "base" && !/^0x[a-fA-F0-9]{40}$/.test(to)) return fail("That is not a valid Base address");
-  if (input.chain === "solana" && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(to)) {
-    return fail("That is not a valid Solana address");
-  }
+  const raw = input.toAddress?.trim();
+  if (!raw) return fail("Enter a destination address");
+  // The same check the form runs, checksum included: a mixed-case Base address with a
+  // typo is refused here in words, not later by the signer in its own.
+  const problem = addressProblemForChain(input.chain, raw);
+  if (problem) return fail(problem);
+  const to = normalizeAddressForChain(input.chain, raw);
 
   const { error, agent } = await ownedAgent(input.agentId, session.userId);
   if (error || !agent) return fail(error ?? "Agent not found");

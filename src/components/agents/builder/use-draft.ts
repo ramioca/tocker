@@ -116,5 +116,24 @@ export function useDraft(userId: string) {
     setRestored(false);
   }, [draftKey]);
 
-  return { draft, setDraft, update, updateConfig, clear, restored };
+  /**
+   * Put back a draft that "Start over" just cleared — its Undo. Written straight to
+   * storage rather than waiting for the debounce, so a reload right after the Undo
+   * still finds it.
+   */
+  const restore = useCallback(
+    (previous: BuilderDraft) => {
+      touched.current = true;
+      setDraft(previous);
+      try {
+        window.localStorage.setItem(draftKey, JSON.stringify(previous));
+      } catch {
+        // Private mode / quota — the form still has it, it just will not persist.
+      }
+      setRestored(true);
+    },
+    [draftKey],
+  );
+
+  return { draft, setDraft, update, updateConfig, clear, restore, restored };
 }

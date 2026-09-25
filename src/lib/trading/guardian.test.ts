@@ -116,7 +116,7 @@ describe("runGuardian — stop loss", () => {
     const exit = result.exits[0];
     expect(exit?.status).toBe("filled");
     expect(exit?.reason).toBe("stop_loss");
-    expect(exit?.rationale).toContain("Stop loss: BONK −25.0%");
+    expect(exit?.rationale).toMatch(/^Stop loss: BONK at \$[\d.]+, −25\.0% from entry/);
 
     // The trade: a guardian-origin sell with the reason on it.
     const rows = await tradesFor(agentId);
@@ -143,13 +143,15 @@ describe("runGuardian — stop loss", () => {
     expect(position?.entryLiquidityUsd).toBeNull();
     expect(Number(position?.realizedPnlUsd)).toBeLessThan(0);
 
-    // The feed post carries the rationale verbatim.
+    // The feed post carries the public line: what sold and where, never the 15% stop.
     const feed = await db.select().from(schema.posts).where(eq(schema.posts.agentId, agentId));
     expect(feed).toHaveLength(1);
     expect(feed[0]?.kind).toBe("trade");
     expect(feed[0]?.authorId).toBe(userId);
     expect(feed[0]?.tradeId).toBe(trade?.id);
-    expect(feed[0]?.body).toBe(exit?.rationale);
+    expect(feed[0]?.body).toBe(exit?.publicRationale);
+    expect(feed[0]?.body).toContain("Stop loss: closed BONK at −25.0% from entry.");
+    expect(feed[0]?.body).not.toContain("15%");
 
     // The owner gets an `exit` notification; the follower gets a `trade` one.
     const owner = await db.select().from(schema.notifications).where(eq(schema.notifications.userId, userId));
@@ -157,10 +159,16 @@ describe("runGuardian — stop loss", () => {
     expect(owner[0]?.kind).toBe("exit");
     expect(owner[0]?.title).toBe("Stop loss hit: sold BONK");
     expect(owner[0]?.href).toContain("/agents/");
+    // The href names the trade so the notifications page can show its receipt under
+    // the rationale; the body is the rationale alone, not the receipt summary again.
+    expect(owner[0]?.href).toContain(`?trade=${trade?.id}`);
+    expect(owner[0]?.body).toBe(exit?.rationale);
     const followerNotes = await db.select().from(schema.notifications).where(eq(schema.notifications.userId, follower));
     expect(followerNotes).toHaveLength(1);
     expect(followerNotes[0]?.kind).toBe("trade");
     expect(followerNotes[0]?.title).toContain("sold BONK");
+    expect(followerNotes[0]?.body).not.toContain("15%");
+    expect(owner[0]?.body).toContain("15% stop");
 
     // Equity snapshot after the exit.
     const snaps = await db.select().from(schema.equitySnapshots).where(eq(schema.equitySnapshots.agentId, agentId));

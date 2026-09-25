@@ -2,8 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { LogIn } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { NAV_ITEMS, isActivePath } from "./nav-items";
+import { signInHref } from "@/components/auth/login-helpers";
+import { useSession } from "@/hooks/use-session";
+import { NAV_ITEMS, isActivePath, type NavItem } from "./nav-items";
 
 /**
  * The phone's primary navigation.
@@ -29,7 +32,16 @@ export function MobileTabBar({
   ownedSlugs?: ReadonlySet<string>;
 }) {
   const pathname = usePathname();
-  const items = NAV_ITEMS.filter((item) => item.mobile);
+  // Signed out: the tabs a visitor can open, then the way in — the rest are sign-in
+  // walls. The signed-in bar holds until the session is known, so it never flashes.
+  const { ready, session } = useSession();
+  const items: NavItem[] =
+    ready && !session
+      ? [
+          ...NAV_ITEMS.filter((item) => item.mobile && item.public),
+          { href: signInHref(pathname), label: "Sign in", icon: LogIn },
+        ]
+      : NAV_ITEMS.filter((item) => item.mobile);
 
   return (
     <nav

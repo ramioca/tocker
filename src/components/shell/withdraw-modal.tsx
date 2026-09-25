@@ -15,9 +15,9 @@ import { Input } from "@/components/ui/input";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
 import { FullAddress } from "@/components/common/address";
 import { formatUsd, truncateAddress } from "@/components/common/format";
-import { useRefreshCash } from "@/components/wallets/use-cash";
+import { useRefreshCash, useSyncWallets } from "@/components/wallets/use-cash";
 import { useTransfer } from "@/components/wallets/use-transfer";
-import { addressHintForChain, isValidAddressForChain } from "@/lib/wallet-address";
+import { addressProblemForChain, normalizeAddressForChain } from "@/lib/wallet-address";
 import {
   NETWORK_WORDING,
   cashOn,
@@ -84,6 +84,8 @@ export function WithdrawModal({
   const [quote, setQuote] = useState<Quote | null>(null);
   const { send, available } = useTransfer();
   const refresh = useRefreshCash();
+  const syncWallets = useSyncWallets();
+  const [syncing, setSyncing] = useState(false);
 
   // Every open starts clean, on the chain the cash is on: an address typed last time
   // (for the other chain, perhaps) is not one to carry into a new withdrawal. Adjusted
@@ -102,7 +104,10 @@ export function WithdrawModal({
   const chainCash = cashOn(cash, chain);
   const availableUsdc = chainCash.usdc;
   const target = destination.trim();
-  const destinationOk = isValidAddressForChain(chain, destination);
+  // The same check the server makes, checksum included: a mixed-case Base address with
+  // one wrong letter is refused here, in words, rather than by viem after the hold.
+  const addressProblem = addressProblemForChain(chain, destination);
+  const destinationOk = addressProblem === null;
 
   // Solana only: what sending to this address costs, if anything. A quote belongs to one
   // address, so a stale one is simply not "current" — no reset needed when typing.
@@ -136,6 +141,21 @@ export function WithdrawModal({
 
   const ready = current?.status === "ready" ? current : null;
   const quoteError = current?.status === "error" ? current.message : null;
+  // The server has no Solana wallet on record for this user: the fix is a sync, which
+  // can be done right here rather than by finding Deposit.
+  const needsSync = quoteError !== null && /sync wallets/i.test(quoteError);
+
+  const syncAndRequote = async () => {
+    setSyncing(true);
+    try {
+      await syncWallets();
+      setQuote(null);
+    } catch {
+      toast.error("Couldn't sync your wallets", { description: "Try again in a moment." });
+    } finally {
+      setSyncing(false);
+    }
+  };
   const feeUsdc = ready?.feeUsdc ?? 0;
   const minAmount = chain === "solana" ? (ready?.minAmountUsdc ?? DEFAULT_SOLANA_MIN) : 0;
   const spendable = Math.max(0, availableUsdc - feeUsdc);
@@ -158,7 +178,8 @@ export function WithdrawModal({
         chain,
         asset: "usdc",
         amount: parsed,
-        to: target,
+        // Checksummed on Base: viem refuses an all-uppercase address that EIP-55 allows.
+        to: normalizeAddressForChain(chain, target),
         purpose: "withdraw",
         maxFeeUsdc: feeUsdc,
       });
@@ -256,6 +277,8 @@ export function WithdrawModal({
               options={(wallets.length ? wallets : [{ chain: "base" as Chain }]).map((entry) => ({
                 value: entry.chain,
                 label: chainLabelFor(entry.chain),
+                // What can leave from there, so the pick is made with the number in view.
+                hint: `${formatUsd(cashOn(cash, entry.chain).usdcUsd)} USDC`,
               }))}
               onChange={(next) => {
                 setChain(next as Chain);
@@ -271,16 +294,32 @@ export function WithdrawModal({
 
           <div>
             <label htmlFor="withdraw-amount" className="mb-1 block text-xs text-muted-foreground">
-              Amount
+              Amount (USDC)
             </label>
-            <Input
-              id="withdraw-amount"
-              value={amount}
-              inputMode="decimal"
-              placeholder="0"
-              onChange={(event) => setAmount(sanitizeUsdInput(event.target.value))}
-              className="tnum font-mono"
-            />
+            {/* The unit on both sides, as the builder and manual trade show it: a bare field
+                beside "$12.34 USDC" and "Hold to send $120.50" left the reader to guess. */}
+            <div className="relative">
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-y-0 left-2.5 grid place-items-center font-mono text-sm text-muted-foreground"
+              >
+                $
+              </span>
+              <Input
+                id="withdraw-amount"
+                value={amount}
+                inputMode="decimal"
+                placeholder="0.00"
+                onChange={(event) => setAmount(sanitizeUsdInput(event.target.value))}
+                className="tnum pr-12 pl-6 font-mono"
+              />
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-y-0 right-2.5 grid place-items-center text-xs text-muted-foreground"
+              >
+                USDC
+              </span>
+            </div>
             <div className="mt-2 flex items-center gap-1.5">
               {PERCENT_CHIPS.map((chip) => (
                 <button
@@ -288,7 +327,8 @@ export function WithdrawModal({
                   type="button"
                   // Against what can actually leave: the balance, less the account fee
                   // when this address needs one — so "Max" is always sendable.
-                  onClick={() => setAmount(String(floorCents(spendable * chip.fraction)))}
+                  // Cents always, so "Max" reads 120.50 like every other amount here, not 120.5.
+                  onClick={() => setAmount(floorCents(spendable * chip.fraction).toFixed(2))}
                   className="h-7 flex-1 rounded-lg border border-border text-xs text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:scale-[0.97]"
                 >
                   {chip.label}
@@ -326,21 +366,38 @@ export function WithdrawModal({
               autoCorrect="off"
               autoCapitalize="off"
               spellCheck={false}
-              className="font-mono text-xs"
+              aria-invalid={target && addressProblem ? true : undefined}
+              aria-describedby={target && addressProblem ? "withdraw-destination-error" : undefined}
+              // The primitive's size, not "text-xs": 16px on phones, where iOS zooms into
+              // any focused field smaller than that.
+              className="font-mono"
             />
-            {target && !destinationOk ? (
-              <p className="mt-1 text-[11px] text-destructive">{addressHintForChain(chain)}</p>
+            {target && addressProblem ? (
+              <p id="withdraw-destination-error" className="mt-1 text-[11px] text-destructive">
+                {addressProblem}
+              </p>
             ) : null}
             {quoteError ? (
               <p className="mt-1 text-[11px] leading-relaxed text-destructive">
                 {quoteError}{" "}
-                <button
-                  type="button"
-                  onClick={() => setQuote(null)}
-                  className="underline underline-offset-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                >
-                  Check again
-                </button>
+                {needsSync ? (
+                  <button
+                    type="button"
+                    onClick={() => void syncAndRequote()}
+                    disabled={syncing}
+                    className="underline underline-offset-2 hover:text-foreground disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  >
+                    {syncing ? "Syncing…" : "Sync wallets"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setQuote(null)}
+                    className="underline underline-offset-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  >
+                    Check again
+                  </button>
+                )}
               </p>
             ) : null}
           </div>

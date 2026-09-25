@@ -118,8 +118,8 @@ export default async function MoneyPage() {
             <section aria-labelledby="money-days-heading" className="space-y-4">
               <SectionHeading
                 id="money-days-heading"
-                title="P&L by day"
-                hint="The last 30 UTC days. A day's number is the change in what every live agent held at the last mark of that day."
+                title="Change in equity by day"
+                hint="The last 30 UTC days. A day's number is the change in what every live agent held at the last mark of that day, less any money moved in or out."
               />
               <PnlByDay days={summary.days} />
             </section>

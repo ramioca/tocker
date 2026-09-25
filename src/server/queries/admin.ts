@@ -37,6 +37,7 @@ import {
   type Db,
 } from "@/db";
 import { toNum } from "@/lib/money";
+import { SIMULATED_SETTLEMENT_TX } from "@/lib/platform/fee";
 import { isPaperWallet, readWalletBalances, type AgentWalletRow } from "@/lib/wallets";
 import type { AgentCard, Chain } from "@/server/types";
 import { buildAgentCards } from "./_shared";
@@ -82,10 +83,15 @@ export interface AdminVolume {
 }
 
 export interface AdminFeeTotals {
-  /** Charged and not yet swept to a platform wallet. */
+  /** Live fills: charged and not yet swept to a platform wallet. */
   accruedUsd: number;
-  /** Swept in (paper agents' rows are written settled at accrual — see the schema). */
+  /** Live fills: swept into a platform wallet. Real revenue, and only that. */
   collectedUsd: number;
+  /**
+   * Paper fills' fees. Written settled at accrual with a `"simulated"` hash, so they
+   * would otherwise read as collected; no money moved. Shown apart, never summed in.
+   */
+  paperUsd: number;
 }
 
 export interface AdminDataSpend {
@@ -112,8 +118,10 @@ export interface AdminDailyPoint {
 }
 
 export interface AdminSeries {
+  /** Waitlist signups — not accounts, which `AdminUserTotals` counts. */
   signups: AdminDailyPoint[];
   volumeUsd: AdminDailyPoint[];
+  /** Fees on live fills only; a paper fill's fee is simulated. */
   feesUsd: AdminDailyPoint[];
 }
 
@@ -193,10 +201,6 @@ export interface AdminBalancesSnapshot {
 
 const DAY_MS = 86_400_000;
 
-function daysAgo(now: Date, days: number): Date {
-  return new Date(now.getTime() - days * DAY_MS);
-}
-
 /** Start of the UTC day `days` back, so a daily series has whole buckets. */
 function startOfUtcDay(now: Date, daysBack = 0): Date {
   const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -233,8 +237,8 @@ function densify(rows: Array<{ day: string; value: number }>, now: Date, days = 
 async function userTotals(db: Db, now: Date): Promise<AdminUserTotals> {
   const [[total], [n7], [n30]] = await Promise.all([
     db.select({ n: sql<number>`count(*)::int` }).from(users),
-    db.select({ n: sql<number>`count(*)::int` }).from(users).where(gte(users.createdAt, daysAgo(now, 7))),
-    db.select({ n: sql<number>`count(*)::int` }).from(users).where(gte(users.createdAt, daysAgo(now, 30))),
+    db.select({ n: sql<number>`count(*)::int` }).from(users).where(gte(users.createdAt, startOfUtcDay(now, 6))),
+    db.select({ n: sql<number>`count(*)::int` }).from(users).where(gte(users.createdAt, startOfUtcDay(now, 29))),
   ]);
   return { total: Number(total?.n ?? 0), new7d: Number(n7?.n ?? 0), new30d: Number(n30?.n ?? 0) };
 }
@@ -316,15 +320,29 @@ async function volumeWindow(db: Db, since: Date | null): Promise<AdminVolumeWind
   return out;
 }
 
+/**
+ * A fee on a paper fill: its trade is paper, or (should the trade row be gone) its
+ * settlement is the literal simulated hash. Constant SQL, so it is safe in GROUP BY.
+ */
+const PAPER_FEE = sql<boolean>`(coalesce(${trades.isPaper}, false) or coalesce(${platformFees.txHash} = ${sql.raw(`'${SIMULATED_SETTLEMENT_TX}'`)}, false))`;
+
 async function feeTotals(db: Db): Promise<AdminFeeTotals> {
   const rows = await db
-    .select({ status: platformFees.status, total: sql<string>`coalesce(sum(${platformFees.amountUsd}), 0)` })
+    .select({
+      status: platformFees.status,
+      paper: PAPER_FEE,
+      total: sql<string>`coalesce(sum(${platformFees.amountUsd}), 0)`,
+    })
     .from(platformFees)
-    .groupBy(platformFees.status);
-  const out: AdminFeeTotals = { accruedUsd: 0, collectedUsd: 0 };
+    .leftJoin(trades, eq(trades.id, platformFees.tradeId))
+    .groupBy(platformFees.status, PAPER_FEE);
+  const out: AdminFeeTotals = { accruedUsd: 0, collectedUsd: 0, paperUsd: 0 };
   for (const row of rows) {
-    if (row.status === "accrued") out.accruedUsd = toNum(row.total);
-    else out.collectedUsd = toNum(row.total);
+    const usd = toNum(row.total);
+    // A raw boolean column arrives as `true` from one driver and "t" from another.
+    if (String(row.paper) === "true" || String(row.paper) === "t") out.paperUsd += usd;
+    else if (row.status === "accrued") out.accruedUsd += usd;
+    else out.collectedUsd += usd;
   }
   return out;
 }
@@ -357,8 +375,10 @@ export async function getAdminHeadline(now: Date = new Date()): Promise<AdminHea
     agentTotals(db),
     walletTotals(db),
     volumeWindow(db, null),
-    volumeWindow(db, daysAgo(now, 30)),
-    volumeWindow(db, daysAgo(now, 7)),
+    // Whole UTC days, today included — the same window the daily bars below draw, so
+    // "Volume · 30d" and the 30-day chart are one number, not two.
+    volumeWindow(db, startOfUtcDay(now, 29)),
+    volumeWindow(db, startOfUtcDay(now, 6)),
     feeTotals(db),
     dataSpend(db),
     db.select({ n: sql<number>`count(*)::int` }).from(waitlistSignups),
@@ -397,10 +417,13 @@ export async function getAdminSeries(now: Date = new Date()): Promise<AdminSerie
       .from(trades)
       .where(and(eq(trades.status, "filled"), gte(trades.createdAt, since)))
       .groupBy(tradeDay),
+    // Live fees only: a paper fill's fee is simulated, and charting it as revenue is
+    // the same mistake the headline tile no longer makes.
     db
       .select({ day: feeDay, total: sql<string>`coalesce(sum(${platformFees.amountUsd}), 0)` })
       .from(platformFees)
-      .where(gte(platformFees.createdAt, since))
+      .leftJoin(trades, eq(trades.id, platformFees.tradeId))
+      .where(and(gte(platformFees.createdAt, since), sql`not ${PAPER_FEE}`))
       .groupBy(feeDay),
   ]);
 

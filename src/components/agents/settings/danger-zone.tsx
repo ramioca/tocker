@@ -125,7 +125,7 @@ export function DangerZone({ agent, balances = [] }: { agent: AgentDetail; balan
           placeholder={agent.name}
           disabled={Boolean(stranded)}
           onChange={(event) => setTyped(event.target.value)}
-          className={cn("max-w-xs font-mono text-xs", confirmed && "border-destructive/50")}
+          className={cn("max-w-xs font-mono", confirmed && "border-destructive/50")}
         />
         <div className="pt-1">
           <HoldToConfirmButton

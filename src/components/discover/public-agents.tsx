@@ -14,6 +14,7 @@ import { EmptyState } from "@/components/common/empty-state";
 import type { AgentCard, Page } from "@/server/types";
 import { BeamSearchInput } from "./beam-search-input";
 import { AgentGridCard } from "./agent-grid-card";
+import { matchesAgent, normalizeSearch } from "./agent-search";
 
 type Sort = "pnl" | "new" | "followers";
 
@@ -98,15 +99,9 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
 
   const filtering = query.trim().length > 0;
   const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = normalizeSearch(query);
     if (!q) return items;
-    return items.filter(
-      (agent) =>
-        agent.name.toLowerCase().includes(q) ||
-        agent.owner.handle.toLowerCase().includes(q) ||
-        (agent.tagline ?? "").toLowerCase().includes(q) ||
-        agent.model.toLowerCase().includes(q),
-    );
+    return items.filter((agent) => matchesAgent(agent, q));
   }, [items, query]);
 
   return (

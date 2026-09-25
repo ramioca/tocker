@@ -13,6 +13,7 @@ import type { AgentConfig } from "@/db/schema";
 import { getSession } from "@/lib/auth";
 import { DEFAULT_AGENT_CONFIG, chainSchema } from "@/lib/agent/config";
 import { getTokenScore } from "@/lib/tokens";
+import { isNoData } from "@/lib/tokens/history";
 import type { ActionResult, Chain, TokenScore } from "@/server/types";
 import { ACTION_LIMITS, slowDown } from "./_shared";
 
@@ -149,6 +150,11 @@ export async function scoreTokenNow(chain: Chain, address: string): Promise<Acti
       maxTradeUsd: DEFAULT_AGENT_CONFIG.risk.maxTradeUsd,
       force: true,
     });
+    // Nothing answered, so nothing was learned and nothing was saved (`getTokenScore`
+    // keeps the last real reading). Reporting "scored 0/100" would be a lie.
+    if (isNoData(score)) {
+      return fail("None of the data providers answered, so nothing was saved. Try again in a minute.");
+    }
     revalidatePath(`/tokens/${chain}/${address}`);
     return { ok: true, data: score };
   } catch (error) {

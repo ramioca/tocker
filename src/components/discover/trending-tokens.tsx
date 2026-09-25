@@ -56,7 +56,7 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
   if (scores.length === 0) {
     return (
       <section aria-labelledby="scoreboard-heading">
-        <Heading />
+        <RadarHeading />
         <EmptyState
           className="mt-5"
           icon={<Sparkles />}
@@ -69,7 +69,7 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
 
   return (
     <section aria-labelledby="scoreboard-heading">
-      <Heading />
+      <RadarHeading />
 
       <ul className="mt-4 flex flex-wrap gap-1.5" aria-label="Verdict spread">
         {(["strong", "candidate", "watch", "avoid"] as ScoreVerdict[]).map((verdict) => {
@@ -192,7 +192,8 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
   );
 }
 
-function Heading() {
+/** Also the streaming fallback's heading (`radar-section.tsx`), so it does not jump. */
+export function RadarHeading() {
   return (
     <div>
       <h2

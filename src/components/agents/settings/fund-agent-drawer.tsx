@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { AlertTriangle, Plus, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -11,8 +11,8 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { TransferFundsCard } from "@/components/spectrumui/transfer-funds-card";
 import { Address } from "@/components/common/address";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { FeesCovered } from "@/components/common/fees-covered";
@@ -50,8 +50,9 @@ interface FundProps {
 
 /**
  * Funding moves real value, so the flow is deliberately plain: pick a chain, type
- * an amount, read the card back, confirm once. Nothing animates except the card's
- * own press feedback.
+ * an amount, read the transfer back, confirm once. Nothing animates: the review is
+ * static text rather than controls that look pickable, and Send stays disabled —
+ * with the reason under it — until there is something it can actually send.
  *
  * The amount is checked against the user's actual balance on that chain before
  * they are asked to sign — an over-ask becomes a deposit prompt rather than a
@@ -89,18 +90,18 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
   const positive = Number.isFinite(parsed) && parsed > 0;
   const overBalance = positive && myChain !== null && parsed > availableHere;
   const valid = positive && Boolean(target) && !overBalance;
-
-  const summary = useMemo(
-    () => [
-      { label: "Network", value: NETWORK_WORDING[chain].network },
-      {
-        label: "Agent receives",
-        value: positive ? `${parsed} USDC` : "— USDC",
-        emphasized: true,
-      },
-    ],
-    [chain, parsed, positive],
-  );
+  const sendDisabled = !valid || pending || !available;
+  // Why Send is dead, in the order the user would fix it. Nothing while pending: the
+  // label already says what it is waiting for.
+  const sendBlockedReason = pending
+    ? null
+    : !available
+      ? "Wallets aren’t available here yet."
+      : !positive
+        ? "Enter an amount."
+        : overBalance
+          ? `More than you hold on ${chainLabelFor(chain)}.`
+          : null;
 
   const confirm = async () => {
     if (!valid || !target || pending) return;
@@ -251,28 +252,42 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
         </div>
       ) : null}
 
-      <TransferFundsCard
-        title={`Fund ${agentName}`}
-        description="From your embedded wallet to the agent's own wallet. The agent signs its own trades from there."
-        amountLabel="Sending"
-        currencySymbol="$"
-        amount={amount || "0"}
-        fromLabel="From"
-        fromAccount="Your embedded wallet"
-        toLabel="To"
-        toAccount={target ? `${agentName} · ${truncateAddress(target.address, 6, 6)}` : "—"}
-        summary={summary}
-        buttonLabel={
-          pending
-            ? "Waiting for your wallet to confirm…"
-            : available
-              ? "Send USDC"
-              : "Wallets are not available in this environment"
-        }
-        onConfirm={() => void confirm()}
-        className={cn(!valid && "opacity-90")}
-      />
-      {/* A footnote to the card, so it sits close under it rather than a full gap away. */}
+      <div className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Fund {agentName}</h3>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+            From your embedded wallet to the agent&apos;s own wallet. The agent signs its own trades from there.
+          </p>
+        </div>
+        <dl className="space-y-2 rounded-xl border border-border/60 bg-card/40 p-3 text-xs">
+          <ReviewRow label="From">Your wallet on {chainLabelFor(chain)}</ReviewRow>
+          <ReviewRow label="To">
+            {target ? `${agentName} · ${truncateAddress(target.address, 6, 6)}` : "—"}
+          </ReviewRow>
+          <ReviewRow label="Network">{NETWORK_WORDING[chain].network}</ReviewRow>
+          <div className="flex items-baseline justify-between gap-3 border-t border-border/50 pt-2">
+            <dt className="font-medium text-foreground">Agent receives</dt>
+            <dd className="tnum text-right font-mono text-sm font-medium">
+              {positive ? `${formatUsd(parsed)} USDC` : "—"}
+            </dd>
+          </div>
+        </dl>
+        <Button
+          className="w-full"
+          size="lg"
+          disabled={sendDisabled}
+          aria-describedby={sendDisabled && sendBlockedReason ? "fund-send-reason" : undefined}
+          onClick={() => void confirm()}
+        >
+          {pending ? "Waiting for your wallet to confirm…" : `Send ${positive ? `${formatUsd(parsed)} ` : ""}USDC`}
+        </Button>
+        {sendDisabled && sendBlockedReason ? (
+          <p id="fund-send-reason" className="-mt-1 text-xs text-muted-foreground">
+            {sendBlockedReason}
+          </p>
+        ) : null}
+      </div>
+      {/* A footnote to the button, so it sits close under it rather than a full gap away. */}
       <FeesCovered className="-mt-2 justify-center" />
 
       <DepositSheet
@@ -282,6 +297,15 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
         cash={data?.cash}
         initialChain={chain}
       />
+    </div>
+  );
+}
+
+function ReviewRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="shrink-0 text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 truncate text-right">{children}</dd>
     </div>
   );
 }

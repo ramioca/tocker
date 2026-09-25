@@ -4,10 +4,11 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { RelativeTime } from "@/components/common/relative-time";
 import { refreshAdminBalancesAction } from "@/server/actions/admin";
 
 /**
- * "as of 14:32" plus the one button that changes it.
+ * "read 2 min ago" plus the one button that changes it.
  *
  * The timestamp is the honest part: balances come from a 60-second in-process cache over
  * a few hundred Privy calls, so the page must never imply they are live. Pressing this
@@ -21,15 +22,20 @@ export function RefreshBalances({ readAt }: { readAt: string }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  const clock = new Date(readAt);
-  const label = Number.isNaN(clock.getTime())
-    ? "not read"
-    : clock.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  // Relative, not a clock: a time rendered on the server comes out in the server's zone,
+  // and "how stale is this" is the question anyway. The exact time is its tooltip.
+  const read = !Number.isNaN(new Date(readAt).getTime());
 
   return (
     <div className="flex items-center gap-2">
-      <span className="tnum font-mono text-[11px] text-muted-foreground" suppressHydrationWarning>
-        as of {label}
+      <span className="tnum font-mono text-[11px] text-muted-foreground">
+        {read ? (
+          <>
+            read <RelativeTime iso={readAt} />
+          </>
+        ) : (
+          "not read"
+        )}
       </span>
       <Button
         type="button"

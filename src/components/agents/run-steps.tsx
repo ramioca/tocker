@@ -3,12 +3,7 @@
 import { useMemo, useState } from "react";
 import { ChevronRight, Coins } from "lucide-react";
 import { ReasoningTrace } from "@/components/spectrumui/blocks/ai-assistants/reasoning-trace";
-import { ToolChips } from "@/components/spectrumui/blocks/ai-assistants/tool-chips";
-import type {
-  ReasoningStep,
-  ToolCall,
-  ToolCallStatus,
-} from "@/components/spectrumui/blocks/ai-assistants/types";
+import type { ReasoningStep, ToolCallStatus } from "@/components/spectrumui/blocks/ai-assistants/types";
 import { formatDuration, formatUsd } from "@/components/common/format";
 import { EmptyState } from "@/components/common/empty-state";
 import { describeCall, describeResult, narrateRun, type CallHint } from "@/lib/agent/narrate";
@@ -28,7 +23,7 @@ interface X402Payment {
  */
 interface TranscriptStep {
   id: string;
-  /** The tool name — still the honest label for the chips row and the raw panel. */
+  /** The tool name — still the honest label for the raw panel. */
   tool: string;
   status: ToolCallStatus;
   /** `describeCall`, re-derived once the result reveals the symbol. */
@@ -227,16 +222,6 @@ export function RunSteps({
   }
 
   const totalSpend = payments.reduce((sum, payment) => sum + payment.amountUsd, 0);
-  const chips: ToolCall[] = transcript.map((step) => ({
-    id: step.id,
-    name: step.tool,
-    status: step.status,
-    // The narrated line, never the raw args: the chips are a status strip, and the raw
-    // shape lives on the row below.
-    ...(step.detail === null ? {} : { result: step.detail }),
-    startedAt: step.startedAt,
-    ...(step.completedAt === undefined ? {} : { completedAt: step.completedAt }),
-  }));
 
   return (
     <div className={cn("space-y-5", className)}>
@@ -259,15 +244,14 @@ export function RunSteps({
         />
       ) : null}
 
+      {/* No tool-name chip strip above the list: it said every step a second time, as
+          raw names with a green dot each, and the rows already carry status and time. */}
       {transcript.length > 0 ? (
-        <div className="space-y-3">
-          <ToolChips calls={chips} variant="Row" className="max-w-none" />
-          <ol className="w-full">
-            {transcript.map((step, index) => (
-              <StepRow key={step.id} step={step} last={index === transcript.length - 1} />
-            ))}
-          </ol>
-        </div>
+        <ol className="w-full">
+          {transcript.map((step, index) => (
+            <StepRow key={step.id} step={step} last={index === transcript.length - 1} />
+          ))}
+        </ol>
       ) : null}
 
       {payments.length > 0 ? (

@@ -39,6 +39,7 @@
  * front-run the fixed stop loss and turn a −5% wobble into a realised loss the operator
  * never asked for. Below entry, `stop_loss` is the floor and the only floor.
  */
+import { fmtUsd } from "@/lib/money";
 import type { Chain, ExitReason, ScoreVerdict } from "@/server/types";
 
 /** The exit-relevant half of `AgentConfig["risk"]`. Every field null = the engine is off. */
@@ -94,8 +95,19 @@ export interface ExitDecision {
   markPriceUsd: number;
   /** Unrealised PnL at the moment of the decision, in percent. */
   unrealizedPnlPct: number | null;
-  /** Published to the feed verbatim as the trade's rationale. */
+  /**
+   * The owner's account of the exit: which rule fired, at what threshold, against what
+   * entry. Stored on the trade and sent to the owner. The threshold is their strategy,
+   * so it never reaches anyone else — see {@link publicRationale}.
+   */
   rationale: string;
+  /**
+   * What anyone may read: what happened, never the rule value that made it happen.
+   * "past my 35% target" next to a public fill price hands a non-owner the take-profit
+   * setting, which `visibleExitDistances` exists to keep private. The feed post and
+   * follower notifications carry this one.
+   */
+  publicRationale: string;
 }
 
 export interface EvaluateExitsInput {
@@ -148,7 +160,7 @@ export function needsRescore(rules: ExitRules): boolean {
   return rules.exitScoreBelow !== null || rules.exitOnLiquidityDropPct !== null;
 }
 
-// ---------- formatting (the rationale is the whole feed message) ----------
+// ---------- formatting (the public rationale is the whole feed message) ----------
 
 function positive(n: number | null): boolean {
   return n !== null && Number.isFinite(n) && n > 0;
@@ -165,8 +177,9 @@ export function priceText(value: number): string {
   return `$${value.toFixed(digits).replace(/0+$/, "")}`;
 }
 
+/** "$2,141.37" — grouped, so a four-figure exit does not read as "$2141". */
 function usdText(value: number): string {
-  return `$${Math.abs(value) >= 1000 ? value.toFixed(0) : value.toFixed(2)}`;
+  return fmtUsd(value);
 }
 
 /** "+42.5%" / "−16.2%" with a typographic minus, because this text is read, not parsed. */
@@ -199,6 +212,37 @@ function holdText(hours: number): string {
 
 function ruleText(pct: number): string {
   return `${Number.isInteger(pct) ? pct.toFixed(0) : pct.toFixed(1)}%`;
+}
+
+/**
+ * The public line for an exit: the rule's name, the token and where the trade ended up.
+ * No threshold, no peak, no hold limit and no pool depth, because each of those sits one
+ * step from the operator's private setting. Deterministic in its inputs so
+ * `visibleRationale` can rebuild the same line for rows written before this existed.
+ */
+export function publicExitText(reason: ExitReason, symbol: string, pnlPct: number | null): string {
+  const at = pnlPct === null || !Number.isFinite(pnlPct) ? "" : ` at ${pctText(pnlPct)} from entry`;
+  switch (reason) {
+    case "stop_loss":
+      return `Stop loss: closed ${symbol}${at}.`;
+    case "take_profit":
+      return `Take profit: sold ${symbol}${at}.`;
+    case "trailing_stop":
+      return `Trailing stop: sold ${symbol} off its high${at}.`;
+    case "max_hold":
+      return `Max hold: closed ${symbol}${at}.`;
+    case "score_collapse":
+      return `Score collapse: sold ${symbol}${at} after its score fell.`;
+    case "liquidity_collapse":
+      return `Liquidity collapse: sold ${symbol}${at} as its pool thinned.`;
+    default:
+      return `Exit: sold ${symbol}${at}.`;
+  }
+}
+
+/** The "$95.00 out." tail both rationales end with. */
+export function exitValueText(amountUsd: number): string {
+  return `${usdText(amountUsd)} out.`;
 }
 
 // ---------- the rules ----------
@@ -252,7 +296,7 @@ function evaluateOne(position: ExitPosition, rules: ExitRules, now: Date): Candi
   if (stop !== null && mark <= stop) {
     return {
       reason: "stop_loss",
-      rationale: `Stop loss: ${symbol} ${pctText(pnlPct ?? 0)} from entry at ${priceText(mark)}, through my ${ruleText(rules.stopLossPct as number)} stop (entry ${priceText(avgCost)}). Closed the position.`,
+      rationale: `Stop loss: ${symbol} at ${priceText(mark)}, ${pctText(pnlPct ?? 0)} from entry (${priceText(avgCost)}), through my ${ruleText(rules.stopLossPct as number)} stop. Closed the position.`,
     };
   }
 
@@ -261,7 +305,7 @@ function evaluateOne(position: ExitPosition, rules: ExitRules, now: Date): Candi
   if (target !== null && mark >= target) {
     return {
       reason: "take_profit",
-      rationale: `Take profit: ${symbol} ${pctText(pnlPct ?? 0)} from entry at ${priceText(mark)}, past my ${ruleText(rules.takeProfitPct as number)} target (entry ${priceText(avgCost)}). Banked it.`,
+      rationale: `Take profit: ${symbol} at ${priceText(mark)}, ${pctText(pnlPct ?? 0)} from entry (${priceText(avgCost)}), past my ${ruleText(rules.takeProfitPct as number)} target. Banked it.`,
     };
   }
 
@@ -376,6 +420,7 @@ export function evaluateExits(input: EvaluateExitsInput): ExitDecision[] {
 
     const priority = EXIT_PRIORITY.indexOf(candidate.reason) + 1;
     const avgCost = position.avgCostUsd;
+    const pnlPct = positive(avgCost) ? ((mark - avgCost) / avgCost) * 100 : null;
     out.push({
       tokenId: position.tokenId,
       chain: position.chain,
@@ -386,8 +431,9 @@ export function evaluateExits(input: EvaluateExitsInput): ExitDecision[] {
       amountUsd: value,
       amountToken: position.amountToken,
       markPriceUsd: mark,
-      unrealizedPnlPct: positive(avgCost) ? ((mark - avgCost) / avgCost) * 100 : null,
-      rationale: `${candidate.rationale} ${usdText(value)} out.`,
+      unrealizedPnlPct: pnlPct,
+      rationale: `${candidate.rationale} ${exitValueText(value)}`,
+      publicRationale: `${publicExitText(candidate.reason, position.symbol, pnlPct)} ${exitValueText(value)}`,
     });
   }
 
@@ -395,7 +441,9 @@ export function evaluateExits(input: EvaluateExitsInput): ExitDecision[] {
 }
 
 /** One-line summary of a pass, for the run transcript and the tick prompt. */
-export function describeExits(decisions: readonly ExitDecision[]): string {
+export function describeExits(
+  decisions: readonly Pick<ExitDecision, "reason" | "symbol" | "amountUsd" | "unrealizedPnlPct">[],
+): string {
   if (decisions.length === 0) return "No exit rules fired.";
   return decisions
     .map((d) => `${d.reason} → sold ${d.symbol} (${usdText(d.amountUsd)}${d.unrealizedPnlPct === null ? "" : `, ${pctText(d.unrealizedPnlPct)}`})`)

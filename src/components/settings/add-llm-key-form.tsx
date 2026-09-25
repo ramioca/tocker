@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Eye, EyeOff, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,7 @@ import { MorphButton } from "@/components/spectrumui/morph-button";
 import { addLlmKey } from "@/server/actions/users";
 import type { LlmKeyRow } from "@/server/types";
 import { MORPH_FOCUS, enterSubmits, useMorphAction } from "./use-morph-action";
+import { mismatchedProvider, providerName, wrongProviderOnAdd } from "@/lib/agent/key-prefix";
 
 type Provider = LlmKeyRow["provider"];
 type Field = "key" | "label" | "workspace";
@@ -33,18 +34,30 @@ function providerLabel(provider: Provider): string {
   return PROVIDERS.find((p) => p.id === provider)?.label ?? provider;
 }
 
+/** What the server said beyond the new row: how many of the owner's agents still have no key. */
+export interface KeyAddedInfo {
+  keylessAgents: number;
+}
+
 export function AddLlmKeyForm({
   onAdded,
   onCancel,
   autoFocus = false,
   submitLabel = "Add key",
+  compact = false,
 }: {
-  onAdded?: (key: LlmKeyRow) => void;
+  onAdded?: (key: LlmKeyRow, info: KeyAddedInfo) => void;
   /** Set when the form was opened on demand, so there is somewhere to go back to. Escape calls it too. */
   onCancel?: () => void;
   /** Focus the first field on mount: the button that opened the form has just unmounted. */
   autoFocus?: boolean;
   submitLabel?: string;
+  /**
+   * First-run use (onboarding): the optional Anthropic Workspace ID folds behind an
+   * "Advanced" disclosure, since almost nobody needs it and the console path is jargon
+   * to someone adding their first key.
+   */
+  compact?: boolean;
 }) {
   const uid = useId();
   const [provider, setProvider] = useState<Provider>("anthropic");
@@ -53,14 +66,28 @@ export function AddLlmKeyForm({
   const [workspaceId, setWorkspaceId] = useState("");
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<{ field: Field; message: string } | null>(null);
+  // The compact form's "Advanced" disclosure. Tracked, not left to the DOM, so an error
+  // that opened it does not snap it shut again as soon as typing clears that error.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const providerRef = useRef<HTMLSelectElement>(null);
 
   const hint = PROVIDERS.find((p) => p.id === provider)?.hint ?? "";
+  // The select defaults to Anthropic and keeps the pasted key when it changes, so a key
+  // under the wrong provider is easy to end up with — and, when that provider can't be
+  // reached to check it, it would be saved and only fail on the agent's next run.
+  const otherProvider = mismatchedProvider(key, provider);
 
   async function submit() {
     setError(null);
     if (key.trim().length < KEY_MIN) {
       setError({ field: "key", message: "That doesn’t look like a full API key — paste the whole thing." });
       throw new Error("invalid key");
+    }
+    // Pressing Add past the note below. Refused here, not by disabling the button,
+    // so the reason is said rather than hidden.
+    if (otherProvider) {
+      setError({ field: "key", message: wrongProviderOnAdd(otherProvider, provider) });
+      throw new Error("wrong provider");
     }
     const optimistic: LlmKeyRow = {
       id: `local_${Date.now()}`,
@@ -87,7 +114,10 @@ export function AddLlmKeyForm({
           description: "If the key is wrong, the agent’s next run will fail and say so.",
         });
       }
-      onAdded?.({ ...optimistic, id: result.data.id, last4: result.data.last4 });
+      onAdded?.(
+        { ...optimistic, id: result.data.id, last4: result.data.last4 },
+        { keylessAgents: result.data.keylessAgents ?? 0 },
+      );
     } catch (e) {
       const message = e instanceof Error ? e.message : "Could not add the key";
       // Only ever in development: in production a server error that happened to contain
@@ -97,7 +127,7 @@ export function AddLlmKeyForm({
         throw e;
       }
       // Dev / mock mode: the action is still a stub, so show the row locally.
-      onAdded?.(optimistic);
+      onAdded?.(optimistic, { keylessAgents: 0 });
     }
     setKey("");
     setLabel("");
@@ -121,9 +151,49 @@ export function AddLlmKeyForm({
   const invalid = (field: Field) =>
     error?.field === field ? { "aria-invalid": true, "aria-describedby": `${uid}-${field}-error` } : {};
 
+  // Under a key error the note would only repeat it, so just its button stays.
+  const showKeyNote = otherProvider !== null && error?.field !== "key";
+  const keyDescribedBy =
+    [error?.field === "key" ? `${uid}-key-error` : null, showKeyNote ? `${uid}-key-note` : null]
+      .filter(Boolean)
+      .join(" ") || undefined;
+
+  const switchProvider = (next: Provider) => {
+    setProvider(next);
+    edited("key");
+    // The button leaves with the mismatch. The select is where the change shows, and
+    // landing there reads it back ("Provider, OpenAI").
+    providerRef.current?.focus();
+  };
+
   const submitOnEnter = enterSubmits(() => {
     if (key.trim().length > 0) void run();
   });
+
+  const workspaceField = (
+    <div>
+      <label htmlFor={`${uid}-workspace`} className="text-sm font-medium">
+        Workspace ID <span className="font-normal text-muted-foreground">(optional)</span>
+      </label>
+      <Input
+        id={`${uid}-workspace`}
+        value={workspaceId}
+        autoComplete="off"
+        spellCheck={false}
+        {...invalid("workspace")}
+        onChange={(event) => {
+          setWorkspaceId(event.target.value);
+          edited("workspace");
+        }}
+        className="mt-2 h-9 font-mono dark:bg-transparent"
+      />
+      {errorFor("workspace")}
+      <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">
+        Leave empty: Tocker detects the workspace for an organization-level key on its own. Set it only
+        to force a specific one (Console → Settings → Workspaces, wrkspc_…).
+      </p>
+    </div>
+  );
 
   return (
     <form
@@ -148,10 +218,15 @@ export function AddLlmKeyForm({
             Provider
           </label>
           <select
+            ref={providerRef}
             id={`${uid}-provider`}
             autoFocus={autoFocus}
             value={provider}
-            onChange={(event) => setProvider(event.target.value as Provider)}
+            onChange={(event) => {
+              setProvider(event.target.value as Provider);
+              // A key error is about this key under that provider; a new provider moots it.
+              edited("key");
+            }}
             className="mt-2 h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-base outline-none md:text-sm transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             {PROVIDERS.map((p) => (
@@ -199,6 +274,7 @@ export function AddLlmKeyForm({
             spellCheck={false}
             maxLength={512}
             {...invalid("key")}
+            aria-describedby={keyDescribedBy}
             onChange={(event) => {
               setKey(event.target.value);
               edited("key");
@@ -215,31 +291,41 @@ export function AddLlmKeyForm({
           </button>
         </div>
         {errorFor("key")}
+        {/* Always mounted, so the note is announced when it appears. */}
+        <div aria-live="polite">
+          {otherProvider ? (
+            <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm text-amber-700 dark:text-amber-400">
+              {showKeyNote ? (
+                <span id={`${uid}-key-note`}>This looks like an {providerName(otherProvider)} key.</span>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => switchProvider(otherProvider)}
+                className="inline-flex h-8 items-center rounded-md border border-amber-600/40 px-2.5 text-xs font-medium transition-[background-color,transform] duration-150 hover:bg-amber-500/10 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:h-7 dark:border-amber-400/30"
+              >
+                Switch to {providerName(otherProvider)}
+              </button>
+            </p>
+          ) : null}
+        </div>
       </div>
 
       {provider === "anthropic" ? (
-        <div>
-          <label htmlFor={`${uid}-workspace`} className="text-sm font-medium">
-            Workspace ID <span className="font-normal text-muted-foreground">(optional)</span>
-          </label>
-          <Input
-            id={`${uid}-workspace`}
-            value={workspaceId}
-            autoComplete="off"
-            spellCheck={false}
-            {...invalid("workspace")}
-            onChange={(event) => {
-              setWorkspaceId(event.target.value);
-              edited("workspace");
-            }}
-            className="mt-2 h-9 font-mono dark:bg-transparent"
-          />
-          {errorFor("workspace")}
-          <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">
-            Leave empty: Tocker detects the workspace for an organization-level key on its own. Set it only
-            to force a specific one (Console → Settings → Workspaces, wrkspc_…).
-          </p>
-        </div>
+        compact ? (
+          <details
+            className="group"
+            // Opened by a workspace error too, so the message under the field is never hidden.
+            open={advancedOpen || error?.field === "workspace"}
+            onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+          >
+            <summary className="w-fit cursor-pointer rounded text-xs text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+              Advanced: workspace ID
+            </summary>
+            <div className="mt-3">{workspaceField}</div>
+          </details>
+        ) : (
+          workspaceField
+        )
       ) : null}
 
       <p className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">

@@ -3,6 +3,7 @@ import { ArrowUpRight, Bot, Plus } from "lucide-react";
 import { AgentCard } from "@/components/agents/agent-card";
 import { EmptyState } from "@/components/common/empty-state";
 import type { HomeOverview } from "@/server/queries/home";
+import { attentionFirst } from "./attention-first";
 
 /**
  * Your agents, as cards.
@@ -28,6 +29,8 @@ export function AgentsOverview({
   // Counted over every agent, not just the six shown: the subtitle speaks for the fleet.
   const stuck = blockers ? agents.filter((agent) => blockers.has(agent.id)).length : 0;
   const attention = stuck > 0 ? ` · ${stuck} need${stuck === 1 ? "s" : ""} attention` : "";
+  // Blocked agents first, so the six cards include the ones the subtitle just counted.
+  const ordered = attentionFirst(agents, blockers);
 
   return (
     <section aria-labelledby="home-agents-heading" id="agents" className="scroll-mt-20">
@@ -84,7 +87,7 @@ export function AgentsOverview({
         />
       ) : (
         <ul className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {agents.slice(0, 6).map((agent, index) => (
+          {ordered.slice(0, 6).map((agent, index) => (
             <li key={agent.id}>
               <AgentCard
                 agent={agent}

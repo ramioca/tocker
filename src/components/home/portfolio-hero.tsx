@@ -79,7 +79,12 @@ export function PortfolioHero({ overview }: { overview: HomeOverview }) {
             className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
           >
             {paperOnly ? "Paper equity" : "Total equity"}
-            {paperOnly ? <ModeBadge mode="paper" size="xs" /> : null}
+            {/* Hidden from the heading's name, which already says "Paper equity". */}
+            {paperOnly ? (
+              <span aria-hidden className="inline-flex">
+                <ModeBadge mode="paper" size="xs" />
+              </span>
+            ) : null}
           </h2>
           <p className="tnum mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
             {formatUsd(book.equityUsd)}

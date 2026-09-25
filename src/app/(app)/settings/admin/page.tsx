@@ -109,7 +109,7 @@ export default async function AdminSettingsPage() {
         >
           <div className="grid min-w-0 gap-6 sm:grid-cols-2 lg:grid-cols-3">
             <DailyBars
-              label="Signups"
+              label="Waitlist signups"
               points={series.signups}
               total={formatCount(sum(series.signups))}
               format={(v) => `${formatCount(v)} signup${v === 1 ? "" : "s"}`}
@@ -121,7 +121,7 @@ export default async function AdminSettingsPage() {
               format={(v) => fmtUsd(v, { compact: true })}
             />
             <DailyBars
-              label="Fees charged"
+              label="Fees charged · live"
               points={series.feesUsd}
               total={fmtUsd(sum(series.feesUsd))}
               format={(v) => fmtUsd(v)}

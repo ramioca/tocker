@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { getFreshLaunches, getLeaderboard, getTopDataSources, viewerFollowedAgentIds } from "@/server/queries/discover";
 import { listPublicAgents } from "@/server/queries/agents";
@@ -6,7 +7,7 @@ import { mockLeaderboard, mockPublicAgents, mockTopDataSources } from "@/mocks/s
 import { mockFreshLaunches } from "@/mocks/tokens";
 import type { LeaderboardRow, LeaderboardWindow } from "@/server/types";
 import { Leaderboard } from "@/components/discover/leaderboard";
-import { TrendingTokens } from "@/components/discover/trending-tokens";
+import { RadarSection, RadarSkeleton } from "@/components/discover/radar-section";
 import { TopDataSources } from "@/components/discover/top-data-sources";
 import { PublicAgents } from "@/components/discover/public-agents";
 import { viewerSession } from "@/components/common/data-access";
@@ -21,6 +22,15 @@ export const metadata: Metadata = {
 export default async function DiscoverPage() {
   const session = await viewerSession();
   const viewerId = session?.userId ?? null;
+
+  // Real sweep, scored under the platform's default rules (free providers only).
+  // A provider outage returns fewer rows, never an error page. Started now so it runs
+  // alongside the queries below, and awaited inside a Suspense boundary so a cold
+  // sweep streams in after the rest of the page instead of holding all of it back.
+  const freshLaunches = withMock(
+    () => getFreshLaunches(12).catch(() => []),
+    () => mockFreshLaunches(12),
+  );
 
   // All three windows are fetched up front so switching tabs is instant — a tab is a
   // hot path and should never wait on a request.
@@ -51,13 +61,6 @@ export default async function DiscoverPage() {
     ),
   ]);
 
-  // Real sweep, scored under the platform's default rules (free providers only).
-  // A provider outage returns fewer rows, never an error page.
-  const freshLaunches = await withMock(
-    () => getFreshLaunches(12).catch(() => []),
-    () => mockFreshLaunches(12),
-  );
-
   const leaderboard: Record<LeaderboardWindow, LeaderboardRow[]> = {
     "7d": sevenDay,
     "30d": thirtyDay,
@@ -76,7 +79,9 @@ export default async function DiscoverPage() {
 
       <div className="mt-10 space-y-14">
         <Leaderboard data={leaderboard} followedIds={followedIds} viewerId={viewerId} />
-        <TrendingTokens scores={freshLaunches} />
+        <Suspense fallback={<RadarSkeleton />}>
+          <RadarSection scores={freshLaunches} />
+        </Suspense>
         <TopDataSources sources={sources} />
         <PublicAgents initial={agents} />
       </div>

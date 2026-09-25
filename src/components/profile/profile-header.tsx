@@ -13,6 +13,8 @@ export function ProfileHeader({ profile }: { profile: UserProfile }) {
   const pnl = pnlByMode(profile.agents);
   const liveAgents = pnl.liveAgents;
   const totalTrades = profile.agents.reduce((sum, a) => sum + a.tradeCount, 0);
+  // Your own profile counts your private agents in every tile; visitors never get them.
+  const publicAgents = profile.agents.filter((a) => a.isPublic).length;
 
   return (
     <header className="glass-panel glass-grain rounded-2xl p-5 sm:p-6">
@@ -145,6 +147,12 @@ export function ProfileHeader({ profile }: { profile: UserProfile }) {
           </span>
         </Stat>
       </dl>
+      {profile.isSelf && publicAgents < profile.agents.length ? (
+        <p className="mt-2.5 text-xs text-muted-foreground">
+          Visitors see <span className="font-mono tabular-nums">{publicAgents}</span> of{" "}
+          <span className="font-mono tabular-nums">{profile.agents.length}</span> agents.
+        </p>
+      ) : null}
     </header>
   );
 }

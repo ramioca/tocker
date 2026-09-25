@@ -7,6 +7,7 @@ import { BlockerList, visibleWarnings } from "@/components/tokens/blocker-list";
 import { ScoreBreakdown } from "@/components/tokens/score-breakdown";
 import { ScoreDial } from "@/components/tokens/score-dial";
 import { VERDICT_META, effectiveVerdict } from "@/components/tokens/verdict";
+import { providerLabel } from "@/components/tokens/format";
 import { GateList } from "./gate-list";
 import { cn } from "@/lib/utils";
 
@@ -48,7 +49,7 @@ export function ScoreHero({
         </h2>
         <div className="flex items-center gap-2">
           <p className="tnum font-mono text-[11px] text-muted-foreground">
-            {score.sources.length > 0 ? `${score.sources.join(" + ")} · ` : ""}
+            {score.sources.length > 0 ? `${score.sources.map(providerLabel).join(" + ")} · ` : ""}
             {formatRelative(score.scoredAt)}
           </p>
           {action}
@@ -73,7 +74,11 @@ export function ScoreHero({
           ) : null}
         </div>
 
-        <GateList blockers={score.blockers} className="lg:border-l lg:border-border/60 lg:pl-6" />
+        <GateList
+          blockers={score.blockers}
+          sources={score.sources}
+          className="lg:border-l lg:border-border/60 lg:pl-6"
+        />
       </div>
     </section>
   );

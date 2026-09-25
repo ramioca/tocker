@@ -68,6 +68,15 @@ describe("transferErrorMessage", () => {
     );
   });
 
+  it("never shows viem's text for an address it refused to encode", () => {
+    const viem = Object.assign(
+      new Error('Address "0xAbC0000000000000000000000000000000000001" is invalid.\n\nDocs: https://viem.sh'),
+      { name: "InvalidAddressError" },
+    );
+    expect(transferErrorMessage(viem, "base")).toBe("That address has a typo. Copy it again from the source.");
+    expect(transferErrorMessage(new Error('Address "0x12" is invalid.'), "base")).toMatch(/typo/);
+  });
+
   it("passes an unrecognised failure through rather than inventing a cause", () => {
     expect(transferErrorMessage(new Error("RPC 503"), "solana")).toBe("RPC 503");
     expect(transferErrorMessage(null, "solana")).toBe("The transfer could not be signed.");

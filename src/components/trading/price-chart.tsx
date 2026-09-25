@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { ChartEmpty, useElementWidth } from "@/components/spectrumui/charts/chart-engine";
-import { formatAbsolute, formatUsd } from "@/components/common/format";
+import { formatAbsolute, formatPriceUsd, formatUsd } from "@/components/common/format";
 import { axisLabels } from "@/components/tokens/page/time-span";
 import { cn } from "@/lib/utils";
 import type { TokenMarker } from "@/server/queries/trading";
@@ -277,7 +277,7 @@ export function PriceChart({
               <span className={marker.side === "buy" ? "text-positive" : "text-negative"}>
                 {marker.side === "buy" ? "Bought" : "Sold"} {formatUsd(marker.amountUsd)}
               </span>
-              <span>@ {formatUsd(marker.priceUsd)}</span>
+              <span>@ {formatPriceUsd(marker.priceUsd)}</span>
               <span className="font-sans">{formatAbsolute(marker.at)}</span>
               <span className="font-sans">{marker.agentName}</span>
               {marker.exitReason ? (
@@ -289,10 +289,10 @@ export function PriceChart({
           ) : (
             <>
               <span className="font-sans">{hovered ? formatAbsolute(hovered.at) : "Latest"}</span>
-              <span className="text-foreground">{formatUsd((hovered ?? latest).priceUsd)}</span>
+              <span className="text-foreground">{formatPriceUsd((hovered ?? latest).priceUsd)}</span>
               {placed.length > 0 ? (
                 <span className="font-sans">
-                  {placed.length} of your fill{placed.length === 1 ? "" : "s"} marked
+                  {placed.length === 1 ? "Your fill is marked" : `${placed.length} of your fills marked`}
                 </span>
               ) : agentCount > 0 ? (
                 <span className="font-sans">

@@ -59,7 +59,7 @@ import {
   type ExitDecision,
   type ExitPosition, priceText } from "./exits";
 import { applyFill, heldAmountToken, updatePeaks } from "./positions";
-import { buildReceipt, receiptSummary, saveReceipt } from "./receipt";
+import { buildReceipt, saveReceipt } from "./receipt";
 import { riskGuard, type OrderIntent } from "./risk";
 import { executeTrade } from "./settle";
 import { ensureQuoteToken } from "./tokens";
@@ -85,7 +85,10 @@ export interface GuardianExitRecord {
   chain: Chain;
   symbol: string;
   reason: ExitReason;
+  /** The owner's text, threshold included. */
   rationale: string;
+  /** What the feed and followers get; see `ExitDecision.publicRationale`. */
+  publicRationale: string;
   amountUsd: number;
   amountToken: number;
   priceUsd: number | null;
@@ -443,6 +446,7 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
     symbol: decision.symbol,
     reason: decision.reason,
     rationale: decision.rationale,
+    publicRationale: decision.publicRationale,
     amountToken: decision.amountToken,
     priceUsd: decision.markPriceUsd,
   };
@@ -672,28 +676,30 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
   });
   await saveReceipt(tradeId, agent.id, receipt);
 
-  // The feed post carries the rationale verbatim — it is the whole message on the card.
+  // The feed post is the whole message on the card, and anyone can read it, so it
+  // carries the public line: what sold and where, never the threshold that sold it.
   await db.insert(posts).values({
     id: nanoid(),
     authorId: agent.ownerId,
     agentId: agent.id,
     tradeId,
     kind: "trade",
-    body: decision.rationale,
+    body: decision.publicRationale,
   });
 
   const href = `/agents/${agent.slug}`;
   // One owner notification, not two. An exit already tells the owner which rule fired
-  // and why; the receipt line is appended to it rather than sent separately, because a
-  // second push for the same event is noise, and noise is what makes people mute the
-  // channel that carries their stop losses.
+  // and why; the receipt is not sent separately, because a second push for the same
+  // event is noise, and noise is what makes people mute the channel that carries their
+  // stop losses. `?trade=` lets the notifications page show this fill's receipt inline
+  // under the rationale, so the body stays the rationale alone.
   await notify([
     {
       userId: agent.ownerId,
       kind: "exit",
       title: `${EXIT_TITLES[decision.reason]}: sold ${decision.symbol}`,
-      body: `${decision.rationale} · ${receiptSummary(receipt)}`,
-      href,
+      body: decision.rationale,
+      href: `${href}?trade=${tradeId}`,
     },
     ...ctx.followers
       .filter((id) => id !== agent.ownerId)
@@ -701,7 +707,7 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
         userId,
         kind: "trade",
         title: `${agent.name} sold ${decision.symbol}`,
-        body: decision.rationale,
+        body: decision.publicRationale,
         href,
       })),
   ]);

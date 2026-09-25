@@ -29,6 +29,7 @@ import {
   agentFundingIntents,
   agentRuns,
   agents,
+  auditEvents,
   equitySnapshots,
   getDb,
   platformFees,
@@ -124,14 +125,34 @@ export interface SnapshotPoint {
   cashUsd?: number;
 }
 
+/**
+ * Money that moved into or out of an agent's wallet without being a trade: a deposit is
+ * positive, a withdrawal negative. Equity moves by exactly this much, and none of it is
+ * profit or loss.
+ */
+export interface FlowPoint {
+  agentId: string;
+  at: number | Date | string;
+  amountUsd: number;
+}
+
 export interface PnlDay {
   /** `YYYY-MM-DD`, UTC. */
   day: string;
   /** Summed close across every contributing agent. */
   equityUsd: number;
-  /** Change from the previous day's close. `null` on the first day — there is no prior. */
+  /**
+   * Change from the previous day's close, less the day's net flow. `null` on the first
+   * day — there is no prior.
+   */
   pnlUsd: number | null;
   pnlPct: number | null;
+  /**
+   * Net money in (+) or out (−) that day: deposits, withdrawals and the opening book of
+   * an agent that first appears that day. Already taken out of `pnlUsd`; non-zero means
+   * the day's equity step was partly not trading.
+   */
+  flowUsd: number;
   /** How many agents had a book that day. Explains a step in the curve. */
   agents: number;
 }
@@ -164,22 +185,32 @@ function startOfUtcDayMs(ms: number): number {
  *    whatever it owned on Monday. Summing only the agents that reported would print
  *    Tuesday as a loss of one agent's entire book and Wednesday as a miraculous
  *    recovery. The carried-forward close is the honest reading.
- *  - **An agent contributes only from its first snapshot onward.** So a new agent is a
- *    step up in equity on the day it appears — which is a deposit, not a gain. The page
- *    never presents a day's delta as "return"; it presents it as the change in the book,
- *    and `agents` on each row is what lets the UI explain a step.
+ *  - **Money moved is not money made.** A new agent is a step up in equity on the day it
+ *    appears, a deposit is a step up and a withdrawal a step down, and none of them is a
+ *    gain or a loss. So each is a flow: an agent's first point is its opening book, and
+ *    `opts.flows` carries deposits and withdrawals. The day's P&L is the change in the
+ *    summed close less the day's net flow, and its percentage is measured against the
+ *    prior close plus what came in. `flowUsd` on the row says a step was partly money
+ *    moving, so the UI can say so instead of colouring it.
+ *
+ * A flow at or before an agent's first point (within `resolutionMs` of it, since a point
+ * may stand for a bucket of marks) is already inside that opening book and is not counted
+ * twice.
  *
  * Days are contiguous, so a quiet weekend still gets rows (flat, at the carried close).
  * Weekends are not special: crypto does not close.
  */
 export function pnlByDay(
   snapshots: readonly SnapshotPoint[],
-  opts: { days?: number; now?: number | Date } = {},
+  opts: { days?: number; now?: number | Date; flows?: readonly FlowPoint[]; resolutionMs?: number } = {},
 ): PnlDay[] {
   const days = Math.max(1, Math.floor(opts.days ?? 30));
+  const resolutionMs = Math.max(0, opts.resolutionMs ?? 0);
 
   // agentId → dayKey → { at, equity } for the latest point seen in that day.
   const byAgent = new Map<string, Map<string, { at: number; equityUsd: number }>>();
+  // agentId → its earliest point: the book it opened with.
+  const opening = new Map<string, { at: number; equityUsd: number }>();
   let firstMs = Number.POSITIVE_INFINITY;
   let lastMs = Number.NEGATIVE_INFINITY;
 
@@ -193,9 +224,28 @@ export function pnlByDay(
     const held = forAgent.get(key);
     if (!held || ms >= held.at) forAgent.set(key, { at: ms, equityUsd: point.equityUsd });
     byAgent.set(point.agentId, forAgent);
+    const open = opening.get(point.agentId);
+    if (!open || ms < open.at) opening.set(point.agentId, { at: ms, equityUsd: point.equityUsd });
   }
 
   if (byAgent.size === 0) return [];
+
+  // dayKey → { net, inflow }. The opening book counts on the day an agent first appears.
+  const flowByDay = new Map<string, { net: number; inflow: number }>();
+  const addFlow = (key: string, amountUsd: number) => {
+    const day = flowByDay.get(key) ?? { net: 0, inflow: 0 };
+    day.net += amountUsd;
+    if (amountUsd > 0) day.inflow += amountUsd;
+    flowByDay.set(key, day);
+  };
+  for (const open of opening.values()) addFlow(utcDayKey(open.at), open.equityUsd);
+  for (const flow of opts.flows ?? []) {
+    const ms = toMs(flow.at);
+    const open = opening.get(flow.agentId);
+    if (!open || !Number.isFinite(ms) || !Number.isFinite(flow.amountUsd) || flow.amountUsd === 0) continue;
+    if (ms < open.at + resolutionMs) continue; // inside the opening book already
+    addFlow(utcDayKey(ms), flow.amountUsd);
+  }
 
   const nowMs = opts.now === undefined ? Date.now() : toMs(opts.now);
   const startDay = startOfUtcDayMs(firstMs);
@@ -218,11 +268,15 @@ export function pnlByDay(
       total += value;
       contributing += 1;
     }
+    const flow = flowByDay.get(key) ?? { net: 0, inflow: 0 };
+    const pnlUsd = previous === null ? null : total - previous - flow.net;
+    const base = previous === null ? 0 : previous + flow.inflow;
     rows.push({
       day: key,
       equityUsd: total,
-      pnlUsd: previous === null ? null : total - previous,
-      pnlPct: previous === null || previous === 0 ? null : ((total - previous) / Math.abs(previous)) * 100,
+      pnlUsd,
+      pnlPct: pnlUsd === null || base === 0 ? null : (pnlUsd / Math.abs(base)) * 100,
+      flowUsd: previous === null ? 0 : flow.net,
       agents: contributing,
     });
     previous = total;
@@ -348,8 +402,12 @@ export interface MoneySummary {
   basisUsd: number;
   /** Last 30 UTC days, live agents only. */
   days: PnlDay[];
-  /** The most recent day's delta, pulled out because it is a headline. */
-  today: { pnlUsd: number | null; pnlPct: number | null };
+  /**
+   * The most recent day's P&L, pulled out because it is a headline. Net of deposits and
+   * withdrawals; `flowUsd` is what moved that day, so the headline can say a step was
+   * partly money in or out.
+   */
+  today: { pnlUsd: number | null; pnlPct: number | null; flowUsd: number };
   /** True when any live agent's wallet read failed — the page has to say so. */
   stale: boolean;
 }
@@ -380,11 +438,26 @@ export const EMPTY_MONEY: MoneySummary = {
   equity: [],
   basisUsd: 0,
   days: [],
-  today: { pnlUsd: null, pnlPct: null },
+  today: { pnlUsd: null, pnlPct: null, flowUsd: 0 },
   stale: false,
 };
 
 // ---------------------------------------------------------------- the read
+
+/**
+ * USDC an audited `withdraw` row took out of an agent, or 0 when it is not an owner's
+ * USDC withdrawal. The kind is shared: fee settlement and rent recycling also write it
+ * (with a `reason`), and those are costs or moved no USDC, not the owner taking money
+ * out. A Solana withdrawal records what was `delivered` (0 when it failed on chain); a
+ * Base one records the `amount` sent.
+ */
+export function withdrawnUsdc(metadata: Record<string, unknown> | null | undefined): number {
+  if (!metadata || metadata.reason !== undefined || metadata.asset !== "usdc") return 0;
+  if (metadata.status === "failed") return 0;
+  const raw = metadata.delivered ?? metadata.amount;
+  const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : Number.NaN;
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
 
 /** Snapshot window: 30 displayed days plus the day before, so day one has a delta. */
 const SNAPSHOT_WINDOW_DAYS = 31;
@@ -476,6 +549,8 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     runRows,
     tradeRows,
     fundingRows,
+    depositRows,
+    withdrawRows,
   ] = await Promise.all([
     // One row per agent per 15 minutes: the last snapshot in the bucket. The bucket
     // index alone carries the timestamp (900s divides a day exactly, so a bucket never
@@ -552,12 +627,43 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     db
       .select({
         agentId: agentFundingIntents.agentId,
-        firstAt: sql<string>`min(coalesce(${agentFundingIntents.settledAt}, ${agentFundingIntents.createdAt}))::text`,
+        // Epoch seconds, not `::text`: Postgres prints a UTC offset as "+00", which `Date`
+        // cannot parse, and an Invalid Date's `toISOString()` throws.
+        firstAt: sql<number | string | null>`extract(epoch from min(coalesce(${agentFundingIntents.settledAt}, ${agentFundingIntents.createdAt})))::float8`,
         usdc: sql<string>`coalesce(sum(${agentFundingIntents.amount}) filter (where lower(${agentFundingIntents.asset}) = 'usdc'), 0)`,
       })
       .from(agentFundingIntents)
       .where(and(inArray(agentFundingIntents.agentId, ids), eq(agentFundingIntents.status, "sent")))
       .groupBy(agentFundingIntents.agentId),
+
+    // Deposits and withdrawals inside the window, one row each, for `pnlByDay`'s flows.
+    db
+      .select({
+        agentId: agentFundingIntents.agentId,
+        at: sql<number | string>`extract(epoch from coalesce(${agentFundingIntents.settledAt}, ${agentFundingIntents.createdAt}))::float8`,
+        amount: agentFundingIntents.amount,
+      })
+      .from(agentFundingIntents)
+      .where(
+        and(
+          inArray(agentFundingIntents.agentId, ids),
+          eq(agentFundingIntents.status, "sent"),
+          sql`lower(${agentFundingIntents.asset}) = 'usdc'`,
+          sql`coalesce(${agentFundingIntents.settledAt}, ${agentFundingIntents.createdAt}) >= ${since.toISOString()}`,
+        ),
+      ),
+
+    db
+      .select({ agentId: auditEvents.agentId, at: auditEvents.createdAt, metadata: auditEvents.metadata })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.userId, userId),
+          eq(auditEvents.kind, "withdraw"),
+          inArray(auditEvents.agentId, ids),
+          gte(auditEvents.createdAt, since),
+        ),
+      ),
   ]);
 
   // ---- snapshots -----------------------------------------------------------
@@ -667,6 +773,7 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     const spend = data.get(row.id) ?? { total: 0, simulated: 0 };
     const run = runs.get(row.id) ?? { runs: 0, inputTokens: 0, outputTokens: 0 };
     const fund = funding.get(row.id);
+    const fundedAtMs = fund && fund.firstAt !== null ? Number(fund.firstAt) * 1000 : Number.NaN;
     const model = row.config?.llm?.model ?? "";
     const agentTrades = tradesByAgent.get(row.id) ?? [];
     const wr = winRate(
@@ -705,7 +812,7 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
       runCount: run.runs,
       tradeCount: agentTrades.length,
       winRate: wr.rate,
-      firstFundedAt: fund?.firstAt ? new Date(fund.firstAt.replace(" ", "T")).toISOString() : null,
+      firstFundedAt: Number.isFinite(fundedAtMs) ? new Date(fundedAtMs).toISOString() : null,
       stale: book.stale,
     };
   };
@@ -741,7 +848,14 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
   const liveIds = new Set(live.map((a) => a.id));
   const livePoints = points.filter((p) => liveIds.has(p.agentId));
   const equity = combineEquity(livePoints);
-  const days = pnlByDay(livePoints, { days: 30 });
+  const flows: FlowPoint[] = [
+    ...depositRows.map((r) => ({ agentId: r.agentId, at: Number(r.at) * 1000, amountUsd: toNum(r.amount) })),
+    ...withdrawRows.flatMap((r) => {
+      const usdc = withdrawnUsdc(r.metadata);
+      return r.agentId && usdc > 0 ? [{ agentId: r.agentId, at: r.at, amountUsd: -usdc }] : [];
+    }),
+  ].filter((f) => liveIds.has(f.agentId));
+  const days = pnlByDay(livePoints, { days: 30, flows, resolutionMs: EQUITY_BUCKET_MS });
   const today = days.at(-1);
 
   return {
@@ -751,7 +865,7 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     equity,
     basisUsd: totals.fundedUsd > 0 ? totals.fundedUsd : (equity[0]?.equityUsd ?? 0),
     days,
-    today: { pnlUsd: today?.pnlUsd ?? null, pnlPct: today?.pnlPct ?? null },
+    today: { pnlUsd: today?.pnlUsd ?? null, pnlPct: today?.pnlPct ?? null, flowUsd: today?.flowUsd ?? 0 },
     stale: live.some((a) => a.stale),
   };
 }

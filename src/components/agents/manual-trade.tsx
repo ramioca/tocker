@@ -12,12 +12,13 @@
  * Paper gets a morph button. Live money gets hold-to-confirm: the same gesture as
  * switching an agent to live in the first place, for the same reason.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeftRight, Loader2, ShieldAlert, ShieldCheck } from "lucide-react";
+import { ArrowLeftRight, Loader2, ShieldAlert, ShieldCheck, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import {
   Sheet,
+  SheetClose,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -25,6 +26,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
@@ -32,7 +34,7 @@ import { MorphButton } from "@/components/spectrumui/morph-button";
 import { MORPH_FOCUS } from "@/components/common/focus";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { Address } from "@/components/common/address";
-import { formatUsd } from "@/components/common/format";
+import { formatPriceUsd, formatUsd } from "@/components/common/format";
 import { Field } from "@/components/agents/builder/field";
 import { ScoreBadge } from "@/components/tokens";
 import { placeManualTrade, previewTrade } from "@/server/actions/trading";
@@ -68,10 +70,16 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
    * that disappears in four seconds.
    */
   const [receipt, setReceipt] = useState<TradeReceiptData | null>(null);
+  const receiptRef = useRef<HTMLHeadingElement>(null);
 
   const amountUsd = Number(amount);
   const address = tokenAddress.trim();
   const ready = address.length >= 3 && Number.isFinite(amountUsd) && amountUsd > 0;
+  // Said at the Size box, not only by the guard at the bottom of the preview: on a phone
+  // that line sat under the footer, next to a Buy button that was simply dead. Buys only —
+  // a full exit may sell past the cap (see risk.test.ts).
+  const maxTrade = agent.config?.risk.maxTradeUsd ?? 0;
+  const overCap = side === "buy" && maxTrade > 0 && Number.isFinite(amountUsd) && amountUsd > maxTrade;
   const isLive = agent.mode === "live";
   const key = open && ready ? `${chain}|${side}|${address}|${amountUsd}` : null;
 
@@ -92,6 +100,15 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
       window.clearTimeout(timer);
     };
   }, [key, agent.id, chain, side, address, amountUsd]);
+
+  // The fill lands at the end of a long form, below the fold on a phone, while the token
+  // box above it has just been cleared — which read as the sheet resetting. Take the
+  // reader to the receipt instead.
+  useEffect(() => {
+    if (!receipt) return;
+    receiptRef.current?.scrollIntoView({ block: "start" });
+    receiptRef.current?.focus({ preventScroll: true });
+  }, [receipt]);
 
   const current = result !== null && result.key === key ? result : null;
   const preview = current?.data ?? null;
@@ -124,7 +141,7 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
       {
         description: `${placed.data.amountToken.toLocaleString("en-US", {
           maximumFractionDigits: 2,
-        })} ${placed.data.symbol} at ${formatUsd(placed.data.priceUsd)}${placed.data.isPaper ? " · paper" : ""}`,
+        })} ${placed.data.symbol} at ${formatPriceUsd(placed.data.priceUsd)}${placed.data.isPaper ? " · paper" : ""}`,
       },
     );
     setReceipt(placed.data.receipt);
@@ -145,6 +162,17 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   }, [place]);
 
   const blocked = submitting || !ready || previewing || preview === null || !preview.allowed;
+  // One line above the button saying why it is dead, so the reason is in view wherever
+  // the form is scrolled to.
+  const footerReason = submitting
+    ? null
+    : previewError !== null
+      ? previewError
+      : preview !== null && !preview.allowed
+        ? overCap
+          ? "Over the per-trade cap."
+          : preview.reason
+        : null;
 
   return (
     <Sheet
@@ -177,10 +205,22 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
           The form scrolls and the footer does not: with the whole sheet scrolling, the
           preview pushed the Buy button below the fold on a phone, so the one control
           the preview exists to inform was the one you could not see. */}
-      <SheetContent side="right" className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md">
+      <SheetContent
+        side="right"
+        // The primitive's X is pinned over the scrolling form and, scrolled down, sat on the
+        // receipt's first row. This one lives in the header row and scrolls away with it.
+        showCloseButton={false}
+        className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md"
+      >
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           <SheetHeader>
-            <SheetTitle>Trade on {agent.name}</SheetTitle>
+            <div className="flex items-start justify-between gap-3">
+              <SheetTitle>Trade on {agent.name}</SheetTitle>
+              <SheetClose render={<Button variant="ghost" size="icon-sm" className="-mt-1 -mr-1.5 shrink-0" />}>
+                <XIcon />
+                <span className="sr-only">Close</span>
+              </SheetClose>
+            </div>
             <SheetDescription>
               Your order, its book. It still goes through this agent&rsquo;s score, its caps and its
               blocklist — manual means you choose, not that the rules stop applying.
@@ -254,7 +294,16 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
               />
             </Field>
 
-            <Field label="Size" htmlFor="manual-amount" hint={`Capped at ${formatUsd(agent.config?.risk.maxTradeUsd ?? 0)} per trade by this agent's own risk rules.`}>
+            <Field
+              label="Size"
+              htmlFor="manual-amount"
+              hint={`Capped at ${formatUsd(maxTrade)} per trade by this agent's own risk rules.`}
+              error={
+                overCap
+                  ? `Over this agent's ${formatUsd(maxTrade)} cap per trade. Lower it, or raise Max per trade in settings.`
+                  : null
+              }
+            >
               <div className="space-y-2">
                 <div className="relative">
                   <span
@@ -267,6 +316,8 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
                     id="manual-amount"
                     value={amount}
                     inputMode="decimal"
+                    aria-invalid={overCap || undefined}
+                    aria-describedby={overCap ? "manual-amount-error" : undefined}
                     onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ""))}
                     className="tnum pl-6 font-mono"
                   />
@@ -285,6 +336,16 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
                 </div>
               </div>
             </Field>
+
+            {/* Directly under the size: the verdict belongs next to the inputs it answers. */}
+            <PreviewPanel
+              preview={preview}
+              side={side}
+              amountUsd={amountUsd}
+              error={previewError}
+              loading={previewing}
+              ready={ready}
+            />
 
             <Field label="Note" htmlFor="manual-note" hint="Published with the fill, like any other trade's rationale. Left blank it reads “Manual trade by the owner.”">
               <Textarea
@@ -306,18 +367,13 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
               equityUsd={agent.equityUsd}
             />
 
-            <PreviewPanel
-              preview={preview}
-              side={side}
-              amountUsd={amountUsd}
-              error={previewError}
-              loading={previewing}
-              ready={ready}
-            />
-
             {receipt ? (
               <section aria-label="Fill receipt" className="space-y-2">
-                <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+                <h3
+                  ref={receiptRef}
+                  tabIndex={-1}
+                  className="scroll-mt-4 rounded text-[11px] font-semibold tracking-wide text-muted-foreground uppercase focus:outline-none"
+                >
                   Filled
                 </h3>
                 <TradeReceiptCard receipt={receipt} />
@@ -333,7 +389,27 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
               it fills immediately.
             </p>
           ) : null}
-          {isLive ? (
+          {footerReason ? (
+            <p role="status" className="line-clamp-2 text-xs leading-relaxed text-destructive">
+              {footerReason}
+            </p>
+          ) : !ready && !receipt ? (
+            <p className="text-xs text-muted-foreground">Paste a token and a size to preview.</p>
+          ) : null}
+          {receipt && !ready ? (
+            // After a fill the token box is empty, so the order button could only sit there
+            // disabled. The next thing to do is start another one.
+            <Button
+              className="w-full"
+              size="lg"
+              onClick={() => {
+                setReceipt(null);
+                document.getElementById("manual-token")?.focus();
+              }}
+            >
+              Place another trade
+            </Button>
+          ) : isLive ? (
             <HoldToConfirmButton
               key={holdKey}
               size="md"
@@ -431,7 +507,7 @@ function PreviewPanel({
       {/* One column: a token count like 157,232,704.4 BONK needs the width. A buy gets
           tokens; a sell gives them up and gets dollars, so it says both. */}
       <dl className="grid gap-y-1.5 text-xs">
-        <Row label="Price" value={formatUsd(preview.priceUsd)} />
+        <Row label="Price" value={formatPriceUsd(preview.priceUsd)} />
         <Row label={side === "buy" ? "You get ≈" : "You sell ≈"} value={tokens} />
         {side === "sell" ? <Row label="You receive ≈" value={formatUsd(amountUsd)} /> : null}
         <Row label="Cash" value={formatUsd(preview.cashUsd)} />

@@ -7,6 +7,11 @@ export interface NavItem {
   icon: LucideIcon;
   /** Shown in the mobile tab bar (space for five at most). */
   mobile?: boolean;
+  /**
+   * Opens without an account. Signed out, the bars show only these: every other entry
+   * redirects to sign-in, and a bar of sign-in walls tells a visitor nothing.
+   */
+  public?: boolean;
 }
 
 /**
@@ -24,8 +29,8 @@ export interface NavItem {
  */
 export const NAV_ITEMS: NavItem[] = [
   { href: "/home", label: "Home", icon: LayoutGrid, mobile: true },
-  { href: "/feed", label: "Feed", icon: Radio, mobile: true },
-  { href: "/discover", label: "Discover", icon: Compass, mobile: true },
+  { href: "/feed", label: "Feed", icon: Radio, mobile: true, public: true },
+  { href: "/discover", label: "Discover", icon: Compass, mobile: true, public: true },
   { href: "/agents", label: "My agents", icon: Bot, mobile: true },
   { href: "/money", label: "Money", icon: Banknote, mobile: true },
   { href: "/notifications", label: "Notifications", icon: Bell },

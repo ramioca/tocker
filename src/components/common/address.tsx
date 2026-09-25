@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, X } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { truncateAddress } from "./format";
 
@@ -59,29 +60,46 @@ export function Address({
   tail?: number;
   label?: string;
 }) {
-  const { copied, copy } = useCopy();
+  const { copied, failed, copy } = useCopy();
+  const what = label ?? "address";
+
+  // A refused clipboard (in-app browsers, a strict Permissions-Policy) used to leave the
+  // copy icon in place and say nothing, and whoever was funding an agent pasted whatever
+  // was on their clipboard before. The toast is for sight; the status below is for
+  // screen readers, which never heard "Copied" either — the button's static label hid it.
+  useEffect(() => {
+    if (failed) toast.error(`Couldn't copy the ${what}. Select it and copy it by hand.`);
+  }, [failed, what]);
 
   return (
-    <button
-      type="button"
-      onClick={() => void copy(address)}
-      aria-label={`Copy ${label ?? "address"} ${address}`}
-      className={cn(
-        "group inline-flex items-center gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 font-mono text-xs text-muted-foreground",
-        "transition-[background-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]",
-        "hover:border-border hover:bg-muted/60 hover:text-foreground active:scale-[0.97]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        className,
-      )}
-    >
-      <span className="tnum">{truncateAddress(address, lead, tail)}</span>
-      {copied ? (
-        <Check aria-hidden className="size-3 text-positive" />
-      ) : (
-        <Copy aria-hidden className="size-3 opacity-50 group-hover:opacity-100" />
-      )}
-      <span className="sr-only">{copied ? "Copied" : "Copy"}</span>
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => void copy(address)}
+        aria-label={`Copy ${what} ${address}`}
+        className={cn(
+          "group inline-flex items-center gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 font-mono text-xs text-muted-foreground",
+          "transition-[background-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]",
+          "hover:border-border hover:bg-muted/60 hover:text-foreground active:scale-[0.97]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          className,
+        )}
+      >
+        <span className="tnum">{truncateAddress(address, lead, tail)}</span>
+        {copied ? (
+          <Check aria-hidden className="size-3 text-positive" />
+        ) : failed ? (
+          <X aria-hidden className="size-3 text-destructive" />
+        ) : (
+          <Copy aria-hidden className="size-3 opacity-50 group-hover:opacity-100" />
+        )}
+      </button>
+      {/* A sibling, not a child: `sr-only` takes it out of flow, so a caller's flex row
+          or grid cell is unchanged. */}
+      <span role="status" aria-live="polite" className="sr-only">
+        {copied ? `Copied the ${what}` : failed ? `Couldn't copy the ${what}` : ""}
+      </span>
+    </>
   );
 }
 

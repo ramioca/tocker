@@ -9,6 +9,8 @@ import { getSession } from "@/lib/auth";
 import { encryptSecret, last4 } from "@/lib/crypto";
 import { recordAudit } from "@/lib/security/audit";
 import { newId } from "@/server/queries/_shared";
+import { countKeylessAgents } from "@/server/queries/users";
+import { mismatchedProvider, wrongProviderOnAdd, wrongProviderOnRotate } from "@/lib/agent/key-prefix";
 import { sanitizePrefs, type NotificationPrefs } from "@/lib/notifications/prefs";
 import type { ActionResult } from "@/server/types";
 
@@ -83,7 +85,7 @@ export async function addLlmKey(input: {
   label?: string;
   /** Anthropic only: the workspace an organization-level key should act in. */
   workspaceId?: string;
-}): Promise<ActionResult<{ id: string; last4: string; unverified?: boolean }>> {
+}): Promise<ActionResult<{ id: string; last4: string; unverified?: boolean; keylessAgents?: number }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
@@ -93,6 +95,10 @@ export async function addLlmKey(input: {
   if (input.label !== undefined && (typeof input.label !== "string" || input.label.trim().length > 60)) {
     return fail("Label must be 60 characters or fewer");
   }
+  // The form refuses this before calling; this covers a direct call. A key saved under
+  // the wrong provider passes when that provider can't be probed and fails on the next run.
+  const otherProvider = mismatchedProvider(key, input.provider);
+  if (otherProvider) return fail(wrongProviderOnAdd(otherProvider, input.provider));
 
   // An Anthropic key made at the organization level must name a workspace on every
   // request. Nobody should have to know that: one free request says whether this key
@@ -144,7 +150,58 @@ export async function addLlmKey(input: {
 
   revalidatePath("/settings");
   revalidatePath("/settings/security");
-  return { ok: true, data: { id, last4: last4(key), ...(probe === "unreachable" ? { unverified: true } : {}) } };
+  // A key removed and re-added (rather than rotated) leaves every agent it served with
+  // none. Saying how many lets the form offer to attach this one in the same breath.
+  const keylessAgents = await countKeylessAgents(session.userId);
+  return {
+    ok: true,
+    data: { id, last4: last4(key), keylessAgents, ...(probe === "unreachable" ? { unverified: true } : {}) },
+  };
+}
+
+/**
+ * Attach one of the caller's keys to every one of their agents that has none.
+ *
+ * The other half of `removeLlmKey`: removing a key detaches every agent it served, and
+ * adding a new one attached nothing, so an operator who swapped keys by remove-then-add
+ * ended with a working key and every agent stopped — fixable only agent by agent. Only
+ * agents with no key at all are touched; one already pointed at another key keeps it.
+ */
+export async function attachKeyToKeylessAgents(keyId: string): Promise<ActionResult<{ attached: number }>> {
+  const session = await getSession();
+  if (!session) return fail("Sign in first");
+
+  const db = await getDb();
+  const [key] = await db
+    .select({ id: llmKeys.id, provider: llmKeys.provider, last4: llmKeys.last4 })
+    .from(llmKeys)
+    .where(and(eq(llmKeys.id, keyId), eq(llmKeys.userId, session.userId)))
+    .limit(1);
+  if (!key) return fail("Key not found");
+
+  const attached = await db
+    .update(agents)
+    .set({ llmKeyId: key.id, updatedAt: new Date() })
+    .where(and(eq(agents.ownerId, session.userId), isNull(agents.llmKeyId)))
+    .returning({ id: agents.id, name: agents.name, slug: agents.slug });
+
+  // One row per agent, so each agent's own history says when it got its brain back.
+  // `llm_key_added` is the honest existing kind: a key was added to this agent.
+  for (const agent of attached) {
+    await recordAudit({
+      userId: session.userId,
+      kind: "llm_key_added",
+      agentId: agent.id,
+      agentName: agent.name,
+      summary: `Attached the ${providerLabel(key.provider)} key ending ${key.last4} to ${agent.name}, which had no key.`,
+      metadata: { provider: key.provider, last4: key.last4, attachedTo: agent.id },
+    });
+  }
+
+  revalidatePath("/settings");
+  revalidatePath("/settings/security");
+  for (const agent of attached) revalidatePath(`/agents/${agent.slug}`);
+  return { ok: true, data: { attached: attached.length } };
 }
 
 export async function removeLlmKey(id: string): Promise<ActionResult<{ detachedAgents: number }>> {
@@ -210,6 +267,9 @@ export async function rotateLlmKey(input: {
     .where(and(eq(llmKeys.id, input.id), eq(llmKeys.userId, session.userId)))
     .limit(1);
   if (!existing) return fail("Key not found");
+  // A rotation replaces the secret, never the provider; the inventory refuses this first.
+  const otherProvider = mismatchedProvider(key, existing.provider);
+  if (otherProvider) return fail(wrongProviderOnRotate(otherProvider, existing.provider));
 
   // Every agent on this key picks up the new secret on its next run, so a refused one
   // would take all of them down at once. Checked against the saved workspace: rotation

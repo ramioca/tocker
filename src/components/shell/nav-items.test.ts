@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { isActivePath } from "./nav-items";
+import { NAV_ITEMS, isActivePath } from "./nav-items";
+
+describe("NAV_ITEMS", () => {
+  it("marks only pages that open without an account as public", () => {
+    // Home, My agents, Money, Notifications and Settings all redirect to sign-in.
+    expect(NAV_ITEMS.filter((item) => item.public).map((item) => item.href)).toEqual(["/feed", "/discover"]);
+  });
+});
 
 describe("isActivePath", () => {
   it("treats / as home", () => {

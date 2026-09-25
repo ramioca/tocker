@@ -6,6 +6,7 @@ import { AgentHeader } from "@/components/agents/agent-header";
 import { AgentStats } from "@/components/agents/agent-stats";
 import { AgentStatusBanner } from "@/components/agents/agent-status-banner";
 import { AgentTabs } from "@/components/agents/agent-tabs";
+import { bookBasisUsd } from "@/components/agents/book-basis";
 import { PositionsTable } from "@/components/agents/positions-table";
 import { PrivateStrategyPanel } from "@/components/agents/private-strategy";
 import { ProposalList } from "@/components/agents/proposals/proposal-list";
@@ -80,6 +81,8 @@ export default async function AgentPage({ params }: Params) {
     if (source) sourceNames[id] = source.name;
   }
 
+  const chartPoints = withLivePoint(equity.length > 1 ? equity : agent.equity, agent);
+
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <AgentHeader agent={agent} accountPaused={paused} runBlocker={runBlocker} />
@@ -102,9 +105,11 @@ export default async function AgentPage({ params }: Params) {
           overview={
             <div className="space-y-6">
               <section className="glass-panel rounded-2xl p-3 sm:p-4">
+                {/* Against what this book started with, never the paper notional:
+                    that stays $10,000 after going live, and flattens a $50 book to −99%. */}
                 <EquityChart
-                  points={withLivePoint(equity.length > 1 ? equity : agent.equity, agent)}
-                  startingUsd={agent.paperStartingUsd}
+                  points={chartPoints}
+                  startingUsd={bookBasisUsd(agent, chartPoints[0]?.equityUsd)}
                   label={agent.name}
                 />
               </section>
@@ -135,7 +140,7 @@ export default async function AgentPage({ params }: Params) {
            */
           config={
             agent.config ? (
-              <AgentConfigSummary config={agent.config} sourceNames={sourceNames} />
+              <AgentConfigSummary config={agent.config} sourceNames={sourceNames} agentSlug={agent.slug} />
             ) : (
               <PrivateStrategyPanel agent={agent} />
             )

@@ -27,11 +27,12 @@ import "server-only";
  * which are pure: every phrasing below is tested against the sentences the providers
  * and the run loop actually produce, with no database in the way.
  */
-import { and, desc, eq, inArray } from "drizzle-orm";
-import { agentRuns, agents, getDb, trades, users } from "@/db";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { agentRunSteps, agentRuns, agents, getDb, trades, users } from "@/db";
 import type { AgentConfig } from "@/db/schema";
 import { isWorkspaceScopeError } from "@/lib/agent/anthropic-workspace";
 import { isLlmMock } from "@/lib/agent/mock-model";
+import { narrateRun, tradeRefusals, type NarratableStep } from "@/lib/agent/narrate";
 import { getPortfolio } from "@/lib/agent/portfolio";
 import { getPlatformWallet, platformUsdcBalances } from "@/lib/platform/wallets";
 import { proposalExpiresAt } from "@/lib/trading/proposals";
@@ -50,6 +51,7 @@ export type AgentStatusKind =
   | "low_cash"
   | "platform_gas"
   | "draft"
+  | "buys_refused"
   | "quiet_window";
 
 /**
@@ -207,9 +209,16 @@ export interface StatusRun {
 
 export interface StatusQuietRun {
   id: string;
-  summary: string | null;
+  /**
+   * `narrateRun` over the run's own steps: what it scored, paid for and decided. Never
+   * the model's `summary`, which is its own words and can claim a buy the risk guard
+   * refused.
+   */
+  digest: string | null;
   /** Trades *and* proposals this run wrote. Zero means the tick decided on nothing. */
   tradeCount: number;
+  /** `place_trade` calls the risk guard or the venue turned down, by label. */
+  refusals: Array<{ label: string; count: number }>;
 }
 
 export interface StatusInputs {
@@ -363,25 +372,90 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
     });
   }
 
-  // ---- info: three quiet ticks in a row. Not a fault: a narrow age window on a slow
-  // hour legitimately returns nothing, and the operator should be told that rather
-  // than left wondering whether the agent is broken.
+  // ---- three ticks in a row with nothing to show. Either it tried to buy and was
+  // refused — a setting is in its way, and that is a warning with the fix — or nothing
+  // cleared the bar, which is not a fault: a narrow age window on a slow hour
+  // legitimately returns nothing, and the operator should be told that rather than left
+  // wondering whether the agent is broken.
   const quiet = input.recentSucceeded.slice(0, 3);
   if (quiet.length === 3 && quiet.every((run) => run.tradeCount === 0)) {
-    const window = describeWindow(input.maxAgeHours);
-    push({
-      kind: "quiet_window",
-      severity: "info",
-      title: window
-        ? `No launch passed the ${window} window in the last three ticks`
-        : "Nothing cleared the bar in the last three ticks",
-      detail:
-        firstSentence(quiet[0].summary) ?? "The agent finished each tick without proposing anything.",
-      action: { label: "Open the run", href: `/agents/${input.slug}/runs/${quiet[0].id}` },
-    });
+    const refused = topRefusal(quiet);
+    if (refused) {
+      const copy = REFUSAL_COPY[refused.label];
+      const orders = plural(refused.total, "order was", "orders were");
+      push({
+        kind: "buys_refused",
+        severity: "warn",
+        title: "Its buys were refused",
+        detail: `${copy?.detail ?? `${capitalize(refused.label)}.`} ${orders} turned down in the last three ticks.`,
+        action:
+          copy?.hash !== undefined
+            ? { label: "Settings", href: settings(copy.hash) }
+            : { label: "Open the run", href: `/agents/${input.slug}/runs/${refused.runId}` },
+      });
+    } else {
+      const window = describeWindow(input.maxAgeHours);
+      push({
+        kind: "quiet_window",
+        severity: "info",
+        title: window
+          ? `No launch passed the ${window} window in the last three ticks`
+          : "Nothing cleared the bar in the last three ticks",
+        detail: firstSentence(quiet[0].digest) ?? "The agent finished each tick without proposing anything.",
+        action: { label: "Open the run", href: `/agents/${input.slug}/runs/${quiet[0].id}` },
+      });
+    }
   }
 
   return items.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]).slice(0, MAX_ITEMS);
+}
+
+/**
+ * What each refusal label means to an owner, and the Settings section that changes it.
+ * No `hash` means no setting fixes it (a bad quote, a provider outage): the run is the
+ * better place to send them.
+ */
+const REFUSAL_COPY: Record<string, { detail: string; hash?: string }> = {
+  "chain not enabled": { detail: "The token's chain is not enabled for this agent.", hash: "#universe" },
+  "trade size cap": { detail: "Each order was over its per-trade cap.", hash: "#risk" },
+  "position concentration": { detail: "Each order would have put too much of the book in one token.", hash: "#risk" },
+  "not enough cash": { detail: "There was not enough cash to cover the order.", hash: "#wallets" },
+  "daily buy limit": { detail: "The day's buys were already spent.", hash: "#risk" },
+  "hard gates": { detail: "The token failed a hard gate.", hash: "#universe" },
+  "below the score floor": { detail: "The token scored under this agent's floor.", hash: "#universe" },
+  "avoid verdict": { detail: "The token's verdict was avoid.", hash: "#universe" },
+  blocklist: { detail: "The token is on this agent's blocklist.", hash: "#universe" },
+  "unscored token": { detail: "It tried to buy a token it had not scored first." },
+  "bad quote": { detail: "The venue's quote was unusable." },
+  "scoring outage": { detail: "Every data provider failed while it was scoring." },
+};
+
+/**
+ * Refusals that are the approval flow working, or a sell with nothing to sell: none of
+ * them is a buy being stopped by a setting.
+ */
+const NOT_A_BLOCKED_BUY = new Set(["already proposed", "tick proposal limit", "nothing to sell"]);
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The most frequent blocked-buy label across these runs, with the newest run that hit it. */
+function topRefusal(runs: readonly StatusQuietRun[]): { label: string; total: number; runId: string } | null {
+  const totals = new Map<string, { total: number; runId: string }>();
+  for (const run of runs) {
+    for (const { label, count } of run.refusals) {
+      if (NOT_A_BLOCKED_BUY.has(label)) continue;
+      const held = totals.get(label);
+      if (held) held.total += count;
+      else totals.set(label, { total: count, runId: run.id });
+    }
+  }
+  let best: { label: string; total: number; runId: string } | null = null;
+  for (const [label, entry] of totals) {
+    if (!best || entry.total > best.total) best = { label, ...entry };
+  }
+  return best;
 }
 
 /** Where a failed run sends the operator: the provider's billing, the key, or the run. */
@@ -449,18 +523,49 @@ async function readRuns(db: Db, agentId: string): Promise<{ last: StatusRun | nu
   const last = recent[0] ?? null;
   const succeeded = recent.filter((run) => run.status === "succeeded").slice(0, 3);
   if (succeeded.length < 3) {
-    return { last, quiet: succeeded.map((run) => ({ id: run.id, summary: run.summary, tradeCount: 0 })) };
+    return {
+      last,
+      quiet: succeeded.map((run) => ({ id: run.id, digest: null, tradeCount: 0, refusals: [] })),
+    };
   }
 
   const ids = succeeded.map((run) => run.id);
-  const rows = await db.select({ runId: trades.runId }).from(trades).where(inArray(trades.runId, ids));
+  const [rows, stepRows] = await Promise.all([
+    db.select({ runId: trades.runId }).from(trades).where(inArray(trades.runId, ids)),
+    // The steps, not the summary: the summary is the model's account of the tick, and
+    // a model can write "bought a $50 starter position" after the risk guard said no.
+    db
+      .select({
+        runId: agentRunSteps.runId,
+        kind: agentRunSteps.kind,
+        toolName: agentRunSteps.toolName,
+        payload: agentRunSteps.payload,
+      })
+      .from(agentRunSteps)
+      .where(inArray(agentRunSteps.runId, ids))
+      .orderBy(asc(agentRunSteps.seq)),
+  ]);
   const counts = new Map<string, number>();
   for (const row of rows) {
     if (row.runId) counts.set(row.runId, (counts.get(row.runId) ?? 0) + 1);
   }
+  const stepsByRun = new Map<string, NarratableStep[]>();
+  for (const row of stepRows) {
+    const list = stepsByRun.get(row.runId) ?? [];
+    list.push({ kind: row.kind, toolName: row.toolName, payload: row.payload });
+    stepsByRun.set(row.runId, list);
+  }
   return {
     last,
-    quiet: succeeded.map((run) => ({ id: run.id, summary: run.summary, tradeCount: counts.get(run.id) ?? 0 })),
+    quiet: succeeded.map((run) => {
+      const steps = stepsByRun.get(run.id) ?? [];
+      return {
+        id: run.id,
+        digest: steps.length > 0 ? narrateRun(steps) : null,
+        tradeCount: counts.get(run.id) ?? 0,
+        refusals: tradeRefusals(steps),
+      };
+    }),
   };
 }
 

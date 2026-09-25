@@ -3,7 +3,7 @@ import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { agents, equitySnapshots, getDb, trades, x402Payments } from "@/db";
 import { DATA_SOURCES } from "@/lib/data-sources/registry";
 import { toNum } from "@/lib/money";
-import { pnlOverWindow, WINDOW_DAYS } from "@/lib/pnl";
+import { pnlOverWindow, windowSparkline, WINDOW_DAYS } from "@/lib/pnl";
 import type { DataSourceInfo, LeaderboardRow, LeaderboardWindow, TokenScore } from "@/server/types";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import { discoverCandidates, getTokenScore } from "@/lib/tokens";
@@ -76,15 +76,21 @@ export async function getLeaderboard(window: LeaderboardWindow, limit = 25): Pro
   const windowCount = new Map(windowTrades.map((r) => [r.agentId, Number(r.n ?? 0)]));
 
   const scored = agentRows.flatMap((a) => {
-    const pnl = pnlOverWindow(series.get(a.id) ?? [], window);
+    const points = series.get(a.id) ?? [];
+    const pnl = pnlOverWindow(points, window);
     const card = cardById.get(a.id);
     if (!pnl || !card) return [];
+    // The card's sparkline is its last month; this one is the window the row is ranked
+    // on, so the line and the PnL beside it (and the colour it takes) agree.
+    const sparkline = windowSparkline(points, window);
     if (days === null) {
       // All time is the number the agent's card prints further down the same page (a
       // paper book measured from its notional, not its first mark), so take it from there.
-      return [{ card, pnlPct: card.pnlPct ?? pnl.pnlPct, pnlUsd: card.pnlUsd ?? pnl.pnlUsd, tradeCount: card.tradeCount }];
+      return [
+        { card, pnlPct: card.pnlPct ?? pnl.pnlPct, pnlUsd: card.pnlUsd ?? pnl.pnlUsd, tradeCount: card.tradeCount, sparkline },
+      ];
     }
-    return [{ card, pnlPct: pnl.pnlPct, pnlUsd: pnl.pnlUsd, tradeCount: windowCount.get(a.id) ?? 0 }];
+    return [{ card, pnlPct: pnl.pnlPct, pnlUsd: pnl.pnlUsd, tradeCount: windowCount.get(a.id) ?? 0, sparkline }];
   });
 
   scored.sort((a, b) => b.pnlPct - a.pnlPct || b.tradeCount - a.tradeCount);
@@ -95,6 +101,7 @@ export async function getLeaderboard(window: LeaderboardWindow, limit = 25): Pro
     pnlPct: row.pnlPct,
     pnlUsd: row.pnlUsd,
     tradeCount: row.tradeCount,
+    sparkline: row.sparkline,
   }));
 }
 
@@ -162,6 +169,8 @@ export async function getTopDataSources(
 // ---------------------------------------------------------------------------
 
 const FRESH_TTL_MS = 5 * 60_000;
+/** How long an empty sweep is served: an outage costs one slow sweep a minute, not one a request. */
+const FRESH_EMPTY_TTL_MS = 60_000;
 const FRESH_SWEEP_SIZE = 24;
 const freshCache: { at: number; limit: number; rows: TokenScore[] } = { at: 0, limit: 0, rows: [] };
 let freshInFlight: Promise<TokenScore[]> | null = null;
@@ -178,13 +187,20 @@ let freshInFlight: Promise<TokenScore[]> | null = null;
  */
 export async function getFreshLaunches(limit = 12): Promise<TokenScore[]> {
   const now = Date.now();
-  if (freshCache.rows.length > 0 && freshCache.limit >= limit && now - freshCache.at < FRESH_TTL_MS) {
+  if (freshCache.at > 0 && freshCache.limit >= limit && now - freshCache.at < FRESH_TTL_MS) {
     return freshCache.rows.slice(0, limit);
   }
   if (!freshInFlight) {
     freshInFlight = sweepFreshLaunches(Math.max(limit, 12))
       .then((rows) => {
-        if (rows.length > 0) Object.assign(freshCache, { at: Date.now(), limit: Math.max(limit, 12), rows });
+        const at = Date.now();
+        if (rows.length > 0) {
+          Object.assign(freshCache, { at, limit: Math.max(limit, 12), rows });
+        } else if (!(freshCache.rows.length > 0 && at - freshCache.at < FRESH_TTL_MS)) {
+          // Negative cache: every provider down (or nothing new) is remembered for a
+          // minute, dated so it expires then. A still-fresh good sweep is never replaced.
+          Object.assign(freshCache, { at: at - FRESH_TTL_MS + FRESH_EMPTY_TTL_MS, limit: Math.max(limit, 12), rows: [] });
+        }
         return rows;
       })
       .finally(() => {

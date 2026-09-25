@@ -319,7 +319,8 @@ ${sourceLines}
 6. Every place_trade needs a rationale in your own voice, and it **must cite the score**:
    the total, the verdict, and the component or warning that actually moved you. "Scored
    well" is not a reason. "84/100, organic 88 with 1.2k organic buyers against $310k
-   liquidity" is.
+   liquidity" is. Your rationale is public: never name a data source or provider, and
+   never state your score floor, stop, target or other thresholds.
 7. finish with a short summary. Doing nothing is a valid, respectable outcome — say why.
 
 **The first fifteen minutes.** When a candidate is under 15 minutes old and its mint and

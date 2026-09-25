@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { MotionConfig } from "framer-motion";
 import { Dialog } from "@base-ui/react/dialog";
 import {
   Banknote,
@@ -19,7 +18,7 @@ import {
   User,
   Wallet,
 } from "lucide-react";
-import { CommandPalette, type CommandItem } from "@/components/spectrumui/command-palette";
+import { SearchPalette, type SearchPaletteItem as CommandItem } from "@/components/common/search-palette";
 import { cn } from "@/lib/utils";
 import { chainLabelFor } from "@/lib/wallets/funding";
 import type { CommandIndex } from "./command-index";
@@ -73,30 +72,20 @@ function matches(row: Row, query: string): boolean {
 }
 
 /**
- * Overrides for the registry palette's low-contrast greys (neutral-600 on glass is
- * about 2.6:1) and its desktop-only keyboard hint. Descendant selectors because the
- * component takes one className, on its box; `!` because its own dark: classes win
- * otherwise. The footer's first child is the "Use arrows ↑↓ and Enter" hint.
+ * The footer's first child is the "Use arrows ↑↓ and Enter" hint: no use on a phone or
+ * under a finger, so it goes there. The active row's highlight is lifted a touch on the
+ * dark glass so the arrow-key position reads.
  */
-const PALETTE_READABLE = [
-  "[&_h4]:!text-muted-foreground [&_.py-12]:!text-muted-foreground",
-  "[&_input]:placeholder:!text-muted-foreground",
-  // 16px on phones: iOS Safari zooms the page into any focused field smaller than
-  // that, and this one autofocuses on every tap of Search.
-  "[&_input]:max-sm:!text-base",
-  "[&_kbd]:!text-muted-foreground [&_kbd]:!opacity-100",
-  "[&>div:last-child]:!text-muted-foreground",
-  "[&>div:last-child>div:first-child]:max-sm:!hidden",
-  "[@media(pointer:coarse)]:[&>div:last-child>div:first-child]:!hidden",
-  // The active row's highlight (an absolute layer inside each [data-index] row) is
-  // near-invisible on the dark glass; lift it so the arrow-key position reads.
-  "dark:[&_[data-index]>.absolute]:!bg-white/[0.08]",
+const PALETTE_TWEAKS = [
+  "[&>div:last-child>div:first-child]:max-sm:hidden",
+  "[@media(pointer:coarse)]:[&>div:last-child>div:first-child]:hidden",
+  "dark:[&_[data-index]>.absolute]:bg-white/[0.08]",
 ];
 
 /**
- * ⌘K is a 100-times-a-day action, so the palette opens without movement: the registry
- * component's entrance spring and sliding highlight run under `reducedMotion="always"`,
- * which makes transform and layout animations instant. The value is in what
+ * ⌘K is a 100-times-a-day action, so the palette opens without movement (the
+ * SearchPalette has none). It is the accessible combobox: the input names the listbox,
+ * the arrows move `aria-activedescendant`, and the result count is announced. The value is in what
  * it can reach: every agent, every person, and — through
  * `/api/tokens/search` — every token the platform has ever seen, not just the
  * handful the layout could afford to ship in the index.
@@ -126,6 +115,8 @@ export function CommandMenu({
   // the change event as it bubbles out of it (see the wrapper below). Cleared on close
   // so a reopen starts from the full list, as the palette's own input does.
   const [query, setQuery] = useState("");
+  // A lookup in flight, so an empty list says "Searching…" rather than "Nothing matches".
+  const [searching, setSearching] = useState(false);
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
@@ -140,6 +131,7 @@ export function CommandMenu({
     if (!open) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
+      setSearching(true);
       fetch(`/api/tokens/search?q=${encodeURIComponent(query.trim())}`, { signal: controller.signal })
         .then((response) => (response.ok ? response.json() : {}))
         .then((body: SearchResponse) => {
@@ -151,6 +143,10 @@ export function CommandMenu({
         })
         .catch(() => {
           // A failed lookup costs the extra rows, never the palette.
+        })
+        .finally(() => {
+          // An aborted lookup was replaced by the next one, which owns the flag now.
+          if (!controller.signal.aborted) setSearching(false);
         });
     }, SEARCH_DEBOUNCE_MS);
     return () => {
@@ -326,10 +322,10 @@ export function CommandMenu({
 
   const commands = useMemo<CommandItem[]>(() => rows.filter((row) => matches(row, query)), [rows, query]);
 
-  // A real modal dialog around the registry palette, which is a plain div: Base UI adds
-  // the dialog role and name, traps focus inside, makes the page behind it inert and
-  // hands focus back to whatever had it (usually the Search button) on close. The popup
-  // is `display: contents` so the palette's own fixed layout is untouched.
+  // A real modal dialog around the palette: Base UI adds the dialog role and name, traps
+  // focus inside, makes the page behind it inert and hands focus back to whatever had it
+  // (usually the Search button) on close. The popup is `display: contents` so the
+  // palette's own fixed layout is untouched.
   return (
     <Dialog.Root open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
       <Dialog.Portal>
@@ -349,28 +345,16 @@ export function CommandMenu({
               if (target instanceof HTMLInputElement) setQuery(target.value);
             }}
           >
-            <MotionConfig reducedMotion="always">
-              <CommandPalette
-                isOpen={open}
-                onClose={onClose}
-                commands={commands}
-                placeholder="Search agents, tokens, people…"
-                footerLabel="Tocker"
-                /*
-                 * The registry component paints its own neutral glass, and `cn` merges
-                 * last-wins, so these four utilities re-point it at our material tokens —
-                 * the same recipe `.glass-heavy` uses. The palette is the app's single
-                 * heaviest surface: whatever is behind it is out of play.
-                 */
-                className={cn(
-                  "bg-[var(--glass-overlay)] dark:bg-[var(--glass-overlay)]",
-                  "border-[var(--glass-hairline)] dark:border-[var(--glass-hairline)]",
-                  "backdrop-blur-[var(--glass-blur-heavy)] backdrop-saturate-[1.7]",
-                  "shadow-[var(--glass-overlay-shadow)]",
-                  PALETTE_READABLE,
-                )}
-              />
-            </MotionConfig>
+            <SearchPalette
+              isOpen={open}
+              onClose={onClose}
+              commands={commands}
+              label="Search agents, tokens and people"
+              placeholder="Search agents, tokens, people…"
+              emptyText={searching ? "Searching…" : `Nothing matches “${query.trim()}”`}
+              footerLabel="Tocker"
+              className={cn(PALETTE_TWEAKS)}
+            />
           </div>
           {/* Phones have no Escape key and the ESC chip is desktop-only, so the backdrop
               was the only way out — and nothing said so. Above the palette's own box,

@@ -105,6 +105,13 @@ export function transferErrorMessage(
   const raw = err instanceof Error ? err.message : String(err ?? "");
   const lower = raw.toLowerCase();
 
+  // viem refusing to encode the destination (a checksum typo, a truncated paste). The
+  // form checks first; this is the backstop, and viem's own text quotes the address
+  // back with "Address "0x…" is invalid." and a docs link.
+  if ((err instanceof Error && err.name === "InvalidAddressError") || /Address ".*" is invalid/.test(raw)) {
+    return "That address has a typo. Copy it again from the source.";
+  }
+
   // Verbatim: written by the server about Tocker's own fee wallet, and already says
   // what to do.
   if (lower.includes("fee wallet") || lower.includes("platform solana wallet") || lower.includes("platform wallet")) {
@@ -142,7 +149,7 @@ export function isNativeGasShortfall(err: unknown): boolean {
 type SolanaWallet = ReturnType<typeof useSolanaWallets>["wallets"][number];
 
 const WRONG_WALLET =
-  "The Solana wallet in your browser is not the one Tocker has on record for you. Sync your wallets from Settings and try again.";
+  "The Solana wallet in your browser is not the one Tocker has on record for you. Open Deposit and tap Sync wallets, then try again.";
 
 function usd(value: number): string {
   return `$${value.toFixed(2)}`;
@@ -279,18 +286,20 @@ function usePrivyTransfer(): UseTransfer {
       if (!request.to) throw new Error("No destination address");
 
       if (request.chain === "base") {
-        const payload =
-          request.asset === "native"
-            ? { to: request.to as `0x${string}`, value: parseEther(String(request.amount)) }
-            : {
-                to: BASE_USDC,
-                data: encodeFunctionData({
-                  abi: ERC20_TRANSFER_ABI,
-                  functionName: "transfer",
-                  args: [request.to as `0x${string}`, parseUnits(String(request.amount), 6)],
-                }),
-              };
         try {
+          // Inside the try: encoding is where viem refuses a bad address, and its
+          // message has to go through `transferErrorMessage` like any other failure.
+          const payload =
+            request.asset === "native"
+              ? { to: request.to as `0x${string}`, value: parseEther(String(request.amount)) }
+              : {
+                  to: BASE_USDC,
+                  data: encodeFunctionData({
+                    abi: ERC20_TRANSFER_ABI,
+                    functionName: "transfer",
+                    args: [request.to as `0x${string}`, parseUnits(String(request.amount), 6)],
+                  }),
+                };
           // `sponsor` is the *second* argument, not part of the transaction request —
           // `useSendTransaction(): sendTransaction(input, options?)` in
           // @privy-io/react-auth/dist/dts/index.d.ts:3417.
@@ -303,7 +312,7 @@ function usePrivyTransfer(): UseTransfer {
 
       const wallet = solanaWallets[0];
       if (!wallet) {
-        throw new Error("No Solana wallet is connected. Sync your wallets and try again.");
+        throw new Error("No Solana wallet is connected. Open Deposit and tap Sync wallets, then try again.");
       }
 
       if (request.asset === "native") return sendNativeSol(request, wallet);

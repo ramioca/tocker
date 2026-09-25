@@ -19,7 +19,7 @@
  * `?proposal=<id>` (the deep link in the owner's notification) scrolls that card into
  * view and rings it for a moment.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Gavel } from "lucide-react";
 import { ProposalCard } from "./proposal-card";
@@ -50,6 +50,7 @@ export function ProposalList({
   const now = useCoarseNow();
   const [decided, setDecided] = useState<Record<string, true>>({});
   const [dropped, setDropped] = useState<Record<string, true>>({});
+  const sectionRef = useRef<HTMLElement>(null);
 
   const visible = useMemo(
     () => byNewestFirst(proposals.filter((p) => !dropped[p.id])),
@@ -69,6 +70,7 @@ export function ProposalList({
     const ids = Object.keys(decided);
     if (ids.length === 0) return;
     const timer = window.setTimeout(() => {
+      handOffFocus(sectionRef.current, new Set(ids));
       setDropped((current) => {
         const next = { ...current };
         for (const id of ids) next[id] = true;
@@ -86,7 +88,7 @@ export function ProposalList({
   const soonest = soonestExpiry(visible, now);
 
   return (
-    <section aria-labelledby="proposals-heading" className={className}>
+    <section ref={sectionRef} aria-labelledby="proposals-heading" className={className}>
       <header className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         <Gavel aria-hidden className="size-3.5 text-[oklch(0.8_0.15_75)]" />
         <h2 id="proposals-heading" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -129,4 +131,25 @@ export function ProposalList({
       </div>
     </section>
   );
+}
+
+/**
+ * Before decided cards leave: if focus is inside one of them, move it on, or it drops to
+ * <body> and the next Tab starts from the top of the page. The next card that is staying
+ * takes it (then the one before); with none left the whole list goes, heading included,
+ * so the page's main region does.
+ *
+ * A card, not its first button: that would be Reject, one keypress from declining a
+ * trade the operator has not read yet.
+ */
+function handOffFocus(section: HTMLElement | null, leaving: ReadonlySet<string>) {
+  if (!section) return;
+  const active = document.activeElement;
+  const cards = Array.from(section.querySelectorAll<HTMLElement>("[data-proposal-card]"));
+  const stays = (card: HTMLElement) => !leaving.has(card.id.replace(/^proposal-/, ""));
+  const index = cards.findIndex((card) => card.contains(active));
+  if (index < 0 || stays(cards[index])) return;
+  const next = cards.slice(index + 1).find(stays) ?? cards.slice(0, index).reverse().find(stays);
+  if (next) next.focus();
+  else document.getElementById("main")?.focus({ preventScroll: true });
 }

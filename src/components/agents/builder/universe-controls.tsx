@@ -8,6 +8,8 @@ import { AnimatedSwitch } from "@/components/spectrumui/animated-switch";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { ChainBadge } from "@/components/common/chain-badge";
+import { addressProblemForChain } from "@/lib/wallet-address";
+import { chainLabelFor } from "@/lib/wallets/funding";
 import { ScoreBadge, VerdictScale } from "@/components/tokens/score-badge";
 import {
   VERDICT_META,
@@ -587,7 +589,8 @@ export function UniverseControls({
             ladder={MAX_AGE_LADDER}
             value={universe.maxAgeHours ?? 72}
             disabled={universe.maxAgeHours === null}
-            format={(value) => formatHours(value)}
+            // The thumb parks at 72h while "Any age" is on; the readout says what is enforced.
+            format={(value) => (universe.maxAgeHours === null ? "Any" : formatHours(value))}
             meaning={
               universe.maxAgeHours === null
                 ? "No ceiling — a token from 2021 is as eligible as one from this morning."
@@ -794,11 +797,20 @@ function BlocklistEditor({
   const [symbol, setSymbol] = useState("");
   const [address, setAddress] = useState("");
   const [chain, setChain] = useState<Chain>(chains[0] ?? "solana");
+  const [addressError, setAddressError] = useState<string | null>(null);
+  const addressErrorId = `${idPrefix}-block-address-error`;
 
   const add = () => {
     const trimmedAddress = address.trim();
     const trimmedSymbol = symbol.trim().toUpperCase();
     if (trimmedSymbol.length === 0 || trimmedAddress.length < 3) return;
+    // A block matches on the address, so one that is not a real address on this chain
+    // blocks nothing while the summary counts it as "1 blocked".
+    const problem = addressProblemForChain(chain, trimmedAddress);
+    if (problem) {
+      setAddressError(problem);
+      return;
+    }
     if (blocklist.some((entry) => entry.chain === chain && entry.address === trimmedAddress)) {
       toast.error(`${trimmedSymbol} is already blocked`);
       return;
@@ -838,7 +850,7 @@ function BlocklistEditor({
                   )}
                 >
                   <span className="font-medium">{entry.symbol}</span>
-                  <span className="text-[10px] text-muted-foreground">{entry.chain}</span>
+                  <span className="text-[10px] text-muted-foreground">{chainLabelFor(entry.chain)}</span>
                   <X aria-hidden className="size-3 opacity-50 group-hover:opacity-100" />
                   <span className="sr-only">Remove {entry.symbol} from the blocklist</span>
                 </button>
@@ -863,7 +875,10 @@ function BlocklistEditor({
               <SimpleSelect
                 id={`${idPrefix}-block-chain`}
                 value={chain}
-                onChange={(next) => setChain(next as Chain)}
+                onChange={(next) => {
+                  setChain(next as Chain);
+                  setAddressError(null);
+                }}
                 options={chains.map((entry) => ({
                   value: entry,
                   label: entry === "solana" ? "Solana" : "Base",
@@ -883,7 +898,7 @@ function BlocklistEditor({
               id={`${idPrefix}-block-symbol`}
               value={symbol}
               maxLength={16}
-              placeholder="SCAM"
+              placeholder="e.g. RUG"
               onChange={(event) => setSymbol(event.target.value.toUpperCase())}
             />
           </div>
@@ -898,9 +913,14 @@ function BlocklistEditor({
             <Input
               id={`${idPrefix}-block-address`}
               value={address}
-              placeholder="EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"
-              className="font-mono text-xs"
-              onChange={(event) => setAddress(event.target.value)}
+              placeholder={chain === "solana" ? "Paste a mint address" : "0x…"}
+              aria-invalid={Boolean(addressError) || undefined}
+              aria-describedby={addressError ? addressErrorId : undefined}
+              className="font-mono"
+              onChange={(event) => {
+                setAddress(event.target.value);
+                setAddressError(null);
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
@@ -925,6 +945,13 @@ function BlocklistEditor({
             Block
           </button>
         </div>
+        {/* Under the row rather than inside the address column, which would push the
+            bottom-aligned Block button down with it. */}
+        {addressError ? (
+          <p id={addressErrorId} role="alert" className="-mt-1 text-xs text-destructive">
+            {addressError}
+          </p>
+        ) : null}
       </div>
     </Field>
   );

@@ -63,7 +63,8 @@ export function AgentHeader({
       agentName: agent.name,
       avatarSeed: agent.avatarSeed,
     });
-    toast.success("Run started", { description: "Watch it live in the island." });
+    // No "Run started" toast: the button's "Running" and the run island already say it,
+    // and a toast outlives a short run — it sat on top of the island's "Run finished".
   };
 
   const onFollow = async (next: boolean) => {
@@ -111,24 +112,26 @@ export function AgentHeader({
             >
               @{agent.owner.handle}
             </Link>
-            <span aria-hidden>·</span>
-            <span title={agent.model}>{modelLabel(agent.model)}</span>
-            <span aria-hidden>·</span>
-            {agent.chains.map((chain) => (
-              <ChainBadge key={chain} chain={chain} />
-            ))}
+            <MetaSegment>
+              <span title={agent.model}>{modelLabel(agent.model)}</span>
+            </MetaSegment>
+            <MetaSegment>
+              {agent.chains.map((chain) => (
+                <ChainBadge key={chain} chain={chain} />
+              ))}
+            </MetaSegment>
             {agent.lastRunAt ? (
-              <>
-                <span aria-hidden>·</span>
+              <MetaSegment>
                 <span className="text-xs">
                   ran <RelativeTime iso={agent.lastRunAt} className="text-xs" />
                 </span>
-              </>
+              </MetaSegment>
             ) : null}
-            <span aria-hidden>·</span>
-            <span className="tnum text-xs">
-              {followers.toLocaleString()} follower{followers === 1 ? "" : "s"}
-            </span>
+            <MetaSegment>
+              <span className="tnum text-xs">
+                {followers.toLocaleString()} follower{followers === 1 ? "" : "s"}
+              </span>
+            </MetaSegment>
           </p>
 
           {agent.tagline ? (
@@ -206,6 +209,20 @@ export function AgentHeader({
         </div>
       </div>
     </header>
+  );
+}
+
+/**
+ * One part of the header's meta line, carrying the separator in front of it. A
+ * separator that is its own flex item can be the last thing on a wrapped line — "Base ·"
+ * on a phone — so each "·" travels with what it introduces instead.
+ */
+function MetaSegment({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-2 whitespace-nowrap">
+      <span aria-hidden>·</span>
+      {children}
+    </span>
   );
 }
 

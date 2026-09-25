@@ -13,9 +13,10 @@
  * failed run reads as failed to everyone; only the reason is held back.
  */
 import { NextResponse } from "next/server";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, ne } from "drizzle-orm";
 import { agentRuns, agentRunSteps, agents, getDb, tokens, trades } from "@/db";
 import { getSession } from "@/lib/auth";
+import { tradeRefusals } from "@/lib/agent/narrate";
 import { toTokenRef } from "@/lib/trading/tokens";
 import { toTradeRow } from "@/server/queries/_shared";
 import { isAgentOwner, visibleError, visibleSteps } from "@/server/queries/visibility";
@@ -57,11 +58,13 @@ export async function GET(
     ? await db.select().from(agentRunSteps).where(eq(agentRunSteps.runId, runId)).orderBy(asc(agentRunSteps.seq))
     : [];
 
+  // A proposal still awaiting approval is owner-only, as on the run page (`getRun`): it
+  // is the agent's next trade, and showing it opens a front-running window.
   const tradeRows = await db
     .select({ trade: trades, token: tokens })
     .from(trades)
     .innerJoin(tokens, eq(trades.tokenId, tokens.id))
-    .where(eq(trades.runId, runId))
+    .where(isOwner ? eq(trades.runId, runId) : and(eq(trades.runId, runId), ne(trades.status, "proposed")))
     .orderBy(desc(trades.createdAt));
 
   const steps: RunStep[] = visibleSteps(
@@ -94,7 +97,14 @@ export async function GET(
     dataSpendUsd: Number(run.dataSpendUsd),
     inputTokens: run.inputTokens,
     outputTokens: run.outputTokens,
-    tradeCount: tradeList.length,
+    // Filled only, as `summarizeRuns` counts: a rejected or expired order is not a trade.
+    tradeCount: tradeList.filter((t) => t.status === "filled").length,
+    // Owner-only, like the transcript it is read from: the reasons quote the owner's caps.
+    refusedCount: isOwner
+      ? tradeRefusals(
+          stepRows.map((s) => ({ kind: s.kind, toolName: s.toolName, payload: s.payload })),
+        ).reduce((sum, entry) => sum + entry.count, 0)
+      : null,
     stepCount: steps.length,
     createdAt: run.createdAt.toISOString(),
     steps,

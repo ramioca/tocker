@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   agents,
@@ -14,9 +14,17 @@ import {
 } from "@/db";
 import type { TradeScoreSnapshot } from "@/db/schema";
 import { toNum, toNumOrNull } from "@/lib/money";
-import { pnlOverWindow } from "@/lib/pnl";
-import type { AgentCard, Chain, ScoreComponents, TokenRef, TradeRow, TradeScore, UserCard } from "@/server/types";
-import { visibleError, visibleScore } from "./visibility";
+import type {
+  AgentCard,
+  Chain,
+  EquityPoint,
+  ScoreComponents,
+  TokenRef,
+  TradeRow,
+  TradeScore,
+  UserCard,
+} from "@/server/types";
+import { visibleError, visibleRationale, visibleScore } from "./visibility";
 
 // ---------- ids & slugs ----------
 
@@ -149,8 +157,9 @@ export function toTradeScore(snapshot: TradeScoreSnapshot | null | undefined): T
 
 /**
  * A trade as `viewer` may see it. Redacted unless the viewer is the agent's owner: the
- * provider error (`visibleError`) and the parts of the score snapshot that describe the
- * agent's own rules and paid sources (`visibleScore`). Defaulting to the non-owner view
+ * provider error (`visibleError`), the parts of the score snapshot that describe the
+ * agent's own rules and paid sources (`visibleScore`), and the thresholds and vendor
+ * names a rationale can carry (`visibleRationale`). Defaulting to the non-owner view
  * means a new caller that forgets the argument under-shares instead of leaking.
  */
 export function toTradeRow(
@@ -179,7 +188,11 @@ export function toTradeRow(
     entryScore: typeof row.scoreSnapshot?.total === "number" ? row.scoreSnapshot.total : null,
     isPaper: row.isPaper,
     txHash: row.txHash,
-    rationale: row.rationale,
+    rationale: visibleRationale(row.rationale, {
+      isOwner: viewer.isOwner,
+      exitReason: row.exitReason as TradeRow["exitReason"],
+      symbol: token.symbol,
+    }),
     score: visibleScore(toTradeScore(row.scoreSnapshot), viewer.isOwner),
     error: visibleError(row.error, viewer.isOwner),
     createdAt: row.createdAt.toISOString(),
@@ -247,9 +260,57 @@ export function snapshotInCurrentMode() {
   return or(isNull(equitySnapshots.mode), eq(equitySnapshots.mode, agents.mode));
 }
 
+/** Epoch seconds from a raw `extract(epoch …)` column, which arrives as a number or a string. */
+function epochMs(value: number | string | null): number {
+  const seconds = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(seconds) ? seconds * 1000 : Number.NaN;
+}
+
+/**
+ * Each agent's close per UTC day since `since` — the last snapshot of the day — oldest
+ * first, in the agent's current mode.
+ *
+ * Snapshots land every five minutes, so a month is ~8,600 rows per agent. Every reader
+ * that draws a month (a card sparkline, the agent page's stat cards) wants one point a
+ * day, and fetching the rest to throw it away made payloads grow without bound and
+ * turned "the last 30 points" into the last two and a half hours.
+ */
+export async function loadDailyCloses(db: Db, agentIds: string[], since: Date): Promise<Map<string, EquityPoint[]>> {
+  const out = new Map<string, EquityPoint[]>();
+  const ids = [...new Set(agentIds)].filter(Boolean);
+  if (ids.length === 0) return out;
+  const lastAt = sql`max(${equitySnapshots.at})`;
+  const rows = await db
+    .select({
+      agentId: equitySnapshots.agentId,
+      // Epoch, not the timestamp: a raw aggregate is not column-mapped, and Postgres
+      // prints a timestamptz as "… +00", which `Date` cannot parse.
+      at: sql<number | string>`extract(epoch from ${lastAt})::float8`,
+      equityUsd: sql<string>`(array_agg(${equitySnapshots.equityUsd}::text order by ${equitySnapshots.at} desc, ${equitySnapshots.id} desc))[1]`,
+      cashUsd: sql<string>`(array_agg(${equitySnapshots.cashUsd}::text order by ${equitySnapshots.at} desc, ${equitySnapshots.id} desc))[1]`,
+    })
+    .from(equitySnapshots)
+    .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+    .where(and(inArray(equitySnapshots.agentId, ids), snapshotInCurrentMode(), gte(equitySnapshots.at, since)))
+    .groupBy(equitySnapshots.agentId, sql`date_trunc('day', ${equitySnapshots.at} at time zone 'UTC')`)
+    .orderBy(equitySnapshots.agentId, lastAt);
+  for (const row of rows) {
+    const ms = epochMs(row.at);
+    if (!Number.isFinite(ms)) continue;
+    const list = out.get(row.agentId) ?? [];
+    list.push({ at: new Date(ms).toISOString(), equityUsd: toNum(row.equityUsd), cashUsd: toNum(row.cashUsd) });
+    out.set(row.agentId, list);
+  }
+  return out;
+}
+
+/** How far back a card's sparkline reaches, in daily closes. */
+const SPARKLINE_DAYS = 30;
+
 /**
  * Batch-load the numbers every agent card needs. One query per aggregate rather
- * than one per agent.
+ * than one per agent, and never the whole snapshot history: the first and latest
+ * snapshot per agent carry the PnL, and the sparkline is daily closes.
  */
 export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<Map<string, AgentAggregates>> {
   const out = new Map<string, AgentAggregates>();
@@ -257,10 +318,11 @@ export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<M
   if (ids.length === 0) return out;
   for (const id of ids) out.set(id, { ...EMPTY_AGG, sparkline: [] });
 
-  const [snapshots, tradeCounts, followerCounts] = await Promise.all([
+  const edge = (order: "first" | "latest") =>
     db
-      .select({
+      .selectDistinctOn([equitySnapshots.agentId], {
         agentId: equitySnapshots.agentId,
+        id: equitySnapshots.id,
         equityUsd: equitySnapshots.equityUsd,
         cashUsd: equitySnapshots.cashUsd,
         at: equitySnapshots.at,
@@ -270,7 +332,16 @@ export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<M
       .from(equitySnapshots)
       .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
       .where(and(inArray(equitySnapshots.agentId, ids), snapshotInCurrentMode()))
-      .orderBy(equitySnapshots.agentId, equitySnapshots.at),
+      .orderBy(
+        equitySnapshots.agentId,
+        order === "first" ? asc(equitySnapshots.at) : desc(equitySnapshots.at),
+        order === "first" ? asc(equitySnapshots.id) : desc(equitySnapshots.id),
+      );
+
+  const [firstRows, latestRows, closes, tradeCounts, followerCounts] = await Promise.all([
+    edge("first"),
+    edge("latest"),
+    loadDailyCloses(db, ids, new Date(Date.now() - SPARKLINE_DAYS * 86_400_000)),
     db
       .select({ agentId: trades.agentId, n: sql<number>`count(*)::int` })
       .from(trades)
@@ -283,36 +354,36 @@ export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<M
       .groupBy(follows.targetId),
   ]);
 
-  const byAgent = new Map<string, Array<{ at: Date; equityUsd: number; cashUsd: number }>>();
-  const paperStart = new Map<string, number>();
-  for (const s of snapshots) {
-    const list = byAgent.get(s.agentId) ?? [];
-    list.push({ at: s.at, equityUsd: toNum(s.equityUsd), cashUsd: toNum(s.cashUsd) });
-    byAgent.set(s.agentId, list);
-    if (s.mode === "paper") paperStart.set(s.agentId, toNum(s.paperStartingUsd));
-  }
-
-  for (const [agentId, series] of byAgent) {
-    const agg = out.get(agentId);
+  const firstByAgent = new Map(firstRows.map((r) => [r.agentId, r]));
+  for (const latest of latestRows) {
+    const agg = out.get(latest.agentId);
     if (!agg) continue;
-    const last = series.at(-1);
-    agg.equityUsd = last ? last.equityUsd : null;
-    agg.cashUsd = last ? last.cashUsd : null;
-    agg.sparkline = series.slice(-30).map((p) => p.equityUsd);
+    const lastEquity = toNum(latest.equityUsd);
+    agg.equityUsd = lastEquity;
+    agg.cashUsd = toNum(latest.cashUsd);
+    agg.sparkline = (closes.get(latest.agentId) ?? []).map((p) => p.equityUsd);
     // A paper book started at its notional, not at its first mark — that mark can land
     // after the first fill's fee, and then the card, the agent header and the chart
     // (which is drawn against the notional) each printed a different all-time PnL.
-    const start = paperStart.get(agentId);
-    if (start !== undefined && last) {
+    if (latest.mode === "paper") {
+      const start = toNum(latest.paperStartingUsd);
       agg.startEquityUsd = start;
-      agg.pnlUsd = last.equityUsd - start;
+      agg.pnlUsd = lastEquity - start;
       agg.pnlPct = start === 0 ? 0 : (agg.pnlUsd / Math.abs(start)) * 100;
       continue;
     }
-    agg.startEquityUsd = series[0]?.equityUsd ?? null;
-    const window = pnlOverWindow(series, "all");
-    agg.pnlUsd = window ? window.pnlUsd : null;
-    agg.pnlPct = window ? window.pnlPct : null;
+    // Live: first mark to latest, as `pnlOverWindow(series, "all")` reads it. One
+    // snapshot is no window at all.
+    const first = firstByAgent.get(latest.agentId);
+    agg.startEquityUsd = first ? toNum(first.equityUsd) : null;
+    if (!first || first.id === latest.id) {
+      agg.pnlUsd = null;
+      agg.pnlPct = null;
+      continue;
+    }
+    const start = toNum(first.equityUsd);
+    agg.pnlUsd = lastEquity - start;
+    agg.pnlPct = start === 0 ? 0 : (agg.pnlUsd / Math.abs(start)) * 100;
   }
 
   for (const row of tradeCounts) {

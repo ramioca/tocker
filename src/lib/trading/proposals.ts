@@ -35,12 +35,14 @@ import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { toNum } from "@/lib/money";
 import { notifyFill } from "@/lib/notifications";
 import { sendProposalPush } from "@/lib/notifications/push";
+import { visibleRationale } from "@/server/queries/visibility";
 import type { Chain, TokenScore, TradeStatus } from "@/server/types";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "./executor";
 import { applyFill, heldAmountToken, sellAmountToken } from "./positions";
 import { buildReceipt, saveReceipt } from "./receipt";
 import { getPriceUsd } from "./prices";
 import { riskGuard, type OrderIntent } from "./risk";
+import { ownerRiskMessage } from "./risk-copy";
 import { executeTrade } from "./settle";
 import { checkQuoteSanity } from "./sanity";
 
@@ -86,6 +88,9 @@ function usdLabel(amount: number): string {
 /**
  * One notification per follower of the agent. Shared by automatic trades, approved
  * proposals and manual trades so a fill always reads the same in the feed.
+ *
+ * A follower is never the owner's audience for strategy, so the rationale goes through
+ * the same redaction as the public trade row: no paid-source names, no thresholds.
  */
 export async function notifyAgentFollowers(
   agentId: string,
@@ -105,7 +110,7 @@ export async function notifyAgentFollowers(
       userId: r.followerId,
       kind: "trade",
       title,
-      body,
+      body: visibleRationale(body, { isOwner: false }) ?? body,
       href,
     })),
   );
@@ -514,7 +519,8 @@ export async function decideProposal(input: {
     score,
   );
   if (!verdict.ok) {
-    return settleRejected(`No longer allowed: ${verdict.reason}`);
+    // The owner reads this on the card they just tapped: their words, not the model's.
+    return settleRejected(`No longer allowed: ${ownerRiskMessage(verdict)}`);
   }
 
   const executorAgent: ExecutorAgent = {

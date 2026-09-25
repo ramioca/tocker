@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { RelativeTime } from "@/components/common/relative-time";
+import { LocalTime } from "@/components/common/relative-time";
 import type { AdminAuditRow } from "@/server/queries/admin";
 import type { AuditKind } from "@/lib/security/types";
 import { DataTable, EmptyRow, TableShell, Td, Th } from "./table-shell";
@@ -58,7 +58,9 @@ export function AdminAuditTable({ rows }: { rows: AdminAuditRow[] }) {
             rows.map((row) => (
               <tr key={row.id} className="hover:bg-muted/25">
                 <Td sticky muted>
-                  <RelativeTime iso={row.createdAt} />
+                  {/* Exact and in the reader's zone: a column of "2h ago" orders rows but
+                      dates none of them. */}
+                  <LocalTime iso={row.createdAt} className="whitespace-nowrap" />
                 </Td>
                 <Td>
                   {row.handle ? (

@@ -39,7 +39,7 @@ export type { MfaMethod, MfaStatus } from "./types";
  * is not configured or because the app has no methods switched on is the operator's
  * problem, and the operator's wording lives in `operatorNote`.
  */
-const UNAVAILABLE_TO_USERS = "Two-factor sign-in isn't available on Tocker yet.";
+export const UNAVAILABLE_TO_USERS = "Two-factor sign-in isn't available on Tocker yet.";
 
 const OFFLINE: MfaStatus = {
   available: false,

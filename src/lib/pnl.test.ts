@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyFill, computeEquity, pnlOverWindow, replayTrades, unrealized, winRate, EMPTY_POSITION } from "./pnl";
+import { applyFill, computeEquity, pnlOverWindow, replayTrades, unrealized, winRate, windowSparkline, EMPTY_POSITION } from "./pnl";
 
 const T = "solana:BONK";
 
@@ -213,5 +213,32 @@ describe("replayTrades", () => {
     expect(cashUsd).toBe(1000 - 100 + 100);
     expect(positions.get(T)!.amountToken).toBe(50);
     expect(positions.get(T)!.realizedPnlUsd).toBeCloseTo(50);
+  });
+});
+
+describe("windowSparkline", () => {
+  const now = new Date("2026-02-01T00:00:00Z");
+  const at = (daysAgo: number, equityUsd: number) => ({ at: new Date(now.getTime() - daysAgo * 86_400_000), equityUsd });
+
+  it("starts at the window's baseline, so the line and the PnL beside it cover one period", () => {
+    // Down over 30 days, up over the last 7: the 7-day line must rise.
+    const series = [at(30, 120), at(20, 110), at(8, 90), at(6, 92), at(3, 95), at(0, 99)];
+    const week = windowSparkline(series, "7d", now);
+    expect(week).toEqual([90, 92, 95, 99]);
+    expect(week.at(-1)! > week[0]).toBe(true);
+    expect(windowSparkline(series, "all", now)).toEqual([120, 110, 90, 92, 95, 99]);
+  });
+
+  it("keeps the last point of each slice when there are more points than it can draw", () => {
+    const series = Array.from({ length: 2_000 }, (_, i) => at(7 - (7 * i) / 1_999, 100 + i));
+    const line = windowSparkline(series, "7d", now, 30);
+    expect(line.length).toBeLessThanOrEqual(30);
+    expect(line[0]).toBe(100);
+    expect(line.at(-1)).toBe(2_099);
+  });
+
+  it("is empty when there are not two points in the window", () => {
+    expect(windowSparkline([], "7d", now)).toEqual([]);
+    expect(windowSparkline([at(1, 100)], "7d", now)).toEqual([]);
   });
 });

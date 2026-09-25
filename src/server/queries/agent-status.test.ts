@@ -45,8 +45,13 @@ function inputs(overrides: Partial<StatusInputs> = {}): StatusInputs {
   };
 }
 
-function quietRun(id: string, summary: string | null, tradeCount = 0) {
-  return { id, summary, tradeCount };
+function quietRun(
+  id: string,
+  digest: string | null,
+  tradeCount = 0,
+  refusals: Array<{ label: string; count: number }> = [],
+) {
+  return { id, digest, tradeCount, refusals };
 }
 
 // ------------------------------------------------------------------ formatting
@@ -349,6 +354,52 @@ describe("deriveStatus", () => {
     expect(item.title).toBe("No launch passed the 15-minute window in the last three ticks");
     expect(item.detail).toBe("No launch cleared the 15-minute window.");
     expect(item.action).toEqual({ label: "Open the run", href: "/agents/fresh-hunter/runs/run_c" });
+  });
+
+  it("says the buys were refused, not that nothing cleared the bar, when the risk guard said no", () => {
+    const items = deriveStatus(
+      inputs({
+        maxAgeHours: null,
+        recentSucceeded: [
+          quietRun("run_c", "Scored 1 token — BONK 86. Made no trade and 1 refusal (chain not enabled).", 0, [
+            { label: "chain not enabled", count: 1 },
+          ]),
+          quietRun("run_b", null, 0, [{ label: "chain not enabled", count: 1 }]),
+          quietRun("run_a", null, 0, [{ label: "already proposed", count: 4 }]),
+        ],
+      }),
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]).toEqual({
+      kind: "buys_refused",
+      severity: "warn",
+      title: "Its buys were refused",
+      detail: "The token's chain is not enabled for this agent. 2 orders were turned down in the last three ticks.",
+      action: { label: "Settings", href: "/agents/fresh-hunter/settings#universe" },
+    });
+  });
+
+  it("sends a refusal no setting fixes to the run, and ignores the approval flow's own refusals", () => {
+    const refusedByQuote = deriveStatus(
+      inputs({
+        maxAgeHours: null,
+        recentSucceeded: [
+          quietRun("run_c", null),
+          quietRun("run_b", null, 0, [{ label: "bad quote", count: 1 }]),
+          quietRun("run_a", null),
+        ],
+      }),
+    )[0];
+    expect(refusedByQuote.kind).toBe("buys_refused");
+    expect(refusedByQuote.action).toEqual({ label: "Open the run", href: "/agents/fresh-hunter/runs/run_b" });
+
+    const onlyProposals = deriveStatus(
+      inputs({
+        maxAgeHours: null,
+        recentSucceeded: [quietRun("c", null, 0, [{ label: "already proposed", count: 2 }]), quietRun("b", null), quietRun("a", null)],
+      }),
+    )[0];
+    expect(onlyProposals.kind).toBe("quiet_window");
   });
 
   it("uses the agent's actual window when it is wider, and drops the window when there is none", () => {

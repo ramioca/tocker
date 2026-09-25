@@ -1,8 +1,9 @@
 import { Coins, Receipt, Sun, Wallet } from "lucide-react";
 import { PnlText } from "@/components/common/pnl-text";
-import { formatSignedUsd, formatUsd } from "@/components/common/format";
+import { formatSignedPct, formatSignedUsd, formatUsd } from "@/components/common/format";
 import { cn } from "@/lib/utils";
 import type { MoneySummary } from "@/server/queries/money";
+import { flowText } from "./day-tally";
 
 /**
  * The four numbers, headed by the one the page exists for.
@@ -98,22 +99,47 @@ export function MoneyHeadline({ summary }: { summary: MoneySummary }) {
           {formatUsd(totals.equityUsd)}
         </Well>
 
+        {/* The percentage rides in the footnote, as All-time's split does: a half-width
+            well on a phone has ~124px, and "+$1,234.56 +11.11%" cannot break apart. A
+            deposit or withdrawal today is already taken out of the figure; the note says
+            so in place of the %, whose base moved with the money. */}
         <Well
           icon={Sun}
-          label="Today"
-          footnote={today.pnlUsd === null ? "needs a second day of marks" : "since 00:00 UTC"}
+          label="Today’s change"
+          footnote={
+            today.pnlUsd === null ? (
+              "needs a second day of marks"
+            ) : today.flowUsd !== 0 ? (
+              <>
+                <span className="whitespace-nowrap">{flowText(today.flowUsd)}</span> ·{" "}
+                <span className="whitespace-nowrap">since 00:00 UTC</span>
+              </>
+            ) : today.pnlPct === null ? (
+              "since 00:00 UTC"
+            ) : (
+              <>
+                {formatSignedPct(today.pnlPct, 2)} · <span className="whitespace-nowrap">since 00:00 UTC</span>
+              </>
+            )
+          }
         >
           {today.pnlUsd === null ? (
             <span className="text-muted-foreground">—</span>
           ) : (
-            <PnlText usd={today.pnlUsd} pct={today.pnlPct} size="md" />
+            <PnlText usd={today.pnlUsd} size="md" />
           )}
         </Well>
 
         <Well
           icon={Coins}
           label="All-time P&L"
-          footnote={`${formatSignedUsd(totals.realizedPnlUsd)} realised · ${formatSignedUsd(totals.unrealizedPnlUsd)} open`}
+          // Each figure kept whole: a line break after "−" left "$140.25 open" reading as a gain.
+          footnote={
+            <>
+              <span className="whitespace-nowrap">{formatSignedUsd(totals.realizedPnlUsd)} realised</span> ·{" "}
+              <span className="whitespace-nowrap">{formatSignedUsd(totals.unrealizedPnlUsd)} open</span>
+            </>
+          }
         >
           <PnlText usd={totals.pnlUsd} size="md" />
         </Well>

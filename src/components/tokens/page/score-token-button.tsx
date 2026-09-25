@@ -33,11 +33,14 @@ export function ScoreTokenPanel({
   address,
   signedIn,
   lastScoredAt = null,
+  symbol,
 }: {
   chain: Chain;
   address: string;
   signedIn: boolean;
   lastScoredAt?: string | null;
+  /** The page's symbol, so the toast names the token the reader is looking at. */
+  symbol: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -55,7 +58,7 @@ export function ScoreTokenPanel({
         toast.error(result.error);
         return;
       }
-      toast.success(`${result.data.symbol} scored ${Math.round(result.data.total)}/100`);
+      toast.success(`${symbol} scored ${Math.round(result.data.total)}/100`);
       router.refresh();
     });
   };

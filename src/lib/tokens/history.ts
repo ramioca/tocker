@@ -62,8 +62,12 @@ function round2(n: number): number {
 /**
  * A reading no provider answered: no source, or not one market fact. The chart already
  * draws these as gaps (`isNoDataReading`); they are not observations, so none are kept.
+ * Exported because the score cache applies the same rule: such a reading is not a
+ * verdict on the token and must not replace one.
  */
-function isNoData(score: TokenScore): boolean {
+export function isNoData(
+  score: Pick<TokenScore, "sources" | "priceUsd" | "liquidityUsd" | "holderCount">,
+): boolean {
   return (
     score.sources.length === 0 ||
     (score.priceUsd === null && score.liquidityUsd === null && score.holderCount === null)

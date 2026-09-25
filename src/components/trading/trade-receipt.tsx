@@ -211,7 +211,10 @@ export function TradeReceiptDetail({
           </Field>
         ) : null}
         <Field label="Network fee">
-          {receipt.networkFeeUsd === null ? (
+          {receipt.simulated ? (
+            // A paper fill never touched a chain, so there was no fee to report.
+            <span className="text-muted-foreground">none (simulated)</span>
+          ) : receipt.networkFeeUsd === null ? (
             <span className="text-muted-foreground">not reported</span>
           ) : (
             formatUsd(receipt.networkFeeUsd)

@@ -20,6 +20,7 @@ export function ScoreBadge({
   /** Hide the word and show only the number — for dense tables. */
   numberOnly = false,
   className,
+  title,
 }: {
   total: number;
   /** Pass the server's verdict when you have it; otherwise it is derived. */
@@ -28,6 +29,8 @@ export function ScoreBadge({
   size?: keyof typeof SIZES;
   numberOnly?: boolean;
   className?: string;
+  /** Replaces the default tooltip, e.g. to say which checks an "Avoid" failed. */
+  title?: string;
 }) {
   const resolved = verdict ?? effectiveVerdict(total, blockers);
   const meta = VERDICT_META[resolved];
@@ -45,7 +48,7 @@ export function ScoreBadge({
         backgroundColor: verdictTint(color, 12),
         borderColor: verdictTint(color, 30),
       }}
-      title={`${Math.round(total)} / 100 — ${meta.label}. ${meta.meaning}`}
+      title={title ?? `${Math.round(total)} / 100 — ${meta.label}. ${meta.meaning}`}
     >
       <span className="tnum font-mono font-semibold">{Math.round(total)}</span>
       {numberOnly ? (

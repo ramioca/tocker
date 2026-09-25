@@ -206,15 +206,17 @@ facts and (when a rule needs one) a fresh free score. Rules, highest priority fi
 `stop_loss`, `take_profit`, `trailing_stop` (only while in profit, so it never pre-empts
 the fixed stop), `max_hold`, `score_collapse`, `liquidity_collapse`. A `null` rule is off,
 at most one decision fires per position, exits are always the full position, and positions
-worth under $1 are left alone. Each decision carries a human rationale that is published
-to the feed verbatim.
+worth under $1 are left alone. Each decision carries the owner's `rationale`, which names
+the rule that fired and is stored on the trade and sent to the owner, and a
+`publicRationale` without any rule value, which the feed post and follower notifications
+carry. `visibleRationale` redacts stored rationales for non-owners on read.
 
 `src/lib/trading/guardian.ts` executes them: `runGuardian({ agentId, trigger })` refreshes
 marks, ratchets `positions.peakPriceUsd`, rescores holdings **only** when `exitScoreBelow`
 or `exitOnLiquidityDropPct` is set (free providers, never `deep`, never x402), evaluates,
 and sells through the normal executor — a `trades` row with `origin: 'guardian'`,
-`exitReason`, `rationale` and `scoreSnapshot`, then `applyFill`, a `posts` row, an `exit`
-notification to the owner and `trade` to followers. It never throws, never sells more than
+`exitReason`, `rationale` and `scoreSnapshot`, then `applyFill`, a `posts` row carrying the
+public line, an `exit` notification to the owner and `trade` to followers. It never throws, never sells more than
 is held, skips live agents whose wallets are `paper_` placeholders, and snapshots equity.
 It runs before every LLM tick (so the model sees the book after exits) and every five
 minutes via `/api/cron/marks`, which also snapshots equity for flat active agents.

@@ -52,3 +52,15 @@ export function formatHours(hours: number): string {
   if (months < 12) return `${Math.round(months)} month${Math.round(months) === 1 ? "" : "s"}`;
   return `${Math.round(months / 12)} year${Math.round(months / 12) === 1 ? "" : "s"}`;
 }
+
+/** Provider ids as their makers write them: "RugCheck", not "rugcheck". */
+export const PROVIDER_LABEL: Record<string, string> = {
+  jupiter: "Jupiter",
+  rugcheck: "RugCheck",
+  dexscreener: "DexScreener",
+  goplus: "GoPlus",
+  geckoterminal: "GeckoTerminal",
+};
+
+/** A score source for display. Anything unlisted (a paid source's own name) passes through. */
+export const providerLabel = (id: string): string => PROVIDER_LABEL[id] ?? id;

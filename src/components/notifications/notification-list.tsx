@@ -15,9 +15,10 @@ import {
 } from "lucide-react";
 import type { NotificationRow, ProposalRow } from "@/server/types";
 import type { TradeReceiptData } from "@/db/schema";
-import { dayBucket, formatAgo } from "@/components/social-common/format";
+import { formatAgo } from "@/components/social-common/format";
 import { ProposalCard } from "@/components/agents/proposals/proposal-card";
 import { TradeReceiptRow } from "@/components/trading";
+import { dayBucket } from "./day-bucket";
 import { NotificationLink } from "./notification-link";
 
 const ICONS: Record<string, typeof Bell> = {
@@ -80,9 +81,12 @@ export function NotificationList({
   receipts,
   /** Marks one notification read when its row is opened; see NotificationLink. */
   markRead,
+  /** The viewer's IANA zone, so "Today" and "Yesterday" follow their calendar, not UTC's. */
+  timeZone = "UTC",
 }: {
   items: NotificationRow[];
   now: number;
+  timeZone?: string;
   proposals?: ProposalRow[];
   receipts?: Map<string, TradeReceiptData>;
   markRead?: (id: string) => Promise<{ ok: boolean }>;
@@ -105,7 +109,7 @@ export function NotificationList({
   // Grouped by day, in the order the rows arrive (newest first).
   const groups: Array<{ label: string; rows: NotificationRow[] }> = [];
   for (const row of items) {
-    const label = dayBucket(row.createdAt, now);
+    const label = dayBucket(row.createdAt, now, timeZone);
     const last = groups[groups.length - 1];
     if (last && last.label === label) last.rows.push(row);
     else groups.push({ label, rows: [row] });
@@ -150,6 +154,22 @@ export function NotificationList({
   );
 }
 
+/**
+ * The line under the title, without what the receipt row already says. A fill's body is
+ * the receipt summary itself, so beside its receipt it is dropped; an exit's body is the
+ * rule's rationale with that same summary appended after " · ", so only the rationale
+ * stays — the fill details are on the receipt, here or a tap away.
+ */
+function rowBody(row: NotificationRow, receipt: TradeReceiptData | null): string | null {
+  if (!row.body) return null;
+  if (row.kind === "fill" && receipt) return null;
+  if (row.kind === "exit") {
+    const cut = row.body.indexOf(" · ");
+    return cut === -1 ? row.body : row.body.slice(0, cut);
+  }
+  return row.body;
+}
+
 function Row({
   row,
   now,
@@ -164,6 +184,17 @@ function Row({
   const Icon = ICONS[row.kind] ?? Bell;
   const unread = row.readAt === null;
   const failed = ALERT_KINDS.has(row.kind);
+  const body = rowBody(row, receipt);
+  // The link is named by its title and time (and "Needs attention" first when it does),
+  // and described by the body. Wrapping the whole row made its name the title, the body
+  // and every figure of the receipt, read out in one breath on every Tab.
+  const ids = {
+    attn: `n-${row.id}-attn`,
+    title: `n-${row.id}-title`,
+    body: `n-${row.id}-body`,
+    time: `n-${row.id}-time`,
+    unread: `n-${row.id}-unread`,
+  };
 
   const content = (
     <div className="flex gap-3 px-4 py-3.5 sm:px-5">
@@ -178,15 +209,31 @@ function Row({
       </span>
       <div className="min-w-0 flex-1">
         {/* Words as well as the red tile, so the difference does not rest on colour. */}
-        {failed ? <p className="mb-0.5 text-[11px] font-medium text-destructive">Needs attention</p> : null}
-        <p className={`text-sm ${unread ? "font-medium" : ""}`}>{row.title}</p>
-        {row.body ? (
-          <p className="mt-0.5 line-clamp-2 text-sm leading-6 text-muted-foreground">{row.body}</p>
+        {failed ? (
+          <p id={ids.attn} className="mb-0.5 text-[11px] font-medium text-destructive">
+            Needs attention
+          </p>
+        ) : null}
+        <p id={ids.title} className={`text-sm ${unread ? "font-medium" : ""}`}>
+          {row.title}
+        </p>
+        {body ? (
+          <p
+            id={ids.body}
+            className={`mt-0.5 text-sm leading-6 text-muted-foreground ${
+              // An exit's rationale is the rule's own template, bounded in length, and it ends
+              // on what was banked — any clamp cut exactly that off on a phone.
+              row.kind === "exit" ? "" : "line-clamp-2"
+            }`}
+          >
+            {body}
+          </p>
         ) : null}
         {receipt ? <TradeReceiptRow receipt={receipt} className="mt-1.5" /> : null}
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1.5">
         <time
+          id={ids.time}
           dateTime={row.createdAt}
           className="font-mono text-[11px] tabular-nums text-muted-foreground"
         >
@@ -198,7 +245,9 @@ function Row({
               aria-hidden
               className="size-1.5 rounded-full bg-primary group-data-[read]/notification:hidden"
             />
-            <span className="sr-only group-data-[read]/notification:hidden">Unread</span>
+            <span id={ids.unread} className="sr-only group-data-[read]/notification:hidden">
+              Unread
+            </span>
           </>
         ) : null}
       </div>
@@ -213,6 +262,9 @@ function Row({
       href={row.href}
       unread={unread}
       markRead={markRead}
+      labelledBy={[failed ? ids.attn : null, ids.title, ids.time].filter(Boolean).join(" ")}
+      unreadId={unread ? ids.unread : undefined}
+      describedBy={body ? ids.body : undefined}
       // Inset, and rounded to match the list's own corners on the first and last rows:
       // an outer ring is clipped by the list's overflow and covered by the next row,
       // which left only a line along the bottom that read as a divider.

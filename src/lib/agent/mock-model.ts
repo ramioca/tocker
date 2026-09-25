@@ -74,13 +74,6 @@ interface ScoreEcho {
   holderCount: number | null;
 }
 
-/** Display names for the paid sentiment sources a deep score can fold in. */
-const PAID_SOURCE_NAMES: Record<string, string> = {
-  sentimentalpha: "SentimentAlpha",
-  "x-search": "x402Atlas X search",
-  "xquik-search": "Xquik",
-};
-
 function readNumber(source: Record<string, unknown>, key: string): number | null {
   const value = source[key];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -135,11 +128,13 @@ function money(n: number | null): string {
   return `$${n.toFixed(0)} liquidity`;
 }
 
-/** "X sentiment 74 via SentimentAlpha (paid) · " — or nothing when the score was free. */
+/**
+ * "X sentiment 74, " — or nothing when the score was free. The rationale is public, and
+ * which source the agent paid for is not, so the number is quoted without its vendor.
+ */
 function paidSentiment(score: ScoreEcho): string {
   if (score.sentiment === null) return "";
-  const paid = score.sources.map((id) => PAID_SOURCE_NAMES[id]).find(Boolean);
-  return `X sentiment ${score.sentiment}${paid ? ` via ${paid} (paid)` : ""}, `;
+  return `X sentiment ${score.sentiment}, `;
 }
 
 function rationaleFrom(score: ScoreEcho | null): string {
@@ -150,9 +145,46 @@ function rationaleFrom(score: ScoreEcho | null): string {
   return `${score.symbol} scores ${score.total.toFixed(1)}/100 (${score.verdict}) with no hard-gate blockers: ${paidSentiment(score)}safety ${score.safety}, organic ${score.organic}, distribution ${score.distribution}, momentum ${score.momentum}. Real demand behind the volume against ${money(score.liquidityUsd)}${holders}, so the clip fills without moving it. Starter position.`;
 }
 
-function summaryFrom(score: ScoreEcho | null): string {
-  if (score === null) return "Swept the discovery feeds, scored the best candidate and opened one starter position.";
-  return `Swept the discovery feeds, scored ${score.symbol} at ${score.total.toFixed(1)}/100 (${score.verdict}, safety ${score.safety} / organic ${score.organic}) and bought a $50 starter position. One position open, will reassess next tick.`;
+/** How the tick's `place_trade` ended, so the summary never claims a buy that did not happen. */
+type TradeOutcome = { kind: "filled" } | { kind: "proposed" } | { kind: "refused" } | null;
+
+function lastTradeOutcome(options: MockGenerateOptions): TradeOutcome {
+  let outcome: TradeOutcome = null;
+  for (const message of options.prompt) {
+    const content: unknown = (message as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const raw of content) {
+      if (!raw || typeof raw !== "object") continue;
+      const part = raw as Record<string, unknown>;
+      if (part.type !== "tool-result" || part.toolName !== "place_trade") continue;
+      let value: unknown = part.output ?? part.result;
+      if (value && typeof value === "object" && "value" in (value as Record<string, unknown>)) {
+        value = (value as Record<string, unknown>).value;
+      }
+      const result = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+      if (result.ok === false) {
+        outcome = { kind: "refused" };
+      } else if (result.proposed === true) {
+        outcome = { kind: "proposed" };
+      } else {
+        outcome = { kind: "filled" };
+      }
+    }
+  }
+  return outcome;
+}
+
+function summaryFrom(score: ScoreEcho | null, trade: TradeOutcome = { kind: "filled" }): string {
+  const scored =
+    score === null
+      ? "Swept the discovery feeds, scored the best candidate"
+      : `Swept the discovery feeds, scored ${score.symbol} at ${score.total.toFixed(1)}/100 (${score.verdict}, safety ${score.safety} / organic ${score.organic})`;
+  // The summary is public, and a refusal's reason can quote the owner's caps, so it
+  // says that the buy was refused and leaves the why to the owner's transcript.
+  if (trade?.kind === "refused") return `${scored}, but the buy was refused. Nothing traded this tick.`;
+  if (trade?.kind === "proposed") return `${scored} and proposed a $50 starter position. Waiting on the owner.`;
+  if (score === null) return `${scored} and opened one starter position.`;
+  return `${scored} and bought a $50 starter position. One position open, will reassess next tick.`;
 }
 
 /**
@@ -232,7 +264,7 @@ export function createMockModel(): LanguageModel {
         if (lastFinishRefused(options)) {
           return step(
             "Noted; nothing more I would act on this tick.",
-            { name: "finish", input: { summary: summaryFrom(lastScore(options)) } },
+            { name: "finish", input: { summary: summaryFrom(lastScore(options), lastTradeOutcome(options)) } },
             `mock-${index}`,
           );
         }
@@ -251,7 +283,7 @@ export function createMockModel(): LanguageModel {
         });
       }
       if (entry.call.name === "finish") {
-        input.summary = summaryFrom(lastScore(options));
+        input.summary = summaryFrom(lastScore(options), lastTradeOutcome(options));
       }
       return step(entry.text, { name: entry.call.name, input }, `mock-${index}`);
     },

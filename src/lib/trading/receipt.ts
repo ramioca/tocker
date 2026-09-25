@@ -232,5 +232,10 @@ export async function getReceipts(tradeIds: readonly string[]): Promise<Map<stri
 export function receiptSummary(receipt: TradeReceiptData): string {
   const fee = receipt.totalFeeUsd > 0 ? `, $${receipt.totalFeeUsd.toFixed(2)} fees` : "";
   const where = receipt.simulated ? SIMULATED_FILL_TEXT : receipt.venueLabel;
-  return `${where} · ${slippageText(receipt.slippageBps)} vs quote${fee}`;
+  // slippageText already says "at the quote" for a zero-slip fill; "at the quote vs quote" did not.
+  const slip =
+    !Number.isFinite(receipt.slippageBps) || Math.abs(receipt.slippageBps) < 0.5
+      ? "filled at the quote"
+      : `${slippageText(receipt.slippageBps)} vs quote`;
+  return `${where} · ${slip}${fee}`;
 }

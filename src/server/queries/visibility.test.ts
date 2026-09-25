@@ -9,6 +9,7 @@ import {
   visibleConfig,
   visibleError,
   visibleExitDistances,
+  visibleRationale,
   visibleScore,
   visibleSteps,
 } from "./visibility";
@@ -208,5 +209,77 @@ describe("visibleExitDistances", () => {
 
   it("keeps them for the owner", () => {
     expect(visibleExitDistances(position, true)).toBe(position);
+  });
+});
+
+describe("visibleRationale", () => {
+  const TP =
+    "Take profit: BONK +91.5% from entry at $0.0000318, past my 35% target (entry $0.0000166). Banked it. $95.40 out.";
+  const SL =
+    "Stop loss: WIF −18.2% from entry at $1.21, through my 15% stop (entry $1.48). Closed the position. $40.00 out.";
+  const TRAIL =
+    "Trailing stop: BONK fell 21.0% from its $2.00 peak to $1.58, through my 20% trail. Still +58.0% on the trade, so I took the win rather than watch it round-trip. $158.00 out.";
+  const HOLD =
+    "Max hold: JUP has been open 24.1h, past my 24.0h limit, at +4.9%. The thesis had its window; closing it out. $10.49 out.";
+
+  it("rebuilds a stored exit from its reason, with no rule value left in it", () => {
+    expect(visibleRationale(TP, { isOwner: false, exitReason: "take_profit", symbol: "BONK" })).toBe(
+      "Take profit: sold BONK at +91.5% from entry. $95.40 out.",
+    );
+    expect(visibleRationale(SL, { isOwner: false, exitReason: "stop_loss", symbol: "WIF" })).toBe(
+      "Stop loss: closed WIF at −18.2% from entry. $40.00 out.",
+    );
+    // The unsigned 21.0% drop and 20% trail would bound the setting; the signed move is the trade.
+    expect(visibleRationale(TRAIL, { isOwner: false, exitReason: "trailing_stop", symbol: "BONK" })).toBe(
+      "Trailing stop: sold BONK off its high at +58.0% from entry. $158.00 out.",
+    );
+    const hold = visibleRationale(HOLD, { isOwner: false, exitReason: "max_hold", symbol: "JUP" });
+    expect(hold).toBe("Max hold: closed JUP at +4.9% from entry. $10.49 out.");
+    expect(hold).not.toContain("24");
+  });
+
+  it("rebuilds the current template too, grouped dollar amount included", () => {
+    const current =
+      "Take profit: BONK at $0.0000318, +91.5% from entry ($0.0000166), past my 35% target. Banked it. $2,141.37 out.";
+    expect(visibleRationale(current, { isOwner: false, exitReason: "take_profit", symbol: "BONK" })).toBe(
+      "Take profit: sold BONK at +91.5% from entry. $2,141.37 out.",
+    );
+  });
+
+  it("is idempotent on a line that is already public", () => {
+    const line = "Take profit: sold BONK at +91.5% from entry. $95.40 out.";
+    expect(visibleRationale(line, { isOwner: false, exitReason: "take_profit", symbol: "BONK" })).toBe(line);
+  });
+
+  it("gives the owner the text untouched", () => {
+    expect(visibleRationale(TP, { isOwner: true, exitReason: "take_profit", symbol: "BONK" })).toBe(TP);
+    const buy = "X sentiment 77.9 via SentimentAlpha (paid), safety 90.";
+    expect(visibleRationale(buy, { isOwner: true })).toBe(buy);
+  });
+
+  it("cuts threshold clauses out of free text", () => {
+    expect(visibleRationale("Sold into strength, past my 35% target (entry $1.00). Done.", { isOwner: false })).toBe(
+      "Sold into strength (entry $1.00). Done.",
+    );
+    expect(visibleRationale("Score 31, under my exit floor of 40. Out.", { isOwner: false })).toBe("Score 31. Out.");
+  });
+
+  it("replaces paid source names and ids, never leaving a vendor behind", () => {
+    const buy =
+      "BONK scores 85.9/100 (strong) with no hard-gate blockers: X sentiment 77.9 via SentimentAlpha (paid), safety 90. A clean Deepnets read; nansen-smart-money shows wallets adding. Nansen Smart Money agrees.";
+    const out = visibleRationale(buy, { isOwner: false }) ?? "";
+    expect(out).toContain("X sentiment 77.9 via a paid source, safety 90.");
+    expect(out).toContain("A clean paid-source read");
+    expect(out).toContain("; a paid source shows wallets adding.");
+    expect(out).toContain("A paid source agrees.");
+    for (const vendor of ["SentimentAlpha", "(paid)", "Deepnets", "nansen", "Nansen", "Smart Money"]) {
+      expect(out).not.toContain(vendor);
+    }
+  });
+
+  it("leaves ordinary prose alone", () => {
+    const buy = "WIF scores 72/100 (watch): organic 88 with 1.2k organic buyers against $310k liquidity.";
+    expect(visibleRationale(buy, { isOwner: false })).toBe(buy);
+    expect(visibleRationale(null, { isOwner: false })).toBeNull();
   });
 });

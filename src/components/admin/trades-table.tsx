@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { chainLabel } from "@/components/common/chain-badge";
-import { RelativeTime } from "@/components/common/relative-time";
+import { LocalTime } from "@/components/common/relative-time";
 import { formatUsd } from "@/components/common/format";
 import type { AdminTradeRow } from "@/server/queries/admin";
 import { cn } from "@/lib/utils";
@@ -44,7 +44,9 @@ export function AdminTradesTable({ rows }: { rows: AdminTradeRow[] }) {
             rows.map((row) => (
               <tr key={row.id} className="hover:bg-muted/25">
                 <Td sticky muted>
-                  <RelativeTime iso={row.createdAt} />
+                  {/* Exact and in the reader's zone: a column of "2h ago" orders rows but
+                      dates none of them. */}
+                  <LocalTime iso={row.createdAt} className="whitespace-nowrap" />
                 </Td>
                 <Td className="max-w-[12rem]">
                   <Link

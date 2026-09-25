@@ -216,8 +216,10 @@ export function mockLeaderboard(window: LeaderboardWindow = "7d", limit = 12): L
   return MOCK_AGENTS.map((agent, i) => {
     const pnlPct = round((agent.pnlPct ?? 0) * factor + (window === "7d" ? ((i % 5) - 2) * 1.7 : 0), 1);
     const equity = agent.equityUsd ?? 1000;
+    const line = sparkline(i * 977 + (window === "7d" ? 5 : window === "30d" ? 55 : 17), 30, pnlPct);
     return {
-      agent: { ...agent, pnlPct, sparkline: sparkline(i * 977 + (window === "7d" ? 5 : window === "30d" ? 55 : 17), 30, pnlPct) },
+      agent: { ...agent, pnlPct, sparkline: line },
+      sparkline: line,
       pnlPct,
       pnlUsd: round(equity - equity / (1 + pnlPct / 100)),
       tradeCount: Math.max(1, Math.round(agent.tradeCount * factor)),

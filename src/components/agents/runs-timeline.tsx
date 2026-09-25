@@ -40,6 +40,8 @@ function RunRow({
       ? new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()
       : null;
   const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+  // Orders the guard or the venue turned down: why "0 trades" was not "nothing to buy".
+  const refused = run.refusedCount ?? 0;
 
   return (
     <li>
@@ -88,16 +90,28 @@ function RunRow({
               {run.error ?? run.summary ?? (run.status === "running" ? "Working…" : "No summary")}
             </span>
             <span className="tnum mt-0.5 block font-mono text-[11px] text-muted-foreground sm:hidden">
-              {plural(run.tradeCount, "trade")} · {formatUsd(run.dataSpendUsd)}
+              {plural(run.tradeCount, "trade")}
+              {refused > 0 ? ` · ${refused} refused` : null} · {formatUsd(run.dataSpendUsd)}
             </span>
           </span>
-          <span className="hidden shrink-0 items-center gap-3 font-mono text-[11px] text-muted-foreground sm:flex">
+          {/* Fixed columns, right-aligned, so the figures scan down the list; an
+              auto-width group started each row's numbers at a different x. */}
+          <span className="hidden shrink-0 font-mono text-[11px] text-muted-foreground sm:grid sm:grid-cols-[4.25rem_4.5rem_3.25rem_3.5rem] sm:justify-items-end sm:gap-x-3">
             <span className="tnum">{plural(run.stepCount, "step")}</span>
-            <span className="tnum">{plural(run.tradeCount, "trade")}</span>
+            {/* Refusals (owner-only; null for anyone else) stack under the count, so the
+                column keeps its width and the figures still line up down the list. */}
+            {refused > 0 ? (
+              <span className="tnum flex flex-col items-end gap-0.5 leading-none">
+                <span>{plural(run.tradeCount, "trade")}</span>
+                <span className="text-amber-700 dark:text-amber-400">{refused} refused</span>
+              </span>
+            ) : (
+              <span className="tnum">{plural(run.tradeCount, "trade")}</span>
+            )}
             <span className="tnum">{formatUsd(run.dataSpendUsd)}</span>
-            {elapsed !== null ? <span className="tnum">{formatDuration(elapsed)}</span> : null}
+            {elapsed !== null ? <span className="tnum">{formatDuration(elapsed)}</span> : <span />}
           </span>
-          <RelativeTime iso={run.createdAt} className="shrink-0 text-[11px]" />
+          <RelativeTime iso={run.createdAt} className="w-14 shrink-0 text-right text-[11px]" />
         </button>
 
         {/* Described by the toggle beside it, so twenty of these are not twenty

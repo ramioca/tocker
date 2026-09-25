@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatPriceUsd, formatSignedPct, formatUsd } from "./format";
+import { formatExact, formatPriceUsd, formatSignedPct, formatUsd } from "./format";
 
 /**
  * The finding: `toPrecision(2)` returns exponential notation for anything below 1e-6, so
@@ -80,5 +80,18 @@ describe("formatSignedPct", () => {
     expect(formatSignedPct(-0.06, 1)).toBe("−0.1%");
     expect(formatSignedPct(7.591, 2)).toBe("+7.59%");
     expect(formatSignedPct(null)).toBe("—");
+  });
+});
+
+describe("formatExact", () => {
+  it("says the second and the zone, in the zone it is given", () => {
+    const iso = new Date().getFullYear() + "-09-25T01:58:59Z";
+    expect(formatExact(iso, "America/Los_Angeles")).toBe("Sep 24, 6:58:59 PM PDT");
+    expect(formatExact(iso, "UTC")).toBe("Sep 25, 1:58:59 AM UTC");
+  });
+
+  it("names the year only when it is not this one", () => {
+    expect(formatExact("2020-01-02T03:04:05Z", "UTC")).toBe("Jan 2, 2020, 3:04:05 AM UTC");
+    expect(formatExact("not a date")).toBe("—");
   });
 });

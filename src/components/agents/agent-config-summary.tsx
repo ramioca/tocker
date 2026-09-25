@@ -1,5 +1,7 @@
+import Link from "next/link";
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { ChainBadge } from "@/components/common/chain-badge";
+import { modelLabel } from "@/components/social-common/chain-badge";
 import { formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
 import {
@@ -25,18 +27,32 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 function Section({
   title,
+  editHref,
   children,
   className,
 }: {
   title: string;
+  /** Where Settings edits this part, when the page gave us an agent to link into. */
+  editHref?: string;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
     <section className={className}>
-      <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-        {title}
-      </h3>
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          {title}
+        </h3>
+        {editHref ? (
+          <Link
+            href={editHref}
+            aria-label={`Edit ${title.toLowerCase()} in Settings`}
+            className="rounded text-[11px] text-muted-foreground underline-offset-2 transition-colors duration-150 hover:text-foreground hover:underline focus-ring"
+          >
+            Edit
+          </Link>
+        ) : null}
+      </div>
       {children}
     </section>
   );
@@ -61,6 +77,7 @@ export function intervalLabel(minutes: number): string {
 export function AgentConfigSummary({
   config,
   sourceNames,
+  agentSlug,
   className,
 }: {
   config: AgentConfig | null;
@@ -70,24 +87,31 @@ export function AgentConfigSummary({
    * `intervalLabel`. An id missing from it is one the run loop drops.
    */
   sourceNames?: Readonly<Record<string, string>>;
+  /** Links each section to the part of Settings that changes it. */
+  agentSlug?: string;
   className?: string;
 }) {
   if (!config) return null;
+
+  // Anchors on the settings form. The universe rules (feeds, the bar, authorities and
+  // the blocklist) are all one section there.
+  const edit = (anchor: string) => (agentSlug ? `/agents/${agentSlug}/settings#${anchor}` : undefined);
+  const dataHref = edit("data");
 
   const { universe } = config;
   const verdict = verdictForScore(universe.minScore);
   const feeds = DISCOVERY_FEEDS.filter((feed) => universe.discovery.includes(feed.id));
 
   return (
-    <div className={cn("space-y-5", className)}>
-      <Section title="Strategy">
+    <div className={cn("glass-panel space-y-5 rounded-2xl p-4 sm:p-5", className)}>
+      <Section title="Strategy" editHref={edit("strategy")}>
         <p className="mt-2 glass-inset rounded-xl p-3 text-sm leading-relaxed whitespace-pre-wrap text-foreground/85">
           {config.strategyPrompt}
         </p>
       </Section>
 
       {/* ----------------------------------------------------- hunting ground */}
-      <Section title="Hunting ground">
+      <Section title="Hunting ground" editHref={edit("universe")}>
         <div className="mt-2 flex flex-wrap gap-1.5">
           {config.chains.map((chain) => (
             <ChainBadge key={chain} chain={chain} />
@@ -113,61 +137,65 @@ export function AgentConfigSummary({
         </ul>
       </Section>
 
-      {/* ---------------------------------------------------------- the bar */}
-      <Section title="The bar">
-        <div className="mt-2 flex items-center gap-2.5 glass-inset rounded-xl px-3 py-2.5">
-          <ScoreBadge total={universe.minScore} verdict={verdict} size="md" />
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Nothing below {Math.round(universe.minScore)} is eligible —{" "}
-            {VERDICT_META[verdict].label.toLowerCase()} and up.
-          </p>
-        </div>
+      {/* Side by side from sm up, like Brain and Risk below: at full width a label and
+          its value sat 900px apart. */}
+      <div className="grid gap-5 sm:grid-cols-2">
+        {/* ---------------------------------------------------------- the bar */}
+        <Section title="The bar" editHref={edit("universe")}>
+          <div className="mt-2 flex items-center gap-2.5 glass-inset rounded-xl px-3 py-2.5">
+            <ScoreBadge total={universe.minScore} verdict={verdict} size="md" />
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Nothing below {Math.round(universe.minScore)} is eligible —{" "}
+              {VERDICT_META[verdict].label.toLowerCase()} and up.
+            </p>
+          </div>
 
-        <dl className="mt-1">
-          <Row label="Minimum liquidity">
-            <span className="tnum">{formatCompactUsd(universe.minLiquidityUsd)}</span>
-          </Row>
-          <Row label="Minimum holders">
-            <span className="tnum">
-              {universe.minHolderCount === 0 ? "Any" : formatHolders(universe.minHolderCount)}
-            </span>
-          </Row>
-          <Row label="Age window">
-            <span className="tnum">
-              {universe.minAgeMinutes === 0
-                ? "From birth"
-                : `From ${formatMinutes(universe.minAgeMinutes)}`}
-              {" · "}
-              {universe.maxAgeHours === null ? "no ceiling" : `up to ${formatHours(universe.maxAgeHours)}`}
-            </span>
-          </Row>
-          <Row label="Top-10 wallet share">
-            <span className="tnum">under {Math.round(universe.maxTop10HolderPct)}%</span>
-          </Row>
-          <Row label="Buy tax">
-            <span className="tnum">under {Math.round(universe.maxBuyTaxPct)}%</span>
-          </Row>
-        </dl>
-      </Section>
+          <dl className="mt-1">
+            <Row label="Minimum liquidity">
+              <span className="tnum">{formatCompactUsd(universe.minLiquidityUsd)}</span>
+            </Row>
+            <Row label="Minimum holders">
+              <span className="tnum">
+                {universe.minHolderCount === 0 ? "Any" : formatHolders(universe.minHolderCount)}
+              </span>
+            </Row>
+            <Row label="Age window">
+              <span className="tnum">
+                {universe.minAgeMinutes === 0
+                  ? "From birth"
+                  : `From ${formatMinutes(universe.minAgeMinutes)}`}
+                {" · "}
+                {universe.maxAgeHours === null ? "no ceiling" : `up to ${formatHours(universe.maxAgeHours)}`}
+              </span>
+            </Row>
+            <Row label="Top-10 wallet share">
+              <span className="tnum">under {Math.round(universe.maxTop10HolderPct)}%</span>
+            </Row>
+            <Row label="Buy tax">
+              <span className="tnum">under {Math.round(universe.maxBuyTaxPct)}%</span>
+            </Row>
+          </dl>
+        </Section>
 
-      {/* ------------------------------------------------- non-negotiables */}
-      <Section title="Non-negotiables">
-        <ul className="mt-2 space-y-1.5">
-          <Authority
-            on={universe.requireMintRevoked}
-            onLabel="Mint authority must be revoked"
-            offLabel="Mint authority may still be live — the deployer can print supply"
-          />
-          <Authority
-            on={universe.requireFreezeRevoked}
-            onLabel="Freeze authority must be revoked"
-            offLabel="Freeze authority may still be live — the agent could be stopped from selling"
-          />
-        </ul>
-      </Section>
+        {/* ------------------------------------------------- non-negotiables */}
+        <Section title="Non-negotiables" editHref={edit("universe")}>
+          <ul className="mt-2 space-y-1.5">
+            <Authority
+              on={universe.requireMintRevoked}
+              onLabel="Mint authority must be revoked"
+              offLabel="Mint authority may still be live — the deployer can print supply"
+            />
+            <Authority
+              on={universe.requireFreezeRevoked}
+              onLabel="Freeze authority must be revoked"
+              offLabel="Freeze authority may still be live — the agent could be stopped from selling"
+            />
+          </ul>
+        </Section>
+      </div>
 
       {/* ---------------------------------------------------------- blocklist */}
-      <Section title="Blocklist">
+      <Section title="Blocklist" editHref={edit("universe")}>
         <ul className="mt-2 flex flex-wrap gap-1.5">
           {universe.blocklist.length === 0 ? (
             <li className="text-sm text-muted-foreground">
@@ -188,13 +216,14 @@ export function AgentConfigSummary({
       </Section>
 
       <div className="grid gap-5 sm:grid-cols-2">
-        <Section title="Brain &amp; schedule">
+        <Section title="Brain &amp; schedule" editHref={edit("brain")}>
           <dl className="mt-1">
             <Row label="Provider">
               <span className="capitalize">{config.llm.provider}</span>
             </Row>
+            {/* The name the header prints; the exact id is one hover away. */}
             <Row label="Model">
-              <span className="font-mono text-xs">{config.llm.model}</span>
+              <span title={config.llm.model}>{modelLabel(config.llm.model)}</span>
             </Row>
             <Row label="Temperature">
               <span className="tnum">{config.llm.temperature}</span>
@@ -206,7 +235,7 @@ export function AgentConfigSummary({
           </dl>
         </Section>
 
-        <Section title="Risk">
+        <Section title="Risk" editHref={edit("risk")}>
           <dl className="mt-1">
             <Row label="Max per trade">
               <span className="tnum">{formatUsd(config.risk.maxTradeUsd)}</span>
@@ -233,7 +262,7 @@ export function AgentConfigSummary({
         </Section>
       </div>
 
-      <Section title="Data sources">
+      <Section title="Data sources" editHref={dataHref}>
         <ul className="mt-2 flex flex-wrap gap-1.5">
           {config.dataSources.length === 0 ? (
             <li className="text-sm text-muted-foreground">None — it scores on free data alone.</li>
@@ -251,7 +280,23 @@ export function AgentConfigSummary({
                   className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs"
                 >
                   {name ?? source}
-                  {retired ? <span className="text-muted-foreground"> · retired</span> : null}
+                  {retired ? (
+                    <>
+                      <span className="text-muted-foreground"> · retired</span>
+                      {dataHref ? (
+                        <>
+                          <span className="text-muted-foreground"> · </span>
+                          <Link
+                            href={dataHref}
+                            aria-label={`Remove ${source} in Settings`}
+                            className="rounded text-muted-foreground underline underline-offset-2 transition-colors duration-150 hover:text-foreground focus-ring"
+                          >
+                            remove
+                          </Link>
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
                 </li>
               );
             })

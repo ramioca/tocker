@@ -2,6 +2,7 @@
 
 import { StatCards, type StatCardData } from "@/components/spectrumui/charts/stat-cards";
 import { formatSignedUsd, formatUsd } from "@/components/common/format";
+import { bookBasisUsd } from "./book-basis";
 
 /** Signed and compact, like the header's PnL: "+$1.9K", "−$341.02". */
 function signedCompactUsd(value: number): string {
@@ -19,11 +20,12 @@ import type { AgentDetail } from "@/server/types";
  * in the second row, and a hole reads as a missing card rather than a choice.
  */
 export function AgentStats({ agent }: { agent: AgentDetail }) {
-  const equity = agent.equityUsd ?? agent.paperStartingUsd;
   const series = agent.equity.map((point) => point.equityUsd);
-  // Paper starts at its starting balance; a live book starts at its first live point,
-  // and until there is one it starts at what it holds now — never at a paper number.
-  const start = agent.mode === "live" ? (series[0] ?? equity) : agent.paperStartingUsd;
+  // Never a paper number for a live book: `paperStartingUsd` outlives the flip. Before
+  // its wallet has been read, a live book is worth its last live point.
+  const equity = agent.equityUsd ?? (agent.mode === "live" ? (series.at(-1) ?? 0) : agent.paperStartingUsd);
+  // The PnL card's own basis, so "vs start" is the same move as the card beside it.
+  const start = bookBasisUsd(agent, series[0]);
 
   const cards: StatCardData[] = [
     {
@@ -75,14 +77,28 @@ export function AgentStats({ agent }: { agent: AgentDetail }) {
     },
   ];
 
+  // Each card is a labelled image ("All-time PnL: +$1.9K"), which reads its number but
+  // not the line under it. The captions carry the split and the context, so they are
+  // said here once more, from the same values.
+  const captions = cards.flatMap((card) =>
+    card.caption ? [`${card.label}: ${card.caption.replace(/ · /g, ", ")}`] : [],
+  );
+
   return (
-    <StatCards
-      cards={cards}
-      columns={3}
-      // The registry card clips its caption to one nowrap line, which cut captions off
-      // at 390; phones let them wrap. The last rule gives the sparkline's own focus
-      // state our ring colour.
-      className="max-sm:[&_p.whitespace-nowrap]:!h-auto max-sm:[&_p.whitespace-nowrap]:!whitespace-normal max-sm:[&_p.whitespace-nowrap]:!leading-snug [&_.cursor-crosshair:focus-visible]:!ring-ring"
-    />
+    <>
+      <StatCards
+        cards={cards}
+        columns={3}
+        // The registry card clips its caption to one nowrap line, which cut captions off
+        // at 390; phones let them wrap. The last rule gives the sparkline's own focus
+        // state our ring colour.
+        className="max-sm:[&_p.whitespace-nowrap]:!h-auto max-sm:[&_p.whitespace-nowrap]:!whitespace-normal max-sm:[&_p.whitespace-nowrap]:!leading-snug [&_.cursor-crosshair:focus-visible]:!ring-ring"
+      />
+      <ul className="sr-only">
+        {captions.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </>
   );
 }

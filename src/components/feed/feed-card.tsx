@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { memo, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { ArrowUpRight, Link2, MessageCircle, Rocket, Share, Sparkles, Trophy } from "lucide-react";
 import { LikeButton } from "@/components/spectrumui/like-button";
@@ -167,7 +167,10 @@ const KIND_ICON = {
   milestone: Trophy,
 } as const;
 
-export function FeedCard({
+// Memoized: a like patches one post in the cache, and without this every loaded card
+// (and its motion buttons) re-rendered with it, so a like got slower the deeper you
+// had scrolled. The list keeps `item`, `receipt` and both callbacks referentially stable.
+export const FeedCard = memo(function FeedCard({
   item,
   receipt = null,
   onLike,
@@ -329,4 +332,4 @@ export function FeedCard({
       </div>
     </article>
   );
-}
+});

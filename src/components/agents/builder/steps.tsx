@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useId, useMemo, useState, useTransition } from "react";
 import { AlertTriangle, KeyRound, Plus, Shuffle, X } from "lucide-react";
 import { toast } from "sonner";
 import { DEFAULT_MODELS } from "@/lib/agent/config";
@@ -140,17 +140,32 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
 
 // --------------------------------------------------------------------- brain
 
-const PROVIDER_LABELS: Record<LlmKeyRow["provider"], string> = {
+export const PROVIDER_LABELS: Record<LlmKeyRow["provider"], string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
   openrouter: "OpenRouter",
 };
+
+// The server refuses anything shorter (src/server/actions/users.ts), so the form does too.
+const KEY_MIN = 16;
+
+type KeyField = "key" | "label" | "workspace";
+
+/** Which field a server error is about, so it sits under that field. */
+function keyFieldFor(message: string): KeyField {
+  if (/^label/i.test(message)) return "label";
+  if (/workspace id/i.test(message)) return "workspace";
+  return "key";
+}
 
 /**
  * Adds a key for the provider the agent already thinks with. There is deliberately no
  * provider picker in here: a second one, independent of the Brain's, let an Anthropic
  * key be attached to an OpenAI agent, where the key select could not even show it and
  * every run failed. Switch the Brain's provider to add a key for another one.
+ *
+ * Errors sit under the field they are about, like Settings → Keys, not in toasts: a
+ * toast per press stacked copies of the same sentence and left the key box unmarked.
  */
 export function AddKeyInline({
   provider,
@@ -164,10 +179,12 @@ export function AddKeyInline({
   id?: string;
   describedBy?: string;
 }) {
+  const uid = useId();
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
   const [label, setLabel] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
+  const [error, setError] = useState<{ field: KeyField; message: string } | null>(null);
   const [pending, start] = useTransition();
 
   if (!open) {
@@ -185,8 +202,63 @@ export function AddKeyInline({
     );
   }
 
+  const keyId = id ?? `${uid}-key`;
+  const errorId = (field: KeyField) => `${uid}-${field}-error`;
+  const invalid = (field: KeyField) =>
+    error?.field === field ? { "aria-invalid": true, "aria-describedby": errorId(field) } : {};
+  const errorFor = (field: KeyField) =>
+    error?.field === field ? (
+      <p id={errorId(field)} role="alert" className="mt-1 text-xs text-destructive">
+        {error.message}
+      </p>
+    ) : null;
+  const edited = (field: KeyField) => {
+    if (error?.field === field) setError(null);
+  };
+
+  const save = () => {
+    if (pending || value.trim() === "") return;
+    if (value.trim().length < KEY_MIN) {
+      setError({ field: "key", message: "That doesn’t look like a full API key — paste the whole thing." });
+      return;
+    }
+    setError(null);
+    start(async () => {
+      const result = await addLlmKeyAction({
+        provider,
+        key: value.trim(),
+        label: label.trim() || undefined,
+        workspaceId: provider === "anthropic" && workspaceId.trim() ? workspaceId.trim() : undefined,
+      });
+      if (!result.ok) {
+        setError({ field: keyFieldFor(result.error), message: result.error });
+        return;
+      }
+      onAdded({
+        id: result.data.id,
+        provider,
+        label: label.trim() || null,
+        last4: result.data.last4,
+        createdAt: new Date().toISOString(),
+      });
+      setOpen(false);
+      setValue("");
+      setLabel("");
+      setWorkspaceId("");
+      toast.success("Key saved");
+    });
+  };
+
+  // Not a <form>: this sits inside the settings page and the builder, so Enter is wired
+  // by hand on each box.
+  const saveOnEnter = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    save();
+  };
+
   return (
-    <div className="space-y-2 rounded-xl border border-border bg-card/40 p-3">
+    <div className="space-y-2.5 rounded-xl border border-border bg-card/40 p-3">
       <div className="flex items-center gap-2">
         <KeyRound aria-hidden className="size-3.5 text-muted-foreground" />
         <p className="text-xs font-medium">New {PROVIDER_LABELS[provider]} key</p>
@@ -195,6 +267,7 @@ export function AddKeyInline({
           onClick={() => {
             // Cancel means gone: the secret must not sit in state and reappear on reopen.
             setValue("");
+            setError(null);
             setOpen(false);
           }}
           aria-label="Cancel"
@@ -204,74 +277,88 @@ export function AddKeyInline({
         </button>
       </div>
 
-      <Input
-        id={id}
-        type="password"
-        aria-label={`${PROVIDER_LABELS[provider]} API key`}
-        aria-describedby={describedBy}
-        // Mounted only by pressing "Add", which unmounts that button: without this,
-        // focus would fall back to the page.
-        autoFocus
-        value={value}
-        placeholder="sk-…"
-        // "new-password" is the value Chrome actually honours on a password field;
-        // "off" still offers to save the key into the password manager.
-        autoComplete="new-password"
-        spellCheck={false}
-        maxLength={512}
-        onChange={(event) => setValue(event.target.value)}
-      />
-      <Input
-        value={label}
-        placeholder="Label (optional)"
-        maxLength={40}
-        onChange={(event) => setLabel(event.target.value)}
-      />
-      {provider === "anthropic" ? (
+      <div>
+        <label htmlFor={keyId} className="mb-1 block text-xs text-muted-foreground">
+          API key
+        </label>
         <Input
-          value={workspaceId}
-          placeholder="Workspace ID (optional — detected automatically)"
-          autoComplete="off"
+          id={keyId}
+          type="password"
+          aria-invalid={error?.field === "key" || undefined}
+          aria-describedby={
+            [error?.field === "key" ? errorId("key") : null, describedBy].filter(Boolean).join(" ") || undefined
+          }
+          // Mounted only by pressing "Add", which unmounts that button: without this,
+          // focus would fall back to the page.
+          autoFocus
+          value={value}
+          placeholder="sk-…"
+          // "new-password" is the value Chrome actually honours on a password field;
+          // "off" still offers to save the key into the password manager.
+          autoComplete="new-password"
           spellCheck={false}
-          onChange={(event) => setWorkspaceId(event.target.value)}
+          maxLength={512}
+          onChange={(event) => {
+            setValue(event.target.value);
+            edited("key");
+          }}
+          onKeyDown={saveOnEnter}
           className="font-mono"
         />
+        {errorFor("key")}
+      </div>
+      <div>
+        <label htmlFor={`${uid}-label`} className="mb-1 block text-xs text-muted-foreground">
+          Label (optional)
+        </label>
+        <Input
+          id={`${uid}-label`}
+          value={label}
+          placeholder="Personal key"
+          maxLength={40}
+          {...invalid("label")}
+          onChange={(event) => {
+            setLabel(event.target.value);
+            edited("label");
+          }}
+          onKeyDown={saveOnEnter}
+        />
+        {errorFor("label")}
+      </div>
+      {provider === "anthropic" ? (
+        <div>
+          <label htmlFor={`${uid}-workspace`} className="mb-1 block text-xs text-muted-foreground">
+            Workspace ID (optional)
+          </label>
+          <Input
+            id={`${uid}-workspace`}
+            value={workspaceId}
+            placeholder="wrkspc_…"
+            autoComplete="off"
+            spellCheck={false}
+            {...invalid("workspace")}
+            onChange={(event) => {
+              setWorkspaceId(event.target.value);
+              edited("workspace");
+            }}
+            onKeyDown={saveOnEnter}
+            className="font-mono"
+          />
+          {errorFor("workspace")}
+        </div>
       ) : null}
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         Encrypted at rest and decrypted only inside the run loop. It never reaches the browser again.
         {provider === "anthropic"
-          ? " Organization-level Anthropic keys get their workspace detected automatically."
+          ? " Leave the workspace empty: an organization-level Anthropic key gets its workspace detected automatically."
           : ""}
       </p>
+      {/* Disabled while empty: an empty save is not a rejected key, and should not look like one. */}
       <button
         type="button"
-        disabled={pending}
-        onClick={() =>
-          start(async () => {
-            const result = await addLlmKeyAction({
-              provider,
-              key: value,
-              label: label || undefined,
-              workspaceId: provider === "anthropic" && workspaceId.trim() ? workspaceId.trim() : undefined,
-            });
-            if (!result.ok) {
-              toast.error("Key not saved", { description: result.error });
-              return;
-            }
-            onAdded({
-              id: result.data.id,
-              provider,
-              label: label || null,
-              last4: result.data.last4,
-              createdAt: new Date().toISOString(),
-            });
-            setOpen(false);
-            setValue("");
-            setLabel("");
-            toast.success("Key saved");
-          })
-        }
-        className="w-full rounded-lg bg-primary py-1.5 text-xs font-medium text-primary-foreground transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        disabled={pending || value.trim() === ""}
+        onClick={save}
+        className="w-full rounded-lg bg-primary py-1.5 text-xs font-medium text-primary-foreground transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {pending ? "Saving…" : "Save key"}
       </button>
@@ -422,14 +509,14 @@ export function BrainStep({
               placeholder="Choose a key"
               options={keysForProvider.map((key) => ({
                 value: key.id,
-                label: key.label ?? `${key.provider} key`,
+                label: key.label ?? `${PROVIDER_LABELS[key.provider]} key`,
                 hint: `••••${key.last4}`,
               }))}
               onChange={(llmKeyId) => update({ llmKeyId })}
             />
           ) : (
             <p className="text-xs text-muted-foreground">
-              No {provider} key on file yet.
+              No {PROVIDER_LABELS[provider]} key on file yet.
             </p>
           )}
           <AddKeyInline
@@ -540,7 +627,9 @@ export function BrainStep({
             aria-describedby={errors.strategyPrompt ? "strategy-prompt-error" : undefined}
             rows={9}
             onChange={(event) => updateConfig({ strategyPrompt: event.target.value })}
-            className="font-mono text-xs leading-relaxed"
+            // No text size of its own: the primitive's 16px on phones (iOS zooms into any
+            // smaller field) and 14px from md. A "text-xs" here only ever reached phones.
+            className="font-mono leading-relaxed"
           />
           <p className="tnum text-right text-[11px] text-muted-foreground">
             {draft.config.strategyPrompt.length} / 8000
@@ -914,6 +1003,12 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
   const [customAmount, setCustomAmount] = useState("");
   /** Set once the box is left: "at least $5" flashing up on the "2" of "25" is noise. */
   const [customLeft, setCustomLeft] = useState(false);
+  /**
+   * What is typed in each split box. Kept as text for the same reason as the custom
+   * amount: a box that re-renders the parsed number turns "7." into "7" before the "5"
+   * arrives, and an emptied box into "0".
+   */
+  const [legText, setLegText] = useState<Partial<Record<Chain, string>>>({});
 
   const { plan, cash, wallets, loading } = useFundingPlan({
     mode: funding.mode,
@@ -927,23 +1022,28 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
 
   const setAmount = (amountUsd: number) => patch({ amountUsd, split: null });
 
+  /**
+   * A custom split is the amount: what the legs add up to is what gets signed, so the
+   * total moves with them. Otherwise the summary, the commit bar and the plan all kept
+   * quoting the old figure while a different one waited to be signed.
+   */
   const setLeg = (chain: Chain, value: number) => {
-    const current: Partial<Record<Chain, number>> = { ...(funding.split ?? {}) };
+    const split: Partial<Record<Chain, number>> = {};
     for (const entry of chains) {
-      if (current[entry] === undefined) {
-        current[entry] = plan?.legs.find((l) => l.chain === entry)?.usdc ?? 0;
-      }
+      split[entry] =
+        entry === chain ? value : (funding.split?.[entry] ?? plan?.legs.find((l) => l.chain === entry)?.usdc ?? 0);
     }
-    current[chain] = value;
-    patch({ split: current });
+    const total = Object.values(split).reduce<number>((sum, usdc) => sum + (usdc ?? 0), 0);
+    patch({ split, amountUsd: round(total, 2) });
+    setCustomAmount("");
   };
 
   const paper = funding.mode === "paper";
   const presetPressed = !funding.split && FUND_PRESETS.some((preset) => preset === funding.amountUsd);
   // The summary and the commit bar both quote `amountUsd`, so some control on screen has
-  // to show it too. A restored draft can carry an amount no preset matches; the box shows
-  // it rather than sitting empty next to four unpressed buttons.
-  const customValue = customAmount !== "" || presetPressed || funding.split ? customAmount : String(funding.amountUsd);
+  // to show it too. A restored draft can carry an amount no preset matches, and a custom
+  // split sets one; the box shows it rather than sitting empty next to four unpressed buttons.
+  const customValue = customAmount !== "" || presetPressed ? customAmount : String(funding.amountUsd);
   const customError =
     customLeft && customAmount !== "" && !(Number(customAmount) >= MIN_FUND_USD)
       ? `Enter an amount of at least ${formatUsd(MIN_FUND_USD)}.`
@@ -1035,6 +1135,7 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
                       // saying 250 next to a pressed $50.00.
                       setCustomAmount("");
                       setCustomLeft(false);
+                      setLegText({});
                       setAmount(preset);
                     }}
                     className={cn(
@@ -1072,6 +1173,7 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
                     if (next.split(".").length > 2) return;
                     setCustomAmount(next);
                     setCustomLeft(false);
+                    setLegText({});
                     // Emptied, the box asks for nothing, so the amount goes back to one a
                     // button shows. Anything typed is the amount, even one too small: the
                     // funding check then blocks create and this box says why.
@@ -1108,11 +1210,15 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
                         <span className="text-xs text-muted-foreground">$</span>
                         <Input
                           aria-label={`USDC to send on ${chainLabelFor(chain)}`}
-                          value={leg ? String(leg.usdc) : ""}
+                          value={legText[chain] ?? (leg ? String(leg.usdc) : "")}
                           inputMode="decimal"
-                          onChange={(event) =>
-                            setLeg(chain, Number(event.target.value.replace(/[^0-9.]/g, "")) || 0)
-                          }
+                          onChange={(event) => {
+                            const next = event.target.value.replace(/[^0-9.]/g, "");
+                            // One decimal point, the same rule as the custom amount above.
+                            if (next.split(".").length > 2) return;
+                            setLegText((current) => ({ ...current, [chain]: next }));
+                            setLeg(chain, Number(next) || 0);
+                          }}
                           className="tnum h-9 w-24 font-mono"
                         />
                       </div>
@@ -1120,9 +1226,17 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
                   );
                 })}
                 {funding.split ? (
+                  <p className="tnum text-right text-xs text-muted-foreground">
+                    Total <span className="font-mono text-foreground">{formatUsd(funding.amountUsd)}</span> USDC
+                  </p>
+                ) : null}
+                {funding.split ? (
                   <button
                     type="button"
-                    onClick={() => patch({ split: null })}
+                    onClick={() => {
+                      setLegText({});
+                      patch({ split: null });
+                    }}
                     className="rounded text-xs text-muted-foreground underline-offset-2 transition-colors duration-150 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     Back to a proportional split

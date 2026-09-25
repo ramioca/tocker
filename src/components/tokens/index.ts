@@ -16,4 +16,12 @@ export {
   verdictForScore,
   verdictTint,
 } from "./verdict";
-export { formatAge, formatCompactUsd, formatHolders, formatHours, formatMinutes } from "./format";
+export {
+  PROVIDER_LABEL,
+  formatAge,
+  formatCompactUsd,
+  formatHolders,
+  formatHours,
+  formatMinutes,
+  providerLabel,
+} from "./format";

@@ -1,9 +1,9 @@
 "use client";
 
-import { useId, useRef, useState, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { Loader2, SendHorizontal } from "lucide-react";
 import {
   Sheet,
@@ -16,6 +16,7 @@ import { UserAvatar } from "@/components/common/agent-avatar";
 import { RelativeTime } from "@/components/common/relative-time";
 import { EmptyState } from "@/components/common/empty-state";
 import { Textarea } from "@/components/ui/textarea";
+import { useSession } from "@/hooks/use-session";
 import { fetchComments, submitComment } from "./feed-actions";
 import type { CommentRow, FeedItem, Page } from "@/server/types";
 import { cn } from "@/lib/utils";
@@ -51,6 +52,8 @@ export function CommentThread({
 }) {
   const [draft, setDraft] = useState("");
   const queryClient = useQueryClient();
+  const { session } = useSession();
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const pathname = usePathname();
   const inputId = useId();
   const countId = useId();
@@ -76,14 +79,59 @@ export function CommentThread({
       if (!result.ok) throw new Error(result.error);
       return result.data;
     },
-    onSuccess: () => {
+    onSuccess: (data, body) => {
       setDraft("");
+      // In the list at once, where the reader is looking (the bottom), rather than after a
+      // refetch. Pages are newest first, so the new comment heads the first page; the
+      // refetch then replaces it with the server's row.
+      if (session) {
+        const comment: CommentRow = {
+          id: data.id,
+          body: body.trim(),
+          author: {
+            id: session.userId,
+            handle: session.handle,
+            displayName: session.displayName,
+            avatarUrl: session.avatarUrl,
+          },
+          createdAt: new Date().toISOString(),
+        };
+        queryClient.setQueryData<InfiniteData<Page<CommentRow>, string | null>>(["comments", postId], (current) => {
+          const first = current?.pages[0];
+          if (!current || !first || first.items.some((row) => row.id === comment.id)) return current;
+          return { ...current, pages: [{ ...first, items: [comment, ...first.items] }, ...current.pages.slice(1)] };
+        });
+      }
       void queryClient.invalidateQueries({ queryKey: ["comments", postId] });
       onCommented?.(postId);
+      requestAnimationFrame(() => {
+        const list = listRef?.current;
+        if (scrollable && list) list.scrollTo({ top: list.scrollHeight });
+        // Send goes disabled while posting, which drops a keyboard user's focus: give it
+        // back to the box, ready for the next comment.
+        const active = document.activeElement;
+        if (active === null || active === document.body) inputRef.current?.focus({ preventScroll: true });
+      });
     },
   });
 
-  const comments = query.data?.pages.flatMap((page) => page.items) ?? [];
+  // The newest comments are at the bottom, so that is where the sheet opens — once, on
+  // the first load, not on every refetch under a reader who has scrolled up.
+  const openedAtEnd = useRef(false);
+  useEffect(() => {
+    if (!scrollable || openedAtEnd.current || !query.isSuccess) return;
+    openedAtEnd.current = true;
+    const list = listRef?.current;
+    list?.scrollTo({ top: list.scrollHeight });
+  }, [scrollable, query.isSuccess, listRef]);
+
+  // Pages arrive newest first, and each page newest first: reversed, the thread reads
+  // oldest at the top, down to the newest just above the composer.
+  const comments =
+    query.data?.pages
+      .slice()
+      .reverse()
+      .flatMap((page) => [...page.items].reverse()) ?? [];
   const showCount = draft.length >= SHOW_COUNT_FROM;
 
   return (
@@ -96,6 +144,22 @@ export function CommentThread({
         tabIndex={-1}
         className={cn("px-5 py-4 outline-none", scrollable && "min-h-0 flex-1 overflow-y-auto")}
       >
+        {/* Above the thread, since that is where older comments go. */}
+        {query.hasNextPage ? (
+          <button
+            type="button"
+            onClick={() => void query.fetchNextPage()}
+            disabled={query.isFetchingNextPage}
+            className="focus-ring mb-4 w-full rounded-lg border border-border py-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
+          >
+            {query.isFetchingNextPage
+              ? "Loading…"
+              : query.isFetchNextPageError
+                ? "Older comments did not load — retry"
+                : "Load older comments"}
+          </button>
+        ) : null}
+
         {query.isPending ? (
           <div className="space-y-4" role="status" aria-label="Loading comments">
             {Array.from({ length: 4 }, (_, i) => (
@@ -129,10 +193,16 @@ export function CommentThread({
               <li key={comment.id} className="flex gap-2.5">
                 <UserAvatar handle={comment.author.handle} size="sm" />
                 <div className="min-w-0 flex-1">
-                  <p className="flex items-center gap-1.5 text-xs">
-                    <span className="font-medium">
+                  {/* Linked and with the @handle, as a card header is: beside an agent
+                      called "Nova", a commenter shown only as "Nova" is ambiguous. */}
+                  <p className="flex flex-wrap items-center gap-x-1.5 text-xs">
+                    <Link
+                      href={`/u/${comment.author.handle}`}
+                      className="focus-ring rounded font-medium hover:underline"
+                    >
                       {comment.author.displayName ?? comment.author.handle}
-                    </span>
+                    </Link>
+                    <span className="text-muted-foreground">@{comment.author.handle}</span>
                     <RelativeTime iso={comment.createdAt} />
                   </p>
                   <p className="mt-0.5 break-words text-sm leading-relaxed text-foreground/85">
@@ -143,21 +213,6 @@ export function CommentThread({
             ))}
           </ul>
         )}
-
-        {query.hasNextPage ? (
-          <button
-            type="button"
-            onClick={() => void query.fetchNextPage()}
-            disabled={query.isFetchingNextPage}
-            className="focus-ring mt-4 w-full rounded-lg border border-border py-2 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
-          >
-            {query.isFetchingNextPage
-              ? "Loading…"
-              : query.isFetchNextPageError
-                ? "Older comments did not load — retry"
-                : "Load older comments"}
-          </button>
-        ) : null}
       </div>
 
       <div className="border-t border-border px-5 py-3">
@@ -197,6 +252,7 @@ export function CommentThread({
               focus, and `field-sizing` grows it with the draft up to `max-h-40`.
             */}
             <Textarea
+              ref={inputRef}
               id={inputId}
               value={draft}
               onChange={(event) => {
@@ -230,6 +286,8 @@ export function CommentThread({
           </div>
           <button
             type="submit"
+            // A pointer press keeps the caret in the box, as a chat composer does.
+            onMouseDown={(event) => event.preventDefault()}
             disabled={mutation.isPending || draft.trim().length === 0}
             className={cn(
               "grid size-9 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground",

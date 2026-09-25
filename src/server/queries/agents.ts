@@ -37,6 +37,7 @@ import {
   iso,
   isFollowing,
   loadAgentAggregates,
+  loadDailyCloses,
   loadTokens,
   pageSize,
   snapshotInCurrentMode,
@@ -44,7 +45,10 @@ import {
   toTradeRow,
   type AgentRow,
 } from "./_shared";
-import { loadCachedScores } from "@/lib/trading/score-cache";
+import { loadDisplayScores } from "@/lib/trading/score-cache";
+import { universeKey } from "@/lib/tokens";
+import { PUBLIC_UNIVERSE_KEY } from "./tokens";
+import { tradeRefusals, type NarratableStep } from "@/lib/agent/narrate";
 import {
   isAgentOwner,
   toPublicProfile,
@@ -88,13 +92,9 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
         .from(positions)
         .innerJoin(tokens, eq(tokens.id, positions.tokenId))
         .where(eq(positions.agentId, agent.id)),
-      db
-        .select({ at: equitySnapshots.at, equityUsd: equitySnapshots.equityUsd, cashUsd: equitySnapshots.cashUsd })
-        .from(equitySnapshots)
-        .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
-        // Current mode only — a paper book and a live book are different units.
-        .where(and(eq(equitySnapshots.agentId, agent.id), gte(equitySnapshots.at, since), snapshotInCurrentMode()))
-        .orderBy(asc(equitySnapshots.at)),
+      // Daily closes, current mode only — a paper book and a live book are different
+      // units, and the stat cards read one point per day ("day 30 of 31").
+      loadDailyCloses(db, [agent.id], since),
       db
         .select({ id: wallets.id, chain: wallets.chain, address: wallets.address })
         .from(wallets)
@@ -130,15 +130,29 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
   const agg = aggregates.get(agent.id);
   const card: AgentCard = (await buildAgentCards(db, [agent]))[0];
 
-  // Latest cached score per holding, so the positions table can show "74 at entry → 41
-  // now". Display only — a buy still scores through getTokenScore (see score-cache.ts).
-  const cachedScores = await loadCachedScores(positionRows.map((r) => r.token.id));
+  // Latest score per holding, so the positions table can show "74 at entry → 41 now".
+  // Display only — a buy still scores through getTokenScore (see score-cache.ts). The
+  // cache keeps one row per token, overwritten by whoever scored it last, so only a
+  // reading under a universe this viewer may see counts: the agent's own for its
+  // owner, the public default's for everyone else, as on the token page.
+  const displayScores = await loadDisplayScores(
+    positionRows.map((r) => r.token.id),
+    isOwner ? universeKey(agent.config.universe) : PUBLIC_UNIVERSE_KEY,
+  );
+  const withDisplayScore = (position: Position): Position => {
+    const shown = displayScores.get(position.token.id);
+    return {
+      ...position,
+      currentScore: shown?.total ?? null,
+      ...(isOwner ? { currentBlockers: shown?.blockers ?? null } : {}),
+    };
+  };
 
   // Live and readable: the book from the wallet, positions at live marks — the same
   // numbers the positions table prints, so the header can never disagree with it.
   // Otherwise the stored rows at their last mark.
   const live = agent.mode === "live" ? await livePortfolio(agent.id) : null;
-  const livePositions: Position[] = live
+  const livePositions: Position[] = (live
     ? live.positions
     : positionRows
     .filter((r) => toNum(r.position.amountToken) !== 0)
@@ -160,7 +174,7 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
         peakPriceUsd: r.position.peakPriceUsd === null ? null : toNum(r.position.peakPriceUsd),
         entryScore: r.position.entryScore === null ? null : toNum(r.position.entryScore),
         entryLiquidityUsd: r.position.entryLiquidityUsd === null ? null : toNum(r.position.entryLiquidityUsd),
-        currentScore: cachedScores.get(r.token.id)?.total ?? null,
+        currentScore: null,
         ...exitDistances({
           unrealizedPct: u.pnlPct,
           stopLossPct: agent.config.risk.stopLossPct,
@@ -168,16 +182,13 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
         }),
       };
     })
-    .sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0));
+    .sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0))
+  ).map(withDisplayScore);
   // Both branches above attach stop/target distances computed from the owner's risk
   // rules; a non-owner could subtract `unrealizedPnlPct` and read the thresholds back.
   const visiblePositions = livePositions.map((p) => visibleExitDistances(p, isOwner));
 
-  const equity: EquityPoint[] = equityRows.map((r) => ({
-    at: r.at.toISOString(),
-    equityUsd: toNum(r.equityUsd),
-    cashUsd: toNum(r.cashUsd),
-  }));
+  const equity: EquityPoint[] = equityRows.get(agent.id) ?? [];
 
   const wr = winRate(
     tradeRows.map((t) => ({
@@ -388,7 +399,7 @@ export async function getAgentRuns(
     .limit(limit + 1);
 
   const page = rows.slice(0, limit);
-  const summaries = await summarizeRuns(page);
+  const summaries = await summarizeRuns(page, isOwner);
   const last = page.at(-1);
   return {
     items: summaries.map((run) => ({ ...run, error: visibleError(run.error, isOwner) })),
@@ -398,24 +409,53 @@ export async function getAgentRuns(
 
 const DEFAULT_RUN_PAGE = 20;
 
-async function summarizeRuns(rows: Array<typeof agentRuns.$inferSelect>): Promise<RunSummary[]> {
+/**
+ * The row the runs list and the run header print. `tradeCount` is fills only: a proposal
+ * that expired or was declined wrote a `trades` row with this run's id, and counting it
+ * printed "1 trade" for a tick that traded nothing. Refusals are counted from the
+ * transcript for the owner alone.
+ */
+async function summarizeRuns(rows: Array<typeof agentRuns.$inferSelect>, isOwner: boolean): Promise<RunSummary[]> {
   if (rows.length === 0) return [];
   const db = await getDb();
   const ids = rows.map((r) => r.id);
-  const [tradeCounts, stepCounts] = await Promise.all([
+  const [tradeCounts, stepCounts, refusalSteps] = await Promise.all([
     db
       .select({ runId: trades.runId, n: sql<number>`count(*)::int` })
       .from(trades)
-      .where(inArray(trades.runId, ids))
+      .where(and(inArray(trades.runId, ids), eq(trades.status, "filled")))
       .groupBy(trades.runId),
     db
       .select({ runId: agentRunSteps.runId, n: sql<number>`count(*)::int` })
       .from(agentRunSteps)
       .where(inArray(agentRunSteps.runId, ids))
       .groupBy(agentRunSteps.runId),
+    isOwner
+      ? db
+          .select({
+            runId: agentRunSteps.runId,
+            kind: agentRunSteps.kind,
+            toolName: agentRunSteps.toolName,
+            payload: agentRunSteps.payload,
+          })
+          .from(agentRunSteps)
+          .where(
+            and(
+              inArray(agentRunSteps.runId, ids),
+              eq(agentRunSteps.toolName, "place_trade"),
+              inArray(agentRunSteps.kind, ["tool_result", "error"]),
+            ),
+          )
+      : Promise.resolve([]),
   ]);
   const tradeByRun = new Map(tradeCounts.map((r) => [r.runId ?? "", Number(r.n ?? 0)]));
   const stepByRun = new Map(stepCounts.map((r) => [r.runId, Number(r.n ?? 0)]));
+  const tradeStepsByRun = new Map<string, NarratableStep[]>();
+  for (const step of refusalSteps) {
+    const list = tradeStepsByRun.get(step.runId) ?? [];
+    list.push({ kind: step.kind, toolName: step.toolName, payload: step.payload });
+    tradeStepsByRun.set(step.runId, list);
+  }
 
   return rows.map((r) => ({
     id: r.id,
@@ -430,6 +470,9 @@ async function summarizeRuns(rows: Array<typeof agentRuns.$inferSelect>): Promis
     inputTokens: r.inputTokens,
     outputTokens: r.outputTokens,
     tradeCount: tradeByRun.get(r.id) ?? 0,
+    refusedCount: isOwner
+      ? tradeRefusals(tradeStepsByRun.get(r.id) ?? []).reduce((sum, entry) => sum + entry.count, 0)
+      : null,
     stepCount: stepByRun.get(r.id) ?? 0,
     createdAt: r.createdAt.toISOString(),
   }));
@@ -447,14 +490,20 @@ export async function getRun(runId: string, viewerId?: string | null): Promise<R
   const isOwner = isAgentOwner(row.agent.ownerId, viewerId);
   if (!row.agent.isPublic && !isOwner) return null;
 
-  const [summary] = await summarizeRuns([row.run]);
+  const [summary] = await summarizeRuns([row.run], isOwner);
+  // A proposal still awaiting approval is owner-only, as in `getAgentTrades`: it is the
+  // agent's next trade, and showing it opens a front-running window and reveals
+  // approval mode. Decided rows (rejected, expired, filled) are track record.
+  const tradeScope = isOwner
+    ? eq(trades.runId, runId)
+    : and(eq(trades.runId, runId), ne(trades.status, "proposed"));
   // Non-owners never need the step rows, so don't read them at all — the cheapest way
   // to be sure they cannot be serialised into the payload by accident.
   const [steps, tradeRows] = await Promise.all([
     isOwner
       ? db.select().from(agentRunSteps).where(eq(agentRunSteps.runId, runId)).orderBy(asc(agentRunSteps.seq))
       : Promise.resolve([] as Array<typeof agentRunSteps.$inferSelect>),
-    db.select().from(trades).where(eq(trades.runId, runId)).orderBy(asc(trades.createdAt)),
+    db.select().from(trades).where(tradeScope).orderBy(asc(trades.createdAt)),
   ]);
   const tokenMap = await loadTokens(db, tradeRows.map((t) => t.tokenId));
 
@@ -532,23 +581,66 @@ export async function getAgentTrades(
   };
 }
 
+/** The last week of an equity series is drawn hour by hour; everything older, by day. */
+const HOURLY_DAYS = 7;
+/** Roughly the most points an equity chart needs, whatever the history's length. */
+const MAX_SERIES_POINTS = 400;
+
+/**
+ * An agent's equity curve for a chart, bucketed in SQL: hourly closes for the last
+ * {@link HOURLY_DAYS} days, daily closes before that (or wider buckets, once a long
+ * history would pass {@link MAX_SERIES_POINTS}). Each point is the bucket's last
+ * snapshot, at its own time.
+ *
+ * Snapshots land every five minutes. Unbucketed, "all" was every one of them — a month
+ * is ~8,600 points, each rendered into the chart's table — and the chart's 7D and 30D
+ * ranges only ever needed hourly and daily detail.
+ */
 export async function getEquitySeries(agentId: string, window: LeaderboardWindow): Promise<EquityPoint[]> {
   const db = await getDb();
+  const now = Date.now();
   const days = WINDOW_DAYS[window];
-  const since = days === null ? null : new Date(Date.now() - days * 86_400_000);
-  const rows = await db
-    .select({ at: equitySnapshots.at, equityUsd: equitySnapshots.equityUsd, cashUsd: equitySnapshots.cashUsd })
+  const since = days === null ? null : new Date(now - days * 86_400_000);
+  const scope = and(
+    eq(equitySnapshots.agentId, agentId),
+    since ? gte(equitySnapshots.at, since) : undefined,
+    snapshotInCurrentMode(),
+  );
+
+  const [first] = await db
+    .select({ at: equitySnapshots.at })
     .from(equitySnapshots)
     .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
-    .where(
-      and(
-        eq(equitySnapshots.agentId, agentId),
-        since ? gte(equitySnapshots.at, since) : undefined,
-        snapshotInCurrentMode(),
-      ),
-    )
-    .orderBy(asc(equitySnapshots.at));
-  return rows.map((r) => ({ at: r.at.toISOString(), equityUsd: toNum(r.equityUsd), cashUsd: toNum(r.cashUsd) }));
+    .where(scope)
+    .orderBy(asc(equitySnapshots.at))
+    .limit(1);
+  if (!first) return [];
+
+  const hourlyFrom = new Date(now - HOURLY_DAYS * 86_400_000);
+  const olderDays = Math.max(0, (hourlyFrom.getTime() - first.at.getTime()) / 86_400_000);
+  const stepDays = Math.max(1, Math.ceil(olderDays / (MAX_SERIES_POINTS - HOURLY_DAYS * 24)));
+  // Two numbering spaces so an hour bucket can never collide with a day bucket. Only in
+  // GROUP BY, so its bound parameters appear once and Postgres sees one expression.
+  const bucket = sql`case when ${equitySnapshots.at} >= ${hourlyFrom.toISOString()}::timestamptz
+    then floor(extract(epoch from ${equitySnapshots.at}) / 3600)
+    else -1 - floor(extract(epoch from ${equitySnapshots.at}) / ${stepDays * 86_400}) end`;
+  const lastAt = sql`max(${equitySnapshots.at})`;
+  const rows = await db
+    .select({
+      at: sql<number | string>`extract(epoch from ${lastAt})::float8`,
+      equityUsd: sql<string>`(array_agg(${equitySnapshots.equityUsd}::text order by ${equitySnapshots.at} desc, ${equitySnapshots.id} desc))[1]`,
+      cashUsd: sql<string>`(array_agg(${equitySnapshots.cashUsd}::text order by ${equitySnapshots.at} desc, ${equitySnapshots.id} desc))[1]`,
+    })
+    .from(equitySnapshots)
+    .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+    .where(scope)
+    .groupBy(bucket)
+    .orderBy(lastAt);
+  return rows.flatMap((r) => {
+    const seconds = typeof r.at === "number" ? r.at : Number(r.at);
+    if (!Number.isFinite(seconds)) return [];
+    return [{ at: new Date(seconds * 1000).toISOString(), equityUsd: toNum(r.equityUsd), cashUsd: toNum(r.cashUsd) }];
+  });
 }
 
 /**

@@ -197,14 +197,16 @@ describe("receipts are written on every execution path", () => {
     // A guardian exit pays the fee like any other fill — selling is not free either.
     expect(receipt!.platformFeeUsd).toBeCloseTo(PLATFORM_FEE, 6);
 
-    // One owner notification, carrying both the rule and the execution line.
+    // One owner notification: the rule in its body, and the trade in its href, which is
+    // how the notifications page finds this receipt and shows it under the rule.
     const owner = await db
       .select()
       .from(schema.notifications)
       .where(and(eq(schema.notifications.userId, userId), eq(schema.notifications.kind, "exit")));
     expect(owner).toHaveLength(1);
     expect(owner[0]?.title).toContain("Stop loss hit");
-    expect(owner[0]?.body).toContain("Simulated fill");
+    expect(owner[0]?.body).toContain("15% stop");
+    expect(owner[0]?.href).toContain(`?trade=${exit.tradeId}`);
   });
 
   it("a manual trade gets one, and the owner's own hands pay the same fee", async () => {

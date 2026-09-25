@@ -9,6 +9,7 @@ import {
   liquidityText,
   needsRescore,
   priceText,
+  publicExitText,
   stopPrice,
   takeProfitPrice,
   toExitRules,
@@ -56,7 +57,7 @@ describe("evaluateExits — stop loss", () => {
     expect(rest).toHaveLength(0);
     expect(decision?.reason).toBe("stop_loss");
     expect(decision?.priority).toBe(1);
-    expect(decision?.rationale).toMatch(/^Stop loss: BONK −15\.0% from entry at \$0\.0000275/);
+    expect(decision?.rationale).toMatch(/^Stop loss: BONK at \$0\.0000275\d*, −15\.0% from entry \(\$0\.0000323\)/);
     expect(decision?.rationale).toContain("15% stop");
     expect(decision?.rationale).toContain("out.");
   });
@@ -88,7 +89,7 @@ describe("evaluateExits — take profit", () => {
     const [decision] = run({ takeProfitPct: 40 }, [p]);
     expect(decision?.reason).toBe("take_profit");
     expect(decision?.priority).toBe(2);
-    expect(decision?.rationale).toContain("Take profit: BONK +40.0%");
+    expect(decision?.rationale).toMatch(/^Take profit: BONK at \$[\d.]+, \+40\.0% from entry \(\$[\d.]+\)/);
     expect(decision?.rationale).toContain("40% target");
   });
 
@@ -463,5 +464,80 @@ describe("rule helpers", () => {
     expect(describeExits([])).toBe("No exit rules fired.");
     const p = position({ avgCostUsd: 1, markPriceUsd: 0.8, amountToken: 100 });
     expect(describeExits(run({ stopLossPct: 15 }, [p]))).toBe("stop_loss → sold BONK ($80.00, −20.0%)");
+  });
+});
+
+describe("evaluateExits — the public line", () => {
+  // The owner's rule values are their strategy. A fill price is public, so any number
+  // that names the stop, the target, the trail, the hold limit, the score floor or the
+  // liquidity drop would hand a non-owner the setting.
+  const cases: Array<{ name: string; rules: Partial<ExitRules>; p: ExitPosition; secret: string; line: string }> = [
+    {
+      name: "stop loss",
+      rules: { stopLossPct: 15 },
+      p: position({ avgCostUsd: 1, markPriceUsd: 0.8, amountToken: 100 }),
+      secret: "15%",
+      line: "Stop loss: closed BONK at −20.0% from entry. $80.00 out.",
+    },
+    {
+      name: "take profit",
+      rules: { takeProfitPct: 35 },
+      p: position({ avgCostUsd: 1, markPriceUsd: 1.915, amountToken: 100 }),
+      secret: "35%",
+      line: "Take profit: sold BONK at +91.5% from entry. $191.50 out.",
+    },
+    {
+      name: "trailing stop",
+      rules: { trailingStopPct: 20 },
+      p: position({ avgCostUsd: 1, peakPriceUsd: 2, markPriceUsd: 1.6, amountToken: 100 }),
+      secret: "20",
+      line: "Trailing stop: sold BONK off its high at +60.0% from entry. $160.00 out.",
+    },
+    {
+      name: "max hold",
+      rules: { maxHoldHours: 24 },
+      p: position({ avgCostUsd: 1, markPriceUsd: 1.05, amountToken: 100, openedAt: new Date(NOW.getTime() - 26 * 3_600_000) }),
+      secret: "24",
+      line: "Max hold: closed BONK at +5.0% from entry. $105.00 out.",
+    },
+    {
+      name: "score collapse",
+      rules: { exitScoreBelow: 40 },
+      p: position({
+        avgCostUsd: 1,
+        markPriceUsd: 0.9,
+        amountToken: 100,
+        score: { total: 31, verdict: "avoid", blockers: ["liquidity_below_floor"], liquidityUsd: 90_000 },
+      }),
+      secret: "40",
+      line: "Score collapse: sold BONK at −10.0% from entry after its score fell. $90.00 out.",
+    },
+    {
+      name: "liquidity collapse",
+      rules: { exitOnLiquidityDropPct: 50 },
+      p: position({
+        avgCostUsd: 1,
+        markPriceUsd: 0.9,
+        amountToken: 100,
+        score: { total: 70, verdict: "watch", blockers: [], liquidityUsd: 115_000 },
+      }),
+      secret: "50%",
+      line: "Liquidity collapse: sold BONK at −10.0% from entry as its pool thinned. $90.00 out.",
+    },
+  ];
+
+  for (const c of cases) {
+    it(`${c.name}: states what happened, never the rule value`, () => {
+      const [decision] = run(c.rules, [c.p]);
+      expect(decision?.publicRationale).toBe(c.line);
+      expect(decision?.publicRationale).not.toContain(c.secret);
+      expect(decision?.publicRationale).not.toMatch(/\bmy\b/);
+      // The owner's version still names the rule, so they can see why it fired.
+      expect(decision?.rationale).toContain("my ");
+    });
+  }
+
+  it("leaves the percentage out when entry cost is unknown", () => {
+    expect(publicExitText("stop_loss", "BONK", null)).toBe("Stop loss: closed BONK.");
   });
 });

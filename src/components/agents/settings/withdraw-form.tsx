@@ -12,7 +12,7 @@ import { FullAddress } from "@/components/common/address";
 import { useUserWallets } from "@/components/wallets/use-cash";
 import { useSession } from "@/hooks/use-session";
 import { secureWithdrawAction } from "@/server/actions/security";
-import { isValidAddressForChain, addressHintForChain } from "@/lib/wallet-address";
+import { addressProblemForChain, normalizeAddressForChain } from "@/lib/wallet-address";
 import {
   MIN_SOL_SEND,
   NATIVE_SYMBOL,
@@ -80,7 +80,9 @@ export function WithdrawForm({
   /** A SOL withdrawal whose remainder stays with the agent — and pays the fee from there. */
   const keepsNative = selected === "native" && keptNative > 0;
 
-  const addressValid = toAddress.trim().length === 0 || isValidAddressForChain(chain, toAddress);
+  // Checksum included: a mixed-case Base address with one wrong letter says so here.
+  const addressProblem = toAddress.trim().length === 0 ? null : addressProblemForChain(chain, toAddress);
+  const addressValid = addressProblem === null;
   const overBalance = available !== null && amount.length > 0 && amountNum > available;
   // Solana will not credit a fresh wallet with less than its rent-exempt minimum.
   const belowSolMinimum =
@@ -91,7 +93,7 @@ export function WithdrawForm({
     !overBalance &&
     !belowSolMinimum &&
     toAddress.trim().length > 0 &&
-    isValidAddressForChain(chain, toAddress);
+    addressValid;
 
   /**
    * Goes through `secureWithdrawAction`, not the plain one: a withdrawal requires
@@ -109,7 +111,7 @@ export function WithdrawForm({
         chain,
         asset: selected,
         amount: amountNum,
-        toAddress: toAddress.trim(),
+        toAddress: normalizeAddressForChain(chain, toAddress),
       });
     } catch {
       // The request itself failed (network drop, deploy): the server may or may not
@@ -332,6 +334,7 @@ export function WithdrawForm({
               value={toAddress}
               placeholder={chain === "solana" ? "7xKX…MpTqL" : "0x9A3f…8d90"}
               aria-invalid={!addressValid}
+              aria-describedby={addressProblem ? "withdraw-to-error" : undefined}
               onChange={(event) => setToAddress(event.target.value)}
               // Browser form history is where a poisoned look-alike address would be
               // suggested from; addresses are pasted, never autocompleted.
@@ -339,10 +342,14 @@ export function WithdrawForm({
               autoCorrect="off"
               autoCapitalize="off"
               spellCheck={false}
-              className="font-mono text-xs"
+              // The primitive's size, not "text-xs": 16px on phones, where iOS zooms into
+              // any focused field smaller than that.
+              className="font-mono"
             />
-            {!addressValid ? (
-              <p className="mt-1 text-xs text-destructive">{addressHintForChain(chain)}</p>
+            {addressProblem ? (
+              <p id="withdraw-to-error" className="mt-1 text-xs text-destructive">
+                {addressProblem}
+              </p>
             ) : null}
           </div>
 

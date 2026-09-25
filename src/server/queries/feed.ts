@@ -1,7 +1,8 @@
 import "server-only";
-import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { agents, comments, getDb, likes, posts, trades, users, type Db } from "@/db";
-import type { CommentRow, FeedItem, Page } from "@/server/types";
+import type { CommentRow, FeedItem, Page, TradeRow } from "@/server/types";
+import { visibleRationale } from "./visibility";
 import {
   decodeCursor,
   encodeCursor,
@@ -65,10 +66,21 @@ async function hydrate(db: Db, rows: PostJoin[], viewerId?: string | null): Prom
   return rows.map((r) => {
     const token = r.trade ? tokenMap.get(r.trade.tokenId) : undefined;
     const agg = r.agent ? aggregates.get(r.agent.id) : undefined;
+    const isOwner = Boolean(viewerId) && r.agent?.ownerId === viewerId;
     return {
       id: r.post.id,
       kind: r.post.kind,
-      body: r.post.body,
+      // A trade post's body is the trade's rationale, so it gets the same redaction as
+      // the trade row under it; a guardian exit written before the public line existed
+      // still names the owner's stop in its stored body.
+      body:
+        r.post.kind === "trade"
+          ? visibleRationale(r.post.body, {
+              isOwner,
+              exitReason: r.trade?.exitReason as TradeRow["exitReason"] | undefined,
+              symbol: token?.symbol,
+            })
+          : r.post.body,
       createdAt: r.post.createdAt.toISOString(),
       author: toUserCard(r.author),
       agent: r.agent
@@ -81,10 +93,7 @@ async function hydrate(db: Db, rows: PostJoin[], viewerId?: string | null): Prom
             pnlPct: agg?.pnlPct ?? null,
           }
         : null,
-      trade:
-        r.trade && token
-          ? toTradeRow(r.trade, token, { isOwner: Boolean(viewerId) && r.agent?.ownerId === viewerId })
-          : null,
+      trade: r.trade && token ? toTradeRow(r.trade, token, { isOwner }) : null,
       likeCount: r.post.likeCount,
       commentCount: r.post.commentCount,
       likedByViewer: liked.has(r.post.id),
@@ -160,6 +169,10 @@ export async function getComments(
   if (parent.isPublic === false && parent.ownerId !== viewerId) return { items: [], nextCursor: null };
   const limit = 30;
   const c = decodeCursor(cursor);
+  // Newest first, paging backwards in time: the first page is the latest thirty, which is
+  // where a comment just posted lands, and "Load older comments" means what it says.
+  // (Oldest-first put a new comment on a page nobody had loaded once a thread passed
+  // thirty.) A list that reads oldest-at-top reverses the pages it has loaded.
   const rows = await db
     .select({
       comment: comments,
@@ -173,13 +186,13 @@ export async function getComments(
             eq(comments.postId, postId),
             or(
               // ISO text, not a Date: raw `sql` params are not column-mapped (see run.ts).
-              sql`${comments.createdAt} > ${c.at.toISOString()}`,
-              and(eq(comments.createdAt, c.at), sql`${comments.id} > ${c.id}`),
+              sql`${comments.createdAt} < ${c.at.toISOString()}`,
+              and(eq(comments.createdAt, c.at), sql`${comments.id} < ${c.id}`),
             ),
           )
         : eq(comments.postId, postId),
     )
-    .orderBy(asc(comments.createdAt), asc(comments.id))
+    .orderBy(desc(comments.createdAt), desc(comments.id))
     .limit(limit + 1);
 
   const page = rows.slice(0, limit);

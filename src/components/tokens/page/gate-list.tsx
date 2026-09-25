@@ -9,10 +9,15 @@
  * universe and there is no "your" to address. `explainBlocker` stays the prompt's
  * vocabulary; it is written for a model, not a reader.
  *
+ * A gate no provider could answer is neither: an `*_unknown` code, or the honeypot and
+ * tax gates when nothing that simulates a sell was read. Those rows say "Couldn't
+ * check" with a muted icon and are counted apart from the failures — a green check
+ * there would claim a sell was tested when nobody tested it.
+ *
  * Server-safe: no state, no motion. It sits inside a page a person opened
  * deliberately, and it must be readable before hydration.
  */
-import { Check, X } from "lucide-react";
+import { Check, CircleHelp, X } from "lucide-react";
 import { describeBlocker } from "@/components/tokens/blocker-copy";
 import { cn } from "@/lib/utils";
 
@@ -27,7 +32,16 @@ interface Gate {
   passes: string;
   /** Blocker codes that mean this gate failed. */
   matches: (code: string) => boolean;
+  /** Needs a source that checks sells; without one, "no blocker" is not a pass. */
+  needsSellCheck?: boolean;
+  /** What to say when it could not be checked and no code says it better. */
+  unchecked?: string;
 }
+
+/** Sources whose reading covers honeypot and transfer tax. GoPlus simulates both on Base. */
+const SELL_CHECK_SOURCES = new Set(["goplus"]);
+
+const isUnknown = (code: string) => code.endsWith("_unknown");
 
 const GATES: Gate[] = [
   {
@@ -53,12 +67,16 @@ const GATES: Gate[] = [
     label: "Not a honeypot",
     passes: "Sells go through",
     matches: (code) => code === "honeypot",
+    needsSellCheck: true,
+    unchecked: "Couldn't check whether sells go through",
   },
   {
     id: "tax",
     label: "Transfer tax within limits",
     passes: "No punitive buy or sell tax",
     matches: (code) => code.startsWith("buy_tax_") || code.startsWith("sell_tax_"),
+    needsSellCheck: true,
+    unchecked: "Couldn't check the buy and sell tax",
   },
   {
     id: "liquidity",
@@ -86,20 +104,46 @@ const GATES: Gate[] = [
   },
 ];
 
+type RowState = "pass" | "fail" | "unknown";
+
 export function GateList({
   blockers,
+  sources = [],
   className,
 }: {
   blockers: readonly string[];
+  /** Which providers the reading came from; decides whether the sell gates were checked. */
+  sources?: readonly string[];
   className?: string;
 }) {
+  const sellChecked = sources.some((source) => SELL_CHECK_SOURCES.has(source));
   const rows = GATES.map((gate) => {
-    const failing = blockers.filter((code) => gate.matches(code));
-    return { gate, failing };
+    const codes = blockers.filter((code) => gate.matches(code));
+    const failing = codes.filter((code) => !isUnknown(code));
+    const unknown = codes.filter(isUnknown);
+    const state: RowState =
+      failing.length > 0 ? "fail" : unknown.length > 0 || (gate.needsSellCheck && !sellChecked) ? "unknown" : "pass";
+    const text =
+      state === "pass"
+        ? gate.passes
+        : state === "fail"
+          ? failing.map((code) => describeBlocker(code, "public").title).join("; ")
+          : unknown.length > 0
+            ? unknown.map((code) => describeBlocker(code, "public").title).join("; ")
+            : (gate.unchecked ?? `Couldn't check: ${gate.label.toLowerCase()}`);
+    return { key: gate.id, state, text };
   });
   // Anything the gate table does not recognise still has to surface.
-  const unmatched = blockers.filter((code) => !GATES.some((gate) => gate.matches(code)));
-  const failed = rows.filter((row) => row.failing.length > 0).length + unmatched.length;
+  for (const code of blockers) {
+    if (GATES.some((gate) => gate.matches(code))) continue;
+    rows.push({ key: code, state: isUnknown(code) ? "unknown" : "fail", text: describeBlocker(code, "public").title });
+  }
+  const failed = rows.filter((row) => row.state === "fail").length;
+  const unchecked = rows.filter((row) => row.state === "unknown").length;
+  const passed = rows.filter((row) => row.state === "pass").length;
+  const tally = [failed > 0 ? `${failed} failed` : `${passed} passed`, unchecked > 0 ? `${unchecked} unchecked` : null]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div className={cn("min-w-0", className)}>
@@ -107,35 +151,40 @@ export function GateList({
         <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
           Hard gates
         </p>
-        <p className="tnum font-mono text-[11px]" style={{ color: failed > 0 ? FAIL : PASS }}>
-          {failed === 0 ? `${GATES.length} passed` : `${failed} failed`}
+        <p
+          className={cn("tnum font-mono text-[11px]", failed === 0 && unchecked > 0 && "text-muted-foreground")}
+          style={failed > 0 ? { color: FAIL } : unchecked > 0 ? undefined : { color: PASS }}
+        >
+          {tally}
         </p>
       </div>
 
       <ul className="mt-2 space-y-1">
-        {rows.map(({ gate, failing }) => {
-          const ok = failing.length === 0;
-          const color = ok ? PASS : FAIL;
-          return (
-            <li key={gate.id} className="flex items-start gap-2">
-              {ok ? (
-                <Check aria-hidden className="mt-0.5 size-3.5 shrink-0" style={{ color }} />
-              ) : (
-                <X aria-hidden className="mt-0.5 size-3.5 shrink-0" style={{ color }} />
-              )}
-              <span className="min-w-0">
-                <span className={cn("block text-xs leading-relaxed", ok ? "text-foreground/80" : "font-medium")}>
-                  {ok ? gate.passes : failing.map((code) => describeBlocker(code, "public").title).join("; ")}
+        {rows.map(({ key, state, text }) => (
+          <li key={key} className="flex items-start gap-2">
+            {state === "pass" ? (
+              <Check aria-hidden className="mt-0.5 size-3.5 shrink-0" style={{ color: PASS }} />
+            ) : state === "fail" ? (
+              <X aria-hidden className="mt-0.5 size-3.5 shrink-0" style={{ color: FAIL }} />
+            ) : (
+              <CircleHelp aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+            )}
+            <span className="min-w-0">
+              {/* The verdict leads, the way the icon does: after the sentence, and with
+                  the gate's pass-name, a failure read "…not revoked failed: Mint
+                  authority revoked" — which sounds like a pass. */}
+              <span
+                className={cn(
+                  "block text-xs leading-relaxed",
+                  state === "pass" ? "text-foreground/80" : state === "fail" ? "font-medium" : "text-muted-foreground",
+                )}
+              >
+                <span className="sr-only">
+                  {state === "pass" ? "Passed: " : state === "fail" ? "Failed: " : "Not checked: "}
                 </span>
-                <span className="sr-only">{ok ? "passed" : "failed"}: {gate.label}</span>
+                {text}
               </span>
-            </li>
-          );
-        })}
-        {unmatched.map((code) => (
-          <li key={code} className="flex items-start gap-2">
-            <X aria-hidden className="mt-0.5 size-3.5 shrink-0" style={{ color: FAIL }} />
-            <span className="text-xs leading-relaxed font-medium">{describeBlocker(code, "public").title}</span>
+            </span>
           </li>
         ))}
       </ul>

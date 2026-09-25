@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { EmptyState } from "@/components/common/empty-state";
-import { RelativeTime } from "@/components/common/relative-time";
+import { LocalTime, RelativeTime } from "@/components/common/relative-time";
 import type { AuditKind, AuditRow } from "@/lib/security/types";
 import { cn } from "@/lib/utils";
 import { describeUserAgent } from "./user-agent";
@@ -125,8 +125,11 @@ function AuditList({ events, start, className }: { events: AuditRow[]; start?: n
                   ending (or starting) on a stray "·". */}
               <p className="mt-1 overflow-hidden font-mono text-[11px] text-muted-foreground">
                 <span className="-ml-[calc(1ch+0.5rem)] flex w-[calc(100%+1ch+0.5rem)] flex-wrap items-center gap-x-2 gap-y-0.5 [&>*]:before:mr-2 [&>*]:before:content-['·']">
+                  {/* The exact moment in the reader's zone leads: an audit row answers
+                      "when, exactly", and "3h ago" follows as the quick read. */}
                   <span>
-                    <RelativeTime iso={event.createdAt} />
+                    <LocalTime iso={event.createdAt} className="text-foreground/70" />
+                    <RelativeTime iso={event.createdAt} className="ml-1.5" />
                   </span>
                   <span>{event.ip ?? "no ip"}</span>
                   {/* Browser and device, not the raw string: "Mozilla/5.0 (X11; Linux x86_64) Ap…"

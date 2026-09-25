@@ -183,7 +183,16 @@ export function HeadlineTiles({
         className="bg-[var(--card)]"
         label="Fees collected"
         value={fmtUsd(fees.collectedUsd)}
-        sub={<Sub>swept into a platform wallet</Sub>}
+        // Live fees only. Paper fees are written "settled" with no money behind them, so
+        // they are named apart and never summed into the figure.
+        sub={
+          fees.collectedUsd > 0 || fees.paperUsd > 0 ? (
+            <>
+              {fees.collectedUsd > 0 ? <Sub>swept into a platform wallet</Sub> : null}
+              {fees.paperUsd > 0 ? <Sub>{fmtUsd(fees.paperUsd)} paper · not real money</Sub> : null}
+            </>
+          ) : null
+        }
       />
       <Tile
         className="bg-[var(--card)]"

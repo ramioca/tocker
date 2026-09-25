@@ -10,10 +10,11 @@ import { Input } from "@/components/ui/input";
 import { MorphButton } from "@/components/spectrumui/morph-button";
 import { RelativeTime } from "@/components/common/relative-time";
 import { EmptyState } from "@/components/common/empty-state";
-import { removeLlmKey, rotateLlmKey } from "@/server/actions/users";
+import { attachKeyToKeylessAgents, removeLlmKey, rotateLlmKey } from "@/server/actions/users";
 import type { LlmKeyDetail } from "@/lib/security/types";
 import { cn } from "@/lib/utils";
 import { MORPH_FOCUS, enterSubmits, useMorphAction } from "../use-morph-action";
+import { mismatchedProvider, wrongProviderOnRotate } from "@/lib/agent/key-prefix";
 
 // The server refuses anything shorter (src/server/actions/users.ts), so the client does too.
 const KEY_MIN = 16;
@@ -28,6 +29,13 @@ const PROVIDER_LABEL: Record<LlmKeyDetail["provider"], string> = {
   openrouter: "OpenRouter",
 };
 
+// Names the row's actions. Two keys from one provider otherwise gave two identical
+// "Rotate" and "Hold to revoke" buttons, with nothing to say which key each one acts on.
+function keyA11yName(key: LlmKeyDetail) {
+  const base = `${PROVIDER_LABEL[key.provider]} key ending ${key.last4}`;
+  return key.label ? `${key.label}, ${base}` : base;
+}
+
 /**
  * The inventory view of the keys the operator has handed over: what provider,
  * which four characters, when it arrived, when it last thought, and how many
@@ -38,7 +46,16 @@ const PROVIDER_LABEL: Record<LlmKeyDetail["provider"], string> = {
  * actually does it. Revoke takes a deliberate hold and says out loud how many
  * agents it will leave without a brain.
  */
-export function LlmKeyInventory({ keys: initial, isAdmin = false }: { keys: LlmKeyDetail[]; isAdmin?: boolean }) {
+export function LlmKeyInventory({
+  keys: initial,
+  isAdmin = false,
+  keylessAgents = 0,
+}: {
+  keys: LlmKeyDetail[];
+  isAdmin?: boolean;
+  /** How many of the owner's agents have no key and so cannot run; read on the server. */
+  keylessAgents?: number;
+}) {
   const router = useRouter();
   const [keys, setKeys] = useState(initial);
   // Follow the server whenever it sends a fresh list. A key removed on the Account tab is
@@ -56,6 +73,7 @@ export function LlmKeyInventory({ keys: initial, isAdmin = false }: { keys: LlmK
   // left the row wearing a finished check with nothing left to hold.
   const [attempts, setAttempts] = useState<Record<string, number>>({});
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [attaching, setAttaching] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const rotateRefs = useRef(new Map<string, HTMLButtonElement>());
   // Where focus goes once the row it was in has left the DOM, or its hold button has
@@ -115,8 +133,60 @@ export function LlmKeyInventory({ keys: initial, isAdmin = false }: { keys: LlmK
     });
   };
 
+  // One key: attaching it is unambiguous, so offer it here. Several: each agent picks.
+  const onlyKey = keys.length === 1 ? keys[0] : null;
+  const attachOnlyKey = () => {
+    if (!onlyKey || attaching) return;
+    setAttaching(true);
+    startTransition(async () => {
+      const result = await attachKeyToKeylessAgents(onlyKey.id).catch(() => ({
+        ok: false as const,
+        error: "Could not reach Tocker. Nothing was changed.",
+      }));
+      setAttaching(false);
+      if (!result.ok) {
+        toast.error("Key not attached", { description: result.error });
+        return;
+      }
+      // The notice leaves with the refresh; its button had focus, so hand it to the row.
+      focusAfter.current = () => rotateRefs.current.get(onlyKey.id);
+      const n = result.data.attached;
+      toast.success(n === 1 ? "Attached to 1 agent" : `Attached to ${n} agents`);
+      router.refresh();
+    });
+  };
+
   return (
     <div ref={rootRef} className="space-y-4">
+      {keylessAgents > 0 ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-amber-600/30 bg-amber-500/5 px-3 py-2.5 text-sm">
+          <span className="tnum">
+            {keylessAgents === 1 ? "1 agent has no key" : `${keylessAgents} agents have no key`}
+            <span className="text-muted-foreground"> and can&rsquo;t run.</span>
+          </span>
+          {onlyKey ? (
+            <button
+              type="button"
+              onClick={attachOnlyKey}
+              disabled={attaching}
+              aria-busy={attaching || undefined}
+              className="inline-flex h-8 items-center rounded-md border border-border px-2.5 text-xs font-medium transition-[background-color,transform,opacity] duration-150 hover:bg-muted active:scale-[0.97] disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            >
+              {attaching
+                ? "Attaching…"
+                : `Attach the key ending ${onlyKey.last4} to ${keylessAgents === 1 ? "it" : "them"}`}
+            </button>
+          ) : keys.length === 0 ? (
+            <Link href="/settings#keys" className="rounded text-xs underline underline-offset-2 hover:text-foreground focus-ring">
+              Add a key
+            </Link>
+          ) : (
+            <Link href="/agents" className="rounded text-xs underline underline-offset-2 hover:text-foreground focus-ring">
+              Pick a key in each agent&rsquo;s settings
+            </Link>
+          )}
+        </div>
+      ) : null}
       {keys.length === 0 ? (
         <EmptyState
           icon={<KeyRound aria-hidden />}
@@ -167,7 +237,13 @@ export function LlmKeyInventory({ keys: initial, isAdmin = false }: { keys: LlmK
                     </div>
                   </dl>
                 </div>
-                <div className="ml-11 flex shrink-0 items-center gap-2 sm:ml-0">
+                {/* A named group: focus entering it announces the key, so the hold button,
+                    whose own name can't carry it, is still unambiguous. */}
+                <div
+                  role="group"
+                  aria-label={keyA11yName(key)}
+                  className="ml-11 flex shrink-0 items-center gap-2 sm:ml-0"
+                >
                   <button
                     ref={(el) => {
                       if (!el) return;
@@ -186,7 +262,8 @@ export function LlmKeyInventory({ keys: initial, isAdmin = false }: { keys: LlmK
                     )}
                   >
                     <RotateCcw aria-hidden className="size-3.5" />
-                    Rotate
+                    {/* The visible word leads the name, so "click Rotate" still works by voice. */}
+                    Rotate<span className="sr-only"> {keyA11yName(key)}</span>
                   </button>
                   {/* "Revoking…" in a neutral tone, not a green "Revoked": the hold only
                       asks, and the server has not answered yet. The row leaving is the
@@ -210,6 +287,7 @@ export function LlmKeyInventory({ keys: initial, isAdmin = false }: { keys: LlmK
               {rotating === key.id ? (
                 <RotateForm
                   keyId={key.id}
+                  providerId={key.provider}
                   provider={PROVIDER_LABEL[key.provider]}
                   agentCount={key.agentCount}
                   onDone={(last4) => {
@@ -246,11 +324,13 @@ export function LlmKeyInventory({ keys: initial, isAdmin = false }: { keys: LlmK
 
 function RotateForm({
   keyId,
+  providerId,
   provider,
   agentCount,
   onDone,
 }: {
   keyId: string;
+  providerId: LlmKeyDetail["provider"];
   provider: string;
   agentCount: number;
   onDone: (last4: string) => void;
@@ -264,6 +344,13 @@ function RotateForm({
     if (value.trim().length < KEY_MIN) {
       setError("That doesn’t look like a full API key — paste the whole thing.");
       throw new Error("invalid key");
+    }
+    // Rotation keeps the provider, so another provider's key would take every agent on
+    // this one down at its next run — and be saved when that provider can't be reached.
+    const other = mismatchedProvider(value, providerId);
+    if (other) {
+      setError(wrongProviderOnRotate(other, providerId));
+      throw new Error("wrong provider");
     }
     const result = await rotateLlmKey({ id: keyId, key: value.trim() });
     if (!result.ok) {

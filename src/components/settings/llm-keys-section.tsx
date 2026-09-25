@@ -7,7 +7,7 @@ import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { SwipeToDelete } from "@/components/spectrumui/swipe-to-delete";
 import { UndoPill } from "@/components/spectrumui/undo-pill";
 import { RelativeTime } from "@/components/common/relative-time";
-import { removeLlmKey } from "@/server/actions/users";
+import { attachKeyToKeylessAgents, removeLlmKey } from "@/server/actions/users";
 import type { LlmKeyRow } from "@/server/types";
 import { AddLlmKeyForm } from "./add-llm-key-form";
 import { clip, reinsert } from "./key-removal";
@@ -22,6 +22,13 @@ type PendingRemoval = { key: LlmKeyRow; index: number };
 
 function keyName(key: LlmKeyRow) {
   return key.label ?? `${PROVIDER_LABEL[key.provider]} key`;
+}
+
+// The row's accessible name. Two keys from one provider otherwise both read "OpenAI key",
+// and "Delete OpenAI key" did not say which one was about to go.
+function keyA11yName(key: LlmKeyRow) {
+  const base = `${PROVIDER_LABEL[key.provider]} key ending ${key.last4}`;
+  return key.label ? `${key.label}, ${base}` : base;
 }
 
 export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
@@ -41,6 +48,10 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
   // The same pending removal, readable from the unmount and pagehide handlers, which
   // run outside render and would otherwise see a stale closure.
   const pendingRef = useRef<PendingRemoval | null>(null);
+  // Set when a key was just added while some agents have none: a key removed and
+  // re-added (rather than rotated) leaves them stopped, and this offers the fix in place.
+  const [keyless, setKeyless] = useState<{ keyId: string; count: number } | null>(null);
+  const [attaching, setAttaching] = useState(false);
 
   const track = useCallback((entry: PendingRemoval | null) => {
     pendingRef.current = entry;
@@ -78,6 +89,8 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
       const index = keys.findIndex((k) => k.id === key.id);
       track({ key, index: index < 0 ? keys.length : index });
       setKeys((current) => current.filter((k) => k.id !== key.id));
+      // The offer is for this key; it can't attach one that is on its way out.
+      setKeyless((current) => (current?.keyId === key.id ? null : current));
     },
     [keys, commitRemoval, track],
   );
@@ -104,6 +117,25 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
     focusAddButton.current = true;
     setAdding(false);
   }, []);
+
+  const attachToKeyless = async () => {
+    if (!keyless || attaching) return;
+    setAttaching(true);
+    const result = await attachKeyToKeylessAgents(keyless.keyId).catch(() => ({
+      ok: false as const,
+      error: "Could not reach Tocker. Nothing was changed.",
+    }));
+    setAttaching(false);
+    if (!result.ok) {
+      toast.error("Key not attached", { description: result.error });
+      return;
+    }
+    // The row (and its button) goes; focus goes back to where the form hands it.
+    focusAddButton.current = true;
+    setKeyless(null);
+    const n = result.data.attached;
+    toast.success(n === 1 ? "Attached to 1 agent" : `Attached to ${n} agents`);
+  };
 
   // Leaving ends the undo window: switching to the Security tab unmounts this, closing
   // or reloading the page fires pagehide. Either way the removal goes through rather
@@ -139,7 +171,7 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
           {keys.map((key) => (
             <li key={key.id}>
               <SwipeToDelete
-                label={`${PROVIDER_LABEL[key.provider]} key`}
+                label={keyA11yName(key)}
                 revealOnHover={false}
                 onDelete={() => softDelete(key)}
               >
@@ -183,8 +215,9 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
           <AddLlmKeyForm
             autoFocus={openedOnDemand}
             onCancel={keys.length > 0 ? closeForm : undefined}
-            onAdded={(key) => {
+            onAdded={(key, info) => {
               setKeys((current) => [...current, key]);
+              setKeyless(info.keylessAgents > 0 ? { keyId: key.id, count: info.keylessAgents } : null);
               closeForm();
             }}
           />
@@ -203,6 +236,27 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
           {keys.length === 0 ? "Add a key" : "Add another key"}
         </button>
       )}
+
+      {/* Always mounted, so the offer is announced when it appears after an add. */}
+      <div aria-live="polite">
+        {keyless ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-amber-600/30 bg-amber-500/5 px-3 py-2.5 text-sm">
+            <span className="tnum">
+              {keyless.count === 1 ? "1 agent has no key" : `${keyless.count} agents have no key`}
+              <span className="text-muted-foreground"> and can&rsquo;t run.</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => void attachToKeyless()}
+              disabled={attaching}
+              aria-busy={attaching || undefined}
+              className="inline-flex h-8 items-center rounded-md border border-border px-2.5 text-xs font-medium transition-[background-color,transform,opacity] duration-150 hover:bg-muted active:scale-[0.97] disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            >
+              {attaching ? "Attaching…" : keyless.count === 1 ? "Attach this key to it" : "Attach this key to them"}
+            </button>
+          </div>
+        ) : null}
+      </div>
 
       {keys.length > 0 ? (
         <p className="text-xs text-muted-foreground sm:hidden">Swipe a key left to remove it.</p>

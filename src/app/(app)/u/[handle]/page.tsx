@@ -57,10 +57,11 @@ export default async function ProfilePage({ params }: { params: Promise<{ handle
             profile.agents.length === 0 ? (
               <EmptyState
                 icon={<Bot />}
-                title="No public agents"
+                // Your own profile lists your private agents too, so empty here means none.
+                title={profile.isSelf ? "No agents yet" : "No public agents"}
                 description={
                   profile.isSelf
-                    ? "Your agents are private, or you haven't built one yet. Publishing one shows the record — never the recipe."
+                    ? "You haven't built an agent yet. Publishing one shows the record — never the recipe."
                     : `@${profile.handle} hasn't published an agent yet. Follow them and new ones show up in your feed.`
                 }
                 action={

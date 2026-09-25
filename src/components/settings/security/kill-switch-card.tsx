@@ -127,13 +127,16 @@ export function KillSwitchCard({ paused: initialPaused, pausedAt }: { paused: bo
           // it had was a claim, and on a refusal it sat beside the error toast.
           <HoldToConfirmButton
             key={attempt}
-            size="sm"
+            // The biggest control on the page, full width on a phone: this is the one
+            // that gets reached for in a hurry.
+            size="md"
             duration={1_200}
             resetDelay={0}
             label="Hold to pause all trading"
             confirmedLabel="Pausing…"
             icon={<CircleStop className="size-3.5" />}
             className={cn(
+              "w-full justify-center sm:w-auto",
               pausing &&
                 "border-border bg-muted text-muted-foreground dark:border-border dark:bg-muted dark:text-muted-foreground",
             )}

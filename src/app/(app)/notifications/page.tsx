@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { Settings } from "lucide-react";
 import { getSession } from "@/lib/auth";
 import { getNotifications } from "@/server/queries/users";
 import { listMyProposals } from "@/server/queries/proposals";
@@ -10,6 +13,7 @@ import { referenceNow } from "@/components/social-common/format";
 import { unreadNotifications } from "@/components/common/data-access";
 import { NotificationList, tradeIdFrom } from "@/components/notifications/notification-list";
 import { MarkAllRead } from "@/components/notifications/mark-all-read";
+import { resolveTimeZone } from "@/components/notifications/day-bucket";
 import { MAX_NOTIFICATION_PAGES, collectPages, pagesParam } from "@/components/notifications/older-pages";
 import { ShowOlder } from "@/components/notifications/show-older";
 import { markNotificationRead } from "@/server/actions/users";
@@ -42,11 +46,11 @@ export default async function NotificationsPage({
   ]);
 
   // Proposals still awaiting a decision, so a "proposal" notification is a card with
-  // Approve / Reject on it rather than a link to somewhere else. Fill rows get their
-  // receipt inline, so how the trade actually went is on the row, not a page away.
-  // Fills are only ever written to the trade owner, so every id here is the viewer's own.
+  // Approve / Reject on it rather than a link to somewhere else. Fill and exit rows get
+  // their receipt inline, so how the trade actually went is on the row, not a page away.
+  // Both are only ever written to the trade owner, so every id here is the viewer's own.
   const fillTradeIds = page.items
-    .filter((item) => item.kind === "fill")
+    .filter((item) => item.kind === "fill" || item.kind === "exit")
     .map((item) => tradeIdFrom(item.href))
     .filter((id): id is string => id !== null);
   const [proposals, receipts] = await Promise.all([
@@ -62,16 +66,35 @@ export default async function NotificationsPage({
 
   // Mock fixtures are anchored to a fixed clock so relative times stay stable in dev.
   const now = referenceNow(process.env.MOCK_DATA === "1" ? NOW : undefined);
+  // Days are the viewer's, not UTC's; AppShell writes the zone. UTC until it has.
+  const timeZone = resolveTimeZone((await cookies()).get("tz")?.value);
 
   return (
     <div className="mx-auto w-full max-w-2xl px-5 py-8 sm:py-10">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Notifications</h1>
-          {/* Nothing unread says itself once, in MarkAllRead's "All caught up". */}
-          {unread > 0 ? <p className="mt-1.5 text-sm text-muted-foreground tabular-nums">{unread} unread</p> : null}
+          {/* Focusable from script only: MarkAllRead hands it the focus when it goes away. */}
+          <h1 id="notifications-title" tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none">
+            Notifications
+          </h1>
+          {/* Always there, so marking everything read does not shift the list up; and live,
+              so the answer is announced once the button that asked has gone. */}
+          <p aria-live="polite" className="mt-1.5 text-sm text-muted-foreground tabular-nums">
+            {unread > 0 ? `${unread} unread` : "All caught up"}
+          </p>
         </div>
-        <MarkAllRead unreadCount={unread} />
+        <div className="flex items-center gap-2">
+          <MarkAllRead unreadCount={unread} />
+          {/* Too many fill or exit pushes is a reason to be on this page; the switches for
+              them should be one tap away, not behind the avatar menu and a scroll. */}
+          <Link
+            href="/settings#notifications"
+            aria-label="Notification settings"
+            className="inline-flex size-9 items-center justify-center rounded-xl border border-border text-muted-foreground transition-[background-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted/60 hover:text-foreground active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          >
+            <Settings className="size-4" aria-hidden />
+          </Link>
+        </div>
       </header>
 
       {/*
@@ -84,6 +107,7 @@ export default async function NotificationsPage({
         <NotificationList
           items={page.items}
           now={now}
+          timeZone={timeZone}
           proposals={proposals}
           receipts={receipts}
           markRead={markNotificationRead}

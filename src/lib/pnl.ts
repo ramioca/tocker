@@ -219,6 +219,47 @@ export function pnlOverWindow(
   };
 }
 
+/**
+ * The line a leaderboard row draws next to its window's PnL, as at most `target`
+ * equities, oldest first.
+ *
+ * It starts where {@link pnlOverWindow} measures from — the last snapshot at or before
+ * the window start, else the first in it — and then takes the last snapshot of each of
+ * `target − 1` equal slices of time up to the latest. So the line and the PnL beside it
+ * cover one period, and a rising line is never drawn in the colour of another window's
+ * loss. Empty when there are not two points to draw.
+ */
+export function windowSparkline(
+  snapshots: SnapshotPoint[],
+  window: LeaderboardWindow,
+  now: Date = new Date(),
+  target = 30,
+): number[] {
+  const points = (snapshots ?? [])
+    .map((s) => ({ t: toDate(s.at).getTime(), equityUsd: safe(s.equityUsd) }))
+    .filter((s) => Number.isFinite(s.t))
+    .sort((a, b) => a.t - b.t);
+  if (points.length === 0) return [];
+
+  const days = WINDOW_DAYS[window];
+  const cutoff = days === null ? null : now.getTime() - days * 86_400_000;
+  const inWindow = cutoff === null ? points : points.filter((p) => p.t >= cutoff);
+  const before = cutoff === null ? undefined : points.filter((p) => p.t < cutoff).at(-1);
+  const start = before ?? inWindow[0];
+  const rest = inWindow.filter((p) => p !== start);
+  if (!start || rest.length === 0) return [];
+
+  const slices = Math.max(1, target - 1);
+  const from = start.t;
+  const span = Math.max(1, rest[rest.length - 1].t - from);
+  const lastPerSlice = new Map<number, number>();
+  for (const p of rest) {
+    const slice = Math.min(slices - 1, Math.floor(((p.t - from) / span) * slices));
+    lastPerSlice.set(slice, p.equityUsd);
+  }
+  return [start.equityUsd, ...[...lastPerSlice.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v)];
+}
+
 export interface WinRateTrade {
   tokenId: string;
   side: "buy" | "sell";

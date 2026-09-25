@@ -28,6 +28,7 @@ import {
   getAgentTrades,
   getAgentWindowPnl,
   getEquitySeries,
+  getRun,
   listMyAgents,
 } from "./agents";
 import { getAgentAnalytics } from "./analytics";
@@ -283,6 +284,98 @@ describe("run and trade history are gated on the viewer", () => {
     expect((await getAgentTrades(agent.agentId, null, STRANGER)).items).toEqual([]);
     expect((await getAgentRuns(agent.agentId, null, null)).items).toEqual([]);
     expect((await getAgentTrades(agent.agentId, null, null)).items).toEqual([]);
+  });
+});
+
+describe("a run's orders, as a stranger sees them", () => {
+  async function seedRunWith(statuses: Array<"filled" | "proposed" | "expired">, exitRationale?: string) {
+    const agent = await seedAgent(db);
+    const runId = nanoid();
+    await db.insert(schema.agentRuns).values({
+      id: runId,
+      agentId: agent.agentId,
+      trigger: "schedule",
+      status: "succeeded",
+      summary: "Tick.",
+      startedAt: daysAgo(0),
+      finishedAt: daysAgo(0),
+    });
+    for (const status of statuses) {
+      await db.insert(schema.trades).values({
+        id: nanoid(),
+        agentId: agent.agentId,
+        ownerId: agent.userId,
+        runId,
+        chain: "solana",
+        side: exitRationale ? "sell" : "buy",
+        tokenId: BONK_ID,
+        quoteTokenId: USDC_ID,
+        amountToken: toNumeric(status === "filled" ? 1 : 0, 12),
+        amountUsd: toNumeric(2, 6),
+        priceUsd: toNumeric(0.000021, 12),
+        feeUsd: toNumeric(0, 6),
+        status,
+        isPaper: true,
+        origin: exitRationale ? "guardian" : "agent",
+        exitReason: exitRationale ? "take_profit" : null,
+        rationale: exitRationale ?? "Scored 80.",
+      });
+    }
+    return { ...agent, runId };
+  }
+
+  it("never shows a pending proposal to anyone but the owner, and counts fills only", async () => {
+    const agent = await seedRunWith(["proposed", "expired"]);
+
+    const [theirsRow] = (await getAgentRuns(agent.agentId, null, STRANGER)).items;
+    expect(theirsRow.tradeCount).toBe(0);
+    expect(theirsRow.refusedCount).toBeNull();
+    const theirs = await getRun(agent.runId, STRANGER);
+    expect(theirs!.trades.map((t) => t.status)).toEqual(["expired"]);
+
+    const mine = await getRun(agent.runId, agent.userId);
+    expect(mine!.trades.map((t) => t.status).sort()).toEqual(["expired", "proposed"]);
+    expect(mine!.tradeCount).toBe(0);
+    expect(mine!.refusedCount).toBe(0);
+  });
+
+  it("gives a stranger an exit without the owner's target in it", async () => {
+    const rationale =
+      "Take profit: BONK +91.5% from entry at $0.0000318, past my 35% target (entry $0.0000166). Banked it. $2.00 out.";
+    const agent = await seedRunWith(["filled"], rationale);
+
+    const theirs = await getRun(agent.runId, STRANGER);
+    expect(theirs!.tradeCount).toBe(1);
+    expect(theirs!.trades[0].rationale).toBe("Take profit: sold BONK at +91.5% from entry. $2.00 out.");
+    const [theirTrade] = (await getAgentTrades(agent.agentId, null, STRANGER)).items;
+    expect(theirTrade.rationale).not.toContain("35%");
+
+    const mine = await getRun(agent.runId, agent.userId);
+    expect(mine!.trades[0].rationale).toBe(rationale);
+  });
+});
+
+describe("equity series are bucketed, never every five-minute mark", () => {
+  it("keeps hourly closes for the last week and daily closes before it", async () => {
+    const agent = await seedAgent(db, { mode: "paper" });
+    const hourStart = Math.floor(Date.now() / 3_600_000) * 3_600_000 - 3 * 3_600_000;
+    // Three marks inside one hour, three hours ago: one point, the last of them.
+    await snapshot(agent.agentId, new Date(hourStart + 5 * 60_000), 10_010, "paper");
+    await snapshot(agent.agentId, new Date(hourStart + 10 * 60_000), 10_020, "paper");
+    await snapshot(agent.agentId, new Date(hourStart + 15 * 60_000), 10_030, "paper");
+    // Three marks on one UTC day twelve days ago: one point.
+    const dayStart = Math.floor(Date.now() / 86_400_000) * 86_400_000 - 12 * 86_400_000;
+    await snapshot(agent.agentId, new Date(dayStart + 1 * 3_600_000), 9_900, "paper");
+    await snapshot(agent.agentId, new Date(dayStart + 9 * 3_600_000), 9_950, "paper");
+    await snapshot(agent.agentId, new Date(dayStart + 20 * 3_600_000), 9_990, "paper");
+
+    const series = await getEquitySeries(agent.agentId, "all");
+    expect(series.map((p) => p.equityUsd)).toEqual([9_990, 10_030]);
+    expect(series[1].at).toBe(new Date(hourStart + 15 * 60_000).toISOString());
+
+    // The stat cards read one close per UTC day.
+    const detail = await getAgentBySlug(agent.slug, agent.userId);
+    expect(detail!.equity.map((p) => p.equityUsd)).toEqual([9_990, 10_030]);
   });
 });
 

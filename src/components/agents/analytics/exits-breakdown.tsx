@@ -34,6 +34,7 @@ const REASON_MEANING: Record<ExitReason, string> = {
 
 export function ExitsBreakdown({ exits, totalClosed }: { exits: AgentAnalytics["exits"]; totalClosed: number }) {
   const max = Math.max(1, ...exits.map((exit) => exit.count));
+  const automatic = exits.reduce((n, exit) => n + exit.count, 0);
 
   return (
     <section aria-labelledby="exits-heading" className="glass-panel rounded-2xl p-3 sm:p-4">
@@ -43,7 +44,7 @@ export function ExitsBreakdown({ exits, totalClosed }: { exits: AgentAnalytics["
         </h3>
         {exits.length > 0 ? (
           <p className="tnum text-[11px] text-muted-foreground">
-            {exits.reduce((n, e) => n + e.count, 0)} of {totalClosed} exits were automatic
+            {automatic} of {totalClosed} exits {automatic === 1 ? "was" : "were"} automatic
           </p>
         ) : null}
       </div>

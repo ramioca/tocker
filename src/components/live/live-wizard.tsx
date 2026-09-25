@@ -26,6 +26,7 @@ import type { AgentDetail, RunDetail } from "@/server/types";
 import { Checklist } from "./checklist";
 import { FirstFillPanel } from "./trade-receipt";
 import { ProposalPanel } from "./proposal-panel";
+import { readinessTally } from "./readiness-tally";
 import { deriveRunOutcome } from "./run-outcome";
 import { cn } from "@/lib/utils";
 
@@ -283,6 +284,8 @@ export function LiveWizard({
     ? outcome.trade
     : null;
   const live = mode === "live";
+  const tally = readinessTally(readiness);
+  const failCount = tally.fail;
   // What the preset would change, from the caps the checklist just read (the server's
   // `withFirstTradePreset` only ever lowers them, keeps the first chain, adds a stop).
   const presetChanges = [
@@ -341,9 +344,7 @@ export function LiveWizard({
       <section className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-medium">1 · Preflight</h2>
-          <span className="tnum font-mono text-xs text-muted-foreground">
-            {readiness.steps.filter((s) => s.state === "pass").length}/{readiness.steps.length} ready
-          </span>
+          <span className="tnum font-mono text-xs text-muted-foreground">{tally.label}</span>
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
@@ -437,11 +438,15 @@ export function LiveWizard({
                 icon={<Zap className="size-4" />}
                 onConfirm={() => void goLive()}
               />
-            ) : (
+            ) : failCount > 0 ? (
               <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-muted-foreground">
-                {readiness.steps.filter((s) => s.state === "fail").length} check
-                {readiness.steps.filter((s) => s.state === "fail").length === 1 ? " is" : "s are"} still red. Fix
+                <span className="tnum">{failCount}</span> check{failCount === 1 ? " is" : "s are"} still red. Fix
                 them and re-check — there is no way past this from here.
+              </p>
+            ) : (
+              // Nothing red, only a transfer still confirming: not a failure, so not in red.
+              <p className="rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
+                Waiting for a transfer to confirm. The checklist re-checks itself every few seconds.
               </p>
             )}
           </>

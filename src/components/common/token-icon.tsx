@@ -30,6 +30,9 @@ export function TokenIcon({
   const candidates = token.logoUrl ? logoCandidates(token.logoUrl) : [];
   const [attempt, setAttempt] = useState(0);
   const src = candidates[attempt];
+  // Moves on from *this* attempt only, so a failure reported twice (the check below and
+  // `onError`) never skips a candidate.
+  const fail = (at: number) => setAttempt((current) => (current === at ? current + 1 : current));
 
   if (src) {
     return (
@@ -40,7 +43,16 @@ export function TokenIcon({
         aria-hidden
         loading="lazy"
         referrerPolicy="no-referrer"
-        onError={() => setAttempt((current) => current + 1)}
+        // The server renders this <img>, and a host that 404s can fail it before React
+        // attaches `onError` — the browser's broken-image glyph then stays for good. So
+        // check once per src on mount. `naturalWidth` is also 0 for an SVG with no
+        // intrinsic size, so `decode()` has the last word: it rejects only when broken.
+        ref={(el) => {
+          if (!el || el.dataset.checked === src) return;
+          el.dataset.checked = src;
+          if (el.complete && el.naturalWidth === 0) el.decode().catch(() => fail(attempt));
+        }}
+        onError={() => fail(attempt)}
         className={cn("shrink-0 rounded-full object-cover", SIZES[size], className)}
       />
     );

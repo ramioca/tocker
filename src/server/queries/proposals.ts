@@ -27,6 +27,7 @@ import { deriveSafety } from "@/components/agents/proposals/proposal-stats";
 import { toNum } from "@/lib/money";
 import { proposalExpiresAt, sweepBeforeRead } from "@/lib/trading/proposals";
 import { riskGuard, type OrderIntent, type RiskPortfolio } from "@/lib/trading/risk";
+import { ownerRiskMessage } from "@/lib/trading/risk-copy";
 import type { AgentConfig } from "@/db/schema";
 import type {
   Chain,
@@ -176,7 +177,8 @@ async function buildRow(
     safety: deriveSafety(base.score),
     expiresAt: proposalExpiresAt(trade.proposedAt ?? trade.createdAt, agent.config).toISOString(),
     stillValid: verdict.ok,
-    invalidReason: verdict.ok ? null : verdict.reason,
+    // The owner's sentence, not the model's: the card is read by a person deciding.
+    invalidReason: verdict.ok ? null : ownerRiskMessage(verdict),
     agentSlug: agent.slug,
     agentName: agent.name,
     agentAvatarSeed: agent.avatarSeed,

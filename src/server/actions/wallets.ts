@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { and, desc, eq } from "drizzle-orm";
 import { agentFundingIntents, agents, getDb, wallets } from "@/db";
 import { getSession } from "@/lib/auth";
-import { addressHintForChain, isValidAddressForChain } from "@/lib/wallet-address";
+import { addressProblemForChain, normalizeAddressForChain } from "@/lib/wallet-address";
 import {
   applyAgentBudgetPolicy,
   getAgentWallets,
@@ -177,7 +177,7 @@ async function myEmbeddedSolanaAddress(userId: string): Promise<ActionResult<str
     .limit(1);
   if (!row) {
     return fail(
-      "Tocker has no Solana wallet on record for you, so it cannot build a transfer out of one. Sync your wallets from Settings and try again.",
+      "Tocker has no Solana wallet on record for you, so it cannot build a transfer out of one. Open Deposit and tap Sync wallets, then try again.",
     );
   }
   return { ok: true, data: row.address };
@@ -649,9 +649,11 @@ export async function withdrawFromAgent(input: {
   if (!session) return fail("Sign in first");
 
   if (!(input.amount > 0) || !Number.isFinite(input.amount)) return fail("Enter an amount greater than zero");
-  const to = input.toAddress?.trim();
-  if (!to) return fail("Enter a destination address");
-  if (!isValidAddressForChain(input.chain, to)) return fail(addressHintForChain(input.chain));
+  const raw = input.toAddress?.trim();
+  if (!raw) return fail("Enter a destination address");
+  const problem = addressProblemForChain(input.chain, raw);
+  if (problem) return fail(problem);
+  const to = normalizeAddressForChain(input.chain, raw);
 
   const db = await getDb();
   const [agent] = await db

@@ -5,6 +5,7 @@ import {
   describeResult,
   narrateRun,
   runFacts,
+  tradeRefusals,
   type NarratableStep,
 } from "./narrate";
 
@@ -358,6 +359,21 @@ describe("narrateRun", () => {
       result("place_trade", { ok: false, reason: "DOVE is already proposed and still awaiting your owner's decision.", alreadyProposed: true }),
     ];
     expect(narrateRun(steps)).toContain("3 refusals (daily buy limit ×2 and already proposed)");
+  });
+
+  it("counts only refused orders for tradeRefusals, most frequent first", () => {
+    const steps = [
+      ...TICK,
+      result("place_trade", { ok: false, reason: "Chain solana is not enabled for this agent (enabled: base)." }),
+      result("place_trade", { ok: false, reason: "Chain solana is not enabled for this agent (enabled: base)." }),
+      result("score_token", { ok: false, reason: "Every data provider failed." }),
+    ];
+    // The nudged finish and the failed score are not refused orders.
+    expect(tradeRefusals(steps)).toEqual([
+      { label: "chain not enabled", count: 2 },
+      { label: "daily buy limit", count: 1 },
+    ]);
+    expect(tradeRefusals(TICK.slice(0, 13))).toEqual([]);
   });
 
   it("says when a run ended without finishing, and when it fell over", () => {

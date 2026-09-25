@@ -4,7 +4,7 @@ import { agents, getDb, positions, tokenScores, tokens, trades, type Db } from "
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import { toNum, toNumOrNull } from "@/lib/money";
 import { unrealized } from "@/lib/pnl";
-import { getScoreHistory } from "@/lib/tokens/history";
+import { getScoreHistory, isNoData } from "@/lib/tokens/history";
 import { universeKey } from "@/lib/tokens";
 import type {
   AgentCard,
@@ -25,7 +25,7 @@ import { loadTokens, toTokenRef, toTradeRow } from "./_shared";
  * someone's private threshold would publish that threshold.
  */
 const PUBLIC_UNIVERSE = DEFAULT_AGENT_CONFIG.universe;
-const PUBLIC_UNIVERSE_KEY = universeKey(PUBLIC_UNIVERSE);
+export const PUBLIC_UNIVERSE_KEY = universeKey(PUBLIC_UNIVERSE);
 
 const RECENT_TRADE_LIMIT = 20;
 const FLOW_WINDOW_DAYS = 30;
@@ -61,6 +61,10 @@ async function cachedScore(
   // A row scored under a different universe carries that universe's verdict and
   // blockers. Reusing it here would leak another operator's thresholds.
   if (row.universeKey !== PUBLIC_UNIVERSE_KEY) return { score: null, marketFacts };
+  // A reading no provider answered is an outage, not a verdict: "0 · avoid, 6 gates
+  // failed" on a token that simply could not be looked up. New ones are no longer
+  // cached (`getTokenScore`); this keeps any already stored off the public page.
+  if (isNoData({ ...marketFacts, sources: row.sources })) return { score: null, marketFacts };
 
   const c = row.components;
   const score: TokenScore = {

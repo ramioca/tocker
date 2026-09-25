@@ -750,6 +750,32 @@ export function runFacts(steps: readonly NarratableStep[]): RunFacts {
   return facts;
 }
 
+/**
+ * The orders the risk guard or the venue turned down, grouped by why, most frequent
+ * first. `place_trade` only: a refused finish or a failed score is not a refused order.
+ * Labels are the same ones {@link runFacts} counts, so a banner that quotes this and a
+ * digest built from `runFacts` can never disagree about what stopped a buy.
+ */
+export function tradeRefusals(steps: readonly NarratableStep[]): Array<{ label: string; count: number }> {
+  const refusals = new Map<string, number>();
+  for (const step of steps) {
+    if (str(step.toolName) !== "place_trade") continue;
+    if (step.kind === "error") {
+      const message = str(step.payload.error);
+      if (message !== null) count(refusals, refusalLabel({}, message));
+      continue;
+    }
+    if (step.kind !== "tool_result") continue;
+    const payload = step.payload;
+    const result = obj("result" in payload ? payload.result : payload);
+    const reason = str(result.reason);
+    if (result.ok === false && reason !== null) count(refusals, refusalLabel(result, reason));
+  }
+  return [...refusals.entries()]
+    .map(([label, n]) => ({ label, count: n }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
 function count(counts: Map<string, number>, label: string): void {
   counts.set(label, (counts.get(label) ?? 0) + 1);
 }

@@ -37,6 +37,7 @@ import {
   type ProposalDecision,
 } from "@/lib/trading/proposals";
 import { riskGuard, type OrderIntent } from "@/lib/trading/risk";
+import { ownerRiskMessage } from "@/lib/trading/risk-copy";
 import { executeTrade } from "@/lib/trading/settle";
 import { ensureQuoteToken, resolveToken } from "@/lib/trading/tokens";
 import type {
@@ -87,19 +88,6 @@ async function scoreQuietly(
   }
 }
 
-/**
- * The guard's reason, rewritten for somebody who just tapped Buy. The score case gets a
- * sentence that names both numbers, because "below minScore" is meaningless until you
- * see the two values next to each other.
- */
-function manualRejection(reason: string, symbol: string, score: TokenScore | null, config: AgentConfig): string {
-  if (score !== null && score.blockers.length === 0 && score.total < config.universe.minScore) {
-    return `Your agent's minimum score is ${config.universe.minScore}; ${symbol} scores ${score.total.toFixed(
-      1,
-    )}. Lower the minimum in settings if you meant to take this trade anyway.`;
-  }
-  return reason;
-}
 
 // ------------------------------------------------------------------ preview
 
@@ -183,7 +171,9 @@ export async function previewTrade(input: PreviewTradeInput): Promise<ActionResu
       },
       score,
       allowed: verdict.ok,
-      reason: verdict.ok ? null : manualRejection(verdict.reason, token.symbol, score, config),
+      // The guard's `reason` is written for the model (`maxTradeUsd`, gate codes, which
+      // tool to call next); the owner gets the same fact in their own words.
+      reason: verdict.ok ? null : ownerRiskMessage(verdict),
       priceUsd,
       estimatedToken: priceUsd && priceUsd > 0 ? amountUsd / priceUsd : null,
       cashUsd: portfolio.cashUsd,
@@ -279,7 +269,7 @@ export async function placeManualTrade(
     rangePct: input.side === "buy" ? await recentRangePct(token.id) : null,
   };
   const verdict = riskGuard({ id: agent.id, mode: agent.mode, config }, toRiskPortfolio(portfolio), order, score);
-  if (!verdict.ok) return fail(manualRejection(verdict.reason, token.symbol, score, config));
+  if (!verdict.ok) return fail(ownerRiskMessage(verdict));
 
   const rationale = input.note?.trim() || "Manual trade by the owner.";
   const executorAgent: ExecutorAgent = {

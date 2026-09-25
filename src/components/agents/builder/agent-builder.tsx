@@ -16,6 +16,7 @@ import {
   DataStep,
   FundingStep,
   IdentityStep,
+  PROVIDER_LABELS,
   RiskStep,
   ScheduleStep,
   UniverseStep,
@@ -66,7 +67,7 @@ function validate(draft: ReturnType<typeof useDraft>["draft"], keys: LlmKeyRow[]
   // A restored draft can name a key that has since been removed, and a key for another
   // provider would be kept but could never be used: both fail every run, so neither passes.
   else if (!keys.some((key) => key.id === draft.llmKeyId && key.provider === draft.config.llm.provider)) {
-    errors.llmKeyId = `Pick one of your ${draft.config.llm.provider} keys, or add one.`;
+    errors.llmKeyId = `Pick one of your ${PROVIDER_LABELS[draft.config.llm.provider]} keys, or add one.`;
   }
 
   const parsed = agentConfigSchema.safeParse(draft.config);
@@ -271,13 +272,18 @@ export function AgentBuilder({
   initialKeys: LlmKeyRow[];
 }) {
   const router = useRouter();
-  const { draft, update, updateConfig, clear, restored } = useDraft(userId);
+  const { draft, update, updateConfig, clear, restore, restored } = useDraft(userId);
   const [keys, setKeys] = useState(initialKeys);
   const [attempted, setAttempted] = useState(false);
   /** An agent that exists whose funding did not go through: offered the signature again, here. */
   const [fundingRetry, setFundingRetry] = useState<FundingRetry | null>(null);
   const [open, setOpen] = useState<Set<RuleId>>(new Set());
   const rulesRef = useRef<HTMLDivElement>(null);
+  // The chrome ring runs only under the pointer or keyboard focus, as in the top bar:
+  // the commit bar is on screen the whole time someone writes a strategy, and a ring
+  // that redraws every frame for all of it is a phone's battery for no reason.
+  const [metalHovered, setMetalHovered] = useState(false);
+  const [metalFocused, setMetalFocused] = useState(false);
 
   const errors = useMemo(() => validate(draft, keys), [draft, keys]);
   const visibleErrors = attempted ? errors : {};
@@ -479,10 +485,18 @@ export function AgentBuilder({
             <button
               type="button"
               onClick={() => {
+                // A hand-written strategy is the one thing here that cannot be retyped from
+                // memory, so clearing it gets the same Undo the preset chips have.
+                const previous = draft;
                 clear();
                 setOpen(new Set());
                 setAttempted(false);
-                toast.success("Draft cleared");
+                toast.success("Draft cleared", {
+                  action: { label: "Undo", onClick: () => restore(previous) },
+                });
+                // This button unmounts with the draft, so focus goes to the first field
+                // rather than falling back to the page.
+                requestAnimationFrame(() => document.getElementById("agent-name")?.focus());
               }}
               className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
@@ -597,48 +611,78 @@ export function AgentBuilder({
         data-sticky-actionbar
         // overflow-x-clip: the chrome ring's glow canvas is wider than the button and,
         // at the right edge of a phone, pushed the whole page 28px sideways.
-        className="glass-bar sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] z-10 mt-8 -mx-4 flex items-center gap-3 overflow-x-clip border-t border-border/60 px-4 py-3 sm:-mx-6 sm:px-6 md:bottom-0"
+        // py-2 on a phone: with the text on one line the 48px button sets the height, and
+        // every pixel of this bar is a pixel of form it covers.
+        className="glass-bar sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] z-10 mt-8 -mx-4 flex items-center gap-3 overflow-x-clip border-t border-border/60 px-4 py-2 sm:-mx-6 sm:px-6 sm:py-3 md:bottom-0"
       >
         <p className="min-w-0 flex-1 text-xs leading-4 text-muted-foreground">
-          {draft.funding.mode === "fund" ? (
-            <>
-              You will sign transfers of{" "}
-              <span className="tnum font-mono">{formatUsd(draft.funding.amountUsd)}</span> USDC right after it is created.{" "}
-            </>
-          ) : null}
-          {runsPerDay === 0 ? (
-            <>Manual runs only — nothing is spent until you press Run now.</>
-          ) : heldForLive ? (
-            // The Mode card promises it never trades paper, so this line cannot count
-            // paper runs: nothing ticks until the hold-to-confirm on the checklist.
-            <>
-              No ticks until you switch it live on the checklist — then ~
-              <span className="tnum font-mono">{runsPerDay}</span> runs/day, up to{" "}
-              <span className="tnum font-mono">{formatUsd(costPerRun)}</span> data each.
-            </>
-          ) : (
-            <>
-              ~<span className="tnum font-mono">{runsPerDay}</span> runs/day · up to{" "}
-              <span className="tnum font-mono">{formatUsd(costPerRun)}</span> data each, capped at{" "}
-              <span className="tnum font-mono">{formatUsd(risk.maxDataSpendUsdPerRun)}</span>/run —{" "}
-              {execution.mode === "approve" ? "proposes paper trades for you to approve." : "paper trades until you go live."}
-            </>
-          )}
+          {/* One line on a phone: the full sentence wrapped to five and made the bar a
+              third of the screen. The money being signed stays in it. */}
+          <span className="tnum block truncate sm:hidden">
+            {draft.funding.mode === "fund"
+              ? `Signs ${formatUsd(draft.funding.amountUsd)} USDC · ${runsPerDay === 0 ? "manual runs" : `~${runsPerDay}/day`}`
+              : runsPerDay === 0
+                ? "Manual runs only"
+                : `~${runsPerDay} runs/day · ≤${formatUsd(costPerRun)} data`}
+          </span>
+          <span className="hidden sm:inline">
+            {draft.funding.mode === "fund" ? (
+              <>
+                You will sign transfers of{" "}
+                <span className="tnum font-mono">{formatUsd(draft.funding.amountUsd)}</span> USDC right after it is created.{" "}
+              </>
+            ) : null}
+            {runsPerDay === 0 ? (
+              <>Manual runs only — nothing is spent until you press Run now.</>
+            ) : heldForLive ? (
+              // The Mode card promises it never trades paper, so this line cannot count
+              // paper runs: nothing ticks until the hold-to-confirm on the checklist.
+              <>
+                No ticks until you switch it live on the checklist — then ~
+                <span className="tnum font-mono">{runsPerDay}</span> runs/day, up to{" "}
+                <span className="tnum font-mono">{formatUsd(costPerRun)}</span> data each.
+              </>
+            ) : (
+              <>
+                ~<span className="tnum font-mono">{runsPerDay}</span> runs/day · up to{" "}
+                <span className="tnum font-mono">{formatUsd(costPerRun)}</span> data each, capped at{" "}
+                <span className="tnum font-mono">{formatUsd(risk.maxDataSpendUsdPerRun)}</span>/run —{" "}
+                {execution.mode === "approve" ? "proposes paper trades for you to approve." : "paper trades until you go live."}
+              </>
+            )}
+          </span>
         </p>
-        <LiquidMetal preset="chromatic" theme="dark" strength={0.85} className="shrink-0">
-          {/* metal-fx strips the button's dark:bg-white, which would leave its
-              dark:text-neutral-900 on the dark chrome at about 1.2:1. */}
-          <MorphButton
-            size="lg"
-            onAction={submit}
-            loadingLabel="Creating…"
-            successLabel="Created"
-            errorLabel="Check the form"
-            className={cn("text-foreground dark:text-foreground", MORPH_FOCUS)}
+        <div
+          className="shrink-0"
+          onPointerEnter={() => setMetalHovered(true)}
+          onPointerLeave={() => setMetalHovered(false)}
+          // Keyboard focus only: a click also focuses the button, and the ring would then
+          // keep running for as long as nothing else took the focus.
+          onFocus={(event) => setMetalFocused(event.target.matches(":focus-visible"))}
+          onBlur={() => setMetalFocused(false)}
+        >
+          {/* Paused keeps the last frame on screen: at rest the ring is still chrome, just still. */}
+          <LiquidMetal
+            preset="chromatic"
+            theme="dark"
+            strength={0.85}
+            paused={!(metalHovered || metalFocused)}
+            className="shrink-0"
           >
-            Create agent
-          </MorphButton>
-        </LiquidMetal>
+            {/* metal-fx strips the button's dark:bg-white, which would leave its
+                dark:text-neutral-900 on the dark chrome at about 1.2:1. */}
+            <MorphButton
+              size="lg"
+              onAction={submit}
+              loadingLabel="Creating…"
+              successLabel="Created"
+              errorLabel="Check the form"
+              className={cn("text-foreground dark:text-foreground", MORPH_FOCUS)}
+            >
+              Create agent
+            </MorphButton>
+          </LiquidMetal>
+        </div>
       </div>
     </div>
     </>

@@ -140,6 +140,7 @@ export default async function TokenPageRoute({ params, searchParams }: Props) {
             chain={chain}
             address={address}
             signedIn={Boolean(viewerId)}
+            symbol={page.token.symbol}
             // History keeps every reading; the public verdict only shows one taken under
             // the default rules. A chart full of points under "Not scored yet" was a lie.
             lastScoredAt={page.history.at(-1)?.at ?? null}

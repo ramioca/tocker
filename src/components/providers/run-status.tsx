@@ -29,7 +29,15 @@ interface RunStatusValue {
    * page that produced it.
    */
   pendingProposals: PendingProposalsSummary;
-  /** Re-read the proposal count now — called after a decision settles. */
+  /**
+   * The bell's unread count, riding on the same 15s poll. `null` until the first poll
+   * lands (or when the route does not report it), so the server-rendered count shows.
+   */
+  unreadNotifications: number | null;
+  /**
+   * Re-read the proposal and unread counts now — called after a decision settles, a run
+   * finishes, or notifications are marked read.
+   */
   refreshProposals: () => void;
 }
 
@@ -39,6 +47,9 @@ const POLL_MS = 2_000;
 const PROPOSAL_POLL_MS = 15_000;
 const NO_PROPOSALS: PendingProposalsSummary = { count: 0, latest: null };
 export const PROPOSALS_QUERY_KEY = ["pending-proposals"] as const;
+
+/** `/api/me/proposals` also carries the unread notification count, so the bell needs no poll of its own. */
+type ProposalsPoll = PendingProposalsSummary & { unreadNotifications?: number };
 
 async function fetchRun(agentId: string, runId: string): Promise<RunDetail | null> {
   const response = await fetch(`/api/agents/${agentId}/runs/${runId}`, {
@@ -98,14 +109,14 @@ function alertNewProposal(summary: PendingProposalsSummary, open: () => void): v
   }
 }
 
-async function fetchPendingProposals(): Promise<PendingProposalsSummary> {
+async function fetchPendingProposals(): Promise<ProposalsPoll> {
   const response = await fetch("/api/me/proposals", {
     headers: { accept: "application/json" },
     credentials: "include",
     cache: "no-store",
   });
   if (!response.ok) return NO_PROPOSALS;
-  return (await response.json()) as PendingProposalsSummary;
+  return (await response.json()) as ProposalsPoll;
 }
 
 /**
@@ -156,6 +167,15 @@ export function RunStatusProvider({ children }: { children: ReactNode }) {
   }, [queryClient]);
 
   const pendingProposals = proposalsQuery.data ?? NO_PROPOSALS;
+  const unreadNotifications =
+    typeof proposalsQuery.data?.unreadNotifications === "number" ? proposalsQuery.data.unreadNotifications : null;
+
+  // A run that just settled is what writes fill and exit notifications (and, in approve
+  // mode, proposals): re-read both counts then rather than up to 15s later.
+  const settledRunId = watched !== null && detail !== null && !isRunning ? watched.runId : null;
+  useEffect(() => {
+    if (settledRunId) refreshProposals();
+  }, [settledRunId, refreshProposals]);
 
   // A proposal is worth interrupting someone for: it expires, and the whole point of
   // approval mode on a five-minute tick is that the answer comes in minutes. Only a
@@ -177,8 +197,17 @@ export function RunStatusProvider({ children }: { children: ReactNode }) {
   }, [proposalsLoaded, pendingProposals, router]);
 
   const value = useMemo<RunStatusValue>(
-    () => ({ watched, detail, isRunning, watchRun, clearRun, pendingProposals, refreshProposals }),
-    [watched, detail, isRunning, watchRun, clearRun, pendingProposals, refreshProposals],
+    () => ({
+      watched,
+      detail,
+      isRunning,
+      watchRun,
+      clearRun,
+      pendingProposals,
+      unreadNotifications,
+      refreshProposals,
+    }),
+    [watched, detail, isRunning, watchRun, clearRun, pendingProposals, unreadNotifications, refreshProposals],
   );
 
   return <RunStatusContext.Provider value={value}>{children}</RunStatusContext.Provider>;

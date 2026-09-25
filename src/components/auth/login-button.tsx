@@ -44,9 +44,10 @@ export function LoginButton({ className }: { className?: string }) {
   if (!session) {
     // A link, not a handler: sign-in is a page now, so it should be openable in a new
     // tab, prefetchable, and announced as a link. `next` carries the visitor back to
-    // whatever they were looking at when they pressed it.
+    // whatever they were looking at when they pressed it. `nativeButton={false}` so Base UI
+    // leaves it one: no `type="button"` and no button role on the anchor.
     return (
-      <Button className={className} render={<Link href={signInHref(pathname)} />}>
+      <Button nativeButton={false} className={className} render={<Link href={signInHref(pathname)} />}>
         Sign in
       </Button>
     );

@@ -46,7 +46,14 @@ function patchPost(
   });
 }
 
-export function FeedList({ initialPage }: { initialPage: FeedPage }) {
+export function FeedList({
+  initialPage,
+  initialScope,
+}: {
+  initialPage: FeedPage;
+  /** The scope the server rendered `initialPage` for — the `?tab=` of the request. */
+  initialScope: Scope;
+}) {
   // The scope lives in `?tab=`, so Back from a post or an agent lands on the list
   // it was opened from. Read with `useSearchParams` rather than handed down by the
   // page: Back restores the page from the router cache, while the hook follows the entry.
@@ -62,8 +69,10 @@ export function FeedList({ initialPage }: { initialPage: FeedPage }) {
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => fetchFeedPage({ scope, cursor: pageParam, limit: PAGE_SIZE }),
     getNextPageParam: (last: FeedPage) => last.nextCursor,
+    // Seeds whichever list the server rendered, so a shared `?tab=following` link
+    // paints its first page instead of a skeleton and a second round trip.
     initialData:
-      scope === "global"
+      scope === initialScope
         ? { pages: [initialPage], pageParams: [null as string | null] }
         : undefined,
   });
@@ -119,6 +128,11 @@ export function FeedList({ initialPage }: { initialPage: FeedPage }) {
     [queryClient],
   );
   const onLike = useSaveLike({ read: readLike, write: writeLike, returnTo: "/feed" });
+  // Stable, so the memoized cards that did not change skip the re-render a like causes.
+  const handleLike = useCallback(
+    (postId: string, liked: boolean) => void onLike(postId, liked),
+    [onLike],
+  );
 
   /** A posted comment counts on the card straight away, not after the next refetch. */
   const onCommented = useCallback(
@@ -201,7 +215,7 @@ export function FeedList({ initialPage }: { initialPage: FeedPage }) {
                 key={item.id}
                 item={item}
                 receipt={item.trade ? (receipts[item.trade.id] ?? null) : null}
-                onLike={(postId, liked) => void onLike(postId, liked)}
+                onLike={handleLike}
                 onOpenComments={setCommentTarget}
               />
             ))}

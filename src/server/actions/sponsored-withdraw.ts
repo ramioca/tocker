@@ -126,7 +126,7 @@ async function resolveWithdrawal(userId: string, toAddress: string): Promise<Act
 
   const from = await myEmbeddedSolanaAddress(userId);
   if (!from) {
-    return fail("Tocker has no Solana wallet on record for you yet. Sync your wallets from Settings and try again.");
+    return fail("Tocker has no Solana wallet on record for you yet. Open Deposit and tap Sync wallets, then try again.");
   }
   if (from === to) return fail("That's your own Tocker wallet. Paste the address you want the USDC to go to.");
 
