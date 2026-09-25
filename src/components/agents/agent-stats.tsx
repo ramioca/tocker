@@ -33,7 +33,9 @@ export function AgentStats({ agent }: { agent: AgentDetail }) {
       value: equity,
       previous: start,
       series: series.length > 1 ? series : undefined,
-      format: (value) => formatUsd(value, { compact: true }),
+      // Exact below $100K, so it reads as the same number as the /agents card and the
+      // cent-exact PnL card beside it; compact only once the digits would not fit.
+      format: (value) => (Math.abs(value) < 100_000 ? formatUsd(value) : formatUsd(value, { compact: true })),
       goodWhen: "up",
       deltaLabel: "vs start",
     },
@@ -42,7 +44,7 @@ export function AgentStats({ agent }: { agent: AgentDetail }) {
       value: agent.pnlUsd ?? 0,
       format: signedCompactUsd,
       goodWhen: "up",
-      caption: `${formatSignedUsd(agent.stats.realizedPnlUsd)} realised · ${formatSignedUsd(agent.stats.unrealizedPnlUsd)} open`,
+      caption: `${formatSignedUsd(agent.stats.realizedPnlUsd)} realized · ${formatSignedUsd(agent.stats.unrealizedPnlUsd)} open`,
     },
     {
       label: "Win rate",
@@ -90,9 +92,10 @@ export function AgentStats({ agent }: { agent: AgentDetail }) {
         cards={cards}
         columns={3}
         // The registry card clips its caption to one nowrap line, which cut captions off
-        // at 390; phones let them wrap. The last rule gives the sparkline's own focus
-        // state our ring colour.
-        className="max-sm:[&_p.whitespace-nowrap]:!h-auto max-sm:[&_p.whitespace-nowrap]:!whitespace-normal max-sm:[&_p.whitespace-nowrap]:!leading-snug [&_.cursor-crosshair:focus-visible]:!ring-ring"
+        // at 390; phones let them wrap. The sparkline takes what the exact equity leaves
+        // rather than a fixed 44%, which ran "$10,749.80" into it in the three-across
+        // grid. The last rule gives the sparkline's own focus state our ring colour.
+        className="max-sm:[&_p.whitespace-nowrap]:!h-auto max-sm:[&_p.whitespace-nowrap]:!whitespace-normal max-sm:[&_p.whitespace-nowrap]:!leading-snug [&_.cursor-crosshair]:!w-auto [&_.cursor-crosshair]:!min-w-16 [&_.cursor-crosshair]:!flex-1 [&_.cursor-crosshair:focus-visible]:!ring-ring"
       />
       <ul className="sr-only">
         {captions.map((line) => (

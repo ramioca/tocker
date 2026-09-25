@@ -115,7 +115,7 @@ export function TopBar({
         aria-label="Search"
         aria-keyshortcuts={apple ? "Meta+K" : "Control+K"}
         className={cn(
-          "ml-auto flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-muted/30 px-2.5 text-sm text-muted-foreground sm:max-w-56",
+          "ml-auto flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-muted/30 px-2.5 text-sm text-muted-foreground sm:h-8 sm:max-w-56",
           "transition-colors duration-150 hover:bg-muted/60 hover:text-foreground",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         )}
@@ -197,6 +197,9 @@ export function TopBar({
               // The bar's focus ring, not the registry's 1px grey: tailwind-merge in the
               // bell's own `cn` lets these replace its ring width and colours.
               "shrink-0 focus-visible:ring-2 focus-visible:ring-ring dark:focus-visible:ring-ring",
+              // The row's height: 36px beside the phone's "+", 32px beside the desktop's
+              // Search and New agent. The registry's sm is a flat 36px.
+              "size-9 sm:size-8",
               onNotifications &&
                 "border-primary/40 bg-accent text-accent-foreground dark:border-primary/40 dark:bg-accent dark:text-accent-foreground",
             )}

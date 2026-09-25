@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { RiskSlider, Toggle } from "@/components/agents/builder/field";
+import { parseMagnitude, type ParseValue } from "@/components/agents/builder/parse-value";
 import type { AgentConfig } from "@/db/schema";
 
 type Risk = AgentConfig["risk"];
@@ -42,7 +43,8 @@ export function ExitRulesFields({
           value={value.stopLossPct}
           defaultValue={15}
           onChange={(next) => set("stopLossPct", next)}
-          slider={{ min: 1, max: 90, step: 1, format: (v) => `−${v}%` }}
+          // Shown as a drop, so a typed "-20" means 20, not the −1% minimum.
+          slider={{ min: 1, max: 90, step: 1, format: (v) => `−${v}%`, parse: parseMagnitude }}
           meaning={(v) => `A position ${v}% below entry is sold on the next pass, at most five minutes later.`}
         />
 
@@ -101,7 +103,7 @@ export function ExitRulesFields({
           value={value.exitOnLiquidityDropPct}
           defaultValue={50}
           onChange={(next) => set("exitOnLiquidityDropPct", next)}
-          slider={{ min: 10, max: 90, step: 5, format: (v) => `−${v}%` }}
+          slider={{ min: 10, max: 90, step: 5, format: (v) => `−${v}%`, parse: parseMagnitude }}
           meaning={(v) => `Half the point of an exit is being able to take it: ${v}% of the pool gone means the door is closing.`}
         />
       </div>
@@ -142,7 +144,7 @@ function OptionalRule({
   value: number | null;
   defaultValue: number;
   onChange: (next: number | null) => void;
-  slider: { min: number; max: number; step: number; format: (value: number) => string };
+  slider: { min: number; max: number; step: number; format: (value: number) => string; parse?: ParseValue };
   meaning: (value: number) => ReactNode;
 }) {
   const armed = value !== null;
@@ -165,6 +167,7 @@ function OptionalRule({
             max={slider.max}
             step={slider.step}
             format={slider.format}
+            parse={slider.parse}
             meaning={String(meaning(value))}
             onChange={onChange}
           />

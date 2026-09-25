@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { chainLabel } from "@/components/common/chain-badge";
-import { LocalTime } from "@/components/common/relative-time";
 import { formatUsd } from "@/components/common/format";
 import type { AdminTradeRow } from "@/server/queries/admin";
 import { cn } from "@/lib/utils";
-import { DataTable, EmptyRow, TableShell, Td, Th } from "./table-shell";
+import { DataTable, EmptyRow, PINNED_TIME_WIDTH, TableShell, Td, Th } from "./table-shell";
+import { RowTime } from "./row-time";
 
 /**
  * The last fifty fills, platform-wide.
@@ -21,11 +21,15 @@ import { DataTable, EmptyRow, TableShell, Td, Th } from "./table-shell";
  */
 export function AdminTradesTable({ rows }: { rows: AdminTradeRow[] }) {
   return (
-    <TableShell title="Recent fills" hint={rows.length === 0 ? undefined : `last ${rows.length}, newest first`}>
+    <TableShell scrollPadLeft={PINNED_TIME_WIDTH} title="Recent fills" hint={rows.length === 0 ? undefined : `last ${rows.length}, newest first`}>
       <DataTable label="Recent fills" minWidth="56rem">
         <thead>
           <tr>
-            <Th sticky>Time</Th>
+            {/* `w-[1%]` hugs the compact time, as on the balances table: auto layout
+                otherwise hands the pinned column the table's spare width. */}
+            <Th sticky className="w-[1%]">
+              Time
+            </Th>
             <Th>Agent</Th>
             <Th>Side</Th>
             <Th>Token</Th>
@@ -45,8 +49,8 @@ export function AdminTradesTable({ rows }: { rows: AdminTradeRow[] }) {
               <tr key={row.id} className="hover:bg-muted/25">
                 <Td sticky muted>
                   {/* Exact and in the reader's zone: a column of "2h ago" orders rows but
-                      dates none of them. */}
-                  <LocalTime iso={row.createdAt} className="whitespace-nowrap" />
+                      dates none of them. Compact under `lg`, where the column is pinned. */}
+                  <RowTime iso={row.createdAt} />
                 </Td>
                 <Td className="max-w-[12rem]">
                   <Link

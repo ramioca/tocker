@@ -144,7 +144,7 @@ export function DepositSheet({
       <SheetContent
         side="right"
         initialFocus={selectedTabRef}
-        className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md"
+        className="data-[side=right]:w-full data-[side=right]:sm:max-w-md"
       >
         <SheetHeader>
           <SheetTitle className="text-sm">Deposit</SheetTitle>
@@ -153,7 +153,9 @@ export function DepositSheet({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="space-y-4 px-4 pb-8">
+        {/* The body scrolls, not the sheet: the header and its Close stay pinned, which
+            matters on a phone where the sheet is full width and there is no backdrop to tap. */}
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 pb-[max(2rem,env(safe-area-inset-bottom))]">
           <div className="glass rounded-2xl border border-border/60 px-4 py-3.5">
             {/*
               "In your wallets", not "Your cash": the top bar's Cash also counts what live

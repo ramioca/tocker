@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDigest, digestHref, fillTitle, receiptHref, utcDay, type DigestInput, type DigestTrade } from "./index";
+import { buildDigest, digestHref, fillBody, fillTitle, receiptHref, utcDay, type DigestInput, type DigestTrade } from "./index";
 import { buildReceipt } from "@/lib/trading/receipt";
 
 function trade(overrides: Partial<DigestTrade> = {}): DigestTrade {
@@ -110,12 +110,20 @@ describe("fill notifications", () => {
     filledAt: new Date("2026-09-16T10:00:00.900Z"),
   });
 
-  it("names the agent, the side, the size and whether it was paper", () => {
-    expect(fillTitle({ agentName: "Sniper", receipt })).toBe("Sniper bought $100.00 of BONK (paper)");
+  it("names the agent, the side and the size", () => {
+    expect(fillTitle({ agentName: "Sniper", receipt })).toBe("Sniper bought $100.00 of BONK");
   });
 
-  it("marks a manual order as the owner's own", () => {
-    expect(fillTitle({ agentName: "Sniper", receipt, origin: "manual" })).toContain("(your manual order)");
+  it("writes a manual order in the owner's voice", () => {
+    expect(fillTitle({ agentName: "Sniper", receipt, origin: "manual" })).toBe("You bought $100.00 of BONK via Sniper");
+    expect(fillTitle({ agentName: "Sniper", receipt: { ...receipt, side: "sell" }, origin: "manual" })).toBe(
+      "You sold $100.00 of BONK via Sniper",
+    );
+  });
+
+  it("says paper in the body, not the title", () => {
+    expect(fillBody({ receipt })).toMatch(/^Paper · Simulated fill · /);
+    expect(fillBody({ receipt, exitReason: "take_profit" })).toMatch(/^Paper · take profit · /);
   });
 
   it("links at the trade in the context of its token", () => {

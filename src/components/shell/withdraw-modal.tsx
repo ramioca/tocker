@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
 import { FullAddress } from "@/components/common/address";
 import { formatUsd, truncateAddress } from "@/components/common/format";
+import { checkWithdrawAmount, floorCents } from "./withdraw-amount";
 import { useRefreshCash, useSyncWallets } from "@/components/wallets/use-cash";
 import { useTransfer } from "@/components/wallets/use-transfer";
 import { addressProblemForChain, normalizeAddressForChain } from "@/lib/wallet-address";
@@ -45,7 +46,6 @@ type Quote =
   | { address: string; status: "ready"; newAccount: boolean; feeUsdc: number; minAmountUsdc: number }
   | { address: string; status: "error"; message: string };
 
-const floorCents = (value: number) => Math.floor(value * 100 + 1e-9) / 100;
 
 /**
  * Withdraw USDC from the user's embedded wallet to any external address —
@@ -158,15 +158,14 @@ export function WithdrawModal({
   };
   const feeUsdc = ready?.feeUsdc ?? 0;
   const minAmount = chain === "solana" ? (ready?.minAmountUsdc ?? DEFAULT_SOLANA_MIN) : 0;
-  const spendable = Math.max(0, availableUsdc - feeUsdc);
-
-  // The input is capped at cents as it is typed; the floor is what makes "what they
-  // receive", the hold label and the signed amount one number whatever reaches here.
-  const parsed = floorCents(Number(amount));
-  const entered = Number.isFinite(parsed) && parsed > 0;
-  const underMinimum = entered && parsed < minAmount;
-  const overBalance = entered && parsed + feeUsdc > availableUsdc + 1e-9;
-  const validAmount = entered && !underMinimum && !overBalance;
+  // `sendable` is the balance floored to a cent: the figure every line below shows, so
+  // typing back what is on screen always passes the check.
+  const { spendable, sendable, parsed, entered, underMinimum, overBalance, validAmount } = checkWithdrawAmount({
+    amount,
+    availableUsdc,
+    feeUsdc,
+    minAmount,
+  });
   const quoteReady = chain !== "solana" || ready !== null;
   const canSend = validAmount && destinationOk && quoteReady && !pending && available;
 
@@ -225,8 +224,8 @@ export function WithdrawModal({
   } else if (overBalance) {
     amountHint =
       feeUsdc > 0
-        ? `With the ${formatUsd(feeUsdc)} account fee, the most you can send here is ${formatUsd(floorCents(spendable))}.`
-        : `You have ${formatUsd(availableUsdc)} on ${chainLabelFor(chain)}.`;
+        ? `With the ${formatUsd(feeUsdc)} account fee, the most you can send here is ${formatUsd(sendable)}.`
+        : `The most you can send on ${chainLabelFor(chain)} is ${formatUsd(sendable)}.`;
   } else if (destinationOk && !entered) {
     // The address is in and the hold is still disabled: say what it is waiting for.
     amountPrompt = true;
@@ -278,7 +277,7 @@ export function WithdrawModal({
                 value: entry.chain,
                 label: chainLabelFor(entry.chain),
                 // What can leave from there, so the pick is made with the number in view.
-                hint: `${formatUsd(cashOn(cash, entry.chain).usdcUsd)} USDC`,
+                hint: `${formatUsd(floorCents(cashOn(cash, entry.chain).usdc))} USDC`,
               }))}
               onChange={(next) => {
                 setChain(next as Chain);
@@ -339,11 +338,11 @@ export function WithdrawModal({
               <p className="tnum mt-2 text-xs text-destructive">{amountHint}</p>
             ) : amountPrompt ? (
               <p className="tnum mt-2 text-xs text-muted-foreground">
-                Enter an amount to send. You have {formatUsd(chainCash.usdcUsd)} on {chainLabelFor(chain)}.
+                Enter an amount to send. You have {formatUsd(sendable)} on {chainLabelFor(chain)}.
               </p>
             ) : (
               <p className="tnum mt-2 text-xs text-muted-foreground">
-                {formatUsd(chainCash.usdcUsd)} on {chainLabelFor(chain)} · {formatUsd(cash.totalUsd)} across your wallets
+                {formatUsd(sendable)} on {chainLabelFor(chain)} · {formatUsd(cash.totalUsd)} across your wallets
               </p>
             )}
           </div>

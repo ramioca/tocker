@@ -31,6 +31,8 @@ export interface HoldToConfirmButtonProps {
   resetDelay?: number
   /** Disables pointer and keyboard interaction */
   disabled?: boolean
+  /** Accessible name; defaults to "<label>. Press and hold for N seconds to confirm" */
+  ariaLabel?: string
   className?: string
 }
 
@@ -92,6 +94,7 @@ export function HoldToConfirmButton({
   size = "md",
   resetDelay = 1500,
   disabled = false,
+  ariaLabel,
   className,
 }: HoldToConfirmButtonProps) {
   const shouldReduceMotion = useReducedMotion()
@@ -227,7 +230,7 @@ export function HoldToConfirmButton({
     <motion.button
       type="button"
       disabled={disabled}
-      aria-label={`${label}. Press and hold for ${holdSeconds} seconds to confirm`}
+      aria-label={ariaLabel ?? `${label}. Press and hold for ${holdSeconds} seconds to confirm`}
       onPointerDown={handlePointerDown}
       onPointerUp={cancelPointerHold}
       onPointerLeave={cancelPointerHold}

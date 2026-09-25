@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, Sparkles } from "lucide-react";
+import { ArrowRight, Sparkles } from "lucide-react";
 import type { ScoreVerdict, TokenScore } from "@/server/types";
 import { TokenScoreRow } from "@/components/tokens/token-candidate-row";
 import { VERDICT_META, verdictTint } from "@/components/tokens";
@@ -175,15 +175,18 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
                 // Hidden on a phone, where the row is two dense lines and the chevron —
                 // opening the breakdown — is the thing you actually want on that screen.
                 // The open breakdown carries its own "Open token page" link there.
-                "mt-2 mr-2 hidden shrink-0 items-center gap-1 rounded-md px-1.5 py-1 sm:inline-flex",
-                // Permanently visible at 70% rather than hover-only: a link nobody can
-                // see is a link nobody uses.
-                "text-[10px] text-muted-foreground opacity-70 transition-opacity duration-150",
-                "focus-ring hover:bg-muted hover:opacity-100 group-hover/row:opacity-100 focus-visible:opacity-100",
+                // `mt-4`, not `self-center`: level with the collapsed row's score badge,
+                // and it stays there when the breakdown opens under it.
+                "mt-4 mr-2 hidden shrink-0 items-center gap-1 rounded-md px-1.5 py-1 sm:inline-flex",
+                // Permanently visible at full muted contrast rather than hover-only or
+                // faded: a link nobody can see is a link nobody uses.
+                "text-[10px] text-muted-foreground transition-colors duration-150",
+                "focus-ring hover:bg-muted hover:text-foreground focus-visible:text-foreground",
               )}
             >
               <span className="hidden lg:inline">Token page</span>
-              <ArrowUpRight aria-hidden className="size-3.5" />
+              {/* An in-app page: the plain arrow, not the external-link one. */}
+              <ArrowRight aria-hidden className="size-3.5" />
             </Link>
           </div>
         ))}

@@ -130,3 +130,31 @@ export function pctChange(from: number | null | undefined, to: number | null | u
 export function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
 }
+
+export interface PnlSplit {
+  /** equity − basis: the headline every surface prints. */
+  pnlUsd: number;
+  realizedPnlUsd: number;
+  unrealizedPnlUsd: number;
+}
+
+/**
+ * All-time P&L and its two wells, derived so they always add up to the headline.
+ *
+ * The headline is equity − basis, the subtraction the agent card, agent header and
+ * chart make. Open is what the positions are worth at the mark (equity − cash) less
+ * what they cost. Realised is the remainder, not the positions ledger's own column —
+ * that column misses fees and any fill the ledger never booked, and summing it with
+ * open drifted ~$10 from the cards right below it. A null cash means no mark yet:
+ * nothing is open, so the whole move is realised.
+ */
+export function splitPnl(input: {
+  equityUsd: number;
+  cashUsd: number | null;
+  basisUsd: number;
+  costBasisUsd: number;
+}): PnlSplit {
+  const pnlUsd = input.equityUsd - input.basisUsd;
+  const unrealizedPnlUsd = input.cashUsd === null ? 0 : input.equityUsd - input.cashUsd - input.costBasisUsd;
+  return { pnlUsd, realizedPnlUsd: pnlUsd - unrealizedPnlUsd, unrealizedPnlUsd };
+}

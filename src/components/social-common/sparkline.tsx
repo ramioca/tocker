@@ -17,6 +17,7 @@ export function Sparkline({
   className,
   fill = true,
   stretch = false,
+  domain,
 }: {
   points: number[];
   /** Stable, unique id — used for the gradient + clip ids. */
@@ -34,13 +35,17 @@ export function Sparkline({
    * full-bleed equity trace wants.
    */
   stretch?: boolean;
+  /**
+   * Fixed [min, max] for the y-axis. Without it the series fills the box, so a 0.2%
+   * wiggle draws as a cliff; with it the caller decides what a small move looks like.
+   */
+  domain?: [number, number];
 }) {
   if (points.length < 2) {
     return <div className={cn("bg-muted/40 rounded", className)} style={{ width, height }} aria-hidden />;
   }
 
-  const min = Math.min(...points);
-  const max = Math.max(...points);
+  const [min, max] = domain ?? [Math.min(...points), Math.max(...points)];
   const span = max - min || 1;
   const pad = 2;
   const stepX = (width - pad * 2) / (points.length - 1);

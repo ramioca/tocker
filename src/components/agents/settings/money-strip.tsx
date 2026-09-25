@@ -32,9 +32,11 @@ import type { AgentDetail, WalletBalance } from "@/server/types";
 export function MoneyStrip({
   agent,
   initialBalances,
+  isAdmin = false,
 }: {
   agent: AgentDetail;
   initialBalances: WalletBalance[];
+  isAdmin?: boolean;
 }) {
   const { data: wallets = [] } = useWalletBalances(agent.id, initialBalances);
 
@@ -74,6 +76,7 @@ export function MoneyStrip({
             agentId={agent.id}
             agentName={agent.name}
             wallets={wallets}
+            isAdmin={isAdmin}
             trigger={
               <button type="button" className={cn(ACTION, "border-primary/40 bg-primary/10 text-primary hover:bg-primary/15")}>
                 <ArrowDownToLine aria-hidden className="size-3.5" />

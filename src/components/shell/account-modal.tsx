@@ -35,7 +35,7 @@ export function AccountModal({
         <DialogHeader>
           <DialogTitle>Account details</DialogTitle>
           <DialogDescription>
-            How you sign in and how others see you. Your cash is under the balance in the top bar.
+            How you sign in and how others see you. Deposit and withdraw from the cash balance in the top bar.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">

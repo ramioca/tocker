@@ -32,19 +32,49 @@ import { Textarea } from "@/components/ui/textarea";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { MorphButton } from "@/components/spectrumui/morph-button";
 import { MORPH_FOCUS } from "@/components/common/focus";
-import { ChainBadge } from "@/components/common/chain-badge";
+import { ChainBadge, chainLabel } from "@/components/common/chain-badge";
 import { Address } from "@/components/common/address";
-import { formatPriceUsd, formatUsd } from "@/components/common/format";
+import { formatPreviewFees, formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { Field } from "@/components/agents/builder/field";
 import { ScoreBadge } from "@/components/tokens";
 import { placeManualTrade, previewTrade } from "@/server/actions/trading";
-import { SizingSummary, TradeReceiptCard } from "@/components/trading";
-import { readSizing } from "@/lib/trading/sizing";
+import { TradeReceiptCard } from "@/components/trading";
+import { sliceText } from "@/components/trading/sell-amount";
 import { cn } from "@/lib/utils";
 import type { AgentDetail, Chain, TradePreview } from "@/server/types";
-import type { AgentRiskWithSizing, TradeReceiptData } from "@/db/schema";
+import type { TradeReceiptData } from "@/db/schema";
 
 const SIZE_PRESETS = [10, 25, 50, 100, 250] as const;
+/** A sell is sized against what is held, not against the buy presets. */
+const SELL_SLICES = [
+  { pct: 25, label: "25%" },
+  { pct: 50, label: "50%" },
+  { pct: 100, label: "All" },
+] as const;
+
+/**
+ * Digits and one decimal point, at most two places. The old filter kept every dot, so
+ * "1.2.3" read as no amount at all and the form went quietly blank.
+ */
+function sanitiseAmount(value: string): string {
+  return value
+    .replace(/[^\d.]/g, "")
+    .replace(/(\..*)\./g, "$1")
+    .replace(/(\.\d{2}).+/, "$1");
+}
+
+/** The resolver's miss, which names both chains' formats and the raw chain id. */
+function isUnresolvedToken(error: string): boolean {
+  // previewTrade says "Couldn't find"; the resolver's own text (older servers, agent
+  // tools) says "Could not resolve".
+  return error.startsWith("Couldn't find") || error.startsWith("Could not resolve");
+}
+
+/** The first sentence of a longer message, for the one line above the button. */
+function firstSentence(text: string): string {
+  const match = /^.*?[.!?](?=\s|$)/.exec(text);
+  return match ? match[0] : text;
+}
 
 /** Debounce for the preview: every keystroke would re-score the token otherwise. */
 const PREVIEW_DEBOUNCE_MS = 500;
@@ -71,10 +101,15 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
    */
   const [receipt, setReceipt] = useState<TradeReceiptData | null>(null);
   const receiptRef = useRef<HTMLHeadingElement>(null);
+  /** What the agent holds of the token in the box, from the last preview of it. */
+  const [holding, setHolding] = useState<{ key: string; valueUsd: number | null; symbol: string } | null>(null);
 
   const amountUsd = Number(amount);
   const address = tokenAddress.trim();
-  const ready = address.length >= 3 && Number.isFinite(amountUsd) && amountUsd > 0;
+  const amountValid = Number.isFinite(amountUsd) && amountUsd > 0;
+  const amountError = amount !== "" && !amountValid ? "Enter an amount above $0, like 25 or 12.50" : null;
+  const ready = address.length >= 3 && amountValid;
+  const orderLabel = `${side === "buy" ? "Buy" : "Sell"}${amountValid ? ` ${formatUsd(amountUsd)}` : ""}`;
   // Said at the Size box, not only by the guard at the bottom of the preview: on a phone
   // that line sat under the footer, next to a Buy button that was simply dead. Buys only —
   // a full exit may sell past the cap (see risk.test.ts).
@@ -94,6 +129,14 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
       setResult(
         answer.ok ? { key, data: answer.data, error: null } : { key, data: null, error: answer.error },
       );
+      // Kept per token so the sell slices do not blink out while the next size previews.
+      if (answer.ok) {
+        setHolding({
+          key: `${chain}|${address}`,
+          valueUsd: answer.data.positionValueUsd,
+          symbol: answer.data.token.symbol,
+        });
+      }
     }, PREVIEW_DEBOUNCE_MS);
     return () => {
       cancelled = true;
@@ -114,6 +157,9 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   const preview = current?.data ?? null;
   const previewError = current?.error ?? null;
   const previewing = key !== null && current === null;
+  const held = holding !== null && holding.key === `${chain}|${address}` ? holding : null;
+  const heldUsd = side === "sell" ? (held?.valueUsd ?? null) : null;
+  const overPosition = heldUsd !== null && amountValid && amountUsd > heldUsd;
 
   /**
    * In flight. A live swap can take longer than the hold button's re-arm, and a second
@@ -139,9 +185,7 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
     toast.success(
       `${placed.data.side === "buy" ? "Bought" : "Sold"} ${formatUsd(placed.data.amountUsd)} of ${placed.data.symbol}`,
       {
-        description: `${placed.data.amountToken.toLocaleString("en-US", {
-          maximumFractionDigits: 2,
-        })} ${placed.data.symbol} at ${formatPriceUsd(placed.data.priceUsd)}${placed.data.isPaper ? " · paper" : ""}`,
+        description: `${formatTokenAmount(placed.data.amountToken)} ${placed.data.symbol} at ${formatPriceUsd(placed.data.priceUsd)}${placed.data.isPaper ? " · paper" : ""}`,
       },
     );
     setReceipt(placed.data.receipt);
@@ -164,14 +208,20 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   const blocked = submitting || !ready || previewing || preview === null || !preview.allowed;
   // One line above the button saying why it is dead, so the reason is in view wherever
   // the form is scrolled to.
+  // Short, because the full text is already in the preview right above it; repeating it
+  // here clamped it mid-sentence.
   const footerReason = submitting
     ? null
     : previewError !== null
-      ? previewError
+      ? isUnresolvedToken(previewError)
+        ? "Token not found."
+        : firstSentence(previewError)
       : preview !== null && !preview.allowed
         ? overCap
           ? "Over the per-trade cap."
-          : preview.reason
+          : overPosition
+            ? "Over the position."
+            : firstSentence(preview.reason ?? "")
         : null;
 
   return (
@@ -290,18 +340,26 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
                 autoComplete="off"
                 placeholder={chain === "solana" ? "DezXAZ8z…B263" : "0x532f27…42E4"}
                 onChange={(event) => setTokenAddress(event.target.value)}
-                className="font-mono text-xs"
+                // 16px on phones: iOS zooms the page into any input smaller than that.
+                className="font-mono text-base md:text-xs"
               />
             </Field>
 
             <Field
               label="Size"
               htmlFor="manual-amount"
-              hint={`Capped at ${formatUsd(maxTrade)} per trade by this agent's own risk rules.`}
+              hint={
+                side === "buy"
+                  ? `Capped at ${formatUsd(maxTrade)} per trade by this agent's own risk rules.`
+                  : held !== null && held.valueUsd !== null
+                    ? `You hold ${formatUsd(held.valueUsd)} of ${held.symbol}.`
+                    : "Sells are not capped per trade."
+              }
               error={
-                overCap
+                amountError ??
+                (overCap
                   ? `Over this agent's ${formatUsd(maxTrade)} cap per trade. Lower it, or raise Max per trade in settings.`
-                  : null
+                  : null)
               }
             >
               <div className="space-y-2">
@@ -316,24 +374,36 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
                     id="manual-amount"
                     value={amount}
                     inputMode="decimal"
-                    aria-invalid={overCap || undefined}
-                    aria-describedby={overCap ? "manual-amount-error" : undefined}
-                    onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ""))}
+                    aria-invalid={amountError !== null || overCap || undefined}
+                    aria-describedby={amountError !== null || overCap ? "manual-amount-error" : undefined}
+                    onChange={(event) => setAmount(sanitiseAmount(event.target.value))}
                     className="tnum pl-6 font-mono"
                   />
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {SIZE_PRESETS.map((preset) => (
-                    <button
-                      key={preset}
-                      type="button"
-                      onClick={() => setAmount(String(preset))}
-                      className="tnum rounded-md border border-border/70 px-2 py-1 font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      ${preset}
-                    </button>
-                  ))}
-                </div>
+                {side === "buy" ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {SIZE_PRESETS.map((preset) => (
+                      <button key={preset} type="button" onClick={() => setAmount(String(preset))} className={PRESET_CLASS}>
+                        ${preset}
+                      </button>
+                    ))}
+                  </div>
+                ) : heldUsd !== null && heldUsd > 0 ? (
+                  // Floored to the cent (sliceText), so "All" is never a cent over the mark
+                  // and refused by the guard.
+                  <div className="flex flex-wrap gap-1.5">
+                    {SELL_SLICES.map((slice) => (
+                      <button
+                        key={slice.pct}
+                        type="button"
+                        onClick={() => setAmount(sliceText(heldUsd, slice.pct))}
+                        className={PRESET_CLASS}
+                      >
+                        {slice.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </Field>
 
@@ -342,6 +412,8 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
               preview={preview}
               side={side}
               amountUsd={amountUsd}
+              chain={chain}
+              input={address}
               error={previewError}
               loading={previewing}
               ready={ready}
@@ -355,17 +427,9 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
                 maxLength={500}
                 onChange={(event) => setNote(event.target.value)}
                 placeholder="Why you are taking this one yourself."
-                className="text-xs leading-relaxed"
+                className="text-base leading-relaxed md:text-xs"
               />
             </Field>
-
-            {/* The size the agent's own sizing mode allows right now, and why. Shown next
-                to the amount field so a refusal is never the first time anyone sees it. */}
-            <SizingSummary
-              sizing={readSizing(agent.config?.risk as AgentRiskWithSizing | undefined)}
-              maxTradeUsd={agent.config?.risk.maxTradeUsd ?? 0}
-              equityUsd={agent.equityUsd}
-            />
 
             {receipt ? (
               <section aria-label="Fill receipt" className="space-y-2">
@@ -394,21 +458,26 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
               {footerReason}
             </p>
           ) : !ready && !receipt ? (
-            <p className="text-xs text-muted-foreground">Paste a token and a size to preview.</p>
+            <p className="text-xs text-muted-foreground">
+              {address.length < 3 ? "Paste a token to preview." : "Enter a size to preview."}
+            </p>
           ) : null}
           {receipt && !ready ? (
             // After a fill the token box is empty, so the order button could only sit there
-            // disabled. The next thing to do is start another one.
-            <Button
-              className="w-full"
-              size="lg"
-              onClick={() => {
-                setReceipt(null);
-                document.getElementById("manual-token")?.focus();
-              }}
-            >
-              Place another trade
-            </Button>
+            // disabled. The next thing to do is start another one — or leave: the header
+            // and its close button have scrolled away above the receipt.
+            <div className="grid grid-cols-[auto_1fr] gap-2">
+              <SheetClose render={<Button variant="ghost" size="lg" />}>Done</SheetClose>
+              <Button
+                size="lg"
+                onClick={() => {
+                  setReceipt(null);
+                  document.getElementById("manual-token")?.focus();
+                }}
+              >
+                Place another trade
+              </Button>
+            </div>
           ) : isLive ? (
             <HoldToConfirmButton
               key={holdKey}
@@ -416,7 +485,7 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
               disabled={blocked}
               resetDelay={0}
               duration={1_600}
-              label={`Hold to ${side} ${formatUsd(Number.isFinite(amountUsd) ? amountUsd : 0)}`}
+              label={`Hold to ${orderLabel.toLowerCase()}`}
               confirmedLabel="Sending…"
               icon={<ArrowLeftRight size={14} strokeWidth={2} />}
               onConfirm={() => void submit().catch(() => undefined)}
@@ -432,7 +501,7 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
               errorLabel="Refused"
               onAction={submit}
             >
-              {side === "buy" ? "Buy" : "Sell"} {formatUsd(Number.isFinite(amountUsd) ? amountUsd : 0)}
+              {orderLabel}
             </MorphButton>
           )}
         </SheetFooter>
@@ -441,11 +510,16 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   );
 }
 
+const PRESET_CLASS =
+  "tnum rounded-md border border-border/70 px-2 py-1 font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
 /** Score, guard verdict and quote — the three things worth knowing before committing. */
 function PreviewPanel({
   preview,
   side,
   amountUsd,
+  chain,
+  input,
   error,
   loading,
   ready,
@@ -453,6 +527,8 @@ function PreviewPanel({
   preview: TradePreview | null;
   side: "buy" | "sell";
   amountUsd: number;
+  chain: Chain;
+  input: string;
   error: string | null;
   loading: boolean;
   ready: boolean;
@@ -477,7 +553,14 @@ function PreviewPanel({
   if (error !== null) {
     return (
       <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-xs leading-relaxed text-destructive">
-        {error}
+        {isUnresolvedToken(error)
+          ? // The resolver's own text names both chains and the raw chain id; say it for this one.
+            `Couldn't find “${input}” on ${chainLabel(chain)}. ${
+              chain === "solana"
+                ? "Paste the full mint — a symbol only works for a token Tocker has already seen."
+                : "Paste the 0x contract address."
+            }`
+          : error}
       </p>
     );
   }
@@ -487,7 +570,8 @@ function PreviewPanel({
   const tokens =
     preview.estimatedToken === null
       ? "—"
-      : `${preview.estimatedToken.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${preview.token.symbol}`;
+      : `${formatTokenAmount(preview.estimatedToken)} ${preview.token.symbol}`;
+  const fees = formatPreviewFees(preview.fees);
 
   return (
     <div className="space-y-2.5 rounded-xl border border-border/70 bg-card/30 p-3">
@@ -508,8 +592,15 @@ function PreviewPanel({
           tokens; a sell gives them up and gets dollars, so it says both. */}
       <dl className="grid gap-y-1.5 text-xs">
         <Row label="Price" value={formatPriceUsd(preview.priceUsd)} />
-        <Row label={side === "buy" ? "You get ≈" : "You sell ≈"} value={tokens} />
-        {side === "sell" ? <Row label="You receive ≈" value={formatUsd(amountUsd)} /> : null}
+        {/* A refused order moves nothing, so no "you get": a sell past the position listed
+            157M tokens the agent never had. */}
+        {preview.allowed ? (
+          <>
+            <Row label={side === "buy" ? "You get ≈" : "You sell ≈"} value={tokens} />
+            {side === "sell" ? <Row label="You receive ≈" value={formatUsd(amountUsd)} /> : null}
+            {fees ? <Row label="Fees" value={fees} /> : null}
+          </>
+        ) : null}
         <Row label="Cash" value={formatUsd(preview.cashUsd)} />
         <Row label="Equity" value={formatUsd(preview.equityUsd)} />
       </dl>

@@ -30,8 +30,11 @@ export function AgentHeader({
   agent,
   accountPaused = false,
   runBlocker = null,
+  isAdmin = false,
 }: {
   agent: AgentDetail;
+  /** Admins get the env-var hint in the Fund drawer's fallback; everyone else the plain copy. */
+  isAdmin?: boolean;
   accountPaused?: boolean;
   /**
    * Owner only: the status item that makes a run fail before it starts (no LLM key).
@@ -82,7 +85,7 @@ export function AgentHeader({
         A grid so the avatar can sit beside the name on a phone without narrowing the
         buttons: there the actions span both columns under it. On its own row, with the
         PnL block stacked under the buttons, the header used to fill the first screen.
-        The PnL itself is the first stat card below, with its realised/open split.
+        The PnL itself is the first stat card below, with its realized/open split.
       */}
       <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-4 sm:gap-x-4">
         <AgentAvatar seed={agent.avatarSeed} name={agent.name} size="lg" className="rounded-xl sm:hidden" />
@@ -120,18 +123,22 @@ export function AgentHeader({
                 <ChainBadge key={chain} chain={chain} />
               ))}
             </MetaSegment>
-            {agent.lastRunAt ? (
-              <MetaSegment>
-                <span className="text-xs">
-                  ran <RelativeTime iso={agent.lastRunAt} className="text-xs" />
+            {/* Activity is its own line on a phone, so it starts with "ran", not a "·"
+                left over from the line above; on desktop it rejoins the one line. */}
+            <span className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 sm:w-auto">
+              {agent.lastRunAt ? (
+                <MetaSegment leadingDotClassName="hidden sm:inline">
+                  <span className="text-xs">
+                    ran <RelativeTime iso={agent.lastRunAt} className="text-xs" />
+                  </span>
+                </MetaSegment>
+              ) : null}
+              <MetaSegment leadingDotClassName={agent.lastRunAt ? undefined : "hidden sm:inline"}>
+                <span className="tnum text-xs">
+                  {followers.toLocaleString()} follower{followers === 1 ? "" : "s"}
                 </span>
               </MetaSegment>
-            ) : null}
-            <MetaSegment>
-              <span className="tnum text-xs">
-                {followers.toLocaleString()} follower{followers === 1 ? "" : "s"}
-              </span>
-            </MetaSegment>
+            </span>
           </p>
 
           {agent.tagline ? (
@@ -177,7 +184,7 @@ export function AgentHeader({
               {/* Owner-only: trade the agent's book by hand. */}
               <ManualTradeSheet agent={agent} />
 
-              <OwnerMoneyActions agent={agent} />
+              <OwnerMoneyActions agent={agent} isAdmin={isAdmin} />
 
               <Link
                 href={`/agents/${agent.slug}/settings`}
@@ -217,10 +224,19 @@ export function AgentHeader({
  * separator that is its own flex item can be the last thing on a wrapped line — "Base ·"
  * on a phone — so each "·" travels with what it introduces instead.
  */
-function MetaSegment({ children }: { children: React.ReactNode }) {
+function MetaSegment({
+  children,
+  leadingDotClassName,
+}: {
+  children: React.ReactNode;
+  /** For a segment that opens its own line on phones and so has nothing to follow there. */
+  leadingDotClassName?: string;
+}) {
   return (
     <span className="inline-flex items-center gap-2 whitespace-nowrap">
-      <span aria-hidden>·</span>
+      <span aria-hidden className={leadingDotClassName}>
+        ·
+      </span>
       {children}
     </span>
   );
@@ -238,7 +254,7 @@ function MetaSegment({ children }: { children: React.ReactNode }) {
  * the same checklist as the settings cards, so there is still exactly one Fund flow and
  * one go-live flow in the product.
  */
-function OwnerMoneyActions({ agent }: { agent: AgentDetail }) {
+function OwnerMoneyActions({ agent, isAdmin }: { agent: AgentDetail; isAdmin: boolean }) {
   const { data: wallets = [] } = useWalletBalances(agent.id);
   const live = agent.mode === "live";
 
@@ -248,6 +264,7 @@ function OwnerMoneyActions({ agent }: { agent: AgentDetail }) {
         agentId={agent.id}
         agentName={agent.name}
         wallets={wallets}
+        isAdmin={isAdmin}
         trigger={
           <button type="button" className={cn(HEADER_ACTION, "border-border hover:bg-muted")}>
             <ArrowDownToLine aria-hidden className="size-3.5" />

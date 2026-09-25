@@ -440,12 +440,35 @@ export function evaluateExits(input: EvaluateExitsInput): ExitDecision[] {
   return out;
 }
 
+/** Each rule's name as a person reads it — the same words `publicExitText` leads with. */
+export const EXIT_LABELS: Record<ExitReason, string> = {
+  stop_loss: "Stop loss",
+  take_profit: "Take profit",
+  trailing_stop: "Trailing stop",
+  max_hold: "Max hold",
+  score_collapse: "Score collapse",
+  liquidity_collapse: "Liquidity collapse",
+};
+
+/** "Take profit: sold BONK for $2,140.64 (+91.5%)". One exit, in the transcript's voice. */
+export function describeExit(d: {
+  reason: string;
+  symbol: string;
+  amountUsd: number;
+  unrealizedPnlPct?: number | null;
+}): string {
+  const label = EXIT_LABELS[d.reason as ExitReason] ?? "Exit";
+  const pct =
+    d.unrealizedPnlPct === null || d.unrealizedPnlPct === undefined || !Number.isFinite(d.unrealizedPnlPct)
+      ? ""
+      : ` (${pctText(d.unrealizedPnlPct)})`;
+  return `${label}: sold ${d.symbol} for ${usdText(d.amountUsd)}${pct}`;
+}
+
 /** One-line summary of a pass, for the run transcript and the tick prompt. */
 export function describeExits(
   decisions: readonly Pick<ExitDecision, "reason" | "symbol" | "amountUsd" | "unrealizedPnlPct">[],
 ): string {
   if (decisions.length === 0) return "No exit rules fired.";
-  return decisions
-    .map((d) => `${d.reason} → sold ${d.symbol} (${usdText(d.amountUsd)}${d.unrealizedPnlPct === null ? "" : `, ${pctText(d.unrealizedPnlPct)}`})`)
-    .join("; ");
+  return decisions.map(describeExit).join("; ");
 }

@@ -29,11 +29,11 @@ export function AgentDetailSkeleton() {
             <Bar className="h-6 w-48 max-w-full" />
             <Bar className="mt-2.5 h-3.5 w-64 max-w-full" />
             <Bar className="mt-3 h-4 w-56 max-w-full" />
-            <Bar className="mt-5 h-8 w-28 rounded-full" />
-          </div>
-          <div className="shrink-0 sm:flex sm:flex-col sm:items-end">
-            <Bar className="h-3 w-20" />
-            <Bar className="mt-2 h-7 w-32" />
+            <div className="mt-5 flex flex-wrap gap-2">
+              {Array.from({ length: 4 }, (_, i) => (
+                <Bar key={i} className="h-8 w-20 rounded-full" />
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -43,7 +43,7 @@ export function AgentDetailSkeleton() {
           <span
             key={i}
             aria-hidden
-            className="glass-card block h-[100px] rounded-xl motion-safe:animate-pulse sm:h-[122px]"
+            className="glass-card block h-[112px] rounded-xl motion-safe:animate-pulse sm:h-[122px]"
           />
         ))}
       </div>

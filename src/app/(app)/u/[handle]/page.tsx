@@ -1,3 +1,4 @@
+import { cache } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -13,13 +14,14 @@ import { AgentGridCard } from "@/components/discover/agent-grid-card";
 import { EmptyState } from "@/components/common/empty-state";
 import { tradeActivity } from "./trade-activity";
 
-async function loadProfile(handle: string) {
+// Cached per request: generateMetadata and the page both need the same lookup.
+const loadProfile = cache(async (handle: string) => {
   const session = await withMock(getSession, mockSession).catch(() => null);
   return withMock(
     () => getUserProfile(handle, session?.userId ?? null),
     () => mockUserProfile(handle),
   );
-}
+});
 
 export async function generateMetadata({
   params,
@@ -27,9 +29,13 @@ export async function generateMetadata({
   params: Promise<{ handle: string }>;
 }): Promise<Metadata> {
   const { handle } = await params;
+  // Built from the lookup, not the URL: "@nobody-xyz" over a "Nothing here" page claimed
+  // a user that does not exist.
+  const profile = await loadProfile(handle);
+  if (!profile) return { title: "Profile not found" };
   return {
-    title: `@${handle}`, // the root layout appends " · Tocker"
-    description: `Agents, PnL and trading activity for @${handle}.`,
+    title: `@${profile.handle}`, // the root layout appends " · Tocker"
+    description: `Agents, PnL and trading activity for @${profile.handle}.`,
   };
 }
 

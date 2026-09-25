@@ -107,11 +107,33 @@ export function formatCount(value: number | null | undefined): string {
   return compactFormatter.format(value);
 }
 
+/**
+ * A token *amount*. The one helper the preview, the toast and the receipt of a fill all
+ * call, so "786,163.52 BONK" is not "314,465.408805 BONK" two screens later. Two decimals
+ * from a thousand up (past that they are dust), four below it so a 1.2345 ETH balance
+ * keeps its precision, and four significant digits under one.
+ */
 export function formatTokenAmount(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
-  if (Math.abs(value) >= 1_000_000) return compactFormatter.format(value);
-  if (Math.abs(value) >= 1) return value.toLocaleString("en-US", { maximumFractionDigits: 4 });
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return compactFormatter.format(value);
+  if (abs >= 1_000) return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  if (abs >= 1) return value.toLocaleString("en-US", { maximumFractionDigits: 4 });
   return value.toLocaleString("en-US", { maximumSignificantDigits: 4 });
+}
+
+/**
+ * The fee row of a trade preview: "≈ $0.13 (Tocker $0.10 · venue $0.03)". Null when
+ * the fee is off and the venue quoted nothing, so the row can be left out. An unquoted
+ * venue fee is said, not printed as $0.00.
+ */
+export function formatPreviewFees(fees: { tockerUsd: number; venueUsd: number | null }): string | null {
+  if (fees.venueUsd === null) {
+    return fees.tockerUsd > 0 ? `${formatUsd(fees.tockerUsd)} Tocker · venue fee not quoted` : null;
+  }
+  const total = formatUsd(fees.tockerUsd + fees.venueUsd);
+  if (fees.tockerUsd === 0) return `≈ ${total} venue`;
+  return `≈ ${total} (Tocker ${formatUsd(fees.tockerUsd)} · venue ${formatUsd(fees.venueUsd)})`;
 }
 
 export function formatDuration(ms: number | null | undefined): string {

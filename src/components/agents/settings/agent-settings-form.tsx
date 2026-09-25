@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/common/status-badge";
 import { formatUsd } from "@/components/common/format";
 import { Field, RiskSlider, Toggle } from "@/components/agents/builder/field";
+import { parseBps } from "@/components/agents/builder/parse-value";
 import { UniverseControls } from "@/components/agents/builder/universe-controls";
 import { UniversePreview } from "@/components/agents/settings/universe-preview";
 import { sameConfig } from "@/components/agents/settings/same-config";
@@ -617,6 +618,7 @@ function SettingsForm({
             max={2_000}
             step={10}
             format={(value) => `${Math.round(value)} bps`}
+            parse={parseBps}
             meaning={`Fills worse than ${(config.risk.slippageBps / 100).toFixed(2)}% off the quote are rejected on chain. Launch-day memecoins usually need 300–500 bps; Jupiter picks tighter when the pool allows.`}
             onChange={(slippageBps) => patchRisk({ slippageBps: Math.round(slippageBps) })}
           />

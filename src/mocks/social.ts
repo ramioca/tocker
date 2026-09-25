@@ -235,10 +235,17 @@ export function mockPublicAgents(opts?: {
   cursor?: string | null;
   limit?: number;
   sort?: "new" | "pnl" | "followers";
+  query?: string;
 }): Page<AgentCard> {
   const limit = opts?.limit ?? 9;
   const sort = opts?.sort ?? "pnl";
-  const sorted = [...MOCK_AGENTS].sort((a, b) => {
+  const q = (opts?.query ?? "").trim().toLowerCase();
+  const matches = q
+    ? MOCK_AGENTS.filter((a) =>
+        [a.name, a.slug, a.tagline ?? "", a.owner.handle].some((field) => field.toLowerCase().includes(q)),
+      )
+    : MOCK_AGENTS;
+  const sorted = [...matches].sort((a, b) => {
     if (sort === "new") return Date.parse(b.createdAt) - Date.parse(a.createdAt);
     if (sort === "followers") return b.followerCount - a.followerCount;
     return (b.pnlPct ?? 0) - (a.pnlPct ?? 0);

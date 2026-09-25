@@ -1,11 +1,11 @@
 "use client";
 
 /**
- * Public agents grid: sort, client-side filter, infinite scroll.
+ * Public agents grid: sort, search, infinite scroll.
  *
- * The filter runs over loaded rows — `listPublicAgents` has no `query` parameter yet
- * (see the report's proposed additions), so searching deep into the archive needs a
- * server-side filter to be added.
+ * The search runs on the server (`listPublicAgents({ query })`: name, slug, tagline and
+ * the owner's handle), so it reaches agents that were never loaded. While the debounced
+ * request is in flight the loaded rows are filtered here, so typing answers at once.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -17,6 +17,9 @@ import { AgentGridCard } from "./agent-grid-card";
 import { matchesAgent, normalizeSearch } from "./agent-search";
 
 type Sort = "pnl" | "new" | "followers";
+
+/** Long enough that a word typed at speed is one request, short enough to feel live. */
+const SEARCH_DEBOUNCE_MS = 250;
 
 const SORTS: Array<{ id: Sort; label: string }> = [
   { id: "pnl", label: "Top PnL" },
@@ -31,6 +34,9 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
   const [cursor, setCursor] = useState(initial.nextCursor);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The search the loaded `items` answer. Until it catches up with `query`, the loaded
+  // rows are filtered here instead.
+  const [appliedQuery, setAppliedQuery] = useState("");
   const sentinel = useRef<HTMLDivElement>(null);
   // Only the newest request may write. A page of "Top PnL" landing after the switch to
   // "Newest" used to be appended to the new list and overwrite its cursor — one agent
@@ -39,7 +45,7 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
   const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(
-    async (nextSort: Sort, nextCursor: string | null, replace: boolean) => {
+    async (nextSort: Sort, nextCursor: string | null, replace: boolean, q: string) => {
       const id = ++requestRef.current;
       abortRef.current?.abort();
       const controller = new AbortController();
@@ -49,6 +55,7 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
       try {
         const params = new URLSearchParams({ sort: nextSort });
         if (nextCursor) params.set("cursor", nextCursor);
+        if (q) params.set("q", q);
         const response = await fetch(`/api/discover/agents?${params}`, { signal: controller.signal });
         if (!response.ok) throw new Error("Could not load agents");
         const page = (await response.json()) as Page<AgentCard>;
@@ -61,6 +68,7 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
           return [...current, ...page.items.filter((agent) => !seen.has(agent.id))];
         });
         setCursor(page.nextCursor);
+        setAppliedQuery(q);
       } catch {
         // Superseded (aborted or simply stale): the newer request owns the state.
         if (id !== requestRef.current) return;
@@ -74,13 +82,23 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  const trimmed = query.trim().slice(0, 64);
+
+  // Ask the server once typing pauses. Skipped when the loaded rows already answer it
+  // (the first render, or typing back to the last search).
+  useEffect(() => {
+    if (trimmed === appliedQuery) return;
+    const timer = window.setTimeout(() => void load(sort, null, true, trimmed), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [trimmed, appliedQuery, sort, load]);
+
   function changeSort(next: Sort) {
     if (next === sort) return;
     abortRef.current?.abort();
     setSort(next);
     setItems([]);
     setCursor(null);
-    void load(next, null, true);
+    void load(next, null, true, trimmed);
   }
 
   // Infinite scroll: fetch when the sentinel comes within a screen of the viewport.
@@ -89,20 +107,22 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
     if (!node || !cursor || loading) return;
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) void load(sort, cursor, false);
+        if (entry.isIntersecting) void load(sort, cursor, false, appliedQuery);
       },
       { rootMargin: "600px 0px" },
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [cursor, loading, sort, load]);
+  }, [cursor, loading, sort, load, appliedQuery]);
 
-  const filtering = query.trim().length > 0;
+  const filtering = trimmed.length > 0;
+  // Settled: the rows on screen are the server's answer to what is in the box.
+  const settled = trimmed === appliedQuery;
   const visible = useMemo(() => {
     const q = normalizeSearch(query);
-    if (!q) return items;
+    if (!q || settled) return items;
     return items.filter((agent) => matchesAgent(agent, q));
-  }, [items, query]);
+  }, [items, query, settled]);
 
   return (
     <section aria-labelledby="agents-heading">
@@ -120,7 +140,7 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
           value={query}
           onValueChange={setQuery}
           label="Search public agents"
-          placeholder="Search name, owner, model…"
+          placeholder="Search name, owner, tagline…"
           className="w-full sm:w-72"
         />
       </div>
@@ -153,9 +173,9 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
           title={filtering ? `Nothing matches “${query.trim()}”` : "No public agents yet"}
           description={
             filtering
-              ? cursor || loading
-                ? "The filter runs over what is loaded. Clear it, or scroll further to pull more of the archive in."
-                : "Every public agent is loaded and none match. Try a name, an owner's handle or a model."
+              ? !settled || loading
+                ? "Searching every public agent…"
+                : "No public agent's name, owner handle or tagline matches. Try a shorter word."
               : "Be the first to publish one. Every fill is public; the strategy behind it never is."
           }
           action={
@@ -201,7 +221,7 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
           </p>
           <button
             type="button"
-            onClick={() => void load(sort, cursor, false)}
+            onClick={() => void load(sort, cursor, false, appliedQuery)}
             className="mt-2 inline-flex h-8 items-center rounded-lg border border-border px-3 text-xs transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97] focus-ring"
           >
             Try again
@@ -217,6 +237,12 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
             <Loader2 className="size-3.5 animate-spin" aria-hidden />
             Loading more agents
           </span>
+        ) : filtering ? (
+          // A filtered list is not the list: "every public agent" under three cards read
+          // as if those three were all there is. Say what was searched, too.
+          visible.length > 0 && settled ? (
+            `${visible.length}${cursor ? "+" : ""} match${visible.length === 1 && !cursor ? "" : "es"}`
+          ) : null
         ) : !cursor && items.length > 0 ? (
           "That's every public agent."
         ) : null}

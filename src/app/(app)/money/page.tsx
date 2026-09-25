@@ -63,17 +63,20 @@ const NEW_AGENT_BUTTON = (
   </Link>
 );
 
-// Going live is a per-agent switch (each agent's settings), so a paper-only account is
-// sent to its agents, not to build another one.
-const GO_LIVE_BUTTON = (
-  <Link
-    href="/agents"
-    className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.97]"
-  >
-    Take an agent live
-    <ArrowRight aria-hidden className="size-4" />
-  </Link>
-);
+// Going live is a per-agent step, so a paper-only account is sent straight to the
+// go-live flow of its best paper record — the one most likely to be worth trusting —
+// rather than to a list with no go-live control on it.
+function GoLiveButton({ href }: { href: string }) {
+  return (
+    <Link
+      href={href}
+      className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.97]"
+    >
+      Take an agent live
+      <ArrowRight aria-hidden className="size-4" />
+    </Link>
+  );
+}
 
 export default async function MoneyPage() {
   const session = await getSession();
@@ -85,6 +88,11 @@ export default async function MoneyPage() {
   // Before anything is live, the costs worth explaining are the paper agents' — the
   // live totals would print $0.00 directly under a table that says otherwise.
   const costScope = hasLive ? "live" : "paper";
+  const bestPaper = summary.paper.reduce<(typeof summary.paper)[number] | null>(
+    (best, row) => (best === null || row.pnlUsd > best.pnlUsd ? row : best),
+    null,
+  );
+  const goLiveHref = bestPaper ? `/agents/${bestPaper.slug}/live` : "/agents";
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
@@ -93,7 +101,7 @@ export default async function MoneyPage() {
         <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
           {hasLive
             ? "Everything your live agents are worth, everything they have made, and everything it cost to make it."
-            : "What your agents are worth and what they cost to run. Live agents only — paper money is not counted."}
+            : "What your agents are worth and what they cost to run. Totals count live agents only."}
         </p>
       </header>
 
@@ -142,7 +150,7 @@ export default async function MoneyPage() {
                 ? "Your paper agents are below. Their P&L is real arithmetic on simulated fills, but none of it is counted here — this page only totals live books. Fund an agent and switch it to live when its record convinces you."
                 : "An agent is a prompt, a wallet and a schedule. Build one — it starts on paper, so the first mistake costs nothing — and this page fills in the day it goes live."
             }
-            action={hasAny ? GO_LIVE_BUTTON : NEW_AGENT_BUTTON}
+            action={hasAny ? <GoLiveButton href={goLiveHref} /> : NEW_AGENT_BUTTON}
           />
         )}
 

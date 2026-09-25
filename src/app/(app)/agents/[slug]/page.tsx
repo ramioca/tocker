@@ -15,6 +15,7 @@ import { TradesTable } from "@/components/agents/trades-table";
 import { PerformancePanel } from "@/components/agents/analytics";
 import { EquityChart } from "@/components/charts/equity-chart";
 import { accountPaused, agentBySlug, equitySeries, viewerSession } from "@/components/common/data-access";
+import { isAdminEmail } from "@/lib/admin";
 import { isLlmMock } from "@/lib/agent/mock-model";
 import { getDataSource } from "@/lib/data-sources/registry";
 import { getAgentStatus } from "@/server/queries/agent-status";
@@ -85,7 +86,12 @@ export default async function AgentPage({ params }: Params) {
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
-      <AgentHeader agent={agent} accountPaused={paused} runBlocker={runBlocker} />
+      <AgentHeader
+        agent={agent}
+        accountPaused={paused}
+        runBlocker={runBlocker}
+        isAdmin={agent.isOwner && isAdminEmail(session?.email)}
+      />
 
       <div className="mt-6 space-y-6">
         {/* Why it is not trading, above everything it is not trading with. Renders

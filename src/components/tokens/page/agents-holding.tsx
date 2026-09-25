@@ -64,8 +64,10 @@ export function AgentsHolding({ holders }: { holders: Holder[] }) {
                 ) : null}
               </span>
               <span className="flex shrink-0 flex-col items-end">
+                {/* Full values on every row: `compact` only shortens $10K and up, and one
+                    "$13.9K" above "$5,208.93" reads as two different units. */}
                 <span className="tnum text-xs text-muted-foreground">
-                  {formatUsd(holder.valueUsd, { compact: true })}
+                  {formatUsd(holder.valueUsd)}
                 </span>
                 <PnlText pct={holder.unrealizedPnlPct} dp={1} size="xs" />
               </span>

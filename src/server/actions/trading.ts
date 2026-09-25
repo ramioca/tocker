@@ -20,6 +20,7 @@ import { getSession } from "@/lib/auth";
 import { positionSizingSchema } from "@/lib/agent/config";
 import type { PositionSizingConfig } from "@/lib/trading/sizing";
 import { getAgentWallets, getPortfolio, toRiskPortfolio } from "@/lib/agent/portfolio";
+import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
 import { chargePlatformFee } from "@/lib/platform/fees";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
@@ -31,7 +32,7 @@ import { buildReceipt, saveReceipt, type TradeReceiptData } from "@/lib/trading/
 import { notifyFill } from "@/lib/notifications";
 import {
   decideProposal,
-  indicativePrice,
+  indicativeQuote,
   notifyAgentFollowers,
   requiresApproval,
   type ProposalDecision,
@@ -121,6 +122,17 @@ export async function previewTrade(input: PreviewTradeInput): Promise<ActionResu
   } catch (err) {
     // `resolveToken`'s own refusal is a sentence worth reading; a lookup or DB failure is not.
     console.error("[trading] resolveToken", err);
+    // The resolver's text names both chains and the raw chain id (the agent tools share
+    // it); a person pasting into the trade sheet gets one sentence for their chain.
+    if (err instanceof Error && err.message.startsWith("Could not resolve")) {
+      return fail(
+        `Couldn't find "${input.tokenAddress}" on ${input.chain === "solana" ? "Solana" : "Base"}. ${
+          input.chain === "solana"
+            ? "Paste the full mint — a symbol only works for a token Tocker has already seen."
+            : "Paste the 0x contract address."
+        }`,
+      );
+    }
     return fail(publicErrorMessage(err, "Could not look that token up right now. Try again in a minute."));
   }
 
@@ -140,7 +152,7 @@ export async function previewTrade(input: PreviewTradeInput): Promise<ActionResu
   };
   const verdict = riskGuard({ id: agent.id, mode: agent.mode, config }, toRiskPortfolio(portfolio), order, score);
 
-  const priceUsd = await indicativePrice(
+  const { priceUsd, venueFeeUsd } = await indicativeQuote(
     { id: agent.id, mode: agent.mode, wallets: await getAgentWallets(agent.id) },
     {
       chain: input.chain,
@@ -181,6 +193,7 @@ export async function previewTrade(input: PreviewTradeInput): Promise<ActionResu
       positionValueUsd: held?.valueUsd ?? null,
       isPaper: agent.mode === "paper",
       requiresApproval: requiresApproval(config),
+      fees: { tockerUsd: feeEnabled() ? platformFeeUsd() : 0, venueUsd: venueFeeUsd },
     },
   };
 }
@@ -241,6 +254,17 @@ export async function placeManualTrade(
   } catch (err) {
     // `resolveToken`'s own refusal is a sentence worth reading; a lookup or DB failure is not.
     console.error("[trading] resolveToken", err);
+    // The resolver's text names both chains and the raw chain id (the agent tools share
+    // it); a person pasting into the trade sheet gets one sentence for their chain.
+    if (err instanceof Error && err.message.startsWith("Could not resolve")) {
+      return fail(
+        `Couldn't find "${input.tokenAddress}" on ${input.chain === "solana" ? "Solana" : "Base"}. ${
+          input.chain === "solana"
+            ? "Paste the full mint — a symbol only works for a token Tocker has already seen."
+            : "Paste the 0x contract address."
+        }`,
+      );
+    }
     return fail(publicErrorMessage(err, "Could not look that token up right now. Try again in a minute."));
   }
   const quoteTokenId = await ensureQuoteToken(input.chain);

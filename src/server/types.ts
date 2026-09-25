@@ -129,6 +129,13 @@ export interface TradeRow {
   error: string | null;
   createdAt: string;
   filledAt: string | null;
+  /**
+   * What a filled sell booked on the average-cost basis (`closedSells`), and that as a
+   * percent of the cost it closed. Null on buys and on unfilled, failed or rejected rows,
+   * and wherever the query did not compute it.
+   */
+  realizedPnlUsd: number | null;
+  realizedPnlPct: number | null;
 }
 
 export interface EquityPoint {
@@ -617,4 +624,10 @@ export interface TradePreview {
   isPaper: boolean;
   /** True when this agent would turn the order into a proposal instead of a fill. */
   requiresApproval: boolean;
+  /**
+   * What this fill would cost, so the preview shows it before the receipt does.
+   * `tockerUsd` is 0 when the platform fee is off; `venueUsd` is null when the venue
+   * did not quote one.
+   */
+  fees: { tockerUsd: number; venueUsd: number | null };
 }

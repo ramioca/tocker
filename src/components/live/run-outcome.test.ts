@@ -38,6 +38,8 @@ function trade(overrides: Partial<TradeRow> = {}): TradeRow {
     error: null,
     createdAt: "2026-09-21T10:00:00.000Z",
     filledAt: null,
+    realizedPnlUsd: null,
+    realizedPnlPct: null,
     ...overrides,
   };
 }

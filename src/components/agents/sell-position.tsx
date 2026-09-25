@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
+import { formatPreviewFees, formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { placeManualTrade, previewTrade } from "@/server/actions/trading";
 import { floorCents, pctLabel, sliceText } from "@/components/trading/sell-amount";
 import { cn } from "@/lib/utils";
@@ -126,6 +126,11 @@ function SellPositionDialog({
     };
   }, [agentId, orderUsd, sellAll, valid, position.token.chain, position.token.address]);
 
+  // An unusable figure is an error, not a hint: it says so in the destructive colour and
+  // on the input itself, not only in grey under it.
+  const badAmount = !valid && amountText !== "";
+  const refused = valid && (Boolean(current?.error) || current?.data?.allowed === false);
+
   const sell = () =>
     start(async () => {
       const result = await placeManualTrade({
@@ -174,6 +179,8 @@ function SellPositionDialog({
               inputMode="decimal"
               autoFocus
               value={amountText}
+              aria-invalid={badAmount || undefined}
+              aria-describedby="sell-amount-status"
               onChange={(event) => setAmountText(event.target.value.replace(/[^0-9.]/g, ""))}
               className="tnum font-mono"
             />
@@ -183,6 +190,7 @@ function SellPositionDialog({
               <button
                 key={slice}
                 type="button"
+                aria-pressed={Math.abs(pct - slice) < 0.5}
                 onClick={() => setAmountText(sliceText(valueUsd, slice))}
                 className={cn(
                   "rounded-md border px-2 py-1 text-[11px] transition-colors duration-150 focus-ring",
@@ -196,7 +204,14 @@ function SellPositionDialog({
             ))}
           </div>
 
-          <p className="min-h-[2.5rem] text-xs leading-5 text-muted-foreground" aria-live="polite">
+          <p
+            id="sell-amount-status"
+            className={cn(
+              "min-h-[2.5rem] text-xs leading-5",
+              badAmount || refused ? "text-destructive" : "text-muted-foreground",
+            )}
+            aria-live="polite"
+          >
             {!valid
               ? amountText === ""
                 ? "Enter an amount."
@@ -209,6 +224,14 @@ function SellPositionDialog({
                     ? `${sellAll ? "Everything" : `${pctLabel(pct)} of the position`}${current.data.priceUsd !== null ? `, quoted at ${formatPriceUsd(current.data.priceUsd)}` : ""}. Sells right away — your click is the approval.`
                     : `Not allowed: ${current.data.reason ?? "the guard refused this size"}`}
           </p>
+          {valid && current?.data?.allowed && current.data.fees && formatPreviewFees(current.data.fees) ? (
+            <dl className="flex items-baseline justify-between gap-3 text-xs">
+              <dt className="shrink-0 text-muted-foreground">Fees</dt>
+              <dd className="tnum min-w-0 text-right font-mono break-words">
+                {formatPreviewFees(current.data.fees)}
+              </dd>
+            </dl>
+          ) : null}
         </div>
 
         <DialogFooter>
@@ -220,7 +243,7 @@ function SellPositionDialog({
             onClick={sell}
             disabled={pending || !valid || !current?.data || !current.data.allowed}
           >
-            {pending ? "Selling…" : sellAll ? "Sell everything" : `Sell ${valid ? formatUsd(orderUsd) : ""}`}
+            {pending ? "Selling…" : sellAll ? "Sell everything" : valid ? `Sell ${formatUsd(orderUsd)}` : "Sell"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatExact, formatPriceUsd, formatSignedPct, formatUsd } from "./format";
+import { formatExact, formatPreviewFees, formatPriceUsd, formatSignedPct, formatTokenAmount, formatUsd } from "./format";
 
 /**
  * The finding: `toPrecision(2)` returns exponential notation for anything below 1e-6, so
@@ -93,5 +93,26 @@ describe("formatExact", () => {
   it("names the year only when it is not this one", () => {
     expect(formatExact("2020-01-02T03:04:05Z", "UTC")).toBe("Jan 2, 2020, 3:04:05 AM UTC");
     expect(formatExact("not a date")).toBe("—");
+  });
+});
+
+describe("formatTokenAmount", () => {
+  it("prints the same fill the same way everywhere", () => {
+    expect(formatTokenAmount(314_465.408805)).toBe("314,465.41");
+    expect(formatTokenAmount(786_163.522)).toBe("786,163.52");
+    expect(formatTokenAmount(1.23456)).toBe("1.2346");
+    expect(formatTokenAmount(0.000123456)).toBe("0.0001235");
+    expect(formatTokenAmount(2_500_000)).toBe("2.5M");
+  });
+});
+
+describe("formatPreviewFees", () => {
+  it("totals both fees and names each", () => {
+    expect(formatPreviewFees({ tockerUsd: 0.1, venueUsd: 0.03 })).toBe("≈ $0.13 (Tocker $0.10 · venue $0.03)");
+  });
+
+  it("does not invent a venue fee nobody quoted", () => {
+    expect(formatPreviewFees({ tockerUsd: 0.1, venueUsd: null })).toBe("$0.10 Tocker · venue fee not quoted");
+    expect(formatPreviewFees({ tockerUsd: 0, venueUsd: null })).toBeNull();
   });
 });

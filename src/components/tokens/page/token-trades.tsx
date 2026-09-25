@@ -39,7 +39,7 @@ import {
 } from "@/components/ui/table";
 import { EmptyState } from "@/components/common/empty-state";
 import { RelativeTime } from "@/components/common/relative-time";
-import { formatTokenAmount, formatUsd } from "@/components/common/format";
+import { formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
 import type { TradeRow } from "@/server/types";
 import type { TradeReceiptData } from "@/db/schema";
@@ -79,8 +79,12 @@ export function TokenTrades({
   const anyReceipt = trades.some((trade) => receipts?.has(trade.id));
   const desktopColumns = anyReceipt ? 8 : 7;
   // Beside the holders list (lg+) the table gets ~600px, and a receipt column pushes eight
-  // columns past it. The token amount goes first: Value over Price already says it.
+  // columns past it. Amount and Price go there, and the score header shortens: Value
+  // already says what a fill was worth, and the receipt chip spells out the price.
   const amountCell = anyReceipt ? "hidden sm:table-cell lg:hidden" : "hidden sm:table-cell";
+  const priceCell = anyReceipt ? "hidden sm:table-cell lg:hidden" : "hidden sm:table-cell";
+  const shortScore = anyReceipt ? "sm:hidden lg:inline" : "sm:hidden";
+  const longScore = anyReceipt ? "max-sm:hidden lg:hidden" : "max-sm:hidden";
 
   return (
     <div className="overflow-x-auto rounded-xl border border-border/70">
@@ -91,11 +95,11 @@ export function TokenTrades({
             <TableHead className={CELL}>Agent</TableHead>
             <TableHead className={CELL}>Side</TableHead>
             <TableHead className={cn("text-right", amountCell)}>Amount</TableHead>
-            <TableHead className="hidden text-right sm:table-cell">Price</TableHead>
+            <TableHead className={cn("text-right", priceCell)}>Price</TableHead>
             <TableHead className={cn("text-right", CELL)}>Value</TableHead>
             <TableHead className={cn("text-right", CELL)}>
-              <span className="sm:hidden">Score</span>
-              <span className="max-sm:hidden">Entry score</span>
+              <span className={shortScore}>Score</span>
+              <span className={longScore}>Entry score</span>
             </TableHead>
             {anyReceipt ? (
               <TableHead className="hidden text-right sm:table-cell">Receipt</TableHead>
@@ -156,8 +160,8 @@ export function TokenTrades({
                   <TableCell className={cn("tnum text-right text-muted-foreground", amountCell)}>
                     {formatTokenAmount(trade.amountToken)}
                   </TableCell>
-                  <TableCell className="tnum hidden text-right text-muted-foreground sm:table-cell">
-                    {formatUsd(trade.priceUsd)}
+                  <TableCell className={cn("tnum text-right text-muted-foreground", priceCell)}>
+                    {formatPriceUsd(trade.priceUsd)}
                   </TableCell>
                   <TableCell className={cn("tnum text-right font-medium", CELL)}>
                     {formatUsd(trade.amountUsd)}

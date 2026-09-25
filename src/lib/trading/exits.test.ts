@@ -3,6 +3,7 @@ import {
   DUST_VALUE_USD,
   EXIT_PRIORITY,
   evaluateExits,
+  describeExit,
   describeExits,
   hasAnyExitRule,
   heldHours,
@@ -460,10 +461,18 @@ describe("rule helpers", () => {
     expect(liquidityText(null)).toBe("unknown");
   });
 
+  it("names the rule and prints cents", () => {
+    expect(describeExit({ reason: "take_profit", symbol: "BONK", amountUsd: 2140.64, unrealizedPnlPct: 91.5 })).toBe(
+      "Take profit: sold BONK for $2,140.64 (+91.5%)",
+    );
+    expect(describeExit({ reason: "max_hold", symbol: "WIF", amountUsd: 12 })).toBe("Max hold: sold WIF for $12.00");
+    expect(describeExit({ reason: "not_a_rule", symbol: "WIF", amountUsd: 12 })).toBe("Exit: sold WIF for $12.00");
+  });
+
   it("summarises a pass for the transcript", () => {
     expect(describeExits([])).toBe("No exit rules fired.");
     const p = position({ avgCostUsd: 1, markPriceUsd: 0.8, amountToken: 100 });
-    expect(describeExits(run({ stopLossPct: 15 }, [p]))).toBe("stop_loss → sold BONK ($80.00, −20.0%)");
+    expect(describeExits(run({ stopLossPct: 15 }, [p]))).toBe("Stop loss: sold BONK for $80.00 (−20.0%)");
   });
 });
 

@@ -57,7 +57,7 @@ export function AdminBalancesTable({ snapshot }: { snapshot: AdminBalancesSnapsh
             <Th sticky className="w-[1%]">
               Agent
             </Th>
-            <Th>Chain</Th>
+            <Th className="max-lg:hidden">Chain</Th>
             <Th>Address</Th>
             <Th numeric>USDC</Th>
             <Th numeric>Native</Th>
@@ -73,7 +73,7 @@ export function AdminBalancesTable({ snapshot }: { snapshot: AdminBalancesSnapsh
               <tr key={row.walletId} className="hover:bg-muted/25">
                 <Td sticky>
                   {/* The cap lives on this span, not the cell — a table cell ignores max-width.
-                      Under `lg` the Chain column is scrolled off, so the chain rides along
+                      Under `lg` the Chain column is hidden, so the chain rides along
                       under the name: every agent has two wallets, and the rows read as
                       duplicates without it. */}
                   <span className="flex max-w-[7.5rem] flex-col sm:max-w-[14rem] lg:flex-row lg:items-baseline">
@@ -92,7 +92,7 @@ export function AdminBalancesTable({ snapshot }: { snapshot: AdminBalancesSnapsh
                     </span>
                   </span>
                 </Td>
-                <Td muted className="font-sans text-xs">
+                <Td muted className="font-sans text-xs max-lg:hidden">
                   {chainLabel(row.chain)}
                 </Td>
                 <Td>

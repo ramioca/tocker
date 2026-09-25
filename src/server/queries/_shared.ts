@@ -13,6 +13,7 @@ import {
   type Db,
 } from "@/db";
 import type { TradeScoreSnapshot } from "@/db/schema";
+import { closedSells, type AnalyticsFill } from "@/lib/analytics";
 import { toNum, toNumOrNull } from "@/lib/money";
 import type {
   AgentCard,
@@ -197,7 +198,65 @@ export function toTradeRow(
     error: visibleError(row.error, viewer.isOwner),
     createdAt: row.createdAt.toISOString(),
     filledAt: iso(row.filledAt),
+    realizedPnlUsd: null,
+    realizedPnlPct: null,
   };
+}
+
+/**
+ * Fill in what each filled sell booked, on the same average-cost replay (`closedSells`)
+ * that /money and the agent's stat cards read, so a feed card cannot disagree with
+ * them. Paper and live fills are separate books. Everything else keeps its nulls.
+ */
+export async function attachRealizedPnl<T extends TradeRow>(db: Db, rows: T[]): Promise<T[]> {
+  const agentIds = [
+    ...new Set(rows.filter((r) => r.side === "sell" && r.status === "filled").map((r) => r.agentId)),
+  ];
+  if (agentIds.length === 0) return rows;
+
+  const fills = await db
+    .select()
+    .from(trades)
+    .where(and(inArray(trades.agentId, agentIds), eq(trades.status, "filled")));
+
+  const books = new Map<string, AnalyticsFill[]>();
+  for (const row of fills) {
+    const key = `${row.agentId}:${row.isPaper ? "paper" : "live"}`;
+    const list = books.get(key) ?? [];
+    list.push({
+      id: row.id,
+      tokenId: row.tokenId,
+      chain: row.chain as Chain,
+      side: row.side,
+      amountToken: toNum(row.amountToken),
+      amountUsd: toNum(row.amountUsd),
+      priceUsd: toNum(row.priceUsd),
+      feeUsd: toNum(row.feeUsd),
+      status: row.status,
+      origin: row.origin,
+      exitReason: (row.exitReason as TradeRow["exitReason"]) ?? null,
+      entryScore: null,
+      createdAt: row.createdAt,
+    });
+    books.set(key, list);
+  }
+
+  const bySell = new Map<string, { usd: number; pct: number | null }>();
+  for (const book of books.values()) {
+    for (const sell of closedSells(book)) {
+      bySell.set(sell.sellId, {
+        usd: sell.realizedPnlUsd,
+        pct: sell.costBasisUsd > 0 ? (sell.realizedPnlUsd / sell.costBasisUsd) * 100 : null,
+      });
+    }
+  }
+
+  for (const row of rows) {
+    const hit = row.side === "sell" && row.status === "filled" ? bySell.get(row.id) : undefined;
+    row.realizedPnlUsd = hit?.usd ?? null;
+    row.realizedPnlPct = hit?.pct ?? null;
+  }
+  return rows;
 }
 
 /** Load the tokens referenced by a set of trades, keyed by token id. */

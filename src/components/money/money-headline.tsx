@@ -52,7 +52,7 @@ export function MoneyHeadline({ summary }: { summary: MoneySummary }) {
   const { totals, today, stale } = summary;
   const costParts = [
     `${formatUsd(totals.feesUsd)} Tocker fees`,
-    `${formatUsd(totals.dataSpendUsd)} x402 data`,
+    `${formatUsd(totals.dataSpendUsd)} market data`,
     `${formatUsd(totals.modelSpendUsd)} model tokens (estimate)`,
   ];
 
@@ -79,7 +79,7 @@ export function MoneyHeadline({ summary }: { summary: MoneySummary }) {
         </p>
         <p className="mt-1 max-w-xl text-xs text-muted-foreground">
           All-time P&amp;L across {totals.agentCount} live agent{totals.agentCount === 1 ? "" : "s"}, minus every
-          Tocker fee, x402 payment and estimated model token. Paper agents are listed below but counted in nothing
+          Tocker fee, market-data payment and estimated model token. Paper agents are listed below but counted in nothing
           here.
         </p>
         {stale ? (

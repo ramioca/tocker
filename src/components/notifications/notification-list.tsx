@@ -18,7 +18,7 @@ import type { TradeReceiptData } from "@/db/schema";
 import { formatAgo } from "@/components/social-common/format";
 import { ProposalCard } from "@/components/agents/proposals/proposal-card";
 import { TradeReceiptRow } from "@/components/trading";
-import { dayBucket } from "./day-bucket";
+import { clockTime, dayBucket, fullDateTime } from "./day-bucket";
 import { NotificationLink } from "./notification-link";
 
 const ICONS: Record<string, typeof Bell> = {
@@ -140,6 +140,8 @@ export function NotificationList({
                     <Row
                       row={row}
                       now={now}
+                      timeZone={timeZone}
+                      today={group.label === "Today"}
                       receipt={receipts?.get(tradeIdFrom(row.href) ?? "") ?? null}
                       markRead={markRead}
                     />
@@ -173,11 +175,16 @@ function rowBody(row: NotificationRow, receipt: TradeReceiptData | null): string
 function Row({
   row,
   now,
+  timeZone,
+  today,
   receipt = null,
   markRead,
 }: {
   row: NotificationRow;
   now: number;
+  timeZone: string;
+  /** Under "Today" the age reads best; under a past day's heading, the clock does. */
+  today: boolean;
   receipt?: TradeReceiptData | null;
   markRead?: (id: string) => Promise<{ ok: boolean }>;
 }) {
@@ -235,9 +242,10 @@ function Row({
         <time
           id={ids.time}
           dateTime={row.createdAt}
+          title={fullDateTime(row.createdAt, timeZone)}
           className="font-mono text-[11px] tabular-nums text-muted-foreground"
         >
-          {formatAgo(row.createdAt, now)}
+          {today ? formatAgo(row.createdAt, now) : clockTime(row.createdAt, timeZone)}
         </time>
         {unread ? (
           <>

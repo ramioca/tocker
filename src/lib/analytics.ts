@@ -89,6 +89,8 @@ export interface ClosedSell {
   tokenId: string;
   chain: Chain;
   realizedPnlUsd: number;
+  /** Average cost of the tokens this sell closed (fees in), so a return can be a percent. */
+  costBasisUsd: number;
   origin: TradeOrigin;
   exitReason: ExitReason | null;
   closedAt: string;
@@ -220,11 +222,14 @@ export function closedSells(fills: readonly AnalyticsFill[]): ClosedSell[] {
     });
     book.set(fill.tokenId, res.position);
     if (fill.side !== "sell" || res.filledAmountToken <= 0) continue;
+    // realized = qty·price − qty·avgCost − fee, so the cost of what was closed is the rest.
+    const costBasisUsd = res.filledAmountToken * safe(fill.priceUsd) - safe(fill.feeUsd) - res.realizedDeltaUsd;
     out.push({
       sellId: fill.id,
       tokenId: fill.tokenId,
       chain: fill.chain,
       realizedPnlUsd: res.realizedDeltaUsd,
+      costBasisUsd,
       origin: fill.origin,
       exitReason: fill.exitReason,
       closedAt: new Date(ms(fill.createdAt)).toISOString(),
@@ -320,6 +325,34 @@ export function calibrationSentence(
   const subject = owner ? "Your" : "This agent's";
   if (best.band === worst.band) return `${subject} ${phrase(best, " picks")}.`;
   return `${subject} ${phrase(best, " picks")}; ${phrase(worst)}.`;
+}
+
+/** Below this many round trips a band's average is noise, not advice. */
+const ADVICE_MIN_TRADES = 5;
+
+/**
+ * What the owner can do about the calibration chart, or null when there is nothing
+ * honest to say. The score floor only cuts from below, so it is the answer only when
+ * the lowest band is the one losing; when a higher band does worse than a lower one,
+ * no floor fixes that and the advice says so rather than "raise or lower accordingly".
+ */
+export function calibrationAdvice(bands: readonly ScoreBandStat[]): string | null {
+  const order = BANDS.map((b) => b.band);
+  const populated = bands
+    .filter((b) => b.trades >= ADVICE_MIN_TRADES && b.avgReturnPct !== null)
+    .sort((a, b) => order.indexOf(a.band) - order.indexOf(b.band));
+  if (populated.length < 2) return null;
+
+  const lowest = populated[0];
+  if (populated.every((b) => b === lowest || b.avgReturnPct! > lowest.avgReturnPct!)) {
+    const ceiling = BANDS.find((b) => b.band === lowest.band)!.max - 1;
+    return `Consider raising the score floor above ${ceiling}: it is the one number that decides what this agent may buy, and its ${lowest.band} picks did worst.`;
+  }
+  const inverted = populated.some((b, i) => populated.slice(i + 1).some((higher) => higher.avgReturnPct! < b.avgReturnPct!));
+  if (inverted) {
+    return "Higher scores are not doing better for this strategy; the floor won’t fix that. Revisit the strategy or its data sources.";
+  }
+  return null;
 }
 
 function signedPct(value: number): string {

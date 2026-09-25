@@ -8,6 +8,7 @@ import {
   fmtUsd,
   pctChange,
   signed,
+  splitPnl,
   toNum,
   toNumOrNull,
   toNumeric,
@@ -141,5 +142,24 @@ describe("direction / pctChange / clamp / compactNumber", () => {
     expect(compactNumber(1500)).toBe("1.5K");
     expect(compactNumber(-2_500_000)).toBe("-2.5M");
     expect(compactNumber(999)).toBe("999");
+  });
+});
+
+describe("splitPnl", () => {
+  it("wells always add up to equity − basis, fees included", () => {
+    // $10k paper book, $2k of positions that cost $1.8k, and $12 of fees the ledger never saw.
+    const split = splitPnl({ equityUsd: 10_188, cashUsd: 8_188, basisUsd: 10_000, costBasisUsd: 1_800 });
+    expect(split.pnlUsd).toBe(188);
+    expect(split.unrealizedPnlUsd).toBe(200);
+    expect(split.realizedPnlUsd).toBe(-12);
+    expect(split.realizedPnlUsd + split.unrealizedPnlUsd).toBe(split.pnlUsd);
+  });
+
+  it("puts everything in realised before the first mark", () => {
+    expect(splitPnl({ equityUsd: 10_000, cashUsd: null, basisUsd: 10_000, costBasisUsd: 0 })).toEqual({
+      pnlUsd: 0,
+      realizedPnlUsd: 0,
+      unrealizedPnlUsd: 0,
+    });
   });
 });

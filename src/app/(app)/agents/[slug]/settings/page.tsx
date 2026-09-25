@@ -37,6 +37,8 @@ export default async function AgentSettingsPage({ params }: Params) {
   if (!agent.isOwner) {
     return (
       <div className="mx-auto w-full max-w-2xl px-4 py-10 sm:px-6">
+        {/* EmptyState's title is a <p>; the page still needs a heading to navigate by. */}
+        <h1 className="sr-only">{agent.name} settings</h1>
         <EmptyState
           title="These settings are not yours"
           description={`${agent.name} belongs to @${agent.owner.handle}. You can follow it and read its record, but only its owner can change how it trades.`}
@@ -65,6 +67,7 @@ export default async function AgentSettingsPage({ params }: Params) {
     llmKeys(session.userId),
     accountPaused(session.userId),
   ]);
+  const isAdmin = isAdminEmail(session.email);
   const hasRealWallets = balances.some((wallet) => !wallet.walletId.startsWith("paper_"));
 
   return (
@@ -101,7 +104,7 @@ export default async function AgentSettingsPage({ params }: Params) {
       */}
       <div className="mt-6 space-y-6">
         <HashScroll />
-        <MoneyStrip agent={agent} initialBalances={balances} />
+        <MoneyStrip agent={agent} initialBalances={balances} isAdmin={isAdmin} />
 
         <AgentSettingsForm
           agent={agent}
@@ -109,11 +112,11 @@ export default async function AgentSettingsPage({ params }: Params) {
           sources={sources}
           llmKeys={keys}
           accountPaused={paused}
-          isAdmin={isAdminEmail(session.email)}
+          isAdmin={isAdmin}
         />
 
         <div id="wallets" className="scroll-mt-20">
-          <WalletsCard agentId={agent.id} agentName={agent.name} initialBalances={balances} />
+          <WalletsCard agentId={agent.id} agentName={agent.name} initialBalances={balances} isAdmin={isAdmin} />
         </div>
         <div id="budget" className="scroll-mt-20">
           <BudgetCard
@@ -123,7 +126,7 @@ export default async function AgentSettingsPage({ params }: Params) {
           />
         </div>
         <div id="mode" className="scroll-mt-20">
-          <GoLiveCard agent={agent} />
+          <GoLiveCard agent={agent} isAdmin={isAdmin} />
         </div>
         <div id="withdraw" className="scroll-mt-20">
           <WithdrawForm agent={agent} balances={balances} />

@@ -6,6 +6,7 @@ import { CircleStop, Play } from "lucide-react";
 import { toast } from "sonner";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { RelativeTime } from "@/components/common/relative-time";
+import { MORPH_FOCUS } from "@/components/common/focus";
 import { setTradingPausedAction } from "@/server/actions/security";
 import { cn } from "@/lib/utils";
 
@@ -137,6 +138,9 @@ export function KillSwitchCard({ paused: initialPaused, pausedAt }: { paused: bo
             icon={<CircleStop className="size-3.5" />}
             className={cn(
               "w-full justify-center sm:w-auto",
+              // The Spectrum default is a 1px grey hairline; this is the control reached
+              // for in a hurry, so it gets the app's full ring.
+              MORPH_FOCUS,
               pausing &&
                 "border-border bg-muted text-muted-foreground dark:border-border dark:bg-muted dark:text-muted-foreground",
             )}

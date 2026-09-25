@@ -11,11 +11,12 @@ import {
   positions,
   tokens,
   trades,
+  users,
   wallets,
   x402Payments,
 } from "@/db";
 import { DATA_SOURCES, toDataSourceInfo } from "@/lib/data-sources/registry";
-import { toNum } from "@/lib/money";
+import { splitPnl, toNum } from "@/lib/money";
 import { computeEquity, exitDistances, pnlOverWindow, unrealized, winRate, WINDOW_DAYS } from "@/lib/pnl";
 import type {
   AgentCard,
@@ -231,6 +232,12 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
   const pnlUsd = basisUsd === null ? card.pnlUsd : equityUsd - basisUsd;
   const pnlPct =
     basisUsd === null || pnlUsd === null ? card.pnlPct : basisUsd === 0 ? 0 : (pnlUsd / Math.abs(basisUsd)) * 100;
+  // Realised + open must add up to that headline, and to the same split `/home` and
+  // `/money` print. Without a basis there is no headline to split; keep the ledger's.
+  const split =
+    basisUsd === null
+      ? null
+      : splitPnl({ equityUsd, cashUsd, basisUsd, costBasisUsd: equitySnapshot.costBasisUsd });
 
   return {
     ...card,
@@ -256,8 +263,8 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
     llmKeyId: isOwner ? agent.llmKeyId : null,
     stats: {
       winRate: wr.rate,
-      realizedPnlUsd: wr.realizedPnlUsd,
-      unrealizedPnlUsd: equitySnapshot.unrealizedPnlUsd,
+      realizedPnlUsd: split?.realizedPnlUsd ?? wr.realizedPnlUsd,
+      unrealizedPnlUsd: split?.unrealizedPnlUsd ?? equitySnapshot.unrealizedPnlUsd,
       dataSpendUsd: toNum(spendRow[0]?.total ?? "0"),
       runCount: Number(runCountRow[0]?.n ?? 0),
     },
@@ -318,11 +325,27 @@ export async function listPublicAgents(opts?: {
   cursor?: string | null;
   limit?: number;
   sort?: "new" | "pnl" | "followers";
+  /** Matches name, slug, tagline or the owner's handle, as Discover's search box does. */
+  query?: string;
 }): Promise<Page<AgentCard>> {
   const db = await getDb();
   const limit = pageSize(opts?.limit);
   const sort = opts?.sort ?? "new";
-  const publicFilter = and(eq(agents.isPublic, true), inArray(agents.status, ["active", "paused"]));
+  // `%` and `_` are ilike wildcards; a search for "50%" means the characters.
+  const q = (opts?.query ?? "").replace(/[%_\\]/g, "").trim();
+  const like = `%${q}%`;
+  const publicFilter = and(
+    eq(agents.isPublic, true),
+    inArray(agents.status, ["active", "paused"]),
+    q.length > 0
+      ? or(
+          ilike(agents.name, like),
+          ilike(agents.slug, like),
+          ilike(agents.tagline, like),
+          inArray(agents.ownerId, db.select({ id: users.id }).from(users).where(ilike(users.handle, like))),
+        )
+      : undefined,
+  );
 
   if (sort === "new") {
     const cursor = decodeCursor(opts?.cursor);
@@ -425,8 +448,16 @@ async function summarizeRuns(rows: Array<typeof agentRuns.$inferSelect>, isOwner
       .from(trades)
       .where(and(inArray(trades.runId, ids), eq(trades.status, "filled")))
       .groupBy(trades.runId),
+    // Steps are what the transcript shows: one row per tool call, plus the guardian's
+    // standalone exit row and a run-level failure. Thoughts, results and messages are
+    // stored rows too, and counting them printed "22 steps" over an 8-row transcript.
     db
-      .select({ runId: agentRunSteps.runId, n: sql<number>`count(*)::int` })
+      .select({
+        runId: agentRunSteps.runId,
+        n: sql<number>`(count(*) filter (where ${agentRunSteps.kind} = 'tool_call'
+          or (${agentRunSteps.kind} = 'tool_result' and ${agentRunSteps.toolName} = 'guardian')
+          or (${agentRunSteps.kind} = 'error' and ${agentRunSteps.toolName} is null)))::int`,
+      })
       .from(agentRunSteps)
       .where(inArray(agentRunSteps.runId, ids))
       .groupBy(agentRunSteps.runId),

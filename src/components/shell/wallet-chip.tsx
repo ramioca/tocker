@@ -132,7 +132,7 @@ export function WalletChip() {
           />
         </PopoverTrigger>
 
-        <PopoverContent align="end" className="glass-heavy w-80 space-y-3 rounded-2xl border border-border/60 p-4">
+        <PopoverContent align="end" collisionPadding={16} className="glass-heavy w-[calc(100vw-2rem)] sm:w-80 space-y-3 rounded-2xl border border-border/60 p-4">
           <div>
             {/* The panel's name: without it the dialog is announced as just "dialog". */}
             <PopoverTitle className="text-[11px] font-normal text-muted-foreground">Cash</PopoverTitle>

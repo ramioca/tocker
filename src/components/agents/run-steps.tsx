@@ -208,7 +208,26 @@ export function RunSteps({
       }
     }
 
-    return { transcript, reasoning, payments, digest: narrateRun(steps) };
+    // The model sometimes calls `finish` twice in a row with the same summary; one
+    // "Finishing" row says it, two read as a stutter. Keep the first and stretch its end.
+    const merged: TranscriptStep[] = [];
+    for (const row of transcript) {
+      const prev = merged[merged.length - 1];
+      if (
+        prev &&
+        prev.tool === "finish" &&
+        row.tool === "finish" &&
+        prev.call === row.call &&
+        prev.detail === row.detail
+      ) {
+        prev.completedAt = Math.max(prev.completedAt ?? prev.startedAt, row.completedAt ?? row.startedAt);
+        if (row.status === "error") prev.status = "error";
+        continue;
+      }
+      merged.push(row);
+    }
+
+    return { transcript: merged, reasoning, payments, digest: narrateRun(steps) };
   }, [steps, status]);
 
   if (steps.length === 0) {

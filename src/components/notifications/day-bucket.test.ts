@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayBucket, resolveTimeZone } from "./day-bucket";
+import { clockTime, dayBucket, fullDateTime, resolveTimeZone } from "./day-bucket";
 
 // Fri Sep 25 2026, 01:10 UTC — Thursday 18:10 in Los Angeles.
 const NOW = Date.parse("2026-09-25T01:10:00Z");
@@ -37,5 +37,13 @@ describe("resolveTimeZone", () => {
     expect(resolveTimeZone("")).toBe("UTC");
     expect(resolveTimeZone("Mars/Olympus_Mons")).toBe("UTC");
     expect(resolveTimeZone("'; drop table")).toBe("UTC");
+  });
+});
+
+describe("clockTime", () => {
+  it("reads the clock in the viewer's zone", () => {
+    expect(clockTime("2026-09-23T15:06:00Z")).toBe("3:06 PM");
+    expect(clockTime("2026-09-23T15:06:00Z", "America/Los_Angeles")).toBe("8:06 AM");
+    expect(fullDateTime("2026-09-23T15:06:00Z", "America/Los_Angeles")).toBe("Wed, Sep 23, 2026, 8:06 AM");
   });
 });

@@ -709,14 +709,28 @@ export async function indicativePrice(
   executorAgent: ExecutorAgent,
   request: TradeRequest,
 ): Promise<number | null> {
+  return (await indicativeQuote(executorAgent, request)).priceUsd;
+}
+
+/**
+ * {@link indicativePrice} plus the venue's own fee for this size, so a preview can show
+ * the cost before the receipt does. The fee is null when nothing quoted it: the free
+ * price feed knows no fee, and the Base executor does not price its gas up front.
+ */
+export async function indicativeQuote(
+  executorAgent: ExecutorAgent,
+  request: TradeRequest,
+): Promise<{ priceUsd: number | null; venueFeeUsd: number | null }> {
   try {
     const executor = await getExecutor(executorAgent, request.chain);
     const quote = await executor.quote(request);
-    if (quote.priceUsd > 0) return quote.priceUsd;
+    if (quote.priceUsd > 0) {
+      return { priceUsd: quote.priceUsd, venueFeeUsd: quote.venue === "privy-base" ? null : quote.feeUsd };
+    }
   } catch {
     // fall through to the free feed
   }
-  return getPriceUsd(request.chain, request.tokenAddress);
+  return { priceUsd: await getPriceUsd(request.chain, request.tokenAddress), venueFeeUsd: null };
 }
 
 /** How many proposals are waiting on this user right now, across every agent they own. */

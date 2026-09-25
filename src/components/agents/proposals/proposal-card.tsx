@@ -195,9 +195,17 @@ export function ProposalCard({
 
       {/* `mt-auto`: in the compare grid the action rows line up across cards even when
           one rationale runs longer than another. */}
-      <footer className="mt-auto flex flex-wrap items-center justify-end gap-2 pt-4">
+      {/* Up to three cards sit side by side, so every control names the trade it decides —
+          "Reject" three times over tells a screen reader or voice control nothing. The group
+          label carries it to Approve too, whose primitive takes its label from its text. */}
+      <footer
+        role="group"
+        aria-label={`Decide: ${proposal.side} ${formatUsd(requestedUsd)} of ${proposal.token.symbol}`}
+        className="mt-auto flex flex-wrap items-center justify-end gap-2 pt-4"
+      >
         <button
           type="button"
+          aria-label={`Reject: ${proposal.side} ${formatUsd(requestedUsd)} of ${proposal.token.symbol}`}
           onClick={() => void decide("rejected").catch(() => undefined)}
           disabled={pending !== null}
           aria-busy={pending === "rejected" || undefined}
@@ -221,6 +229,7 @@ export function ProposalCard({
             successLabel="Filled"
             errorLabel="Refused"
             onAction={() => decide("approved")}
+            ariaLabel={`Approve: ${proposal.side} ${formatUsd(requestedUsd)} of ${proposal.token.symbol}`}
           >
             Approve
           </MorphButton>
@@ -231,6 +240,7 @@ export function ProposalCard({
             disabled={blocked || pending === "rejected"}
             duration={1_400}
             label="Hold to approve"
+            ariaLabel={`Approve: ${proposal.side} ${formatUsd(requestedUsd)} of ${proposal.token.symbol}. Press and hold to confirm`}
             confirmedLabel="Approving…"
             resetDelay={0}
             icon={<ArrowUpRight size={12} strokeWidth={2} />}

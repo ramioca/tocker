@@ -310,12 +310,23 @@ function ReviewRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
-function FundFallback({ agentName, wallets }: Omit<FundProps, "agentId">) {
+function FundFallback({
+  agentName,
+  wallets,
+  isAdmin,
+}: Omit<FundProps, "agentId"> & { isAdmin: boolean }) {
   return (
     <div className="space-y-3">
+      {/* The env var is the fix only an operator can make; to everyone else it is noise. */}
       <p className="rounded-xl border border-border/70 bg-card/40 p-3 text-sm leading-relaxed text-muted-foreground">
-        In-app funding needs Privy configured (<code className="font-mono">NEXT_PUBLIC_PRIVY_APP_ID</code>
-        ). Until then, send USDC to {agentName}&apos;s addresses from any wallet — the agent trades
+        {isAdmin ? (
+          <>
+            In-app funding needs Privy configured (<code className="font-mono">NEXT_PUBLIC_PRIVY_APP_ID</code>).
+          </>
+        ) : (
+          <>In-app funding isn&apos;t switched on for this deployment yet.</>
+        )}{" "}
+        Until then, send USDC to {agentName}&apos;s addresses from any wallet — the agent trades
         from whatever lands there.
       </p>
       <ul className="space-y-2">
@@ -343,7 +354,8 @@ export function FundAgentDrawer({
   agentName,
   wallets,
   trigger,
-}: FundProps & { trigger?: React.ReactNode }) {
+  isAdmin = false,
+}: FundProps & { trigger?: React.ReactNode; isAdmin?: boolean }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -372,7 +384,7 @@ export function FundAgentDrawer({
           {PRIVY_CONFIGURED ? (
             <FundBody agentId={agentId} agentName={agentName} wallets={wallets} />
           ) : (
-            <FundFallback agentName={agentName} wallets={wallets} />
+            <FundFallback agentName={agentName} wallets={wallets} isAdmin={isAdmin} />
           )}
         </div>
       </SheetContent>

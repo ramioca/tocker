@@ -36,6 +36,8 @@ export interface MorphButtonProps {
   size?: "sm" | "md" | "lg"
   /** Disables pointer and keyboard interaction */
   disabled?: boolean
+  /** Accessible name; defaults to the children when they are a string */
+  ariaLabel?: string
   className?: string
 }
 
@@ -176,6 +178,7 @@ export function MorphButton({
   resetDelay = DEFAULT_RESET_DELAY,
   size = "md",
   disabled = false,
+  ariaLabel,
   className,
 }: MorphButtonProps) {
   const shouldReduceMotion = useReducedMotion()
@@ -274,7 +277,7 @@ export function MorphButton({
       disabled={disabled}
       aria-disabled={!interactive || undefined}
       aria-busy={state === "loading" || undefined}
-      aria-label={typeof children === "string" ? children : undefined}
+      aria-label={ariaLabel ?? (typeof children === "string" ? children : undefined)}
       style={{ borderRadius: 999 }}
       whileTap={interactive && !shouldReduceMotion ? { scale: 0.97 } : undefined}
       animate={

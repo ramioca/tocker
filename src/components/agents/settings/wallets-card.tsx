@@ -101,10 +101,12 @@ export function WalletsCard({
   agentId,
   agentName,
   initialBalances,
+  isAdmin = false,
 }: {
   agentId: string;
   agentName: string;
   initialBalances?: WalletBalance[];
+  isAdmin?: boolean;
 }) {
   const { data, isPending } = useWalletBalances(agentId, initialBalances);
   const { data: intents } = useFundingIntents(agentId);
@@ -122,7 +124,7 @@ export function WalletsCard({
         <h2 className="text-sm font-medium">Agent wallets</h2>
         {wallets.length > 0 ? (
           <div className="ml-auto">
-            <FundAgentDrawer agentId={agentId} agentName={agentName} wallets={wallets} />
+            <FundAgentDrawer agentId={agentId} agentName={agentName} wallets={wallets} isAdmin={isAdmin} />
           </div>
         ) : null}
       </div>

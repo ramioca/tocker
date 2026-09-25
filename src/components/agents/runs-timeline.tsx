@@ -91,12 +91,13 @@ function RunRow({
             </span>
             <span className="tnum mt-0.5 block font-mono text-[11px] text-muted-foreground sm:hidden">
               {plural(run.tradeCount, "trade")}
-              {refused > 0 ? ` · ${refused} refused` : null} · {formatUsd(run.dataSpendUsd)}
+              {refused > 0 ? ` · ${refused} refused` : null} ·{" "}
+              <span title="x402 data spend">{formatUsd(run.dataSpendUsd)} data</span>
             </span>
           </span>
           {/* Fixed columns, right-aligned, so the figures scan down the list; an
               auto-width group started each row's numbers at a different x. */}
-          <span className="hidden shrink-0 font-mono text-[11px] text-muted-foreground sm:grid sm:grid-cols-[4.25rem_4.5rem_3.25rem_3.5rem] sm:justify-items-end sm:gap-x-3">
+          <span className="hidden shrink-0 font-mono text-[11px] text-muted-foreground sm:grid sm:grid-cols-[4.25rem_4.5rem_4.5rem_3.5rem] sm:justify-items-end sm:gap-x-3">
             <span className="tnum">{plural(run.stepCount, "step")}</span>
             {/* Refusals (owner-only; null for anyone else) stack under the count, so the
                 column keeps its width and the figures still line up down the list. */}
@@ -108,7 +109,9 @@ function RunRow({
             ) : (
               <span className="tnum">{plural(run.tradeCount, "trade")}</span>
             )}
-            <span className="tnum">{formatUsd(run.dataSpendUsd)}</span>
+            <span className="tnum" title="x402 data spend">
+              {formatUsd(run.dataSpendUsd)} data
+            </span>
             {elapsed !== null ? <span className="tnum">{formatDuration(elapsed)}</span> : <span />}
           </span>
           <RelativeTime iso={run.createdAt} className="w-14 shrink-0 text-right text-[11px]" />

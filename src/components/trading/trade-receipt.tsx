@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ArrowUpRight, ReceiptText, TriangleAlert } from "lucide-react";
 import { Address } from "@/components/common/address";
-import { formatAbsolute, formatPriceUsd, formatUsd } from "@/components/common/format";
+import { formatAbsolute, formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import {
@@ -68,7 +68,8 @@ function SlippageValue({ receipt, className }: { receipt: TradeReceiptData; clas
 
 function ExplorerLink({ receipt, className }: { receipt: TradeReceiptData; className?: string }) {
   if (receipt.simulated || !isTrustedExplorerUrl(receipt.explorerUrl)) {
-    return <span className={cn("tnum font-mono text-muted-foreground", className)}>{SIMULATED_FILL_TEXT}</span>;
+    // Words, not a hash, so sans: the monospace belongs to the numbers beside it.
+    return <span className={cn("text-muted-foreground", className)}>{SIMULATED_FILL_TEXT}</span>;
   }
   return (
     <a
@@ -91,7 +92,9 @@ function ExplorerLink({ receipt, className }: { receipt: TradeReceiptData; class
 /**
  * One line: venue, quoted → filled, slippage, fees, and the hash or the simulated note.
  * Wraps on narrow screens rather than scrolling, because a single line of execution
- * facts that you have to scroll is a line nobody reads.
+ * facts that you have to scroll is a line nobody reads. The gap separates the items,
+ * not a "·", which was left dangling at the end of a line whenever the row wrapped.
+ * Only the numbers are monospace, so the row reads as part of the card it sits in.
  */
 export function TradeReceiptRow({
   receipt,
@@ -102,21 +105,26 @@ export function TradeReceiptRow({
 }) {
   if (!receipt) return null;
   return (
-    <div
-      className={cn(
-        "tnum flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground",
-        className,
-      )}
-    >
+    <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground", className)}>
       <span className="text-foreground/80">{receipt.venueLabel}</span>
-      <span aria-hidden className="text-border">
-        ·
-      </span>
-      <span>
-        {formatPriceUsd(receipt.quotedPriceUsd)} → <span className="text-foreground">{formatPriceUsd(receipt.filledPriceUsd)}</span>
-      </span>
-      <SlippageValue receipt={receipt} />
-      {receipt.totalFeeUsd > 0 ? <span>{formatUsd(receipt.totalFeeUsd)} fees</span> : null}
+      {receipt.simulated ? (
+        // A paper fill is the quote by construction, so "X → X at the quote" said nothing.
+        <span>
+          filled at <span className="tnum font-mono text-foreground">{formatPriceUsd(receipt.filledPriceUsd)}</span>
+        </span>
+      ) : (
+        <>
+          <span className="tnum font-mono">
+            {formatPriceUsd(receipt.quotedPriceUsd)} → <span className="text-foreground">{formatPriceUsd(receipt.filledPriceUsd)}</span>
+          </span>
+          <SlippageValue receipt={receipt} />
+        </>
+      )}
+      {receipt.totalFeeUsd > 0 ? (
+        <span>
+          <span className="tnum font-mono">{formatUsd(receipt.totalFeeUsd)}</span> venue fees
+        </span>
+      ) : null}
       <ExplorerLink receipt={receipt} />
     </div>
   );
@@ -192,7 +200,7 @@ export function TradeReceiptDetail({
           <SlippageValue receipt={receipt} />
         </Field>
         <Field label="Size">
-          {receipt.amountToken.toLocaleString("en-US", { maximumFractionDigits: 6 })} {receipt.symbol}
+          {formatTokenAmount(receipt.amountToken)} {receipt.symbol}
         </Field>
         <Field label="Notional">{formatUsd(receipt.amountUsd)}</Field>
       </Group>

@@ -7,6 +7,7 @@ import { CreatePlatformWallets } from "@/components/settings/create-platform-wal
 import { listPlatformWallets } from "@/lib/platform/wallets";
 import { getMfaStatus } from "@/lib/security/mfa";
 import { encryptionConfigured } from "@/lib/security/llm-keys";
+import { isPrivyConfigured } from "@/lib/privy";
 import { HeadlineTiles } from "@/components/admin/headline-tiles";
 import { DailyBars } from "@/components/admin/daily-bars";
 import { AdminUsersTable } from "@/components/admin/users-table";
@@ -181,7 +182,12 @@ export default async function AdminSettingsPage() {
           description="The app's own wallets: what pays for every agent's data, and where the per-fill fee lands."
         >
           <PlatformCard />
-          <CreatePlatformWallets hasWallets={platformHasWallets} />
+          {/* The same answer the balances notice gives, so the button cannot offer what
+              the page already says is impossible. */}
+          <CreatePlatformWallets
+            hasWallets={platformHasWallets}
+            privyConfigured={balances?.privyConfigured ?? isPrivyConfigured()}
+          />
         </SettingsSection>
 
         {/*

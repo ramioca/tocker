@@ -68,13 +68,33 @@ export interface FillNotificationInput {
   origin?: TradeOrigin;
 }
 
-/** The title line of a fill notification. Pure, so the phrasing is testable. */
+/**
+ * The title line of a fill notification. Pure, so the phrasing is testable. A manual
+ * order is the owner's own trade, so it reads in the second person rather than crediting
+ * the agent with a decision it did not make. Paper/live lives in the body, not here —
+ * two parentheticals wrapped the title to three lines on a phone.
+ */
 export function fillTitle(input: Pick<FillNotificationInput, "agentName" | "receipt" | "origin">): string {
   const { receipt } = input;
   const verb = receipt.side === "buy" ? "bought" : "sold";
   const size = `$${receipt.amountUsd.toFixed(2)}`;
-  const who = input.origin === "manual" ? `${input.agentName} (your manual order)` : input.agentName;
-  return `${who} ${verb} ${size} of ${receipt.symbol}${receipt.simulated ? " (paper)" : ""}`;
+  return input.origin === "manual"
+    ? `You ${verb} ${size} of ${receipt.symbol} via ${input.agentName}`
+    : `${input.agentName} ${verb} ${size} of ${receipt.symbol}`;
+}
+
+/**
+ * The body line of a fill notification: mode, the exit rule if one fired, then the
+ * receipt. "Paper" moved here from the title, where it was a second parenthetical.
+ */
+export function fillBody(input: Pick<FillNotificationInput, "receipt" | "exitReason">): string {
+  return [
+    input.receipt.simulated ? "Paper" : null,
+    input.exitReason ? input.exitReason.replace(/_/g, " ") : null,
+    receiptSummary(input.receipt),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /**
@@ -83,15 +103,12 @@ export function fillTitle(input: Pick<FillNotificationInput, "agentName" | "rece
  */
 export async function notifyFill(input: FillNotificationInput): Promise<void> {
   const { receipt } = input;
-  const body = input.exitReason
-    ? `${input.exitReason.replace(/_/g, " ")} · ${receiptSummary(receipt)}`
-    : receiptSummary(receipt);
   await notify([
     {
       userId: input.ownerId,
       kind: "fill",
       title: fillTitle(input),
-      body,
+      body: fillBody(input),
       href: receiptHref(receipt, input.tradeId),
     },
   ]);

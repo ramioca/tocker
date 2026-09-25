@@ -10,6 +10,7 @@ import { RunStatusBadge } from "@/components/common/status-badge";
 import { TokenIcon } from "@/components/common/token-icon";
 import { formatCount, formatDuration, formatPriceUsd, formatUsd } from "@/components/common/format";
 import { agentBySlug, runDetail, viewerSession } from "@/components/common/data-access";
+import { isTranscriptRow } from "@/lib/agent/narrate";
 import { cn } from "@/lib/utils";
 
 type Params = { params: Promise<{ slug: string; runId: string }> };
@@ -52,10 +53,28 @@ export default async function RunPage({ params }: Params) {
   if (!loaded) notFound();
   const { agent, run } = loaded;
 
-  const elapsed =
+  // Wall time is finish − start, but a step's own duration can outrun the run row's
+  // timestamps (the tool finished after the row was stamped), so take whichever is longer.
+  const wall =
     run.startedAt && run.finishedAt
       ? new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()
       : null;
+  let stepSpan: number | null = null;
+  if (run.steps.length > 0) {
+    let first = Infinity;
+    let last = -Infinity;
+    for (const step of run.steps) {
+      const at = new Date(step.createdAt).getTime();
+      first = Math.min(first, at);
+      last = Math.max(last, at + (step.durationMs ?? 0));
+    }
+    stepSpan = last - first;
+  }
+  const elapsed = wall === null ? null : Math.max(wall, stepSpan ?? 0);
+  // The rows the transcript actually shows, as the runs list counts them.
+  const stepCount = run.transcriptVisible
+    ? run.steps.filter(isTranscriptRow).length || run.stepCount
+    : run.stepCount;
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
@@ -96,7 +115,7 @@ export default async function RunPage({ params }: Params) {
 
       {/* The token tile is a little wider than the rest: its value is two numbers. */}
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.4fr)_minmax(0,1fr)]">
-        <Stat label="Steps" value={String(run.transcriptVisible ? run.steps.length || run.stepCount : run.stepCount)} />
+        <Stat label="Steps" value={String(stepCount)} />
         <Stat label="Trades" value={String(run.tradeCount)} />
         <Stat label="Data spend" value={formatUsd(run.dataSpendUsd)} />
         {/* "LLM", and in/out spelled out: on a trading page a bare "Tokens" reads as coins. */}

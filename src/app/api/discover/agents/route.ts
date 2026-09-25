@@ -20,10 +20,12 @@ export async function GET(request: Request) {
   const rawSort = url.searchParams.get("sort") ?? "pnl";
   const sort = (SORTS.has(rawSort) ? rawSort : "pnl") as "new" | "pnl" | "followers";
   const cursor = url.searchParams.get("cursor");
+  // Capped: a search box never needs more, and it bounds the ilike.
+  const query = (url.searchParams.get("q") ?? "").trim().slice(0, 64);
 
   const page = await withMock(
-    () => listPublicAgents({ cursor, limit: LIMIT, sort }),
-    () => mockPublicAgents({ cursor, limit: LIMIT, sort }),
+    () => listPublicAgents({ cursor, limit: LIMIT, sort, query }),
+    () => mockPublicAgents({ cursor, limit: LIMIT, sort, query }),
   );
 
   return NextResponse.json(page, { headers: { "cache-control": "no-store" } });

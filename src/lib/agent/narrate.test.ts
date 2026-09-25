@@ -3,6 +3,7 @@ import type { RunStep } from "@/server/types";
 import {
   describeCall,
   describeResult,
+  isTranscriptRow,
   narrateRun,
   runFacts,
   tradeRefusals,
@@ -289,6 +290,38 @@ describe("describeResult", () => {
     expect(describeResult("guardian", { summary: "Sold ACAT: stop loss at -20.4%.", exits: [], skipped: [] })).toBe(
       "Sold ACAT: stop loss at -20.4%.",
     );
+  });
+
+  it("reads the guardian's exits, not its stored summary", () => {
+    // A run written before the summary was reworded still reads in plain words.
+    const payload = {
+      summary: "take_profit → sold BONK ($2141)",
+      exits: [{ symbol: "BONK", reason: "take_profit", status: "filled", amountUsd: 2140.64, priceUsd: 0.00004 }],
+      skipped: [],
+    };
+    expect(describeResult("guardian", payload)).toBe("Take profit: sold BONK for $2,140.64");
+    expect(
+      describeResult("guardian", {
+        ...payload,
+        exits: [...payload.exits, { symbol: "WIF", reason: "stop_loss", status: "failed", amountUsd: 20 }],
+        skipped: [{ symbol: "POPCAT" }],
+      }),
+    ).toBe("Take profit: sold BONK for $2,140.64 · 1 could not be executed · 1 position skipped");
+    // Nothing filled: the summary is all there is.
+    expect(describeResult("guardian", { summary: "No exit rules fired.", exits: [] })).toBe("No exit rules fired.");
+  });
+
+  it("counts the rows the transcript shows", () => {
+    const steps: NarratableStep[] = [
+      { kind: "thought", payload: {} },
+      { kind: "tool_result", toolName: "guardian", payload: {} },
+      { kind: "tool_call", toolName: "get_portfolio", payload: {} },
+      { kind: "tool_result", toolName: "get_portfolio", payload: {} },
+      { kind: "error", toolName: "score_token", payload: {} },
+      { kind: "error", toolName: null, payload: {} },
+      { kind: "message", payload: {} },
+    ];
+    expect(steps.filter(isTranscriptRow)).toHaveLength(3);
   });
 });
 

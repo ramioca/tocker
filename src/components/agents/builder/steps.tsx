@@ -30,6 +30,7 @@ import {
   transfersFor,
 } from "@/lib/wallets/funding";
 import { Field, RiskSlider, StepHeading, Toggle } from "./field";
+import { parseBps } from "./parse-value";
 import { UniverseControls } from "./universe-controls";
 import { SimpleSelect } from "./simple-select";
 import {
@@ -37,6 +38,7 @@ import {
   INTERVAL_PRESETS,
   LLM_BOUNDS,
   MAX_AGENT_NAME,
+  launchRadarUsdPerRun,
   PAPER_BALANCES,
   RISK_BOUNDS,
   STRATEGY_PRESETS,
@@ -657,6 +659,8 @@ export function DataStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Set identity changes every render
     [sources, draft.config.dataSources],
   );
+  const chainCount = draft.config.chains.length;
+  const radar = launchRadarUsdPerRun(draft.config.universe.discovery, draft.config.chains);
 
 
   return (
@@ -675,15 +679,28 @@ export function DataStep({
         onChange={(dataSources) => updateConfig({ dataSources })}
       />
 
-      <div className="flex items-center justify-between rounded-xl border border-border/70 bg-card/40 px-3 py-2.5">
-        <p className="text-sm">
-          Estimated cost per run
-          <span className="ml-2 text-xs text-muted-foreground">
+      {/* The radar is picked under the hunting ground, not here, but it is paid from the
+          same budget — so it gets its own line rather than hiding inside "sources". */}
+      <dl className="rounded-xl border border-border/70 bg-card/40 px-3 py-2.5 text-sm">
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-muted-foreground">
             {selected.size} source{selected.size === 1 ? "" : "s"}, one call each
-          </span>
-        </p>
-        <p className="tnum font-mono text-sm font-medium">{formatUsd(estimate)}</p>
-      </div>
+          </dt>
+          <dd className="tnum font-mono">{formatUsd(estimate)}</dd>
+        </div>
+        {radar > 0 ? (
+          <div className="mt-1 flex items-baseline justify-between gap-3">
+            <dt className="text-muted-foreground">
+              Paid launch radar, {chainCount} chain{chainCount === 1 ? "" : "s"}
+            </dt>
+            <dd className="tnum font-mono">{formatUsd(radar)}</dd>
+          </div>
+        ) : null}
+        <div className="mt-2 flex items-baseline justify-between gap-3 border-t border-border/60 pt-2">
+          <dt>Estimated cost per run</dt>
+          <dd className="tnum font-mono font-medium">≈{formatUsd(estimate + radar)}</dd>
+        </div>
+      </dl>
     </div>
   );
 }
@@ -798,6 +815,7 @@ export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
           max={2_000}
           step={10}
           format={(value) => `${Math.round(value)} bps`}
+          parse={parseBps}
           meaning={`Orders are rejected if the fill would be worse than ${(risk.slippageBps / 100).toFixed(2)}% off the quote. Launch-day memecoins usually need 300–500 bps; Jupiter picks tighter when the pool allows.`}
           onChange={(slippageBps) => patch({ slippageBps: Math.round(slippageBps) })}
         />

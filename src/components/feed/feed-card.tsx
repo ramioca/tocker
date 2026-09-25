@@ -28,18 +28,34 @@ function explorerUrl(trade: TradeRow): string | null {
   return txExplorerUrl(trade.chain, trade.txHash);
 }
 
+/**
+ * What a sell booked, when the query attached it. Declared here as optional so the card
+ * renders today's rows unchanged; the fields are meant to land on `TradeRow` itself,
+ * computed by `closedSells()` so the number cannot drift from /money.
+ */
+type TradeWithOutcome = TradeRow & {
+  realizedPnlUsd?: number | null;
+  realizedPnlPct?: number | null;
+};
+
 function SideChip({ side }: { side: "buy" | "sell" }) {
+  // The chip is a colour and an abbreviation; the sr-only verb is what gets read, as its
+  // own phrase, so it does not run into the header's return ("+8.32% sell").
   return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wider",
-        side === "buy"
-          ? "bg-positive/15 text-positive"
-          : "bg-negative/15 text-negative",
-      )}
-    >
-      {side}
-    </span>
+    <>
+      <span
+        aria-hidden
+        className={cn(
+          "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wider",
+          side === "buy"
+            ? "bg-positive/15 text-positive"
+            : "bg-negative/15 text-negative",
+        )}
+      >
+        {side}
+      </span>
+      <span className="sr-only">{side === "buy" ? "Bought" : "Sold"}</span>
+    </>
   );
 }
 
@@ -48,14 +64,20 @@ function TradeBlock({
   receipt,
   agentMode,
 }: {
-  trade: TradeRow;
+  trade: TradeWithOutcome;
   receipt: TradeReceiptData | null;
   /** The posting agent's mode, already badged in the card header. */
   agentMode?: AgentMode;
 }) {
   const url = explorerUrl(trade);
   const failed = trade.status === "failed" || trade.status === "rejected";
-  const entryScore = trade.entryScore ?? trade.score?.total ?? null;
+  // Frozen on the row that filled: the entry score on a buy, the exit score on a sell.
+  const scoreAtFill = trade.entryScore ?? trade.score?.total ?? null;
+  // Only a filled sell has an outcome; a buy, or a sell that never filled, has none.
+  const realized =
+    trade.side === "sell" && trade.status === "filled" && typeof trade.realizedPnlUsd === "number"
+      ? { usd: trade.realizedPnlUsd, pct: trade.realizedPnlPct ?? null }
+      : null;
   // The header already says PAPER or LIVE for the agent. The fill only repeats it when
   // it disagrees — a paper fill from an agent that has since gone live, say.
   const showMode = agentMode === undefined || trade.isPaper !== (agentMode === "paper");
@@ -96,21 +118,29 @@ function TradeBlock({
         <span className="text-xs text-muted-foreground before:mr-2 before:text-muted-foreground/50 before:content-['·']">
           @ {formatPriceUsd(trade.priceUsd)}
         </span>
+        {realized ? (
+          <span className="whitespace-nowrap before:mr-2 before:text-muted-foreground/50 before:content-['·']">
+            <span className="sr-only">Realised </span>
+            <PnlText usd={realized.usd} pct={realized.pct} size="sm" dp={1} />
+          </span>
+        ) : null}
       </p>
 
       {/*
         The frozen score, not today's. A trade's record is what the agent knew when it
         pulled the trigger — re-scoring later must never rewrite it.
       */}
-      {entryScore !== null ? (
+      {scoreAtFill !== null ? (
         <p className="mt-2 flex flex-wrap items-center gap-1.5">
           <ScoreBadge
-            total={entryScore}
+            total={scoreAtFill}
             verdict={trade.score?.verdict}
             blockers={trade.score?.blockers}
             size="xs"
           />
-          <span className="text-[11px] text-muted-foreground">at entry</span>
+          <span className="text-[11px] text-muted-foreground">
+            {trade.side === "buy" ? "at entry" : "at exit"}
+          </span>
           {trade.exitReason ? (
             <span className="rounded border border-border/70 px-1.5 py-px text-[10px] text-muted-foreground">
               {trade.exitReason.replace(/_/g, " ")}

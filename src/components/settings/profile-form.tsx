@@ -91,7 +91,9 @@ export function ProfileForm({ session, bio: initialBio }: { session: Session; bi
     error?.field === field ? { "aria-invalid": true, "aria-describedby": `profile-${field}-error` } : {};
 
   // The handle is the profile's address, so a valid new one orphans every link to the old.
-  const renaming = HANDLE_RE.test(handle) && handle !== saved.handle;
+  // Not while the handle has an error: "links will stop working" beside "that handle is
+  // taken" warns about a rename that cannot happen.
+  const renaming = HANDLE_RE.test(handle) && handle !== saved.handle && error?.field !== "handle";
   const handleDescribedBy = [
     dropped ? "profile-handle-dropped" : "profile-handle-hint",
     renaming ? "profile-handle-rename" : null,

@@ -192,6 +192,18 @@ export interface DiscoveryFeedMeta {
   caveat: string;
 }
 
+/**
+ * What the paid launch radar costs per chain, per tick. It is a discovery feed, not a
+ * data source, so it lives in the universe config — but it is paid from the same data
+ * budget, and a cost estimate that only counts data sources promises less than a run spends.
+ */
+export const PAID_LAUNCH_RADAR_USD_PER_CHAIN = 0.02;
+
+/** The radar's share of a run's data bill: nothing unless the feed is on. */
+export function launchRadarUsdPerRun(discovery: readonly string[], chains: readonly string[]): number {
+  return discovery.includes("paid_launches") ? PAID_LAUNCH_RADAR_USD_PER_CHAIN * chains.length : 0;
+}
+
 export const DISCOVERY_FEEDS: DiscoveryFeedMeta[] = [
   {
     id: "new_launches",
@@ -229,7 +241,7 @@ export const DISCOVERY_FEEDS: DiscoveryFeedMeta[] = [
     id: "paid_launches",
     label: "Paid launch radar",
     description: "A pre-screened launch feed bought each sweep — SolEnrich on Solana, gate402 on Base.",
-    caveat: "The only feed that costs money: about $0.02 per chain, per tick, from the data budget.",
+    caveat: `The only feed that costs money: about $${PAID_LAUNCH_RADAR_USD_PER_CHAIN.toFixed(2)} per chain, per tick, from the data budget.`,
   },
 ];
 

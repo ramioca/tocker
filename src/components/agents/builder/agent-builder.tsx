@@ -23,6 +23,7 @@ import {
   ttlLabel,
 } from "./steps";
 import { universeSummary } from "./universe-controls";
+import { launchRadarUsdPerRun } from "./types";
 import { useDraft } from "./use-draft";
 import { useFundingPlan } from "@/components/wallets/use-funding-plan";
 import { useRefreshCash } from "@/components/wallets/use-cash";
@@ -297,7 +298,10 @@ export function AgentBuilder({
     });
 
   const chosen = sources.filter((source) => draft.config.dataSources.includes(source.id));
-  const costPerRun = chosen.reduce((sum, source) => sum + (source.priceUsd ?? 0.01), 0);
+  const sourcesPerRun = chosen.reduce((sum, source) => sum + (source.priceUsd ?? 0.01), 0);
+  const radarPerRun = launchRadarUsdPerRun(draft.config.universe.discovery, draft.config.chains);
+  // An estimate, not a ceiling: the cap below is the ceiling, so never show more than it.
+  const costPerRun = Math.min(sourcesPerRun + radarPerRun, draft.config.risk.maxDataSpendUsdPerRun);
   const interval = draft.config.schedule.intervalMinutes;
   const runsPerDay = interval === 0 ? 0 : Math.round(1_440 / interval);
   const risk = draft.config.risk;
@@ -546,9 +550,14 @@ export function AgentBuilder({
           <RuleCard
             title="Data it buys"
             summary={
-              chosen.length === 0
+              chosen.length === 0 && radarPerRun === 0
                 ? "Free feeds only — nothing to pay for."
-                : `${chosen.length} paid source${chosen.length === 1 ? "" : "s"} · up to ${formatUsd(costPerRun)} per run, paid by Tocker`
+                : `${[
+                    chosen.length > 0 ? `${chosen.length} paid source${chosen.length === 1 ? "" : "s"}` : null,
+                    radarPerRun > 0 ? "launch radar" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" + ")} · ≈${formatUsd(costPerRun)} per run, paid by Tocker`
             }
             open={open.has("data")}
             onToggle={() => toggle("data")}
@@ -623,7 +632,7 @@ export function AgentBuilder({
               ? `Signs ${formatUsd(draft.funding.amountUsd)} USDC · ${runsPerDay === 0 ? "manual runs" : `~${runsPerDay}/day`}`
               : runsPerDay === 0
                 ? "Manual runs only"
-                : `~${runsPerDay} runs/day · ≤${formatUsd(costPerRun)} data`}
+                : `~${runsPerDay} runs/day · ≈${formatUsd(costPerRun)} data`}
           </span>
           <span className="hidden sm:inline">
             {draft.funding.mode === "fund" ? (
@@ -639,12 +648,12 @@ export function AgentBuilder({
               // paper runs: nothing ticks until the hold-to-confirm on the checklist.
               <>
                 No ticks until you switch it live on the checklist — then ~
-                <span className="tnum font-mono">{runsPerDay}</span> runs/day, up to{" "}
+                <span className="tnum font-mono">{runsPerDay}</span> runs/day, ≈
                 <span className="tnum font-mono">{formatUsd(costPerRun)}</span> data each.
               </>
             ) : (
               <>
-                ~<span className="tnum font-mono">{runsPerDay}</span> runs/day · up to{" "}
+                ~<span className="tnum font-mono">{runsPerDay}</span> runs/day · ≈
                 <span className="tnum font-mono">{formatUsd(costPerRun)}</span> data each, capped at{" "}
                 <span className="tnum font-mono">{formatUsd(risk.maxDataSpendUsdPerRun)}</span>/run —{" "}
                 {execution.mode === "approve" ? "proposes paper trades for you to approve." : "paper trades until you go live."}

@@ -47,7 +47,7 @@ function Section({
           <Link
             href={editHref}
             aria-label={`Edit ${title.toLowerCase()} in Settings`}
-            className="rounded text-[11px] text-muted-foreground underline-offset-2 transition-colors duration-150 hover:text-foreground hover:underline focus-ring"
+            className="relative rounded text-[11px] text-muted-foreground underline-offset-2 transition-colors duration-150 after:absolute after:-inset-x-2 after:-inset-y-3 after:content-[''] hover:text-foreground hover:underline focus-ring"
           >
             Edit
           </Link>

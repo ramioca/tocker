@@ -553,6 +553,8 @@ function tradesFor(agent: AgentCard, count: number, seedOffset = 0): TradeRow[] 
       error: failed ? "Slippage exceeded 100 bps — order rejected before submission." : null,
       createdAt: iso((i * 47 + 8 + seedOffset * 13) * MINUTE),
       filledAt: failed ? null : iso((i * 47 + 7 + seedOffset * 13) * MINUTE),
+      realizedPnlUsd: null,
+      realizedPnlPct: null,
     });
   }
   return out;
@@ -879,6 +881,8 @@ export function mockRun(runId: string): RunDetail | null {
         error: null,
         createdAt: summary.startedAt ?? iso(0),
         filledAt: summary.finishedAt ?? summary.startedAt ?? iso(0),
+        realizedPnlUsd: null,
+        realizedPnlPct: null,
       } satisfies TradeRow;
     });
 

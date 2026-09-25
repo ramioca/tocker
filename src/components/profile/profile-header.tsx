@@ -75,7 +75,9 @@ export function ProfileHeader({ profile }: { profile: UserProfile }) {
               <dt className="sr-only">Followers</dt>
               <dd className="font-mono font-medium tabular-nums">
                 {formatCount(profile.followerCount)}{" "}
-                <span className="font-sans font-normal text-muted-foreground">followers</span>
+                <span className="font-sans font-normal text-muted-foreground">
+                  {profile.followerCount === 1 ? "follower" : "followers"}
+                </span>
               </dd>
             </div>
             <div>

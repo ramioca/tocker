@@ -5,7 +5,8 @@ import { ModeBadge } from "@/components/common/mode-badge";
 import { RelativeTime } from "@/components/common/relative-time";
 import { TokenIcon } from "@/components/common/token-icon";
 import { EmptyState } from "@/components/common/empty-state";
-import { formatUsd } from "@/components/common/format";
+import { formatSignedUsd, formatUsd } from "@/components/common/format";
+import { PnlText } from "@/components/common/pnl-text";
 import { cn } from "@/lib/utils";
 import type { HomeActivityItem, HomeActivityKind } from "@/server/queries/home";
 
@@ -40,7 +41,10 @@ function Row({ item }: { item: HomeActivityItem }) {
   const kind = rowKind(item);
   const meta = KIND[kind];
   const Icon = meta.icon;
-  const { trade, agent } = item;
+  const { agent } = item;
+  // The sell's booked result, once the query attaches it to `TradeRow` (see feed-card).
+  const trade: HomeActivityItem["trade"] & { realizedPnlUsd?: number | null; realizedPnlPct?: number | null } =
+    item.trade;
   const unfilled = kind === "declined" || kind === "blocked" || kind === "failed";
   const usd = kind === "proposal" || unfilled ? (trade.requestedUsd ?? trade.amountUsd) : trade.amountUsd;
   // A trade lives in its agent's ledger, next to the run that placed it; the token
@@ -57,6 +61,11 @@ function Row({ item }: { item: HomeActivityItem }) {
   // description: named by its contents, one row read out as a 330-character paragraph
   // to anyone moving through the page by links.
   const summaryId = `act-${item.id}`;
+  // Proceeds say what was sold; this says whether it made money. Filled sells only.
+  const realizedUsd =
+    trade.side === "sell" && trade.status === "filled" && typeof trade.realizedPnlUsd === "number"
+      ? trade.realizedPnlUsd
+      : null;
   const hasNote = Boolean(trade.exitReason || note);
 
   return (
@@ -80,6 +89,7 @@ function Row({ item }: { item: HomeActivityItem }) {
         </span>
         <span id={summaryId} className="sr-only">
           {`${agent.name}, ${agent.mode}, ${verb} ${trade.token.symbol}, ${formatUsd(usd)}`}
+          {realizedUsd !== null ? `, realised ${formatSignedUsd(realizedUsd)}` : ""}
         </span>
 
         <span className="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
@@ -122,6 +132,15 @@ function Row({ item }: { item: HomeActivityItem }) {
           >
             {formatUsd(usd)}
           </span>
+          {realizedUsd !== null ? (
+            <PnlText
+              usd={realizedUsd}
+              pct={trade.realizedPnlPct ?? null}
+              dp={1}
+              size="xs"
+              className="shrink-0 whitespace-nowrap"
+            />
+          ) : null}
         </span>
 
         {/*
@@ -156,7 +175,7 @@ function Row({ item }: { item: HomeActivityItem }) {
  * Proposals are lifted to the top and tinted, because they are the only rows with
  * a clock on them — everything else is a receipt.
  *
- * This is your own activity only. The feed next door is everyone's.
+ * This is your own activity only. The feed next door is everyone's, yours included.
  */
 export function ActivityStrip({
   items,
@@ -179,7 +198,7 @@ export function ActivityStrip({
           <p className="mt-1 text-sm text-muted-foreground">
             {pendingCount > 0
               ? `${pendingCount} trade${pendingCount === 1 ? "" : "s"} waiting on your decision.`
-              : "Your own fills and exits. The feed is everyone else's."}
+              : "Your own fills and exits, newest first."}
           </p>
         </div>
         <Link

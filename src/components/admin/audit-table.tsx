@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { LocalTime } from "@/components/common/relative-time";
 import type { AdminAuditRow } from "@/server/queries/admin";
 import type { AuditKind } from "@/lib/security/types";
-import { DataTable, EmptyRow, TableShell, Td, Th } from "./table-shell";
+import { DataTable, EmptyRow, PINNED_TIME_WIDTH, TableShell, Td, Th } from "./table-shell";
+import { RowTime } from "./row-time";
 
 /** Words for the enum. A `Record` so a new kind is a type error here, not a raw `snake_case` cell. */
 const KIND_LABEL: Record<AuditKind, string> = {
@@ -36,11 +36,15 @@ const KIND_LABEL: Record<AuditKind, string> = {
  */
 export function AdminAuditTable({ rows }: { rows: AdminAuditRow[] }) {
   return (
-    <TableShell title="Audit events" hint={rows.length === 0 ? undefined : `last ${rows.length}, every user, newest first`}>
+    <TableShell scrollPadLeft={PINNED_TIME_WIDTH} title="Audit events" hint={rows.length === 0 ? undefined : `last ${rows.length}, every user, newest first`}>
       <DataTable label="Audit events" minWidth="50rem">
         <thead>
           <tr>
-            <Th sticky>Time</Th>
+            {/* `w-[1%]` hugs the compact time, as on the balances table: auto layout
+                otherwise hands the pinned column the table's spare width. */}
+            <Th sticky className="w-[1%]">
+              Time
+            </Th>
             <Th>User</Th>
             <Th>Kind</Th>
             <Th>What happened</Th>
@@ -59,8 +63,8 @@ export function AdminAuditTable({ rows }: { rows: AdminAuditRow[] }) {
               <tr key={row.id} className="hover:bg-muted/25">
                 <Td sticky muted>
                   {/* Exact and in the reader's zone: a column of "2h ago" orders rows but
-                      dates none of them. */}
-                  <LocalTime iso={row.createdAt} className="whitespace-nowrap" />
+                      dates none of them. Compact under `lg`, where the column is pinned. */}
+                  <RowTime iso={row.createdAt} />
                 </Td>
                 <Td>
                   {row.handle ? (

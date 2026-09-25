@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { ScoreHistoryPoint } from "@/server/types";
 import { ChartEmpty, useElementWidth } from "@/components/spectrumui/charts/chart-engine";
-import { formatAbsolute, formatUsd } from "@/components/common/format";
+import { formatAbsolute, formatPriceUsd } from "@/components/common/format";
 import { VERDICT_META, verdictTint } from "@/components/tokens/verdict";
 import { formatCompactUsd } from "@/components/tokens/format";
 import { cn } from "@/lib/utils";
@@ -303,7 +303,7 @@ export function ScoreHistoryChart({
                 <span style={{ color: meta.color }}>
                   {Math.round(point.total)} · {meta.label.toLowerCase()}
                 </span>
-                {point.priceUsd === null ? null : <span>{formatUsd(point.priceUsd)}</span>}
+                {point.priceUsd === null ? null : <span>{formatPriceUsd(point.priceUsd)}</span>}
                 {point.liquidityUsd === null ? null : <span>{formatCompactUsd(point.liquidityUsd)} liq</span>}
               </>
             );
@@ -363,7 +363,7 @@ export function PriceSparkline({
       <div className="flex items-baseline justify-between">
         <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Price</p>
         <p className="tnum font-mono text-[11px] text-muted-foreground">
-          {formatUsd(lo)} – {formatUsd(hi)}
+          {formatPriceUsd(lo)} – {formatPriceUsd(hi)}
         </p>
       </div>
       <svg
@@ -371,7 +371,7 @@ export function PriceSparkline({
         width="100%"
         height={height}
         role="img"
-        aria-label={`Price over the same window, ${rising ? "up" : "down"} from ${formatUsd(first.price)} to ${formatUsd(last.price)}`}
+        aria-label={`Price over the same window, ${rising ? "up" : "down"} from ${formatPriceUsd(first.price)} to ${formatPriceUsd(last.price)}`}
         className="mt-1 block"
       >
         <path d={line} fill="none" stroke={stroke} strokeWidth="1.5" strokeLinejoin="round" />

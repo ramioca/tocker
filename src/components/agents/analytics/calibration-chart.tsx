@@ -4,7 +4,7 @@ import { motion, useReducedMotion } from "motion/react";
 import type { ScoreBandStat } from "@/server/types";
 import { formatSignedPct, formatSignedUsd } from "@/components/common/format";
 import { VERDICT_META, verdictTint } from "@/components/tokens/verdict";
-import { calibrationSentence } from "@/lib/analytics";
+import { calibrationAdvice, calibrationSentence } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
 /**
@@ -33,6 +33,7 @@ export function CalibrationChart({ bands, isOwner = false }: { bands: ScoreBandS
   const populated = bands.filter((band) => band.trades > 0);
   const scale = Math.max(10, ...bands.map((band) => Math.abs(band.avgReturnPct ?? 0)));
   const sentence = calibrationSentence(bands, { owner: isOwner });
+  const advice = isOwner ? calibrationAdvice(bands) : null;
 
   return (
     <section aria-labelledby="calibration-heading" className="glass-panel rounded-2xl p-3 sm:p-4">
@@ -121,12 +122,8 @@ export function CalibrationChart({ bands, isOwner = false }: { bands: ScoreBandS
           {sentence ? (
             <p className="mt-4 border-t border-border/60 pt-3 text-xs leading-relaxed text-foreground/85">
               {sentence}
-              {isOwner ? (
-                <span className="text-muted-foreground">
-                  {" "}
-                  Raise or lower this agent&rsquo;s score floor accordingly — it is the one number
-                  that decides what it is allowed to buy.
-                </span>
+              {isOwner && advice ? (
+                <span className="text-muted-foreground"> {advice}</span>
               ) : null}
             </p>
           ) : null}

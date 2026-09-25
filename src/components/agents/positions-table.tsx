@@ -161,7 +161,7 @@ export function PositionsTable({
   return (
     <div className="glass-card overflow-x-auto rounded-xl">
       {/*
-        Below `sm` the row is Token / Value / Unrealised (/ Sell): the two numbers people
+        Below `sm` the row is Token / Value / Unrealized (/ Sell): the two numbers people
         check first. Amount, cost and mark are how you got there, and at 390px they pushed
         the answer off the right edge. The owner's Stop / TP moves under the symbol there
         rather than losing the near-stop warning, and Sell stays last, where a thumb and
@@ -178,7 +178,7 @@ export function PositionsTable({
               Score
             </TableHead>
             <TableHead className="text-right">Value</TableHead>
-            <TableHead className="text-right">Unrealised</TableHead>
+            <TableHead className="text-right">Unrealized</TableHead>
             {showExits ? (
               <TableHead className="hidden text-right sm:table-cell">
                 Stop / TP

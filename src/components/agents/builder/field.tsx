@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
+import { parseTypedNumber, type ParseValue } from "./parse-value";
 
 /** Snap a typed number onto the slider's grid and inside its range. */
 export function clampToStep(value: number, min: number, max: number, step: number): number {
@@ -14,11 +15,17 @@ export function clampToStep(value: number, min: number, max: number, step: numbe
   return Number(Math.min(max, Math.max(min, snapped)).toFixed(decimals));
 }
 
+type ValueNote = { kind: "error" | "clamped"; text: string };
+
 /**
  * The slider's readout, and the way to set an exact number. A slider from $1 to
  * $5,000 cannot be dragged to $5 with any confidence, so the number is an input:
  * click it, type, press Enter or tab away, and the slider follows. It shows the
  * formatted value until it is focused.
+ *
+ * Text that is not a number keeps the previous value and says so; a number outside
+ * the range is clamped and says that too. Silently turning "abc" into the minimum
+ * reads as the app agreeing to something nobody typed.
  */
 function EditableValue({
   id,
@@ -28,6 +35,10 @@ function EditableValue({
   max,
   step,
   format,
+  parse = parseTypedNumber,
+  invalid,
+  describedBy,
+  onNote,
   onChange,
 }: {
   id: string;
@@ -37,21 +48,35 @@ function EditableValue({
   max: number;
   step: number;
   format: (value: number) => string;
+  parse?: ParseValue;
+  invalid: boolean;
+  describedBy: string;
+  onNote: (note: ValueNote | null) => void;
   onChange: (value: number) => void;
 }) {
   const [text, setText] = useState<string | null>(null);
 
   const commit = () => {
     if (text === null) return;
-    const parsed = Number(text.replace(/[^0-9.-]/g, ""));
-    if (text.trim() !== "" && Number.isFinite(parsed)) onChange(clampToStep(parsed, min, max, step));
     setText(null);
+    // Emptied: the same as Escape, nothing to complain about.
+    if (text.trim() === "") return;
+    const parsed = parse(text);
+    if (parsed === null) {
+      onNote({ kind: "error", text: `Enter a number between ${format(min)} and ${format(max)}` });
+      return;
+    }
+    const next = clampToStep(parsed, min, max, step);
+    onChange(next);
+    onNote(parsed < min || parsed > max ? { kind: "clamped", text: `Set to ${format(next)} (limit)` } : null);
   };
 
   return (
     <input
       id={`${id}-value`}
       aria-label={`${label}, exact value`}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
       type="text"
       inputMode="decimal"
       value={text ?? format(value)}
@@ -60,7 +85,10 @@ function EditableValue({
         // Select on focus so typing replaces the number rather than appending to it.
         requestAnimationFrame(() => event.target.select());
       }}
-      onChange={(event) => setText(event.target.value)}
+      onChange={(event) => {
+        setText(event.target.value);
+        onNote(null);
+      }}
       onBlur={commit}
       onKeyDown={(event) => {
         if (event.key === "Enter") {
@@ -72,9 +100,11 @@ function EditableValue({
         }
       }}
       className={cn(
-        // 16px on phones (iOS zooms into anything smaller), and wide enough for it there.
-        "tnum w-20 rounded-md border border-transparent bg-transparent px-1 text-right font-mono text-base md:w-[8.5ch] md:text-sm",
+        // 16px on phones (iOS zooms into anything smaller). Sized in ch so the widest
+        // readout, "$5,000.00", fits at either font size; 8.5ch clipped its last digit.
+        "tnum w-[calc(9ch+0.75rem)] rounded-md border border-transparent bg-transparent px-1 text-right font-mono text-base md:text-sm",
         "transition-colors duration-150 hover:border-border/70 focus:border-border focus:bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "aria-invalid:border-destructive/60",
       )}
     />
   );
@@ -137,6 +167,7 @@ export function RiskSlider({
   max,
   step = 1,
   format,
+  parse,
   meaning,
   onChange,
 }: {
@@ -147,9 +178,12 @@ export function RiskSlider({
   max: number;
   step?: number;
   format: (value: number) => string;
+  /** How typed text becomes a number; defaults to a plain decimal. */
+  parse?: ParseValue;
   meaning: string;
   onChange: (value: number) => void;
 }) {
+  const [note, setNote] = useState<ValueNote | null>(null);
   return (
     <div className="rounded-xl border border-border/70 bg-card/30 p-3">
       <div className="flex items-baseline justify-between gap-3">
@@ -165,6 +199,10 @@ export function RiskSlider({
           max={max}
           step={step}
           format={format}
+          parse={parse}
+          invalid={note?.kind === "error"}
+          describedBy={`${id}-note`}
+          onNote={setNote}
           onChange={onChange}
         />
       </div>
@@ -178,9 +216,24 @@ export function RiskSlider({
         step={step}
         onValueChange={(next) => {
           const first = Array.isArray(next) ? next[0] : next;
-          if (typeof first === "number") onChange(first);
+          if (typeof first === "number") {
+            setNote(null);
+            onChange(first);
+          }
         }}
       />
+      {/* Always mounted so screen readers are already listening when a note lands. */}
+      <p
+        id={`${id}-note`}
+        aria-live="polite"
+        className={cn(
+          "tnum text-xs",
+          note ? "mt-2" : "sr-only",
+          note?.kind === "error" ? "text-destructive" : "text-muted-foreground",
+        )}
+      >
+        {note?.text}
+      </p>
       <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">{meaning}</p>
     </div>
   );

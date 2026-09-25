@@ -17,6 +17,9 @@ import { AuditLog } from "@/components/settings/security/audit-log";
 
 export const metadata: Metadata = { title: "Security" }; // the root layout appends " · Tocker"
 
+/** How many audit rows the page lists. */
+const AUDIT_CAP = 60;
+
 /**
  * Everything that decides whether money can move, on one page, in the order
  * someone would reach for it in an emergency: stop it, prove it is you, see the
@@ -36,14 +39,17 @@ export default async function SecuritySettingsPage() {
     );
   }
 
-  const [killSwitch, mfa, keys, events, keylessAgents] = await Promise.all([
+  const [killSwitch, mfa, keys, fetched, keylessAgents] = await Promise.all([
     getKillSwitch(session.userId),
     getMfaStatus(session.userId),
     getLlmKeyDetails(session.userId),
-    listAuditEvents(session.userId, 60),
+    // One past the cap, only to learn whether there is anything the list leaves out.
+    listAuditEvents(session.userId, AUDIT_CAP + 1),
     // A count, not a reason to fail the page.
     countKeylessAgents(session.userId).catch(() => 0),
   ]);
+  const events = fetched.slice(0, AUDIT_CAP);
+  const hasMore = fetched.length > AUDIT_CAP;
 
   return (
     <div className="mx-auto w-full max-w-3xl px-5 py-8 sm:py-12">
@@ -87,7 +93,7 @@ export default async function SecuritySettingsPage() {
           title="Audit log"
           description="Append-only. Every withdrawal, budget change, mode switch, key change and kill-switch flip, with the IP address it came from."
         >
-          <AuditLog events={events} />
+          <AuditLog events={events} hasMore={hasMore} cap={AUDIT_CAP} />
         </SettingsSection>
 
         <p className="px-1 text-xs leading-6 text-muted-foreground">

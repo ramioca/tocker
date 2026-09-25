@@ -446,11 +446,19 @@ function UnavailableSignInCard() {
     <Card>
       <Header
         title="Sign in to Tocker"
-        subtitle="Sign-in isn't configured in this environment."
+        subtitle="Sign-in is temporarily unavailable."
       />
-      <p className="mt-5 text-center text-sm text-muted-foreground">
-        There is no auth app behind this build. The console says which setting is missing.
-      </p>
+      <p className="mt-5 text-center text-sm text-muted-foreground">Please try again shortly.</p>
+      {/* The setup hint is for whoever runs the build, never for a visitor to a live deploy. */}
+      {process.env.NODE_ENV !== "production" ? (
+        <p className="mt-2 text-center text-xs text-muted-foreground/80">
+          There is no auth app behind this build. The console says which setting is missing.
+        </p>
+      ) : null}
+      {/* Somewhere to go meanwhile: the feed is public, so the visit is not a dead end. */}
+      <Button nativeButton={false} variant="outline" className="mt-5 h-10 w-full" render={<Link href="/feed" />}>
+        Browse the feed
+      </Button>
     </Card>
   );
 }

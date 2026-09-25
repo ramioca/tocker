@@ -30,7 +30,7 @@ const MIN_USDC = 5;
  * Going *back* to paper stays here and stays one click: stopping is never the
  * direction that needs friction.
  */
-export function GoLiveCard({ agent }: { agent: AgentDetail }) {
+export function GoLiveCard({ agent, isAdmin = false }: { agent: AgentDetail; isAdmin?: boolean }) {
   const router = useRouter();
   const { data: wallets = [] } = useWalletBalances(agent.id);
 
@@ -141,7 +141,7 @@ export function GoLiveCard({ agent }: { agent: AgentDetail }) {
             </LiquidMetal>
             {/* Always offered. Hiding Fund the moment the balance clears the minimum is
                 what made topping up hard to find — $5 is a floor, not a target. */}
-            <FundAgentDrawer agentId={agent.id} agentName={agent.name} wallets={wallets} />
+            <FundAgentDrawer agentId={agent.id} agentName={agent.name} wallets={wallets} isAdmin={isAdmin} />
           </div>
         </>
       )}

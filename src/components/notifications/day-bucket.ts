@@ -59,3 +59,31 @@ export function dayBucket(iso: string, now: number, timeZone = "UTC"): string {
     new Intl.DateTimeFormat("en-US", { weekday: "long", month: "short", day: "numeric", timeZone }),
   ).format(t);
 }
+
+const CLOCK = new Map<string, Intl.DateTimeFormat>();
+const FULL = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * "3:06 PM" in `timeZone`. Rows under a past day's heading show this rather than "1d":
+ * elapsed days are floored hours, the heading is the calendar, and the two disagreed.
+ */
+export function clockTime(iso: string, timeZone = "UTC"): string {
+  return cached(CLOCK, timeZone, () =>
+    new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone }),
+  ).format(Date.parse(iso));
+}
+
+/** "Wed, Sep 23, 2026, 3:06 PM" in `timeZone`, for the `<time>` tooltip. */
+export function fullDateTime(iso: string, timeZone = "UTC"): string {
+  return cached(FULL, timeZone, () =>
+    new Intl.DateTimeFormat("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone,
+    }),
+  ).format(Date.parse(iso));
+}

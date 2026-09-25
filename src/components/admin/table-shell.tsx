@@ -26,6 +26,7 @@ export function TableShell({
   children,
   className,
   maxHeightClass = "max-h-[26rem]",
+  scrollPadLeft,
 }: {
   title: string;
   /** One short line: what the limit is, what the ordering is. */
@@ -39,6 +40,11 @@ export function TableShell({
   children: ReactNode;
   className?: string;
   maxHeightClass?: string;
+  /**
+   * The pinned column's width. Focus scrolling stops that far from the left edge, so a
+   * link tabbed to lands beside the pinned column instead of underneath it.
+   */
+  scrollPadLeft?: string;
 }) {
   return (
     <section className={cn("glass-card min-w-0 overflow-hidden rounded-2xl", className)}>
@@ -48,7 +54,12 @@ export function TableShell({
         {action}
       </header>
       {notice}
-      <div className={cn("w-full overflow-auto overscroll-x-contain", maxHeightClass)}>{children}</div>
+      <div
+        className={cn("w-full overflow-auto overscroll-x-contain", maxHeightClass)}
+        style={scrollPadLeft ? { scrollPaddingLeft: scrollPadLeft } : undefined}
+      >
+        {children}
+      </div>
     </section>
   );
 }
@@ -77,6 +88,9 @@ export function DataTable({
  * of names and no hint that anything else existed. The hairline on its right edge is the
  * cue that the rest of the row slides beneath; from `lg` every table fits, so it goes.
  */
+/** What the pinned compact Time cell ("Sep 25, 06:38" plus its padding) takes under `lg`. */
+export const PINNED_TIME_WIDTH = "7rem";
+
 const STICKY_COLUMN = "sticky left-0 max-lg:shadow-[inset_-1px_0_0_var(--glass-hairline)]";
 
 export function Th({

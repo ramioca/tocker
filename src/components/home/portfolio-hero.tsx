@@ -45,6 +45,11 @@ function Well({
   );
 }
 
+const SPAN_DATE = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+function spanDate(iso: string): string {
+  return SPAN_DATE.format(new Date(iso));
+}
+
 export function PortfolioHero({ overview }: { overview: HomeOverview }) {
   const { cashUsd, allocatedUsd, cashByWallet, hasWallets, counts, paper } = overview;
 
@@ -65,6 +70,18 @@ export function PortfolioHero({ overview }: { overview: HomeOverview }) {
   const showPaperWell = !paperOnly && counts.paper > 0;
 
   const points = book.sparkline.map((p) => p.equityUsd);
+  // Scale against what was put in, not just the curve's own range: a $20 move on a
+  // $10k book should look like $20, not like the whole height of the card.
+  const basis = book.equityUsd - book.pnlUsd;
+  const lo = Math.min(basis, ...points);
+  const hi = Math.max(basis, ...points);
+  const padUsd = (hi - lo) * 0.05 || 1;
+  // The series is whatever snapshots exist, not a fixed window, so the caption names
+  // its real ends rather than promising "30 days". UTC, as every other date on the book.
+  const range =
+    book.sparkline.length > 1
+      ? `${spanDate(book.sparkline[0].at)} – ${spanDate(book.sparkline[book.sparkline.length - 1].at)}`
+      : null;
 
   return (
     <section
@@ -112,6 +129,7 @@ export function PortfolioHero({ overview }: { overview: HomeOverview }) {
           <Sparkline
             id="home-equity"
             points={points}
+            domain={[lo - padUsd, hi + padUsd]}
             pnl={book.pnlUsd}
             width={1200}
             height={96}
@@ -127,6 +145,9 @@ export function PortfolioHero({ overview }: { overview: HomeOverview }) {
                 : "Not enough snapshots yet — the curve fills in after the next run."}
           </div>
         )}
+        {range ? (
+          <p className="tnum mt-1 px-3 text-right text-[11px] text-muted-foreground">{range}</p>
+        ) : null}
       </div>
 
       {/* footer: the decomposition */}

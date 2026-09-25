@@ -3,6 +3,7 @@ import {
   avgHoldHours,
   bandFor,
   calibration,
+  calibrationAdvice,
   calibrationSentence,
   closedSells,
   closedTrades,
@@ -12,6 +13,7 @@ import {
   type AnalyticsFill,
 } from "./analytics";
 import { winRate } from "./pnl";
+import type { ScoreBandStat } from "@/server/types";
 
 const HOUR = 3_600_000;
 const T0 = Date.parse("2026-09-01T00:00:00.000Z");
@@ -329,6 +331,9 @@ describe("headline numbers agree with the average-cost ledger", () => {
     // avg cost (10 + 0.1 + 30 + 0.1) / 20 = 2.01 → 10 × (2.5 − 2.01) − 0.1
     expect(sells[0].realizedPnlUsd).toBeCloseTo(4.8, 6);
     expect(sells[1].realizedPnlUsd).toBeCloseTo(-5, 6);
+    // 10 tokens at 2.01 closed by the first sell, 5 at 2 by the second.
+    expect(sells[0].costBasisUsd).toBeCloseTo(20.1, 6);
+    expect(sells[1].costBasisUsd).toBeCloseTo(10, 6);
   });
 
   it("reports the same realized total and win rate as lib/pnl", () => {
@@ -345,5 +350,34 @@ describe("headline numbers agree with the average-cost ledger", () => {
     expect(part).toHaveLength(1);
     expect(part[0].entryPriceUsd).toBe(1);
     expect(part[0].holdHours).toBeCloseTo(2, 6);
+  });
+});
+
+describe("calibrationAdvice", () => {
+  const band = (name: ScoreBandStat["band"], trades: number, avgReturnPct: number | null): ScoreBandStat => ({
+    band: name,
+    trades,
+    winRate: null,
+    avgReturnPct,
+    totalPnlUsd: 0,
+  });
+
+  it("suggests raising the floor when the lowest band is the worst", () => {
+    expect(calibrationAdvice([band("40-59", 8, -6), band("60-79", 20, 3.3), band("80-100", 6, 1)])).toMatch(
+      /^Consider raising the score floor above 59:/,
+    );
+  });
+
+  it("says the floor won't help when a higher band loses", () => {
+    // The finding's own numbers: 60-79 +3.3% over 20, 80-100 −18.1% over 6.
+    expect(calibrationAdvice([band("60-79", 20, 3.3), band("80-100", 6, -18.1)])).toMatch(
+      /^Higher scores are not doing better/,
+    );
+  });
+
+  it("stays quiet on thin samples or a single band", () => {
+    expect(calibrationAdvice([band("60-79", 20, 3.3), band("80-100", 3, -18.1)])).toBeNull();
+    expect(calibrationAdvice([band("60-79", 20, 3.3)])).toBeNull();
+    expect(calibrationAdvice([])).toBeNull();
   });
 });

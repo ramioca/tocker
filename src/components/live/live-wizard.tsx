@@ -28,6 +28,7 @@ import { FirstFillPanel } from "./trade-receipt";
 import { ProposalPanel } from "./proposal-panel";
 import { readinessTally } from "./readiness-tally";
 import { deriveRunOutcome } from "./run-outcome";
+import { RUN_UNREACHABLE, runErrorMessage } from "./run-error";
 import { cn } from "@/lib/utils";
 
 /**
@@ -46,6 +47,7 @@ function listPhrase(items: string[]): string {
 const POLL_MS = 1_500;
 /** Stop polling rather than hammer a run that is wedged. */
 const POLL_TIMEOUT_MS = 5 * 60_000;
+const LOST_TRACK = "Lost track of the run. It may still be going — open it to check.";
 
 /**
  * The first live trade, as a screen.
@@ -210,9 +212,10 @@ export function LiveWizard({
     setReceipt(null);
     try {
       const res = await fetch(`/api/agents/${agent.id}/run`, { method: "POST" });
-      const body = (await res.json()) as { ok?: boolean; runId?: string; error?: string };
-      if (!res.ok || !body.runId) {
-        setRunError(body.error ?? `Could not start the run (HTTP ${res.status})`);
+      // A gateway error answers with HTML, not JSON: unreadable is a failure, not a throw.
+      const body = (await res.json().catch(() => null)) as { ok?: boolean; runId?: string; error?: string } | null;
+      if (!res.ok || !body?.runId) {
+        setRunError(runErrorMessage(res.status, body));
         return;
       }
       void noteManualRunAction(agent.id, body.runId);
@@ -235,8 +238,9 @@ export function LiveWizard({
         transcriptVisible: true,
         trades: [],
       });
-    } catch (err) {
-      setRunError(err instanceof Error ? err.message : "Could not start the run");
+    } catch {
+      // Only fetch itself throws here ("Failed to fetch"), which says nothing to anyone.
+      setRunError(RUN_UNREACHABLE);
     } finally {
       setStarting(false);
     }
@@ -420,7 +424,9 @@ export function LiveWizard({
               agent will actually do.
             */}
             <p className="text-sm leading-6 text-muted-foreground">
-              Holding this switches {agent.name} to live mode.{" "}
+              {/* With a check still red there is no button here to hold. */}
+              {readiness.ready ? "Holding this switches" : "Once every check is green, holding the button here switches"}{" "}
+              {agent.name} to live mode.{" "}
               {executionMode === "approve"
                 ? "It is set to ask before it trades: each order becomes a proposal you approve, and the moment you approve one it signs a real transaction from its own wallet."
                 : "From then on it signs real transactions from its own wallet without asking you first."}{" "}
@@ -622,15 +628,18 @@ function useRunPolling({
       }
       try {
         const res = await fetch(`/api/agents/${agentId}/runs/${runId}`, { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const detail = (await res.json()) as RunDetail;
+        const detail = (await res.json().catch(() => null)) as RunDetail | null;
         if (cancelled) return;
+        if (!res.ok || detail === null) {
+          onError(runErrorMessage(res.status, null, LOST_TRACK));
+          return;
+        }
         onUpdate(detail);
         if (detail.status === "running" || detail.status === "queued") {
           timer = setTimeout(tick, POLL_MS);
         }
-      } catch (err) {
-        if (!cancelled) onError(err instanceof Error ? err.message : "Lost track of the run");
+      } catch {
+        if (!cancelled) onError(RUN_UNREACHABLE);
       }
     };
 

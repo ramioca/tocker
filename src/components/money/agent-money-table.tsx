@@ -123,7 +123,7 @@ export function AgentMoneyTable({
               <Th className={STICKY_CELL}>{label}</Th>
               <Th numeric>Equity</Th>
               <Th numeric>P&amp;L</Th>
-              <Th numeric>Fees</Th>
+              <Th numeric>Tocker fee</Th>
               <Th numeric>Data</Th>
               <Th numeric>Model est.</Th>
               <Th numeric>Trades</Th>

@@ -15,9 +15,9 @@ import "server-only";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { agents, equitySnapshots, getDb, positions, tokens, trades } from "@/db";
 import { getUserWalletBalances } from "@/lib/wallets";
-import { toNum } from "@/lib/money";
+import { splitPnl, toNum } from "@/lib/money";
 import { proposalExpiresAt, sweepBeforeRead } from "@/lib/trading/proposals";
-import { buildAgentCards, snapshotInCurrentMode, toTokenRef, toTradeRow } from "./_shared";
+import { attachRealizedPnl, buildAgentCards, snapshotInCurrentMode, toTokenRef, toTradeRow } from "./_shared";
 import type { AgentCard, Chain, TradeRow } from "@/server/types";
 
 /** One point on the combined equity curve: every agent's book, summed. */
@@ -166,7 +166,6 @@ export async function getHomeOverview(userId: string): Promise<HomeOverview> {
             agentId: positions.agentId,
             amountToken: positions.amountToken,
             avgCostUsd: positions.avgCostUsd,
-            realizedPnlUsd: positions.realizedPnlUsd,
           })
           .from(positions)
           .where(inArray(positions.agentId, agentIds))
@@ -202,12 +201,7 @@ export async function getHomeOverview(userId: string): Promise<HomeOverview> {
   }
 
   const costBasisByAgent = new Map<string, number>();
-  const realizedByAgent = new Map<string, number>();
   for (const position of positionRows) {
-    realizedByAgent.set(
-      position.agentId,
-      (realizedByAgent.get(position.agentId) ?? 0) + toNum(position.realizedPnlUsd),
-    );
     costBasisByAgent.set(
       position.agentId,
       (costBasisByAgent.get(position.agentId) ?? 0) +
@@ -230,12 +224,22 @@ export async function getHomeOverview(userId: string): Promise<HomeOverview> {
 
       // Before its first mark a paper agent is still holding its whole float; a live
       // one has not been read yet, and counting a notional there would be inventing money.
-      equityUsd += latest ? latest.equityUsd : mode === "paper" ? toNum(row.paperStartingUsd) : 0;
-      basisUsd += mode === "paper" ? toNum(row.paperStartingUsd) : Math.abs(agentSeries?.[0]?.equityUsd ?? 0);
-      realizedPnlUsd += realizedByAgent.get(row.id) ?? 0;
-      // Open positions are worth (agent equity − agent cash) at the last mark; what
-      // they cost is the summed basis. No mark yet means no open number, not a loss.
-      if (latest) unrealizedPnlUsd += latest.equityUsd - latest.cashUsd - (costBasisByAgent.get(row.id) ?? 0);
+      const agentEquity = latest ? latest.equityUsd : mode === "paper" ? toNum(row.paperStartingUsd) : 0;
+      const agentBasis =
+        mode === "paper" ? toNum(row.paperStartingUsd) : Math.abs(agentSeries?.[0]?.equityUsd ?? 0);
+      // Headline is equity − basis, as on the agent cards below it; open is positions at
+      // the last mark less their cost, and realised is the rest. No mark yet means no
+      // open number, not a loss.
+      const split = splitPnl({
+        equityUsd: agentEquity,
+        cashUsd: latest ? latest.cashUsd : null,
+        basisUsd: agentBasis,
+        costBasisUsd: costBasisByAgent.get(row.id) ?? 0,
+      });
+      equityUsd += agentEquity;
+      basisUsd += agentBasis;
+      realizedPnlUsd += split.realizedPnlUsd;
+      unrealizedPnlUsd += split.unrealizedPnlUsd;
     }
 
     const pnlUsd = realizedPnlUsd + unrealizedPnlUsd;
@@ -333,5 +337,10 @@ export async function getHomeActivity(userId: string, limit = 8): Promise<HomeAc
     return new Date(b.at).getTime() - new Date(a.at).getTime();
   });
 
-  return items.slice(0, limit);
+  const shown = items.slice(0, limit);
+  await attachRealizedPnl(
+    db,
+    shown.map((item) => item.trade),
+  );
+  return shown;
 }

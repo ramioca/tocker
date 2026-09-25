@@ -42,11 +42,17 @@ export function RefreshBalances({ readAt }: { readAt: string }) {
         size="sm"
         variant="outline"
         disabled={pending}
-        aria-label="Re-read every agent wallet from Privy"
+        // A tooltip, not an aria-label: the visible "Refresh" / "Reading…" is the name,
+        // so voice control can say it and a screen reader hears the pending state.
+        title="Re-read every agent wallet from Privy"
         onClick={() =>
           start(async () => {
             setError(null);
-            const res = await refreshAdminBalancesAction();
+            // A network throw would otherwise land on the route's error boundary.
+            const res = await refreshAdminBalancesAction().catch(() => ({
+              ok: false as const,
+              error: "Could not reach Tocker.",
+            }));
             if (!res.ok) setError(res.error);
             else router.refresh();
           })

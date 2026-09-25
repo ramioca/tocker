@@ -11,6 +11,7 @@ import {
   loadTokens,
   pageSize,
   toTradeRow,
+  attachRealizedPnl,
   toUserCard,
 } from "./_shared";
 
@@ -63,7 +64,7 @@ async function hydrate(db: Db, rows: PostJoin[], viewerId?: string | null): Prom
   ]);
   const liked = new Set(likedRows.map((l) => l.postId));
 
-  return rows.map((r) => {
+  const items: FeedItem[] = rows.map((r) => {
     const token = r.trade ? tokenMap.get(r.trade.tokenId) : undefined;
     const agg = r.agent ? aggregates.get(r.agent.id) : undefined;
     const isOwner = Boolean(viewerId) && r.agent?.ownerId === viewerId;
@@ -99,6 +100,11 @@ async function hydrate(db: Db, rows: PostJoin[], viewerId?: string | null): Prom
       likedByViewer: liked.has(r.post.id),
     };
   });
+  await attachRealizedPnl(
+    db,
+    items.flatMap((item) => (item.trade ? [item.trade] : [])),
+  );
+  return items;
 }
 
 export async function getFeed(opts: {

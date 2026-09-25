@@ -54,7 +54,16 @@ const VISIBLE = 10;
  * the only interactive part is the native disclosure for the older rows — no client
  * JavaScript. Agent names are plain text: the row carries the name, not the slug.
  */
-export function AuditLog({ events }: { events: AuditRow[] }) {
+export function AuditLog({
+  events,
+  hasMore = false,
+  cap = events.length,
+}: {
+  events: AuditRow[];
+  /** More rows exist past `cap`. Said out loud, so a capped list never reads as the whole trail. */
+  hasMore?: boolean;
+  cap?: number;
+}) {
   if (events.length === 0) {
     return (
       <EmptyState
@@ -92,6 +101,11 @@ export function AuditLog({ events }: { events: AuditRow[] }) {
           </summary>
           <AuditList events={older} start={VISIBLE + 1} className="mt-3" />
         </details>
+      ) : null}
+      {hasMore ? (
+        <p className="tnum px-1 text-xs text-muted-foreground">
+          Showing your latest {cap} events. Older ones are kept but not listed here.
+        </p>
       ) : null}
     </div>
   );

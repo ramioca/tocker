@@ -1,4 +1,4 @@
-import { Cpu, Database, Receipt } from "lucide-react";
+import { ChevronDown, Cpu, Database, Receipt } from "lucide-react";
 import { formatUsd } from "@/components/common/format";
 import { MODEL_PRICES } from "@/server/queries/money";
 import type { MoneySummary } from "@/server/queries/money";
@@ -9,7 +9,7 @@ import type { CostTotals } from "./cost-totals";
  *
  * Every line on this page that subtracts money has to be explainable, because the
  * alternative is an operator who sees "Costs $14.20" and assumes we took it. Two of the
- * three costs are not ours to take: the x402 payments come out of the platform's own
+ * three costs are not ours to take: the market-data (x402) payments come out of the platform's own
  * wallet, and the model tokens are billed to the operator's own LLM account and never
  * pass through Tocker at all. Only the flat per-fill fee is money we collect.
  *
@@ -122,16 +122,19 @@ export function CostsNote({
           ) : null}
         </Item>
 
-        <Item icon={Database} title="x402 data" amount={formatUsd(totals.dataSpendUsd)}>
+        <Item icon={Database} title="Market data" amount={formatUsd(totals.dataSpendUsd)}>
           <p>
-            Sentiment, safety and launch feeds your agents chose to buy. <strong>The platform pays for these</strong>{" "}
-            — every 402 is settled from Tocker&rsquo;s own wallet, not yours. It is booked against the agent anyway,
-            because a strategy that spends a dollar a day on data to make eighty cents is worth knowing about.
+            Sentiment, safety and launch feeds your agents chose to buy. Tocker pays for these from its own wallet,
+            not yours. They are booked against the agent anyway, because a strategy that spends a dollar a day on
+            data to make eighty cents is worth knowing about.
           </p>
-          {simulated > 0 ? (
+          {/* When every call was simulated, "$1.11 of that" repeated the total back. */}
+          {simulated > 0 && simulated >= totals.dataSpendUsd ? (
+            <p>All of it was simulated — no money moved; it is priced at what the calls would cost.</p>
+          ) : simulated > 0 ? (
             <p className="tnum">
-              {formatUsd(simulated)} of that was mock-mode and moved no money — it is priced at what the call would
-              have cost.
+              {formatUsd(simulated)} of that was simulated and moved no money — it is priced at what the calls
+              would cost.
             </p>
           ) : null}
         </Item>
@@ -142,19 +145,32 @@ export function CostsNote({
             through Tocker. The figure is an <strong>estimate</strong>: each run&rsquo;s recorded input and output
             tokens at list price, for the model the agent is configured with today.
           </p>
-          <p>
-            It reads high. Cached input is billed at a fraction of the input rate and we do not record cache hits,
-            so a real invoice is usually lower — and a run taken last week on a different model is priced at
-            today&rsquo;s choice.
-          </p>
-          <ul className="tnum flex flex-wrap gap-x-4 gap-y-1 pt-0.5 text-[11px]">
-            {Object.entries(MODEL_PRICES).map(([id, price]) => (
-              <li key={id}>
-                {price.label} <span className="text-foreground/70">${price.inputPerMTok}</span> /{" "}
-                <span className="text-foreground/70">${price.outputPerMTok}</span> per M
-              </li>
-            ))}
-          </ul>
+          {/* The method and the price list are for the reader who doubts the number. Native
+              <details>, so it costs no client JS and the card stays one screen on a phone. */}
+          <details className="group">
+            <summary className="focus-ring inline-flex cursor-pointer list-none items-center gap-1 rounded text-foreground/80 transition-colors duration-150 hover:text-foreground [&::-webkit-details-marker]:hidden">
+              How we estimate
+              <ChevronDown
+                aria-hidden
+                className="size-3.5 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] group-open:rotate-180"
+              />
+            </summary>
+            <div className="mt-1.5 space-y-1.5">
+              <p>
+                It reads high. Cached input is billed at a fraction of the input rate and we do not record cache
+                hits, so a real invoice is usually lower — and a run taken last week on a different model is priced
+                at today&rsquo;s choice.
+              </p>
+              <ul className="tnum flex flex-wrap gap-x-4 gap-y-1 pt-0.5 text-[11px]">
+                {Object.entries(MODEL_PRICES).map(([id, price]) => (
+                  <li key={id}>
+                    {price.label} <span className="text-foreground/70">${price.inputPerMTok}</span> /{" "}
+                    <span className="text-foreground/70">${price.outputPerMTok}</span> per M
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </details>
           {totals.unpricedAgents > 0 ? (
             <p>
               {totals.unpricedAgents} {paper ? "paper" : "live"} agent

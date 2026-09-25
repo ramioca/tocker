@@ -14,7 +14,7 @@ import type { ReactNode } from "react";
 import { Address } from "@/components/common/address";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { TokenIcon } from "@/components/common/token-icon";
-import { formatSignedPct, formatUsd } from "@/components/common/format";
+import { formatPriceUsd, formatSignedPct } from "@/components/common/format";
 import { pnlTone } from "@/components/common/pnl-text";
 import { formatAge, formatCompactUsd, formatHolders } from "@/components/tokens/format";
 import type { TokenPage } from "@/server/types";
@@ -50,13 +50,18 @@ export function TokenHeader({
               <ChainBadge chain={token.chain} />
             </div>
             <span className="mt-1 flex flex-wrap items-center gap-3">
-              <Address address={token.address} label="token address" />
+              {/* A native gas asset has no contract; copying the word "native" helps nobody. */}
+              {token.address === "native" ? (
+                <span className="text-xs text-muted-foreground">Native gas asset</span>
+              ) : (
+                <Address address={token.address} label="token address" />
+              )}
               <GeckoTerminalLink chain={token.chain} address={token.address} symbol={token.symbol} label="GeckoTerminal" />
             </span>
           </div>
 
           <div className="flex flex-col items-end gap-1.5">
-            <p className="tnum text-2xl font-semibold">{formatUsd(price)}</p>
+            <p className="tnum text-2xl font-semibold">{formatPriceUsd(price)}</p>
             {change24h === null ? null : (
               <p className={cn("tnum text-xs font-medium", pnlTone(change24h, 1))}>
                 {formatSignedPct(change24h, 1)} <span className="text-muted-foreground">24h</span>

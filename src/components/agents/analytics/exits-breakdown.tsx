@@ -33,7 +33,9 @@ const REASON_MEANING: Record<ExitReason, string> = {
 };
 
 export function ExitsBreakdown({ exits, totalClosed }: { exits: AgentAnalytics["exits"]; totalClosed: number }) {
-  const max = Math.max(1, ...exits.map((exit) => exit.count));
+  // Scaled to every exit in the window, not the largest rule: one automatic exit of
+  // nine is a ninth of the track, not all of it.
+  const max = Math.max(1, totalClosed, ...exits.map((exit) => exit.count));
   const automatic = exits.reduce((n, exit) => n + exit.count, 0);
 
   return (
@@ -83,9 +85,11 @@ export function ExitsBreakdown({ exits, totalClosed }: { exits: AgentAnalytics["
                 </span>
               </span>
               <span aria-hidden className="relative h-6 overflow-hidden rounded-md bg-muted/50">
+                {/* Floored at the width of the count it carries: a ninth of a phone's
+                    track is a sliver the count would hide. */}
                 <span
                   className="absolute inset-y-1 left-1 rounded-sm bg-primary/50"
-                  style={{ width: `calc(${(exit.count / max) * 100}% - 0.5rem)` }}
+                  style={{ width: `max(1.25rem, calc(${(exit.count / max) * 100}% - 0.5rem))` }}
                 />
                 <span className="tnum absolute inset-y-0 left-2.5 flex items-center font-mono text-[11px] font-medium">
                   {exit.count}

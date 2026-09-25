@@ -24,7 +24,7 @@ import "server-only";
  * The pure parts — {@link pnlByDay}, {@link combineEquity}, {@link estimateModelSpendUsd}
  * — take plain values and are tested in `money.test.ts`.
  */
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import {
   agentFundingIntents,
   agentRuns,
@@ -38,7 +38,7 @@ import {
   x402Payments,
 } from "@/db";
 import { getPortfolio } from "@/lib/agent/portfolio";
-import { toNum } from "@/lib/money";
+import { splitPnl, toNum } from "@/lib/money";
 import { winRate } from "@/lib/pnl";
 import type { AgentMode, AgentStatus, EquityPoint } from "@/server/types";
 import { snapshotInCurrentMode } from "./_shared";
@@ -551,6 +551,7 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     fundingRows,
     depositRows,
     withdrawRows,
+    firstRows,
   ] = await Promise.all([
     // One row per agent per 15 minutes: the last snapshot in the bucket. The bucket
     // index alone carries the timestamp (900s divides a day exactly, so a bucket never
@@ -664,6 +665,18 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
           gte(auditEvents.createdAt, since),
         ),
       ),
+
+    // A live book's basis is its first live mark, the one the agent card and agent page
+    // measure all-time P&L against. Outside the window on purpose.
+    db
+      .selectDistinctOn([equitySnapshots.agentId], {
+        agentId: equitySnapshots.agentId,
+        equityUsd: equitySnapshots.equityUsd,
+      })
+      .from(equitySnapshots)
+      .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+      .where(and(inArray(equitySnapshots.agentId, ids), snapshotInCurrentMode()))
+      .orderBy(equitySnapshots.agentId, asc(equitySnapshots.at), asc(equitySnapshots.id)),
   ]);
 
   // ---- snapshots -----------------------------------------------------------
@@ -767,8 +780,27 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     });
   }
 
+  const firstEquity = new Map(firstRows.map((r) => [r.agentId, toNum(r.equityUsd)]));
+
   const build = (row: (typeof rows)[number]): MoneyAgentRow => {
     const book = books.get(row.id)!;
+    // Same rule as `/home` and the agent page: the headline is equity − basis and
+    // realised is whatever open does not explain, so this row matches the agent card.
+    // A live book with no mark to measure from keeps the ledger's own split.
+    const basisUsd = row.mode === "paper" ? toNum(row.paperStartingUsd) : (firstEquity.get(row.id) ?? null);
+    const split =
+      book.equityUsd !== null && basisUsd !== null
+        ? splitPnl({
+            equityUsd: book.equityUsd,
+            cashUsd: book.cashUsd,
+            basisUsd,
+            costBasisUsd: ledgerByAgent.get(row.id)?.costBasisUsd ?? 0,
+          })
+        : {
+            pnlUsd: book.realizedPnlUsd + book.unrealizedPnlUsd,
+            realizedPnlUsd: book.realizedPnlUsd,
+            unrealizedPnlUsd: book.unrealizedPnlUsd,
+          };
     const fee = fees.get(row.id) ?? { total: 0, accrued: 0 };
     const spend = data.get(row.id) ?? { total: 0, simulated: 0 };
     const run = runs.get(row.id) ?? { runs: 0, inputTokens: 0, outputTokens: 0 };
@@ -799,9 +831,9 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
       equityUsd: book.equityUsd,
       cashUsd: book.cashUsd,
       positionsUsd: book.positionsUsd,
-      realizedPnlUsd: book.realizedPnlUsd,
-      unrealizedPnlUsd: book.unrealizedPnlUsd,
-      pnlUsd: book.realizedPnlUsd + book.unrealizedPnlUsd,
+      realizedPnlUsd: split.realizedPnlUsd,
+      unrealizedPnlUsd: split.unrealizedPnlUsd,
+      pnlUsd: split.pnlUsd,
       feesUsd: fee.total,
       feesAccruedUsd: fee.accrued,
       dataSpendUsd: spend.total,

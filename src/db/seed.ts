@@ -762,7 +762,10 @@ async function seed() {
       if (tradesToday > 0 || chance(0.35)) {
         runId = id("run");
         const startedAt = at(day, 9);
-        const spend = Number(between(0.01, config.risk.maxDataSpendUsdPerRun).toFixed(4));
+        // Pick the source first: the run's data spend is exactly what its payment rows
+        // add up to, or the run row and the agent's lifetime x402 total disagree.
+        const sourceId = pick(config.dataSources.length ? config.dataSources : DATA_SOURCE_IDS);
+        const source = DATA_SOURCE_URLS[sourceId] ?? DATA_SOURCE_URLS["cmc-quotes"];
         runRows.push({
           id: runId,
           agentId,
@@ -775,14 +778,12 @@ async function seed() {
               ? `Reviewed ${tradable.length} tokens and placed ${tradesToday} trade${tradesToday === 1 ? "" : "s"}.`
               : "Reviewed the watchlist. No setup cleared the risk filters.",
           error: null,
-          dataSpendUsd: toNumeric(spend, 6),
+          dataSpendUsd: toNumeric(source.price, 6),
           inputTokens: Math.floor(between(1200, 9000)),
           outputTokens: Math.floor(between(180, 1400)),
           createdAt: startedAt,
         });
 
-        const sourceId = pick(config.dataSources.length ? config.dataSources : DATA_SOURCE_IDS);
-        const source = DATA_SOURCE_URLS[sourceId] ?? DATA_SOURCE_URLS["cmc-quotes"];
         paymentRows.push({
           id: id("pay"),
           agentId,

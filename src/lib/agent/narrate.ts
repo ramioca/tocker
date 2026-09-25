@@ -28,6 +28,7 @@
  * `src/mocks/core.ts`. Anything else is narrated from whatever it happens to carry.
  */
 import { fmtUsd } from "@/lib/money";
+import { describeExit } from "@/lib/trading/exits";
 
 // ---------------------------------------------------------------- types
 
@@ -344,6 +345,8 @@ export function describeResult(toolName: string | null | undefined, result: unkn
       return describeNote(r);
     case "finish":
       return "Finished";
+    case "guardian":
+      return describeGuardianResult(r);
     case "get_token_price": {
       const symbol = str(r.symbol) ?? "Token";
       const price = priceText(r.priceUsd);
@@ -596,6 +599,42 @@ function describeIntel(r: Record<string, unknown>): string {
 
   if (parts.length === 0) return symbol === null ? "Intel returned" : `Intel on ${symbol}`;
   return `${symbol === null ? "" : `${symbol} `}${parts.join(" · ")}`;
+}
+
+/**
+ * Whether a stored step is its own row in the transcript: a tool call (its result folds
+ * into it), the guardian's standalone result, or a run-level failure. The runs list's
+ * "N steps" counts the same rows in SQL (`summarizeRuns`), so the two agree.
+ */
+export function isTranscriptRow(step: Pick<NarratableStep, "kind" | "toolName">): boolean {
+  if (step.kind === "tool_call") return true;
+  if (step.kind === "tool_result") return step.toolName === "guardian";
+  if (step.kind === "error") return step.toolName === null || step.toolName === undefined;
+  return false;
+}
+
+/**
+ * The exit engine's step, rebuilt from its `exits[]` rather than its stored `summary`,
+ * so runs written before the summary learnt to say "Take profit" instead of
+ * "take_profit →" read the same as new ones. No filled exit means the summary is the
+ * only thing worth saying (a skip, a pass that could not run).
+ */
+function describeGuardianResult(r: Record<string, unknown>): string {
+  const exits = Array.isArray(r.exits) ? r.exits.map(obj) : [];
+  const filled = exits.flatMap((e) => {
+    const symbol = str(e.symbol);
+    const amountUsd = num(e.amountUsd);
+    if (symbol === null || amountUsd === null || (e.status !== undefined && e.status !== "filled")) return [];
+    return [describeExit({ reason: str(e.reason) ?? "", symbol, amountUsd, unrealizedPnlPct: num(e.unrealizedPnlPct) })];
+  });
+  if (filled.length === 0) return describeUnknown("guardian", r);
+  const failed = exits.length - filled.length;
+  const skipped = Array.isArray(r.skipped) ? r.skipped.length : 0;
+  const tail = [
+    failed > 0 ? `${failed} could not be executed` : null,
+    skipped > 0 ? `${skipped} ${plural(skipped, "position")} skipped` : null,
+  ].filter((part): part is string => part !== null);
+  return [filled.join("; "), ...tail].join(" · ");
 }
 
 /** Guardian results and anything a future tool returns: say whatever it carries. */
