@@ -17,6 +17,7 @@ import { Address } from "@/components/common/address";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { FeesCovered } from "@/components/common/fees-covered";
 import { formatUsd, truncateAddress } from "@/components/common/format";
+import { shownUsdc } from "@/components/wallets/cash-display";
 import { CashTotal } from "@/components/wallets/cash-summary";
 import { DepositSheet } from "@/components/wallets/deposit-sheet";
 import { useRefreshCash, useUserWallets } from "@/components/wallets/use-cash";
@@ -150,7 +151,7 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
           <CashTotal cash={myCash} size="sm" />
           {myChain ? (
             <span className="tnum block text-[11px] text-muted-foreground">
-              {formatUsd(myChain.usdcUsd)} on {chainLabelFor(chain)}
+              {formatUsd(shownUsdc(myChain.usdcUsd))} on {chainLabelFor(chain)}
             </span>
           ) : null}
         </span>

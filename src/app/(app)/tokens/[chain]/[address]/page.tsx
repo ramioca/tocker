@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { ChartSkeleton } from "@/components/spectrumui/charts/chart-engine";
+import { ChartEmpty, ChartSkeleton } from "@/components/spectrumui/charts/chart-engine";
 import { ModeBadge } from "@/components/common/mode-badge";
 import {
   AgentsHolding,
@@ -123,10 +123,21 @@ export default async function TokenPageRoute({ params, searchParams }: Props) {
   // An agent that doesn't trade this chain has nothing to block here (the menu still
   // lists it, disabled, so the list matches the agents page). With no agent on the
   // chain and nothing to lift, there is no menu at all.
+  // `targets` is only ever the viewer's own agents, so joining the public holders onto it
+  // cannot put anyone else's position in the menu.
+  const holdings = new Map(page.holders.map((holder) => [holder.agent.id, holder.valueUsd]));
+  const blockTargets = targets.map((agent) =>
+    holdings.has(agent.id) ? { ...agent, holdingUsd: holdings.get(agent.id) ?? null } : agent,
+  );
   const blockMenu = targets.some((agent) => agent.onChain || agent.blocked) ? (
-    <BlockMenu chain={chain} address={address} symbol={page.token.symbol} agents={targets} />
+    <BlockMenu chain={chain} address={address} symbol={page.token.symbol} agents={blockTargets} />
   ) : null;
   const holderMode = sharedHolderMode(page.holders);
+  // A URL pointed at a token nobody has scored, traded or held: every section below would
+  // be its own empty box (four of them, two nested in the price card). The one thing to
+  // do here is score it, so that is all the page shows. A `?trade=` link keeps the trades
+  // section, where its "isn't visible to you" notice lives.
+  const blank = !page.score && page.history.length === 0 && trades.length === 0 && page.holders.length === 0 && !focusId;
 
   return (
     <div className="w-full">
@@ -147,45 +158,49 @@ export default async function TokenPageRoute({ params, searchParams }: Props) {
           />
         )}
 
-        <History page={page} markers={markers} agentCount={agentCount} />
+        {blank ? null : (
+          <>
+            <History page={page} markers={markers} agentCount={agentCount} />
 
-        <FlowStats stats={page.stats} />
+            <FlowStats stats={page.stats} />
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
-          <section aria-labelledby="token-trades-heading" className="min-w-0">
-            <h2
-              id="token-trades-heading"
-              className="mb-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase"
-            >
-              Recent agent trades
-            </h2>
-            {focusId && !focus ? (
-              // One sentence for every miss — wrong token, not filled, or a private agent's
-              // fill — so the notice never confirms that a private trade exists. It is
-              // scrolled to, as a found fill would be: the link promised this spot.
-              <p className="mb-2 text-xs text-muted-foreground">
-                That fill isn&rsquo;t visible to you, or isn&rsquo;t on this token.
-                <ScrollIntoView />
-              </p>
-            ) : null}
-            <TokenTrades trades={trades} agentNames={agents} receipts={receipts} focusTradeId={focus?.id ?? null} />
-          </section>
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
+              <section aria-labelledby="token-trades-heading" className="min-w-0">
+                <h2
+                  id="token-trades-heading"
+                  className="mb-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase"
+                >
+                  Recent agent trades
+                </h2>
+                {focusId && !focus ? (
+                  // One sentence for every miss — wrong token, not filled, or a private agent's
+                  // fill — so the notice never confirms that a private trade exists. It is
+                  // scrolled to, as a found fill would be: the link promised this spot.
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    That fill isn&rsquo;t visible to you, or isn&rsquo;t on this token.
+                    <ScrollIntoView />
+                  </p>
+                ) : null}
+                <TokenTrades trades={trades} agentNames={agents} receipts={receipts} focusTradeId={focus?.id ?? null} />
+              </section>
 
-          <section aria-labelledby="token-holders-heading" className="min-w-0">
-            <h2
-              id="token-holders-heading"
-              className="mb-2 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase"
-            >
-              <span>
-                Agents holding
-                {page.holders.length > 0 ? <span className="tnum"> · {page.holders.length}</span> : null}
-              </span>
-              {/* One badge for all of them when they share a mode; otherwise each row has its own. */}
-              {holderMode ? <ModeBadge mode={holderMode} size="xs" /> : null}
-            </h2>
-            <AgentsHolding holders={page.holders} />
-          </section>
-        </div>
+              <section aria-labelledby="token-holders-heading" className="min-w-0">
+                <h2
+                  id="token-holders-heading"
+                  className="mb-2 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase"
+                >
+                  <span>
+                    Agents holding
+                    {page.holders.length > 0 ? <span className="tnum"> · {page.holders.length}</span> : null}
+                  </span>
+                  {/* One badge for all of them when they share a mode; otherwise each row has its own. */}
+                  {holderMode ? <ModeBadge mode={holderMode} size="xs" /> : null}
+                </h2>
+                <AgentsHolding holders={page.holders} />
+              </section>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -221,6 +236,7 @@ function History({
   // Counted the way the chart draws them: a reading no provider answered is a gap.
   const readings = page.history.filter((point) => !isNoDataReading(point)).length;
   const empty = page.history.length - readings;
+  const nothing = prices.length === 0 && readings === 0 && markers.length === 0;
   return (
     <section
       aria-labelledby="token-history-heading"
@@ -230,34 +246,50 @@ function History({
         <h2 id="token-history-heading" className="text-sm font-medium tracking-tight">
           Price
         </h2>
-        <p className="tnum font-mono text-[11px] text-muted-foreground">
-          {reach} · {prices.length} point{prices.length === 1 ? "" : "s"}
-          {markers.length > 0 ? ` · ${markers.length} of your fills` : ""}
-        </p>
-      </div>
-
-      <Suspense fallback={<ChartSkeleton variant="line" height={240} />}>
-        <PriceChart
-          points={prices}
-          markers={markers}
-          agentCount={agentCount}
-          padLeft={padLeft}
-          className="mt-2"
-        />
-      </Suspense>
-
-      <div className="mt-4 border-t border-border/50 pt-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Score</h3>
+        {nothing ? null : (
           <p className="tnum font-mono text-[11px] text-muted-foreground">
-            {readings} point{readings === 1 ? "" : "s"}
-            {empty > 0 ? ` · ${empty} with no data` : ""}
+            {reach} · {prices.length} point{prices.length === 1 ? "" : "s"}
+            {markers.length > 0 ? ` · ${markers.length} of your fills` : ""}
           </p>
-        </div>
-        <Suspense fallback={<ChartSkeleton variant="line" height={220} />}>
-          <ScoreHistoryChart history={page.history} padLeft={padLeft} className="mt-2" />
-        </Suspense>
+        )}
       </div>
+
+      {nothing ? (
+        // One empty state for the card, not a dashed box per chart nested inside it.
+        <div className="mt-2">
+          <ChartEmpty
+            height={200}
+            variant="line"
+            title="No price or score history yet"
+            description="Every time this token is scored, a price and a score land here. The lines fill in from the next sweep."
+          />
+        </div>
+      ) : (
+        <>
+          <Suspense fallback={<ChartSkeleton variant="line" height={240} />}>
+            <PriceChart
+              points={prices}
+              markers={markers}
+              agentCount={agentCount}
+              padLeft={padLeft}
+              className="mt-2"
+            />
+          </Suspense>
+
+          <div className="mt-4 border-t border-border/50 pt-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Score</h3>
+              <p className="tnum font-mono text-[11px] text-muted-foreground">
+                {readings} point{readings === 1 ? "" : "s"}
+                {empty > 0 ? ` · ${empty} with no data` : ""}
+              </p>
+            </div>
+            <Suspense fallback={<ChartSkeleton variant="line" height={220} />}>
+              <ScoreHistoryChart history={page.history} padLeft={padLeft} className="mt-2" />
+            </Suspense>
+          </div>
+        </>
+      )}
     </section>
   );
 }

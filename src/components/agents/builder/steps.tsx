@@ -11,6 +11,7 @@ import { ChainBadge } from "@/components/common/chain-badge";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { FeesCovered } from "@/components/common/fees-covered";
 import { formatUsd } from "@/components/common/format";
+import { shownUsdc } from "@/components/wallets/cash-display";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { addLlmKeyAction } from "@/components/agents/agent-actions";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
@@ -38,6 +39,7 @@ import {
   INTERVAL_PRESETS,
   LLM_BOUNDS,
   MAX_AGENT_NAME,
+  MAX_TRADE_LADDER,
   launchRadarUsdPerRun,
   PAPER_BALANCES,
   RISK_BOUNDS,
@@ -60,6 +62,8 @@ export interface StepProps {
 // ------------------------------------------------------------------ identity
 
 export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) {
+  const shuffled = !(AVATAR_SEEDS as readonly string[]).includes(draft.avatarSeed);
+  const [shuffles, setShuffles] = useState(0);
   return (
     <div className="space-y-5">
       {hideHeading ? null : (
@@ -118,15 +122,39 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
           })}
           <button
             type="button"
-            onClick={() =>
-              update({ avatarSeed: `${draft.avatarSeed}-${Math.random().toString(36).slice(2, 6)}` })
-            }
-            className="grid size-12 place-items-center rounded-xl border border-dashed border-border text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="Randomise avatar"
+            onClick={() => {
+              // Re-suffix the base seed rather than appending, so repeat shuffles stay short.
+              const base = draft.avatarSeed.split("-")[0];
+              update({ avatarSeed: `${base}-${Math.random().toString(36).slice(2, 6)}` });
+              setShuffles((n) => n + 1);
+            }}
+            // A shuffled seed matches none of the tiles, so this tile becomes the preview —
+            // otherwise the pick is invisible and every further shuffle looks like a no-op.
+            aria-pressed={shuffled}
+            aria-label={shuffled ? "Randomise avatar (current: random)" : "Randomise avatar"}
+            className={cn(
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              shuffled
+                ? "relative rounded-xl p-0.5 ring-2 ring-primary transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.94]"
+                : "grid size-12 place-items-center rounded-xl border border-dashed border-border text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground",
+            )}
           >
-            <Shuffle aria-hidden className="size-4" />
+            {shuffled ? (
+              <>
+                <AgentAvatar seed={draft.avatarSeed} name={draft.name || "Random"} size="lg" />
+                <span className="absolute -right-1.5 -bottom-1.5 grid size-5 place-items-center rounded-full border border-border bg-background text-muted-foreground">
+                  <Shuffle aria-hidden className="size-3" />
+                </span>
+              </>
+            ) : (
+              <Shuffle aria-hidden className="size-4" />
+            )}
           </button>
         </div>
+        {/* Keyed so each shuffle inserts a fresh node — identical text would not re-announce. */}
+        <span aria-live="polite" className="sr-only">
+          {shuffles > 0 ? <span key={shuffles}>New avatar picked</span> : null}
+        </span>
       </Field>
 
       <Toggle
@@ -758,11 +786,12 @@ export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
           label="Max per trade"
           value={risk.maxTradeUsd}
           {...RISK_BOUNDS.maxTradeUsd}
+          ladder={MAX_TRADE_LADDER}
           format={(value) => formatUsd(value)}
           meaning={
             fundedUsd > 0 && risk.maxTradeUsd > fundedUsd
-              ? `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)} — but that is more than ${startsWith}, so every trade would be refused for lack of cash. Type an exact number in the box.`
-              : `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)}, whatever the model asks for. Click the number to type an exact amount.`
+              ? `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)} — but that is more than ${startsWith}, so every trade would be refused for lack of cash. Tap the number to type an exact amount.`
+              : `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)}, whatever the model asks for. Tap the number to type an exact amount.`
           }
           onChange={(maxTradeUsd) => patch({ maxTradeUsd })}
         />
@@ -1122,7 +1151,7 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
                   return (
                     <li key={chain} className="flex items-center gap-1.5 text-xs">
                       <ChainBadge chain={chain} />
-                      <span className="tnum">{formatUsd(chainCash.usdcUsd)}</span>
+                      <span className="tnum">{formatUsd(shownUsdc(chainCash.usdcUsd))}</span>
                     </li>
                   );
                 })}

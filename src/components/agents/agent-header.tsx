@@ -54,7 +54,9 @@ export function AgentHeader({
       : `${window.location.origin}/agents/${agent.slug}`;
 
   const runNow = async () => {
-    const result = await triggerRunAction(agent.id);
+    // `safeAction`: a request that never lands (offline, a deploy in between) must
+    // toast too, not only flash "Failed" on the button with no reason.
+    const result = await safeAction(() => triggerRunAction(agent.id));
     if (!result.ok) {
       toast.error("Could not start the run", { description: result.error });
       throw new Error(result.error);

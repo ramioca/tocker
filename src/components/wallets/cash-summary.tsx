@@ -6,6 +6,7 @@ import { formatUsd } from "@/components/common/format";
 import { chainLabelFor, type UnifiedCash } from "@/lib/wallets/funding";
 import { cn } from "@/lib/utils";
 import type { Chain } from "@/server/types";
+import { shownCashTotal, shownUsdc } from "./cash-display";
 
 /**
  * The one number. Everything else on these screens is context for it, so it is
@@ -38,7 +39,7 @@ export function CashTotal({
 
   return (
     <span className={cn("tnum tracking-tight", type, className)}>
-      {formatUsd(scope === "all" ? cash.allUsd : cash.totalUsd)}
+      {formatUsd(shownCashTotal(cash, scope))}
     </span>
   );
 }
@@ -69,7 +70,7 @@ export function ChainBreakdown({
           </div>
 
           <div className="text-right">
-            <p className="tnum text-sm font-medium">{formatUsd(chainCash.usdcUsd)}</p>
+            <p className="tnum text-sm font-medium">{formatUsd(shownUsdc(chainCash.usdcUsd))}</p>
             {onDeposit ? (
               <button
                 type="button"

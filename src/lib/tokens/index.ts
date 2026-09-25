@@ -22,7 +22,8 @@
  * `age_unknown` blockers — a refusal about our data, not about the token.
  */
 import { eq } from "drizzle-orm";
-import { getDb, tokenScores } from "@/db";
+import { getDb, publicTokenScores, tokenScores } from "@/db";
+import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import type { Chain, TokenScore, TradeScore } from "@/server/types";
 import type { X402Context } from "@/lib/x402/types";
 import { getDexScreenerToken } from "./providers/dexscreener";
@@ -142,6 +143,26 @@ export function universeKey(universe: Universe): string {
   return hash.toString(36);
 }
 
+/**
+ * The platform default universe's fingerprint. Token pages and `/discover` show only
+ * readings taken under it, because an agent's gates are part of its private strategy.
+ */
+export const PUBLIC_UNIVERSE_KEY = universeKey(DEFAULT_AGENT_CONFIG.universe);
+
+/**
+ * Whether a reading is the public one: the default universe, sized against the default
+ * clip, and with no paid signal folded in. An agent whose universe happens to match the
+ * default still scores with its own clip size and its own paid sources, and those move
+ * the total — so its reading shares the cache but is not published.
+ */
+export function isPublicReading(input: Pick<GetTokenScoreInput, "universe" | "maxTradeUsd" | "x402">): boolean {
+  return (
+    universeKey(input.universe) === PUBLIC_UNIVERSE_KEY &&
+    input.x402 === undefined &&
+    (input.maxTradeUsd ?? 0) === DEFAULT_AGENT_CONFIG.risk.maxTradeUsd
+  );
+}
+
 function rowToScore(row: typeof tokenScores.$inferSelect): TokenScore {
   const components = row.components;
   return {
@@ -204,10 +225,10 @@ async function readCache(id: string, key: string, now: number, wants: CacheWants
   }
 }
 
-async function writeCache(score: TokenScore, key: string): Promise<void> {
+async function writeCache(score: TokenScore, key: string, isPublic: boolean): Promise<void> {
   try {
     const db = await getDb();
-    const values = {
+    const market = {
       id: score.tokenId,
       chain: score.chain,
       address: score.address,
@@ -225,10 +246,15 @@ async function writeCache(score: TokenScore, key: string): Promise<void> {
       ageHours: score.ageHours === null ? null : score.ageHours.toFixed(2),
       priceChange24hPct: score.priceChange24hPct === null ? null : score.priceChange24hPct.toFixed(4),
       sources: score.sources,
-      universeKey: key,
       scoredAt: new Date(score.scoredAt),
     };
+    const values = { ...market, universeKey: key };
     await db.insert(tokenScores).values(values).onConflictDoUpdate({ target: tokenScores.id, set: values });
+    // The public row is written only by a public reading, so no agent's rescore under
+    // its own rules can replace what the token page shows.
+    if (isPublic) {
+      await db.insert(publicTokenScores).values(market).onConflictDoUpdate({ target: publicTokenScores.id, set: market });
+    }
   } catch {
     // Same reasoning as readCache: never let cache persistence fail a run.
   }
@@ -448,8 +474,11 @@ export async function getTokenScore(input: GetTokenScoreInput): Promise<TokenSco
   // A reading no provider answered is an outage, not a verdict: caching it would replace
   // the token's last real score (and, under the public universe, its public page) with
   // "0 · avoid". The caller still gets it, so a buy is still refused on it.
-  if (!isNoData(score)) await writeCache(score, key);
-  await recordScore(score); // append-only history for token pages; deduped, never throws
+  const isPublic = isPublicReading(input);
+  if (!isNoData(score)) await writeCache(score, key, isPublic);
+  // Append-only history for token pages; deduped, never throws. A default-universe
+  // reading taken with private inputs is filed under no key, so it never charts as public.
+  await recordScore(score, key === PUBLIC_UNIVERSE_KEY && !isPublic ? null : key);
   return score;
 }
 

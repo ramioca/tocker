@@ -39,18 +39,12 @@ import { Field } from "@/components/agents/builder/field";
 import { ScoreBadge } from "@/components/tokens";
 import { placeManualTrade, previewTrade } from "@/server/actions/trading";
 import { TradeReceiptCard } from "@/components/trading";
-import { sliceText } from "@/components/trading/sell-amount";
+import { SELL_SLICES, sliceLabel, sliceText } from "@/components/trading/sell-amount";
 import { cn } from "@/lib/utils";
 import type { AgentDetail, Chain, TradePreview } from "@/server/types";
 import type { TradeReceiptData } from "@/db/schema";
 
 const SIZE_PRESETS = [10, 25, 50, 100, 250] as const;
-/** A sell is sized against what is held, not against the buy presets. */
-const SELL_SLICES = [
-  { pct: 25, label: "25%" },
-  { pct: 50, label: "50%" },
-  { pct: 100, label: "All" },
-] as const;
 
 /**
  * Digits and one decimal point, at most two places. The old filter kept every dot, so
@@ -109,7 +103,6 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   const amountValid = Number.isFinite(amountUsd) && amountUsd > 0;
   const amountError = amount !== "" && !amountValid ? "Enter an amount above $0, like 25 or 12.50" : null;
   const ready = address.length >= 3 && amountValid;
-  const orderLabel = `${side === "buy" ? "Buy" : "Sell"}${amountValid ? ` ${formatUsd(amountUsd)}` : ""}`;
   // Said at the Size box, not only by the guard at the bottom of the preview: on a phone
   // that line sat under the footer, next to a Buy button that was simply dead. Buys only —
   // a full exit may sell past the cap (see risk.test.ts).
@@ -160,6 +153,10 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   const held = holding !== null && holding.key === `${chain}|${address}` ? holding : null;
   const heldUsd = side === "sell" ? (held?.valueUsd ?? null) : null;
   const overPosition = heldUsd !== null && amountValid && amountUsd > heldUsd;
+  // The amount only rides on the button when the order can go: "Sell $99,999.00" under
+  // "more than the position is worth" read as an offer the sheet was refusing.
+  const orderable = amountValid && !overCap && !overPosition && preview?.allowed !== false;
+  const orderLabel = `${side === "buy" ? "Buy" : "Sell"}${orderable ? ` ${formatUsd(amountUsd)}` : ""}`;
 
   /**
    * In flight. A live swap can take longer than the hold button's re-arm, and a second
@@ -382,26 +379,39 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
                 </div>
                 {side === "buy" ? (
                   <div className="flex flex-wrap gap-1.5">
-                    {SIZE_PRESETS.map((preset) => (
-                      <button key={preset} type="button" onClick={() => setAmount(String(preset))} className={PRESET_CLASS}>
-                        ${preset}
-                      </button>
-                    ))}
+                    {SIZE_PRESETS.map((preset) => {
+                      const active = amount === String(preset);
+                      return (
+                        <button
+                          key={preset}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => setAmount(String(preset))}
+                          className={cn(PRESET_CLASS, active ? PRESET_ACTIVE : PRESET_IDLE)}
+                        >
+                          ${preset}
+                        </button>
+                      );
+                    })}
                   </div>
                 ) : heldUsd !== null && heldUsd > 0 ? (
                   // Floored to the cent (sliceText), so "All" is never a cent over the mark
-                  // and refused by the guard.
+                  // and refused by the guard. Same slices as the Sell position dialog.
                   <div className="flex flex-wrap gap-1.5">
-                    {SELL_SLICES.map((slice) => (
-                      <button
-                        key={slice.pct}
-                        type="button"
-                        onClick={() => setAmount(sliceText(heldUsd, slice.pct))}
-                        className={PRESET_CLASS}
-                      >
-                        {slice.label}
-                      </button>
-                    ))}
+                    {SELL_SLICES.map((pct) => {
+                      const active = amount === sliceText(heldUsd, pct);
+                      return (
+                        <button
+                          key={pct}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => setAmount(sliceText(heldUsd, pct))}
+                          className={cn(PRESET_CLASS, active ? PRESET_ACTIVE : PRESET_IDLE)}
+                        >
+                          {sliceLabel(pct)}
+                        </button>
+                      );
+                    })}
                   </div>
                 ) : null}
               </div>
@@ -511,7 +521,10 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
 }
 
 const PRESET_CLASS =
-  "tnum rounded-md border border-border/70 px-2 py-1 font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "tnum rounded-md border px-2 py-1 font-mono text-[11px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+// The chip matching the Size box reads as chosen, as the Sell position dialog's does.
+const PRESET_ACTIVE = "border-primary/50 bg-primary/10 text-foreground";
+const PRESET_IDLE = "border-border/70 text-muted-foreground hover:bg-muted hover:text-foreground";
 
 /** Score, guard verdict and quote — the three things worth knowing before committing. */
 function PreviewPanel({
@@ -601,14 +614,18 @@ function PreviewPanel({
             {fees ? <Row label="Fees" value={fees} /> : null}
           </>
         ) : null}
-        <Row label="Cash" value={formatUsd(preview.cashUsd)} />
-        <Row label="Equity" value={formatUsd(preview.equityUsd)} />
+        {/* Today's book, not the result of the order — said so next to post-trade figures. */}
+        <Row label="Cash now" value={formatUsd(preview.cashUsd)} />
+        <Row label="Equity now" value={formatUsd(preview.equityUsd)} />
       </dl>
 
       {preview.allowed ? (
         <p className="flex items-start gap-2 text-xs leading-relaxed text-[oklch(0.78_0.15_150)]">
           <ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-          Clears every gate at this size.
+          {/* Sells are not gated on score, so an "Avoid" badge above is not a contradiction. */}
+          {side === "sell"
+            ? "Within this agent's sell limits — score doesn't gate sells."
+            : "Clears every gate at this size."}
         </p>
       ) : (
         <p className="flex items-start gap-2 text-xs leading-relaxed text-destructive">

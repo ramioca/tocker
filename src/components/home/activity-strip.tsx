@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Activity, ArrowDownRight, ArrowUpRight, Ban, Gavel, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowRight, ArrowUpRight, Ban, Gavel, ShieldCheck, TriangleAlert } from "lucide-react";
 import { AgentAvatar } from "@/components/common/agent-avatar";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { RelativeTime } from "@/components/common/relative-time";
@@ -48,11 +48,12 @@ function Row({ item }: { item: HomeActivityItem }) {
   const unfilled = kind === "declined" || kind === "blocked" || kind === "failed";
   const usd = kind === "proposal" || unfilled ? (trade.requestedUsd ?? trade.amountUsd) : trade.amountUsd;
   // A trade lives in its agent's ledger, next to the run that placed it; the token
-  // page is one click on from there. Proposals open straight onto their decision.
+  // page is one click on from there. `trade=` points the ledger at this row rather
+  // than its top. Proposals open straight onto their decision.
   const href =
     kind === "proposal"
       ? `/agents/${agent.slug}?proposal=${trade.id}`
-      : `/agents/${agent.slug}?tab=trades`;
+      : `/agents/${agent.slug}?tab=trades&trade=${trade.id}`;
   // A trade that never filled says why instead of why it was wanted. Home is the
   // owner's own agents only, so the error is theirs to read.
   const note = unfilled ? trade.error : trade.rationale;
@@ -206,7 +207,7 @@ export function ActivityStrip({
           className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.97]"
         >
           Open the feed
-          <ArrowUpRight aria-hidden className="size-3.5" />
+          <ArrowRight aria-hidden className="size-3.5" />
         </Link>
       </div>
 

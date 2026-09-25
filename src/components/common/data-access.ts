@@ -68,7 +68,7 @@ export function viewerSession(): Promise<Session | null> {
 }
 
 /**
- * Whether the viewer has paused all trading from Security → Stop everything. Their own
+ * Whether the viewer has paused all trading from Security → Pause all trading. Their own
  * agents then read "Paused (account)" rather than "Active". A failed read reports not
  * paused: this only labels agents, it never gates a trade (the run loop checks itself).
  */

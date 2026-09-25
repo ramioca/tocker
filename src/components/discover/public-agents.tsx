@@ -21,6 +21,13 @@ type Sort = "pnl" | "new" | "followers";
 /** Long enough that a word typed at speed is one request, short enough to feel live. */
 const SEARCH_DEBOUNCE_MS = 250;
 
+/**
+ * The request that failed, so the message and its retry match it: a new search (or sort)
+ * that failed is not "could not load more", and retrying it must re-run that search, not
+ * fetch the next page of the previous one.
+ */
+type Failure = { kind: "search" | "more"; q: string; cursor: string | null };
+
 const SORTS: Array<{ id: Sort; label: string }> = [
   { id: "pnl", label: "Top PnL" },
   { id: "new", label: "Newest" },
@@ -33,7 +40,7 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
   const [items, setItems] = useState(initial.items);
   const [cursor, setCursor] = useState(initial.nextCursor);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState<Failure | null>(null);
   // The search the loaded `items` answer. Until it catches up with `query`, the loaded
   // rows are filtered here instead.
   const [appliedQuery, setAppliedQuery] = useState("");
@@ -50,8 +57,9 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
+      // `failed` is not cleared here. Clearing it on every attempt remounted the alert
+      // each time the observer retried, and re-armed that observer mid-failure.
       setLoading(true);
-      setError(null);
       try {
         const params = new URLSearchParams({ sort: nextSort });
         if (nextCursor) params.set("cursor", nextCursor);
@@ -69,10 +77,11 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
         });
         setCursor(page.nextCursor);
         setAppliedQuery(q);
+        setFailed(null);
       } catch {
         // Superseded (aborted or simply stale): the newer request owns the state.
         if (id !== requestRef.current) return;
-        setError("Could not load more agents.");
+        setFailed({ kind: replace ? "search" : "more", q, cursor: nextCursor });
       } finally {
         if (id === requestRef.current) setLoading(false);
       }
@@ -83,12 +92,18 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const trimmed = query.trim().slice(0, 64);
+  // A failed search stops counting once the box no longer holds it (typed back to the
+  // last good search, say), or it would block scrolling and speak for the wrong list.
+  const failure = failed && (failed.kind === "more" || failed.q === trimmed) ? failed : null;
 
   // Ask the server once typing pauses. Skipped when the loaded rows already answer it
   // (the first render, or typing back to the last search).
   useEffect(() => {
     if (trimmed === appliedQuery) return;
-    const timer = window.setTimeout(() => void load(sort, null, true, trimmed), SEARCH_DEBOUNCE_MS);
+    const timer = window.setTimeout(() => {
+      setFailed(null);
+      void load(sort, null, true, trimmed);
+    }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [trimmed, appliedQuery, sort, load]);
 
@@ -98,13 +113,25 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
     setSort(next);
     setItems([]);
     setCursor(null);
+    setFailed(null);
     void load(next, null, true, trimmed);
   }
 
+  function retry() {
+    if (!failure) return;
+    setFailed(null);
+    // A failed search re-runs what is in the box now; a failed page re-asks for that page.
+    if (failure.kind === "search") void load(sort, null, true, trimmed);
+    else void load(sort, failure.cursor, false, failure.q);
+  }
+
   // Infinite scroll: fetch when the sentinel comes within a screen of the viewport.
+  // Not after a failure: `loading` flipping back re-subscribed the observer, the sentinel
+  // was still inside its margin, and a dead endpoint was retried ~13 times a second. The
+  // retry is the user's to make.
   useEffect(() => {
     const node = sentinel.current;
-    if (!node || !cursor || loading) return;
+    if (!node || !cursor || loading || failure) return;
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) void load(sort, cursor, false, appliedQuery);
@@ -113,16 +140,27 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [cursor, loading, sort, load, appliedQuery]);
+  }, [cursor, loading, failure, sort, load, appliedQuery]);
 
   const filtering = trimmed.length > 0;
   // Settled: the rows on screen are the server's answer to what is in the box.
   const settled = trimmed === appliedQuery;
+
   const visible = useMemo(() => {
     const q = normalizeSearch(query);
     if (!q || settled) return items;
     return items.filter((agent) => matchesAgent(agent, q));
   }, [items, query, settled]);
+  const searchFailed = failure?.kind === "search";
+  const searching = filtering && (!settled || loading);
+  // Under the list: a page that failed, or a failed search with local matches still on
+  // screen. A failed search with nothing on screen says so in the empty state instead.
+  const bottomFailure =
+    failure?.kind === "more"
+      ? "Could not load more agents."
+      : searchFailed && visible.length > 0
+        ? "Couldn't search every public agent."
+        : null;
 
   return (
     <section aria-labelledby="agents-heading">
@@ -170,16 +208,36 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
         <EmptyState
           className="mt-6"
           icon={<Boxes />}
-          title={filtering ? `Nothing matches “${query.trim()}”` : "No public agents yet"}
+          title={
+            searchFailed
+              ? filtering
+                ? "Couldn't search right now"
+                : "Couldn't load agents"
+              : filtering
+                ? searching
+                  ? `Searching for “${query.trim()}”…`
+                  : `Nothing matches “${query.trim()}”`
+                : "No public agents yet"
+          }
           description={
-            filtering
-              ? !settled || loading
-                ? "Searching every public agent…"
-                : "No public agent's name, owner handle or tagline matches. Try a shorter word."
-              : "Be the first to publish one. Every fill is public; the strategy behind it never is."
+            searchFailed
+              ? "The request didn't go through. Check your connection and try again."
+              : filtering
+                ? searching
+                  ? "Checking every public agent's name, owner handle and tagline."
+                  : "No public agent's name, owner handle or tagline matches. Try a shorter word."
+                : "Be the first to publish one. Every fill is public; the strategy behind it never is."
           }
           action={
-            filtering ? (
+            searchFailed ? (
+              <button
+                type="button"
+                onClick={retry}
+                className="focus-ring rounded-lg border border-border px-3 py-1.5 text-xs transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97]"
+              >
+                Try again
+              </button>
+            ) : filtering ? (
               <button
                 type="button"
                 onClick={() => setQuery("")}
@@ -214,20 +272,23 @@ export function PublicAgents({ initial }: { initial: Page<AgentCard> }) {
         </ul>
       )}
 
-      {error ? (
-        <div className="mt-6 text-center">
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
+      {/* Mounted for good, only its text changes: a live region that is inserted with its
+          message is often not announced at all, and one re-inserted on every retry was
+          announced over and over. */}
+      <div className={bottomFailure ? "mt-6 text-center" : undefined}>
+        <p role="status" aria-live="polite" className="text-sm text-destructive">
+          {bottomFailure}
+        </p>
+        {bottomFailure ? (
           <button
             type="button"
-            onClick={() => void load(sort, cursor, false, appliedQuery)}
+            onClick={retry}
             className="mt-2 inline-flex h-8 items-center rounded-lg border border-border px-3 text-xs transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97] focus-ring"
           >
             Try again
           </button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
       <div ref={sentinel} className="h-px" aria-hidden />
 

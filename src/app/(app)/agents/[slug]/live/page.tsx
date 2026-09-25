@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import {notFound, redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { canonicalSlug } from "@/app/(app)/agents/[slug]/canonical-slug";
 import { EmptyState } from "@/components/common/empty-state";
 import { LiveWizard } from "@/components/live/live-wizard";
 import { agentBySlug, agentWalletBudget, viewerSession } from "@/components/common/data-access";
@@ -17,7 +18,7 @@ export const metadata: Metadata = { title: "First live trade" };
  * leak the one thing that is never public.
  */
 export default async function LiveWizardPage({ params }: Params) {
-  const { slug } = await params;
+  const slug = await canonicalSlug(params, "/live");
   const session = await viewerSession();
   if (!session) redirect(`/login?next=${encodeURIComponent(`/agents/${slug}/live`)}`);
   const agent = await agentBySlug(slug, session?.userId ?? null);
@@ -26,6 +27,8 @@ export default async function LiveWizardPage({ params }: Params) {
   if (!agent.isOwner || !agent.config) {
     return (
       <div className="mx-auto w-full max-w-2xl px-4 py-10 sm:px-6">
+        {/* EmptyState's title is not a heading; the page still needs one to navigate by. */}
+        <h1 className="sr-only">{agent.name} — go live</h1>
         <EmptyState
           title="This checklist is not yours"
           description={`${agent.name} belongs to @${agent.owner.handle}. Only its owner can put it live.`}

@@ -2,6 +2,7 @@ import { cache } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { canonicalSlug } from "@/app/(app)/agents/[slug]/canonical-slug";
 import { ArrowLeft, Lock } from "lucide-react";
 import { RunSteps } from "@/components/agents/run-steps";
 import { AgentAvatar } from "@/components/common/agent-avatar";
@@ -32,7 +33,8 @@ const loadRun = cache(async (slug: string, runId: string) => {
 });
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { slug, runId } = await params;
+  const { runId } = await params;
+  const slug = await canonicalSlug(params, `/runs/${runId}`);
   const loaded = await loadRun(slug, runId);
   if (!loaded) return { title: "Run not found" };
   return { title: `${loaded.agent.name} · run` };
@@ -48,7 +50,8 @@ function Stat({ label, value, className }: { label: string; value: React.ReactNo
 }
 
 export default async function RunPage({ params }: Params) {
-  const { slug, runId } = await params;
+  const { runId } = await params;
+  const slug = await canonicalSlug(params, `/runs/${runId}`);
   const loaded = await loadRun(slug, runId);
   if (!loaded) notFound();
   const { agent, run } = loaded;

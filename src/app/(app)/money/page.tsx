@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { ArrowRight, Plus, Wallet } from "lucide-react";
 import { EquityChart } from "@/components/charts/equity-chart";
 import { EmptyState } from "@/components/common/empty-state";
+import { formatSignedUsd } from "@/components/common/format";
 import { AgentMoneyTable } from "@/components/money/agent-money-table";
 import { sumCosts } from "@/components/money/cost-totals";
 import { CostsNote } from "@/components/money/costs-note";
@@ -66,13 +67,14 @@ const NEW_AGENT_BUTTON = (
 // Going live is a per-agent step, so a paper-only account is sent straight to the
 // go-live flow of its best paper record — the one most likely to be worth trusting —
 // rather than to a list with no go-live control on it.
-function GoLiveButton({ href }: { href: string }) {
+// Named, because "an agent" left an owner of several guessing which one they were about to fund.
+function GoLiveButton({ href, name }: { href: string; name?: string }) {
   return (
     <Link
       href={href}
       className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.97]"
     >
-      Take an agent live
+      {name ? `Take ${name} live` : "Take an agent live"}
       <ArrowRight aria-hidden className="size-4" />
     </Link>
   );
@@ -147,10 +149,10 @@ export default async function MoneyPage() {
             title={hasAny ? "Nothing is trading real money yet" : "No agents yet"}
             description={
               hasAny
-                ? "Your paper agents are below. Their P&L is real arithmetic on simulated fills, but none of it is counted here — this page only totals live books. Fund an agent and switch it to live when its record convinces you."
+                ? `Your paper agents are below. Their P&L is real arithmetic on simulated fills, but none of it is counted here — this page only totals live books. Fund an agent and switch it to live when its record convinces you.${bestPaper ? ` Best paper record so far: ${bestPaper.name}, ${formatSignedUsd(bestPaper.pnlUsd)}.` : ""}`
                 : "An agent is a prompt, a wallet and a schedule. Build one — it starts on paper, so the first mistake costs nothing — and this page fills in the day it goes live."
             }
-            action={hasAny ? <GoLiveButton href={goLiveHref} /> : NEW_AGENT_BUTTON}
+            action={hasAny ? <GoLiveButton href={goLiveHref} name={bestPaper?.name} /> : NEW_AGENT_BUTTON}
           />
         )}
 

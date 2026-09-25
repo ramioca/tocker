@@ -32,6 +32,10 @@ export function TokenHeader({
   const price =
     score?.priceUsd ?? lastKnown(page.history, "priceUsd") ?? page.marketFacts?.priceUsd ?? token.lastPriceUsd;
   const change24h = facts?.priceChange24hPct ?? null;
+  // A token nobody has read a symbol for is titled with its own shortened address
+  // (placeholderToken). Printing the address again underneath said the same thing twice,
+  // so the title itself becomes the copy control and the second line drops it.
+  const unnamed = token.address !== "native" && token.symbol === `${token.address.slice(0, 4)}…${token.address.slice(-4)}`;
 
   return (
     // Padding inside the max-w box, as the body below does it — outside it, the header
@@ -43,7 +47,19 @@ export function TokenHeader({
 
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight">{token.symbol}</h1>
+              <h1 className="text-xl font-semibold tracking-tight">
+                {unnamed ? (
+                  <Address
+                    address={token.address}
+                    label="token address"
+                    lead={4}
+                    tail={4}
+                    className="-mx-1.5 text-xl font-semibold text-foreground"
+                  />
+                ) : (
+                  token.symbol
+                )}
+              </h1>
               {token.name && token.name !== token.symbol ? (
                 <span className="truncate text-sm text-muted-foreground">{token.name}</span>
               ) : null}
@@ -53,7 +69,7 @@ export function TokenHeader({
               {/* A native gas asset has no contract; copying the word "native" helps nobody. */}
               {token.address === "native" ? (
                 <span className="text-xs text-muted-foreground">Native gas asset</span>
-              ) : (
+              ) : unnamed ? null : (
                 <Address address={token.address} label="token address" />
               )}
               <GeckoTerminalLink chain={token.chain} address={token.address} symbol={token.symbol} label="GeckoTerminal" />

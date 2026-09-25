@@ -122,7 +122,6 @@ export function DangerZone({ agent, balances = [] }: { agent: AgentDetail; balan
           value={typed}
           autoComplete="off"
           spellCheck={false}
-          placeholder={agent.name}
           disabled={Boolean(stranded)}
           onChange={(event) => setTyped(event.target.value)}
           className={cn("max-w-xs font-mono", confirmed && "border-destructive/50")}

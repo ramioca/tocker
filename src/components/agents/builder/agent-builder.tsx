@@ -255,7 +255,9 @@ function RuleCard({
           open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
         )}
       >
-        <div className="overflow-hidden">
+        {/* relative: sr-only notes inside are position:absolute; without a positioned
+            ancestor here they escape the 0fr clip and stretch the page. */}
+        <div className="relative overflow-hidden">
           <div className="border-t border-border/50 px-4 pt-4 pb-4">{children}</div>
         </div>
       </div>

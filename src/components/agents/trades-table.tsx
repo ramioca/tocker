@@ -1,8 +1,9 @@
 "use client";
 
-import { Fragment } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { GeckoTerminalLink } from "@/components/common/chart-link";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ArrowUpRight, Receipt } from "lucide-react";
 import {
@@ -46,6 +47,11 @@ function explorerUrl(trade: TradeRow): string | null {
 /** The columns left below `sm`, which the phone-only rationale row spans. */
 const MOBILE_COLUMNS = 5;
 
+/** How many older pages a `?trade=` link may pull in looking for its fill before giving up. */
+const MAX_FOCUS_PAGES = 4;
+/** How long the linked fill stays tinted: long enough to find it, short enough not to linger. */
+const FOCUS_FLASH_MS = 1800;
+
 export function TradesTable({
   agentId,
   agentSlug,
@@ -67,6 +73,35 @@ export function TradesTable({
   });
 
   const trades = query.data?.pages.flatMap((page) => page.items) ?? [];
+
+  // `?trade=<id>` is where a Home activity row points: the fill it named, not the whole
+  // list. Once that row is loaded it is brought to the middle of the screen and tinted
+  // for a moment. Not loaded yet: a few older pages are fetched, then it gives up
+  // silently — the list is still the right place to be.
+  const focusId = useSearchParams().get("trade");
+  const focusLoaded = focusId !== null && trades.some((trade) => trade.id === focusId);
+  const pageCount = query.data?.pages.length ?? 0;
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = query;
+  useEffect(() => {
+    if (!focusId || focusLoaded || pageCount === 0 || pageCount >= MAX_FOCUS_PAGES) return;
+    if (!hasNextPage || isFetchingNextPage || isFetchNextPageError) return;
+    void fetchNextPage();
+  }, [focusId, focusLoaded, pageCount, hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
+
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const scrolledTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusId || !focusLoaded || scrolledTo.current === focusId) return;
+    scrolledTo.current = focusId;
+    // An instant jump, not a glide: the viewer did not scroll, so there is no motion of theirs to follow.
+    document.getElementById(`trade-${focusId}`)?.scrollIntoView({ block: "center" });
+    setFlashId(focusId);
+  }, [focusId, focusLoaded]);
+  useEffect(() => {
+    if (!flashId) return;
+    const id = window.setTimeout(() => setFlashId(null), FOCUS_FLASH_MS);
+    return () => window.clearTimeout(id);
+  }, [flashId]);
 
   // Offline before the first page arrived: React Query pauses rather than fails, so
   // without this the skeleton would pulse until the connection came back.
@@ -151,10 +186,27 @@ export function TradesTable({
                     trade.status === "failed" ||
                     trade.status === "rejected" ||
                     trade.status === "expired";
+                  const focused = trade.id === focusId;
+                  const flashing = trade.id === flashId;
                   return (
                     <Fragment key={trade.id}>
-                      <TableRow className={cn(unfilled && "opacity-60", trade.rationale && "max-sm:border-b-0")}>
-                        <TableCell className="whitespace-nowrap text-xs">
+                      <TableRow
+                        id={`trade-${trade.id}`}
+                        aria-current={focused ? "true" : undefined}
+                        className={cn(
+                          "transition-colors duration-700 ease-out",
+                          unfilled && "opacity-60",
+                          trade.rationale && "max-sm:border-b-0",
+                          flashing && "bg-primary/8",
+                        )}
+                      >
+                        {/* The accent sits on the first cell: box-shadow on a <tr> is not drawn everywhere. */}
+                        <TableCell
+                          className={cn(
+                            "whitespace-nowrap text-xs transition-shadow duration-700 ease-out",
+                            flashing && "shadow-[inset_2px_0_0_var(--primary)]",
+                          )}
+                        >
                           {trade.runId ? (
                             <Link
                               href={`/agents/${agentSlug}/runs/${trade.runId}`}
@@ -226,8 +278,11 @@ export function TradesTable({
                             </p>
                           ) : null}
                         </TableCell>
-                        <TableCell className="tnum hidden text-right text-muted-foreground sm:table-cell">
-                          {formatTokenAmount(trade.amountToken)}
+                        <TableCell
+                          className="tnum hidden text-right text-muted-foreground sm:table-cell"
+                          title={trade.amountToken.toLocaleString("en-US", { maximumFractionDigits: 12 })}
+                        >
+                          {formatTokenAmount(trade.amountToken, { fixed: true })}
                         </TableCell>
                         <TableCell className="tnum hidden text-right text-muted-foreground sm:table-cell">
                           {formatPriceUsd(trade.priceUsd)}
@@ -281,7 +336,13 @@ export function TradesTable({
                         table's, so the end of each line is not hidden past the edge.
                       */}
                       {trade.rationale ? (
-                        <TableRow className={cn("hover:bg-transparent sm:hidden", unfilled && "opacity-60")}>
+                        <TableRow
+                          className={cn(
+                            "transition-colors duration-700 ease-out sm:hidden",
+                            unfilled && "opacity-60",
+                            flashing ? "bg-primary/8" : "hover:bg-transparent",
+                          )}
+                        >
                           <TableCell colSpan={MOBILE_COLUMNS} className="pt-0 whitespace-normal">
                             <p className="line-clamp-2 max-w-[calc(100cqw-1rem)] text-[11px] leading-snug text-muted-foreground">
                               {trade.rationale}

@@ -276,6 +276,7 @@ export function LlmKeyInventory({
                     label="Hold to revoke"
                     confirmedLabel="Revoking…"
                     className={cn(
+                      MORPH_FOCUS,
                       revoking === key.id &&
                         "border-border bg-muted text-muted-foreground dark:border-border dark:bg-muted dark:text-muted-foreground",
                     )}

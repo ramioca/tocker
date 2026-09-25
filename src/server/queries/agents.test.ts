@@ -146,6 +146,26 @@ describe("all-time PnL has one basis", () => {
     const agent = await seedAgent(db, { mode: "paper" });
     await snapshot(agent.agentId, daysAgo(5), 9_998.16, "paper");
     await snapshot(agent.agentId, daysAgo(1), 10_756.58, "paper");
+    // The page reads a paper book from its ledger, so the ledger has to hold what the
+    // last mark saw: one closed round trip that left $756.58 in cash.
+    await db.insert(schema.trades).values({
+      id: nanoid(),
+      agentId: agent.agentId,
+      ownerId: agent.userId,
+      chain: "solana",
+      side: "sell",
+      tokenId: BONK_ID,
+      quoteTokenId: USDC_ID,
+      amountToken: toNumeric(1, 12),
+      amountUsd: toNumeric(756.58, 6),
+      priceUsd: toNumeric(756.58, 12),
+      feeUsd: toNumeric(0, 6),
+      status: "filled",
+      isPaper: true,
+      origin: "agent",
+      createdAt: daysAgo(1),
+      filledAt: daysAgo(1),
+    });
 
     const detail = await getAgentBySlug(agent.slug, agent.userId);
     expect(detail!.pnlUsd).toBeCloseTo(756.58, 6);

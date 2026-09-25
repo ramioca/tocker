@@ -22,7 +22,13 @@ import { DEFAULT_MODELS, agentConfigSchema } from "@/lib/agent/config";
 import { DataSourcePicker } from "@/components/agents/data-source-picker";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
 import { ExitRulesFields } from "@/components/agents/exit-rules";
-import { INTERVAL_PRESETS, LLM_BOUNDS, MAX_AGENT_NAME, RISK_BOUNDS } from "@/components/agents/builder/types";
+import {
+  INTERVAL_PRESETS,
+  LLM_BOUNDS,
+  MAX_AGENT_NAME,
+  MAX_TRADE_LADDER,
+  RISK_BOUNDS,
+} from "@/components/agents/builder/types";
 import { EmptyState } from "@/components/common/empty-state";
 import { setAgentStatusAction, updateAgentAction } from "@/components/agents/agent-actions";
 import { SizingControls } from "@/components/trading";
@@ -63,7 +69,7 @@ export function AgentSettingsForm({
   sources?: DataSourceInfo[];
   /** The owner's API keys, for the Brain section. Server-fetched by the page. */
   llmKeys?: LlmKeyRow[];
-  /** Trading is paused account-wide (Security → Stop everything). */
+  /** Trading is paused account-wide (Security → Pause all trading). */
   accountPaused?: boolean;
   /** Shows operator-only notes, such as which platform wallet pays for a source. */
   isAdmin?: boolean;
@@ -487,8 +493,8 @@ function SettingsForm({
         <div>
           <h2 className="text-sm font-medium">Data it buys</h2>
           <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-            Paid over x402 from Tocker&apos;s platform wallet on the chain it trades, charged to its data budget. Only
-            sources payable on this agent&apos;s chains are offered.
+            Paid over x402 from Tocker&apos;s platform wallet on the chain each source bills on, charged to this
+            agent&apos;s data budget. Sources payable on its own chains are listed first.
           </p>
         </div>
         <DataSourcePicker
@@ -575,6 +581,7 @@ function SettingsForm({
             label="Max per trade"
             value={config.risk.maxTradeUsd}
             {...RISK_BOUNDS.maxTradeUsd}
+            ladder={MAX_TRADE_LADDER}
             format={(value) => formatUsd(value)}
             meaning={`No single trade may move more than ${formatUsd(config.risk.maxTradeUsd)}.`}
             onChange={(maxTradeUsd) => patchRisk({ maxTradeUsd })}
@@ -667,7 +674,9 @@ function SettingsForm({
             disabled={!dirty}
             loadingLabel="Saving…"
             successLabel="Saved"
-            errorLabel="Failed"
+            // Most refusals are a field the form already flags inline; a server
+            // refusal explains itself in a toast, so this stays true for both.
+            errorLabel="Check the form"
           >
             Save changes
           </MorphButton>

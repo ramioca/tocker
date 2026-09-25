@@ -26,7 +26,7 @@ export function SignOutSection() {
           href="/settings/security#kill-switch"
           className="rounded text-foreground underline underline-offset-2 focus-ring"
         >
-          Stop everything
+          Pause all trading
         </Link>{" "}
         on the Security tab.
       </p>

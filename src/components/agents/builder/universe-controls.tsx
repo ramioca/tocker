@@ -863,7 +863,9 @@ function BlocklistEditor({
           </p>
         )}
 
-        <div className="flex flex-wrap items-end gap-2">
+        {/* On a phone the address gets a line of its own: squeezed beside Symbol and Block
+            it showed ~12 of a mint's 44 characters, too few to check before blocking. */}
+        <div className="flex flex-wrap items-end gap-2 sm:flex-nowrap">
           {chains.length > 1 ? (
             <div className="w-28">
               <label
@@ -887,7 +889,7 @@ function BlocklistEditor({
             </div>
           ) : null}
 
-          <div className="w-24">
+          <div className="min-w-24 flex-1 sm:w-24 sm:flex-none">
             <label
               htmlFor={`${idPrefix}-block-symbol`}
               className="mb-1 block text-xs text-muted-foreground"
@@ -903,7 +905,7 @@ function BlocklistEditor({
             />
           </div>
 
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
             <label
               htmlFor={`${idPrefix}-block-address`}
               className="mb-1 block text-xs text-muted-foreground"
@@ -935,7 +937,7 @@ function BlocklistEditor({
             onClick={add}
             disabled={symbol.trim().length === 0 || address.trim().length < 3}
             className={cn(
-              "inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-xs",
+              "inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-border px-3 text-xs sm:w-auto",
               "transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]",
               "hover:bg-muted active:scale-[0.97] disabled:opacity-40",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",

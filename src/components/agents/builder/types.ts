@@ -337,6 +337,31 @@ export const RISK_BOUNDS = {
   maxTradeUsd: { min: 1, max: 5_000, step: 1 },
 } as const;
 
+/**
+ * Max per trade spans $1 to $5,000, but every sensible ticket sits under $500 — on a
+ * linear phone track that is the first 30px. The slider walks this ladder instead;
+ * the typed readout still takes any exact amount inside RISK_BOUNDS.
+ */
+export const MAX_TRADE_LADDER = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000];
+
+/**
+ * The stops a ladder slider offers. A value that is not a rung (typed, seeded, a
+ * preset) becomes a stop of its own, so the thumb sits where the number is instead
+ * of snapping it to a neighbour on first touch.
+ */
+export function ladderStops(ladder: readonly number[], value: number): number[] {
+  return ladder.includes(value) ? [...ladder] : [...ladder, value].sort((a, b) => a - b);
+}
+
+/** Index of the stop closest to `value`. */
+export function nearestStopIndex(stops: readonly number[], value: number): number {
+  let best = 0;
+  stops.forEach((stop, index) => {
+    if (Math.abs(stop - value) < Math.abs(stops[best] - value)) best = index;
+  });
+  return best;
+}
+
 export const LLM_BOUNDS = {
   maxSteps: { min: 2, max: 40, step: 1 },
 } as const;

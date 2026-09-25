@@ -1,9 +1,13 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
+import { nanoid } from "nanoid";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { DEFAULT_AGENT_CONFIG } from "./config";
-import { effectiveTicketUsd, snapshotEquity, type Portfolio } from "./portfolio";
+import { applyFill } from "@/lib/trading/positions";
+import * as prices from "@/lib/trading/prices";
+import { seedKnownTokens, tokenId, USDC_SOLANA } from "@/lib/trading/tokens";
+import { effectiveTicketUsd, getPortfolio, snapshotEquity, type Portfolio } from "./portfolio";
 import { seedAgent, setupTestDb } from "./test-support";
 
 let db: Db;
@@ -107,5 +111,59 @@ describe("effectiveTicketUsd", () => {
   it("never goes negative when the wallet cannot even cover the fee", () => {
     const ticket = effectiveTicketUsd({ cashUsd: 0.05, equityUsd: 0.05 }, config);
     expect(ticket.amountUsd).toBe(0);
+  });
+});
+
+/**
+ * The agent page prints Equity, a Cash row and every position's value side by side; a
+ * manual buy between runs once left them $25 apart because cash came from a stale
+ * snapshot. The book itself has to add up: equity is cash plus what the positions are
+ * worth, read from the same ledger.
+ */
+describe("getPortfolio", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reports equity as cash plus the value of every position", async () => {
+    await seedKnownTokens();
+    const { agentId, userId } = await seedAgent(db);
+    const BONK = tokenId("solana", "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263");
+    const WIF = tokenId("solana", "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm");
+    const marks = new Map<string, number | null>([
+      [BONK, 0.00003],
+      [WIF, 0.6],
+    ]);
+    vi.spyOn(prices, "getMarks").mockImplementation(async (ids) => new Map(ids.map((id) => [id, marks.get(id) ?? null])));
+
+    const fills = [
+      { tokenId: BONK, amountToken: 2_000_000, amountUsd: 50, priceUsd: 0.000025 },
+      { tokenId: WIF, amountToken: 20, amountUsd: 10, priceUsd: 0.5 },
+    ];
+    for (const f of fills) {
+      await db.insert(schema.trades).values({
+        id: nanoid(),
+        agentId,
+        ownerId: userId,
+        chain: "solana",
+        side: "buy",
+        tokenId: f.tokenId,
+        quoteTokenId: tokenId("solana", USDC_SOLANA),
+        amountToken: String(f.amountToken),
+        amountUsd: f.amountUsd.toFixed(6),
+        priceUsd: String(f.priceUsd),
+        feeUsd: "0",
+        status: "filled",
+        isPaper: true,
+      });
+      await applyFill(agentId, f.tokenId, { side: "buy", amountToken: f.amountToken, amountUsd: f.amountUsd, feeUsd: 0, decimals: 6 });
+    }
+
+    const book = await getPortfolio(agentId);
+    const positionsValue = book.positions.reduce((sum, p) => sum + (p.valueUsd ?? 0), 0);
+
+    expect(book.cashUsd).toBeCloseTo(10_000 - 60, 6);
+    expect(positionsValue).toBeCloseTo(60 + 12, 6);
+    expect(book.equityUsd).toBeCloseTo(book.cashUsd + positionsValue, 6);
   });
 });

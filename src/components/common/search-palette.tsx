@@ -26,6 +26,8 @@ export interface SearchPaletteItem {
   title: string;
   description: string;
   category: string;
+  /** What the query is matched against, when the caller has more words than the visible text. Defaults to title, description and category. */
+  keywords?: string;
   shortcut?: string[];
   icon: ReactNode;
   action: () => void;
@@ -34,7 +36,7 @@ export interface SearchPaletteItem {
 export interface SearchPaletteProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Already filtered: the palette matches the typed query against title, description and category too. */
+  /** Already filtered: the palette matches the typed query again, against each row's `keywords` (or its title, description and category). */
   commands: SearchPaletteItem[];
   /** The input's accessible name, and the listbox's. */
   label: string;
@@ -84,7 +86,9 @@ export function SearchPalette({
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
-    return commands.filter((item) => `${item.title} ${item.description} ${item.category}`.toLowerCase().includes(q));
+    return commands.filter((item) =>
+      (item.keywords ?? `${item.title} ${item.description} ${item.category}`).toLowerCase().includes(q),
+    );
   }, [commands, query]);
 
   // A shorter list must not leave the highlight past its end.
@@ -174,7 +178,10 @@ export function SearchPalette({
           ref={listRef}
           id={listId}
           role="listbox"
-          aria-label={label}
+          aria-label="Results"
+          // A scrolling box is a tab stop by default in Chromium; this one does nothing on
+          // its own, since arrows in the input already move the active option.
+          tabIndex={-1}
           className="max-h-[340px] overflow-x-hidden overflow-y-auto p-2"
         >
           {filtered.length === 0 ? (

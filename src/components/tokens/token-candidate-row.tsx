@@ -79,10 +79,14 @@ export function TokenScoreRow({
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
         )}
       >
-        <TokenIcon
-          token={{ id: score.tokenId, symbol: score.symbol, logoUrl: null }}
-          size="md"
-        />
+        {/* Decorative inside the button: its initials fallback ("ME") was read out ahead of
+            the symbol it abbreviates, as the start of the row's accessible name. */}
+        <span aria-hidden className="flex shrink-0">
+          <TokenIcon
+            token={{ id: score.tokenId, symbol: score.symbol, logoUrl: null }}
+            size="md"
+          />
+        </span>
 
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">

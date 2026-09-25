@@ -52,10 +52,12 @@ export default async function SecuritySettingsPage() {
   const hasMore = fetched.length > AUDIT_CAP;
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-5 py-8 sm:py-12">
+    // The same container as the Admin tab, so the header and tabs do not jump sideways
+    // when switching tabs; only the body below them is held to a reading width.
+    <div className="mx-auto w-full min-w-0 max-w-5xl px-5 py-8 sm:py-12">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">
+        <p className="mt-1.5 max-w-3xl text-sm text-muted-foreground">
           The controls that decide whether your agents can move real money, and the record of every time that
           changed.
         </p>
@@ -63,11 +65,11 @@ export default async function SecuritySettingsPage() {
 
       <SettingsTabs isAdmin={isAdminEmail(session.email)} />
 
-      <div className="mt-6 space-y-6">
+      <div className="mt-6 max-w-3xl space-y-6">
         <SettingsSection
           id="kill-switch"
-          title="Stop everything"
-          description="One switch for the whole account, for the moment when you want the trading to stop and the reasoning to happen afterwards."
+          title="Pause all trading"
+          description="One switch that pauses trading on every agent you own, for the moment when you want the trading to stop and the reasoning to happen afterwards."
         >
           <KillSwitchCard paused={killSwitch.paused} pausedAt={killSwitch.pausedAt} />
         </SettingsSection>

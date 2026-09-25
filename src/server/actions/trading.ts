@@ -19,7 +19,7 @@ import type { AgentConfig, AgentConfigWithSizing } from "@/db/schema";
 import { getSession } from "@/lib/auth";
 import { positionSizingSchema } from "@/lib/agent/config";
 import type { PositionSizingConfig } from "@/lib/trading/sizing";
-import { getAgentWallets, getPortfolio, toRiskPortfolio } from "@/lib/agent/portfolio";
+import { getAgentWallets, getPortfolio, snapshotEquity, toRiskPortfolio } from "@/lib/agent/portfolio";
 import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
 import { chargePlatformFee } from "@/lib/platform/fees";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
@@ -438,6 +438,15 @@ export async function placeManualTrade(
     // entry facts frozen onto it — otherwise the stop loss has nothing to measure from.
     { priceUsd: fill.priceUsd, score, now: filledAt },
   );
+
+  // As after an approved proposal: the chart, the cards and the Cash row read snapshots,
+  // and without one here they keep the pre-fill book until the next run. Best effort —
+  // the fill is already real.
+  try {
+    await snapshotEquity(await getPortfolio(agent.id));
+  } catch (err) {
+    console.warn(`[trading] post-fill snapshot failed for ${agent.id}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   const receipt = buildReceipt({
     chain: input.chain,

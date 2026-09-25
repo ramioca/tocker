@@ -2,6 +2,9 @@
 
 /**
  * First-run onboarding. Shows once, for a signed-in user who has no LLM key yet.
+ * An account that already owns agents (a returning owner on a new device, or after
+ * clearing storage) gets only the key step, framed as what those agents are missing —
+ * never "Welcome" or "Create your first agent".
  *
  * Motion budget: this is the definition of a rarely-seen surface, so it gets a real
  * entrance (scale + fade, centered origin — modals aren't anchored to a trigger) and
@@ -27,14 +30,17 @@ import type { LlmKeyRow } from "@/server/types";
 const STORAGE_KEY = "tocker:onboarding-dismissed";
 const STEPS = ["welcome", "key", "agent"] as const;
 type Step = (typeof STEPS)[number];
+const KEY_ONLY: readonly Step[] = ["key"];
 
-export function OnboardingModal() {
+export function OnboardingModal({ ownedAgentCount = 0 }: { ownedAgentCount?: number }) {
   const { ready, session } = useSession();
   const [open, setOpen] = useState(false);
   // In-memory dismissal so the modal never reopens mid-session even when
   // localStorage is unavailable (private mode, sandboxed webviews).
   const dismissedRef = useRef(false);
   const [step, setStep] = useState<Step>("welcome");
+  // Decided once, when the modal opens, so a key saved mid-flow can't reshape it.
+  const [steps, setSteps] = useState<readonly Step[]>(STEPS);
   const [direction, setDirection] = useState(1);
   const reduce = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -77,6 +83,12 @@ export function OnboardingModal() {
     shouldOpen()
       .then((show) => {
         if (!show) return;
+        // `?onboarding=1` always forces the full flow; otherwise an owner skips straight
+        // to the key their agents need.
+        if (!forced && ownedAgentCount > 0) {
+          setSteps(KEY_ONLY);
+          setStep("key");
+        }
         returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         setOpen(true);
       })
@@ -85,7 +97,7 @@ export function OnboardingModal() {
       });
 
     return () => controller.abort();
-  }, [ready, session]);
+  }, [ready, session, ownedAgentCount]);
 
   // There is no trigger to hand focus back to. Return it to what had it, and when that
   // was nothing, to the start of the page's content (Base UI lands on the first
@@ -135,23 +147,26 @@ export function OnboardingModal() {
             </Dialog.Close>
 
             <div className="px-6 pt-6 pb-5 sm:px-7">
-              {/* pr-10 keeps the track clear of the close button beside it. */}
-              <ol className="flex items-center gap-1.5 pr-10" aria-label="Onboarding progress">
-                {STEPS.map((id) => (
-                  <li
-                    key={id}
-                    aria-current={id === step ? "step" : undefined}
-                    className="h-1 flex-1 overflow-hidden rounded-full bg-muted"
-                  >
-                    <span
-                      className="block h-full rounded-full bg-primary transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]"
-                      style={{ width: STEPS.indexOf(id) <= STEPS.indexOf(step) ? "100%" : "0%" }}
-                    />
-                  </li>
-                ))}
-              </ol>
+              {/* pr-10 keeps the track clear of the close button beside it. A single
+                  step has no progress to show, so the track goes with it. */}
+              {steps.length > 1 ? (
+                <ol className="flex items-center gap-1.5 pr-10" aria-label="Onboarding progress">
+                  {steps.map((id) => (
+                    <li
+                      key={id}
+                      aria-current={id === step ? "step" : undefined}
+                      className="h-1 flex-1 overflow-hidden rounded-full bg-muted"
+                    >
+                      <span
+                        className="block h-full rounded-full bg-primary transition-[width] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]"
+                        style={{ width: STEPS.indexOf(id) <= STEPS.indexOf(step) ? "100%" : "0%" }}
+                      />
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
 
-              <div className="relative mt-6">
+              <div className={cn("relative", steps.length > 1 && "mt-6")}>
                 <AnimatePresence mode="wait" initial={false} custom={direction}>
                   <motion.div
                     key={step}
@@ -162,6 +177,13 @@ export function OnboardingModal() {
                   >
                     {step === "welcome" ? (
                       <WelcomeStep onNext={() => go("key")} onSkip={dismiss} />
+                    ) : step === "key" && steps.length === 1 ? (
+                      <KeyStep
+                        title="Your agents need an LLM key to run"
+                        body="They think on your provider account. Add an Anthropic, OpenAI or OpenRouter key and any agent you own can use it."
+                        onAdded={dismiss}
+                        onSkip={dismiss}
+                      />
                     ) : step === "key" ? (
                       <KeyStep onAdded={() => go("agent")} onSkip={() => go("agent")} />
                     ) : (
@@ -228,14 +250,20 @@ function WelcomeStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
   );
 }
 
-function KeyStep({ onAdded, onSkip }: { onAdded: () => void; onSkip: () => void }) {
+function KeyStep({
+  title = "Add an LLM key",
+  body = "Anthropic, OpenAI or OpenRouter. You can add more later, and any agent can use any key you own.",
+  onAdded,
+  onSkip,
+}: {
+  title?: string;
+  body?: string;
+  onAdded: () => void;
+  onSkip: () => void;
+}) {
   return (
     <div>
-      <StepHeader
-        icon={<KeyRound className="size-5" aria-hidden />}
-        title="Add an LLM key"
-        body="Anthropic, OpenAI or OpenRouter. You can add more later, and any agent can use any key you own."
-      />
+      <StepHeader icon={<KeyRound className="size-5" aria-hidden />} title={title} body={body} />
       <div className="mt-5">
         <AddLlmKeyForm compact submitLabel="Save key" onAdded={onAdded} />
       </div>

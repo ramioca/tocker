@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { canonicalSlug } from "@/app/(app)/agents/[slug]/canonical-slug";
 import { AgentConfigSummary } from "@/components/agents/agent-config-summary";
 import { AgentHeader } from "@/components/agents/agent-header";
 import { AgentStats } from "@/components/agents/agent-stats";
@@ -38,10 +39,13 @@ function withLivePoint(points: EquityPoint[], agent: AgentDetail): EquityPoint[]
   ];
 }
 
-type Params = { params: Promise<{ slug: string }> };
+type Params = {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
 
-export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { slug } = await params;
+export async function generateMetadata({ params, searchParams }: Params): Promise<Metadata> {
+  const slug = await canonicalSlug(params, "", searchParams);
   const session = await viewerSession();
   const agent = await agentBySlug(slug, session?.userId ?? null);
   if (!agent) return { title: "Agent not found" };
@@ -51,8 +55,8 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   };
 }
 
-export default async function AgentPage({ params }: Params) {
-  const { slug } = await params;
+export default async function AgentPage({ params, searchParams }: Params) {
+  const slug = await canonicalSlug(params, "", searchParams);
   const session = await viewerSession();
   const agent = await agentBySlug(slug, session?.userId ?? null);
   if (!agent) notFound();

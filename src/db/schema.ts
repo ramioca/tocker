@@ -419,6 +419,35 @@ export const tokenScores = pgTable(
   (t) => [index("token_scores_verdict_idx").on(t.verdict, t.total), index("token_scores_scored_idx").on(t.scoredAt)],
 );
 
+/**
+ * The public score: one row per token, scored under the platform's default universe
+ * with no paid signals and the default clip size — what `/discover` and the token page
+ * show everyone. Its own table because `token_scores` holds whichever reading came last,
+ * and an agent rescoring a token under its own rules would otherwise evict the public
+ * one (the radar said "70 Avoid" while the token page said the score was out of date).
+ * Written by `getTokenScore` alongside the cache row; never read to authorise a buy.
+ */
+export const publicTokenScores = pgTable("public_token_scores", {
+  id: text("id").primaryKey(), // `${chain}:${address}`
+  chain: chainEnum("chain").notNull(),
+  address: text("address").notNull(),
+  symbol: text("symbol").notNull(),
+  total: numeric("total", { precision: 6, scale: 2 }).notNull(),
+  verdict: scoreVerdictEnum("verdict").notNull(),
+  components: jsonb("components").$type<Record<string, number | null>>().notNull(),
+  blockers: jsonb("blockers").$type<string[]>().notNull(),
+  warnings: jsonb("warnings").$type<string[]>().notNull(),
+  priceUsd: numeric("price_usd", { precision: 30, scale: 12 }),
+  liquidityUsd: numeric("liquidity_usd", { precision: 20, scale: 2 }),
+  volume24hUsd: numeric("volume_24h_usd", { precision: 20, scale: 2 }),
+  marketCapUsd: numeric("market_cap_usd", { precision: 24, scale: 2 }),
+  holderCount: integer("holder_count"),
+  ageHours: numeric("age_hours", { precision: 14, scale: 2 }),
+  priceChange24hPct: numeric("price_change_24h_pct", { precision: 12, scale: 4 }),
+  sources: jsonb("sources").$type<string[]>().notNull(),
+  scoredAt: timestamp("scored_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 /** Append-only score history, one row per fresh scoring. Drives token pages and drift detection. */
 export const tokenScoreHistory = pgTable(
   "token_score_history",
@@ -432,6 +461,14 @@ export const tokenScoreHistory = pgTable(
     priceUsd: numeric("price_usd", { precision: 30, scale: 12 }),
     liquidityUsd: numeric("liquidity_usd", { precision: 20, scale: 2 }),
     holderCount: integer("holder_count"),
+    /**
+     * The universe a reading's total and verdict belong to: the public default's key
+     * for a public reading (see `publicTokenScores`), an agent's own key otherwise, and
+     * null for a legacy row or a default-universe reading taken with private inputs
+     * (paid signals, another clip size). Only public-key rows may chart a total or a
+     * verdict on a public page; the rest feed market facts at most.
+     */
+    universeKey: text("universe_key"),
     scoredAt: timestamp("scored_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("token_score_history_token_idx").on(t.tokenId, t.scoredAt)],

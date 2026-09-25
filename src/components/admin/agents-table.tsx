@@ -20,7 +20,13 @@ import { DataTable, EmptyRow, TableShell, Td, Th } from "./table-shell";
  * The name links to the agent's own public page. An admin who opens it sees exactly what
  * a stranger sees — no config, no transcript. Being an admin is not being the owner.
  */
-export function AdminAgentsTable({ rows, balancesRead }: { rows: AdminAgentRow[]; balancesRead: boolean }) {
+export function AdminAgentsTable({
+  rows,
+  balancesRead,
+}: {
+  rows: AdminAgentRow[];
+  balancesRead: boolean;
+}) {
   return (
     <TableShell title="Agents" hint={rows.length === 0 ? undefined : `${rows.length}, newest first`}>
       <DataTable label="Agents" minWidth="58rem">
@@ -42,7 +48,7 @@ export function AdminAgentsTable({ rows, balancesRead }: { rows: AdminAgentRow[]
           {rows.length === 0 ? (
             <EmptyRow colSpan={10}>No agents yet. The builder at /agents/new writes the first one.</EmptyRow>
           ) : (
-            rows.map(({ card, fundedUsdc }) => (
+            rows.map(({ card, fundedUsdc, hasLlmKey }) => (
               <tr key={card.id} className="hover:bg-muted/25">
                 <Td sticky className="max-w-[14rem]">
                   <Link
@@ -61,7 +67,18 @@ export function AdminAgentsTable({ rows, balancesRead }: { rows: AdminAgentRow[]
                   <ModeBadge mode={card.mode} size="xs" />
                 </Td>
                 <Td>
-                  <StatusBadge status={card.status} />
+                  <span className="inline-flex items-center gap-1.5">
+                    <StatusBadge status={card.status} />
+                    {/* ACTIVE alone hides that every tick of a keyless agent fails. */}
+                    {hasLlmKey === false ? (
+                      <span
+                        title="No LLM key attached: every tick fails"
+                        className="inline-flex items-center rounded-md border border-destructive/40 bg-destructive/12 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide whitespace-nowrap text-destructive uppercase"
+                      >
+                        No key
+                      </span>
+                    ) : null}
+                  </span>
                 </Td>
                 <Td muted className="font-sans text-xs">
                   {card.chains.length === 0 ? "—" : card.chains.map(chainLabel).join(" · ")}
@@ -74,10 +91,11 @@ export function AdminAgentsTable({ rows, balancesRead }: { rows: AdminAgentRow[]
                   </span>
                 </Td>
                 <Td numeric>{formatCount(card.tradeCount)}</Td>
-                <Td numeric muted={fundedUsdc === null || fundedUsdc === 0}>
+                <Td numeric muted={card.mode === "paper" || fundedUsdc === null || fundedUsdc === 0}>
                   {/* An unread balance is "—", not "$0.00": they are different facts and
-                      only one of them means the wallet is empty. */}
-                  {!balancesRead || fundedUsdc === null ? "—" : formatUsd(fundedUsdc)}
+                      only one of them means the wallet is empty. A paper agent has no
+                      real wallet to read at all. */}
+                  {!balancesRead || card.mode === "paper" || fundedUsdc === null ? "—" : formatUsd(fundedUsdc)}
                 </Td>
                 <Td muted>{card.lastRunAt ? <RelativeTime iso={card.lastRunAt} /> : "never"}</Td>
               </tr>

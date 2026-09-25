@@ -15,11 +15,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { formatPreviewFees, formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { placeManualTrade, previewTrade } from "@/server/actions/trading";
-import { floorCents, pctLabel, sliceText } from "@/components/trading/sell-amount";
+import { SELL_SLICES, floorCents, pctLabel, sliceLabel, sliceText } from "@/components/trading/sell-amount";
 import { cn } from "@/lib/utils";
 import type { Position, TradePreview } from "@/server/types";
-
-const SLICES = [25, 50, 75, 100] as const;
 
 /**
  * Sell part or all of one position by hand, from the book. Owner only — the button is
@@ -186,7 +184,7 @@ function SellPositionDialog({
             />
           </div>
           <div className="flex gap-1.5">
-            {SLICES.map((slice) => (
+            {SELL_SLICES.map((slice) => (
               <button
                 key={slice}
                 type="button"
@@ -199,7 +197,7 @@ function SellPositionDialog({
                     : "border-border text-muted-foreground hover:text-foreground",
                 )}
               >
-                {slice === 100 ? "All" : `${slice}%`}
+                {sliceLabel(slice)}
               </button>
             ))}
           </div>

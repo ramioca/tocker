@@ -27,6 +27,13 @@ const compactFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
+/** Compact with a fixed two decimals, for columns where "1.60M" must line up with "25.00M". */
+const fixedCompactFormatter = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 /**
  * Sub-cent digits, never exponential.
  *
@@ -112,10 +119,20 @@ export function formatCount(value: number | null | undefined): string {
  * call, so "786,163.52 BONK" is not "314,465.408805 BONK" two screens later. Two decimals
  * from a thousand up (past that they are dust), four below it so a 1.2345 ETH balance
  * keeps its precision, and four significant digits under one.
+ *
+ * `fixed` is for a right-aligned table column: every band keeps its trailing zeros, so the
+ * decimal points of neighbouring rows line up, and millions read "1.60M", not "1.6M" over
+ * "314,465.41". Pair it with a `title` carrying the full amount.
  */
-export function formatTokenAmount(value: number | null | undefined): string {
+export function formatTokenAmount(value: number | null | undefined, { fixed = false }: { fixed?: boolean } = {}): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
   const abs = Math.abs(value);
+  if (fixed) {
+    if (abs >= 1_000_000) return fixedCompactFormatter.format(value);
+    if (abs >= 1_000) return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (abs >= 1) return value.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+    return value.toLocaleString("en-US", { minimumSignificantDigits: 4, maximumSignificantDigits: 4 });
+  }
   if (abs >= 1_000_000) return compactFormatter.format(value);
   if (abs >= 1_000) return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
   if (abs >= 1) return value.toLocaleString("en-US", { maximumFractionDigits: 4 });
@@ -149,22 +166,35 @@ export function truncateAddress(address: string, lead = 4, tail = 4): string {
 }
 
 const RELATIVE_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-  ["year", 365 * 24 * 3_600_000],
-  ["month", 30 * 24 * 3_600_000],
   ["day", 24 * 3_600_000],
   ["hour", 3_600_000],
   ["minute", 60_000],
 ];
 
+const WEEK_MS = 7 * 24 * 3_600_000;
+
 const relativeFormatter = new Intl.RelativeTimeFormat("en", { numeric: "auto", style: "narrow" });
 
-/** "12m ago" style. Pure so server and client agree on the same input. */
+/**
+ * "12m ago" style. Pure so server and client agree on the same input. From a week out
+ * it turns into the date itself ("Aug 26"): "last mo." or "3 wk. ago" is vaguer than
+ * the day, and sits oddly beside the "2d ago" of the row above.
+ */
 export function formatRelative(isoDate: string, now = Date.now()): string {
   const then = new Date(isoDate).getTime();
   if (Number.isNaN(then)) return "—";
   const diff = then - now;
   const abs = Math.abs(diff);
   if (abs < 45_000) return "just now";
+  if (abs >= WEEK_MS) {
+    const date = new Date(then);
+    const sameYear = date.getFullYear() === new Date(now).getFullYear();
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      ...(sameYear ? {} : { year: "numeric" }),
+    });
+  }
   for (const [unit, ms] of RELATIVE_UNITS) {
     if (abs >= ms) return relativeFormatter.format(Math.round(diff / ms), unit);
   }

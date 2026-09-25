@@ -27,41 +27,49 @@ export function RefreshBalances({ readAt }: { readAt: string }) {
   const read = !Number.isNaN(new Date(readAt).getTime());
 
   return (
-    <div className="flex items-center gap-2">
-      <span className="tnum font-mono text-[11px] text-muted-foreground">
-        {read ? (
-          <>
-            read <RelativeTime iso={readAt} />
-          </>
-        ) : (
-          "not read"
-        )}
-      </span>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        disabled={pending}
-        // A tooltip, not an aria-label: the visible "Refresh" / "Reading…" is the name,
-        // so voice control can say it and a screen reader hears the pending state.
-        title="Re-read every agent wallet from Privy"
-        onClick={() =>
-          start(async () => {
-            setError(null);
-            // A network throw would otherwise land on the route's error boundary.
-            const res = await refreshAdminBalancesAction().catch(() => ({
-              ok: false as const,
-              error: "Could not reach Tocker.",
-            }));
-            if (!res.ok) setError(res.error);
-            else router.refresh();
-          })
-        }
-      >
-        <RotateCw className={pending ? "motion-safe:animate-spin" : undefined} aria-hidden />
-        {pending ? "Reading…" : "Refresh"}
-      </Button>
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+    // Stacked, not inline: the error is a sentence, and this sits in a table header row
+    // that already wraps at phone width.
+    <div className="flex flex-col items-end gap-1.5">
+      <div className="flex items-center gap-2">
+        <span className="tnum font-mono text-[11px] text-muted-foreground">
+          {read ? (
+            <>
+              read <RelativeTime iso={readAt} />
+            </>
+          ) : (
+            "not read"
+          )}
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={pending}
+          // A tooltip, not an aria-label: the visible "Refresh" / "Reading…" is the name,
+          // so voice control can say it and a screen reader hears the pending state.
+          title="Re-read every agent wallet from Privy"
+          onClick={() =>
+            start(async () => {
+              setError(null);
+              // A network throw would otherwise land on the route's error boundary.
+              const res = await refreshAdminBalancesAction().catch(() => ({
+                ok: false as const,
+                error: "Could not reach Tocker.",
+              }));
+              if (!res.ok) setError(res.error);
+              else router.refresh();
+            })
+          }
+        >
+          <RotateCw className={pending ? "motion-safe:animate-spin" : undefined} aria-hidden />
+          {pending ? "Reading…" : "Refresh"}
+        </Button>
+      </div>
+      {error ? (
+        <p role="alert" className="max-w-xs break-words text-right text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

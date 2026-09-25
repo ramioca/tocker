@@ -204,7 +204,7 @@ describe("receipts are written on every execution path", () => {
       .from(schema.notifications)
       .where(and(eq(schema.notifications.userId, userId), eq(schema.notifications.kind, "exit")));
     expect(owner).toHaveLength(1);
-    expect(owner[0]?.title).toContain("Stop loss hit");
+    expect(owner[0]?.title).toContain("stop loss hit");
     expect(owner[0]?.body).toContain("15% stop");
     expect(owner[0]?.href).toContain(`?trade=${exit.tradeId}`);
   });

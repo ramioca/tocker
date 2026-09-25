@@ -34,17 +34,19 @@ export default async function SettingsPage() {
   ]);
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-5 py-8 sm:py-12">
+    // The same container as the Admin tab, so the header and tabs do not jump sideways
+    // when switching tabs; only the body below them is held to a reading width.
+    <div className="mx-auto w-full min-w-0 max-w-5xl px-5 py-8 sm:py-12">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">
+        <p className="mt-1.5 max-w-3xl text-sm text-muted-foreground">
           Your profile, the keys your agents think with, and what reaches your notifications.
         </p>
       </header>
 
       <SettingsTabs isAdmin={isAdminEmail(session.email)} />
 
-      <div className="mt-6 space-y-6">
+      <div className="mt-6 max-w-3xl space-y-6">
         <SettingsSection
           id="profile"
           title="Profile"

@@ -207,9 +207,11 @@ function Row({
         className="hidden shrink-0 md:block"
       />
 
-      {/* A floor, not a fixed width: "+$930.75 paper" is wider than a phone's 80px, and
-          wrapping "paper" onto a third line made that row taller than the rest. */}
-      <div className="min-w-20 shrink-0 text-right whitespace-nowrap sm:min-w-24">
+      {/* A floor on a phone: "+$930.75 paper" is wider than its 80px, and wrapping "paper"
+          onto a third line made that row taller than the rest. A fixed 8rem from sm up, so
+          one row's "+$1,260.90 paper" cannot push its sparkline and chips left of every
+          other row's — the widest string ("+$9,999.99 paper"; $10K+ compacts) fits. */}
+      <div className="min-w-20 shrink-0 text-right whitespace-nowrap sm:w-32 sm:min-w-0">
         <span
           className="font-mono text-sm font-medium tabular-nums"
           style={{ color: pnlColor(printed === 0 ? 0 : row.pnlPct) }}

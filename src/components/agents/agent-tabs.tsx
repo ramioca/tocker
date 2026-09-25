@@ -120,10 +120,15 @@ export function AgentTabs({
         edge, where no scroll position can reach it, and "Overview" loses its first
         letter at 390px. Safe centring falls back to start alignment only then.
       */}
+      {/* Taller on a phone: this strip is the page's navigation, and a 25px trigger
+          is a miss waiting to happen under a thumb. Group-scoped, because the list's own
+          `group-data-horizontal/tabs:h-8` outranks a plain `h-*`. Only the list grows —
+          the triggers already fill it (`h-[calc(100%-1px)]`), so the underline keeps
+          its offset from the bottom edge rather than being pushed past it. */}
       <TabsList
         ref={listRef}
         variant="line"
-        className="h-9 justify-center-safe"
+        className="h-9 justify-center-safe max-sm:group-data-horizontal/tabs:h-11"
         style={{ maskImage: mask, WebkitMaskImage: mask }}
       >
         {TABS.map((t) => (

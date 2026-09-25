@@ -16,9 +16,14 @@ import { safeAction } from "@/lib/safe-action";
 import type { BlocklistTarget } from "@/server/queries/tokens";
 import type { Chain } from "@/server/types";
 import { chainLabel } from "@/components/common/chain-badge";
+import { formatUsd } from "@/components/common/format";
 
-/** `onChain` is optional so an older caller that does not know it still gets a working menu. */
-type BlockTarget = BlocklistTarget & { onChain?: boolean };
+/**
+ * `onChain` is optional so an older caller that does not know it still gets a working menu.
+ * `holdingUsd` is the agent's open position here (null: held, value unknown; absent: not
+ * held) — the page joins it from the public holders list, and only onto the viewer's own agents.
+ */
+type BlockTarget = BlocklistTarget & { onChain?: boolean; holdingUsd?: number | null };
 
 /**
  * "Block on…" — the only control a token page has over an agent.
@@ -28,13 +33,17 @@ type BlockTarget = BlocklistTarget & { onChain?: boolean };
  * a second click on a blocked agent lifts the block again, and nothing here can
  * make an agent buy anything.
  *
+ * A block stops entries only. Exits are never blocked (lib/trading/risk.ts), so an
+ * agent holding the token still sells it on its own rules — the copy says "won't
+ * buy", not "never touch", and a holder's row says its exits still run.
+ *
  * Only the viewer's own agents are listed — the server action re-checks
  * ownership, this is not the enforcement.
  *
  * Items are checkboxes, so a screen reader hears "checked" on a blocked agent instead
  * of finding out only from text that appears after a click. An agent that does not
- * trade this chain is listed but disabled — blocking it would toast "Base Camp will
- * never touch WIF" about a token it could never reach — unless it is already blocked,
+ * trade this chain is listed but disabled — blocking it would toast "Base Camp won't
+ * buy WIF again" about a token it could never reach — unless it is already blocked,
  * in which case it stays enabled so the block can be lifted.
  */
 export function BlockMenu({
@@ -76,8 +85,8 @@ export function BlockMenu({
       setState((prev) => ({ ...prev, [agent.id]: !currentlyBlocked }));
       toast.success(
         currentlyBlocked
-          ? `${agent.name} may trade ${symbol} again`
-          : `${agent.name} will never touch ${symbol}`,
+          ? `${agent.name} may buy ${symbol} again`
+          : `${agent.name} won’t buy ${symbol} again`,
       );
     });
   };
@@ -96,8 +105,8 @@ export function BlockMenu({
         {/* A description, not a group label: Base UI's GroupLabel throws outside a Group,
             and that took the whole token page down to the error screen. */}
         <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
-          Stop an agent from ever trading {symbol}. Pick it again to lift the block. This list
-          only subtracts.
+          Stop an agent from buying {symbol}. Pick it again to lift the block. Open positions
+          still exit on the agent&rsquo;s own rules.
         </p>
         <DropdownMenuSeparator />
         {agents.map((agent) => {
@@ -118,6 +127,11 @@ export function BlockMenu({
                 {offChain ? (
                   <span className="block text-[11px] text-muted-foreground">
                     Doesn&rsquo;t trade {chainLabel(chain)}
+                  </span>
+                ) : agent.holdingUsd !== undefined ? (
+                  <span className="tnum block text-[11px] text-muted-foreground">
+                    Holds {agent.holdingUsd === null ? "a position" : formatUsd(agent.holdingUsd)} · exits
+                    still run
                   </span>
                 ) : null}
               </span>

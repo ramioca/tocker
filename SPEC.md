@@ -151,7 +151,7 @@ Each tick: **discover → gate → score → size**. Discovery and scoring are f
 | `gecko` | 10, reweights the five above | GeckoTerminal's GT Score, free, `null` for a token it has not rated |
 | `sentiment` | reweights the rest when present | x402 sentiment sources, only when the agent chooses to pay |
 
-Verdict bands: `avoid` < 40, `watch` 40-59, `candidate` 60-79, `strong` 80+. Scores are cached in `token_scores` keyed by `chain:address` with a 10-minute TTL and shared across agents. The score at the moment of a trade is frozen onto `trades.scoreSnapshot` so the record cannot be rewritten by later re-scoring.
+Verdict bands: `avoid` < 40, `watch` 40-59, `candidate` 60-79, `strong` 80+. Scores are cached in `token_scores` keyed by `chain:address` with a 10-minute TTL and shared across agents. The score at the moment of a trade is frozen onto `trades.scoreSnapshot` so the record cannot be rewritten by later re-scoring. Public scores (default universe, default clip, no paid signals) are kept in `public_token_scores`, which only public readings write; `token_score_history` has a nullable `universe_key`, and public surfaces chart only rows with the public key.
 
 Deliberately, a high score is necessary but not sufficient: the LLM still decides what to buy and why. The score is a filter and a ranking, not an autopilot.
 

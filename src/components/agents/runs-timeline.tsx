@@ -118,12 +118,13 @@ function RunRow({
         </button>
 
         {/* Described by the toggle beside it, so twenty of these are not twenty
-            identical "Open full run"s to a screen reader. */}
+            identical "Open full run"s to a screen reader. The `after:` inset widens the
+            hit area to 44px without making the chevron louder than the row. */}
         <Link
           href={`/agents/${agentSlug}/runs/${run.id}`}
           aria-label="Open full run"
           aria-describedby={toggleId}
-          className="grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-ring"
+          className="relative grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors duration-150 after:absolute after:-inset-2 after:content-[''] hover:bg-muted hover:text-foreground focus-ring"
         >
           {/* A page in this tab, not a new one: the external-link glyph belongs to GeckoTerminal. */}
           <ChevronRight aria-hidden className="size-3.5" />

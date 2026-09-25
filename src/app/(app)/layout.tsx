@@ -37,7 +37,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       console.error("[app-layout] command index failed", error);
       return EMPTY_COMMAND_INDEX;
     }),
-    // Only the slugs: "My agents" lights up on the viewer's own agent pages and no one else's.
+    // Only the slugs and the count: "My agents" lights up on the viewer's own agent pages
+    // and no one else's, and onboarding skips "create your first agent" for an owner.
     myAgents(userId).catch((error: unknown) => {
       console.error("[app-layout] my agents failed", error);
       return [];
@@ -55,7 +56,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     >
       {children}
       {/* First-run only, so the modal's code loads behind a gate rather than on every page. */}
-      <OnboardingGate />
+      <OnboardingGate ownedAgentCount={mine.length} />
     </AppShell>
   );
 }

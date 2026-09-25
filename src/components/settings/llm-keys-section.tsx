@@ -11,6 +11,8 @@ import { attachKeyToKeylessAgents, removeLlmKey } from "@/server/actions/users";
 import type { LlmKeyRow } from "@/server/types";
 import { AddLlmKeyForm } from "./add-llm-key-form";
 import { clip, reinsert } from "./key-removal";
+import { MORPH_FOCUS } from "./use-morph-action";
+import { cn } from "@/lib/utils";
 
 const PROVIDER_LABEL: Record<LlmKeyRow["provider"], string> = {
   anthropic: "Anthropic",
@@ -200,7 +202,7 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
                     confirmedLabel="Removed"
                     duration={1200}
                     resetDelay={0}
-                    className="hidden shrink-0 sm:inline-flex"
+                    className={cn("hidden shrink-0 sm:inline-flex", MORPH_FOCUS)}
                     onConfirm={() => softDelete(key)}
                   />
                 </div>

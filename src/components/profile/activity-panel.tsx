@@ -75,8 +75,11 @@ export function ActivityPanel({
             cell={12}
           />
         </div>
+        {/* `cell` is a ceiling: the heatmap sizes cells from its measured width up to it.
+            At 12 a year of weeks stopped at three-quarters of a desktop card; at 16 it
+            fills the card at 1440 and still shrinks to fit a tablet. */}
         <div className="max-sm:hidden">
-          <CalendarHeatmap data={data} label="trades" hue="var(--primary)" cell={12} />
+          <CalendarHeatmap data={data} label="trades" hue="var(--primary)" cell={16} />
         </div>
       </div>
     </div>

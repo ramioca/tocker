@@ -80,7 +80,7 @@ export function TopBar({
     <header className="glass-bar sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border/60 px-4">
       <Link
         href={signedOut ? "/" : "/home"}
-        className="flex shrink-0 items-center gap-2 rounded-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        className="flex shrink-0 items-center gap-2 rounded-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
         aria-label="Tocker home"
       >
         <PetriMark size={22} />
@@ -97,7 +97,7 @@ export function TopBar({
               aria-current={active ? "page" : undefined}
               className={cn(
                 "rounded-lg px-3 py-1.5 text-sm transition-colors duration-100",
-                "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden",
                 active
                   ? "bg-accent font-medium text-accent-foreground"
                   : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
@@ -117,7 +117,7 @@ export function TopBar({
         className={cn(
           "ml-auto flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-muted/30 px-2.5 text-sm text-muted-foreground sm:h-8 sm:max-w-56",
           "transition-colors duration-150 hover:bg-muted/60 hover:text-foreground",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
         )}
       >
         <Search aria-hidden className="size-4 shrink-0" />
@@ -160,7 +160,7 @@ export function TopBar({
                 // Dark interior; the MetalFx chrome ring carries the shine.
                 "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-background/60 px-3 text-sm font-medium text-foreground",
                 "transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted/60 active:scale-[0.97]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
               )}
             >
               <Plus aria-hidden className="size-4" />
@@ -175,7 +175,7 @@ export function TopBar({
             className={cn(
               "inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/30 text-foreground lg:hidden",
               "transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted/60 active:scale-[0.97]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
             )}
           >
             <Plus aria-hidden className="size-4.5" />

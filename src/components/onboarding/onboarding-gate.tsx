@@ -31,12 +31,13 @@ const isDismissed = () => {
  * Mounted from the app layout in place of the modal. It rules out what can be ruled
  * out without a request — signed out, or dismissed on this device — and hands the
  * rest (does this account have a key yet?) to the modal, which still decides for
- * itself. `?onboarding=1` forces it, as it always has.
+ * itself. `?onboarding=1` forces it, as it always has. `ownedAgentCount` comes from the
+ * server layout so an owner is asked only for the missing key, not walked through setup.
  *
  * The URL and localStorage are the browser's, so the server snapshots say "no" and
  * the first client render agrees; the real answer lands right after hydration.
  */
-export function OnboardingGate() {
+export function OnboardingGate({ ownedAgentCount = 0 }: { ownedAgentCount?: number }) {
   const { ready, session } = useSession();
   const forced = useSyncExternalStore(noSubscribe, isForced, () => false);
   const dismissed = useSyncExternalStore(noSubscribe, isDismissed, () => true);
@@ -47,5 +48,5 @@ export function OnboardingGate() {
   const [mounted, setMounted] = useState(false);
   if (candidate && !mounted) setMounted(true);
 
-  return mounted ? <OnboardingModal /> : null;
+  return mounted ? <OnboardingModal ownedAgentCount={ownedAgentCount} /> : null;
 }

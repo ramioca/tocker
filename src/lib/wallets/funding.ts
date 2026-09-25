@@ -46,13 +46,13 @@ export const FEES_COVERED_SENTENCE = "Network fees are covered by Tocker.";
 export const NETWORK_WORDING: Record<Chain, { network: string; asset: string; warning: string; fees: string }> = {
   base: {
     network: "Base (Ethereum L2, chain id 8453)",
-    asset: "USDC — the native Circle token, not USDbC",
+    asset: "USDC (native Circle token, not USDbC)",
     warning: "Anything sent on Ethereum mainnet, Arbitrum or any other network is lost.",
     fees: FEES_COVERED,
   },
   solana: {
     network: "Solana mainnet",
-    asset: "USDC — the SPL token EPjFWdd5…TDt1v",
+    asset: "USDC (Circle SPL token)",
     warning: "Anything sent on another network, or any other SPL token, is lost.",
     fees: FEES_COVERED,
   },

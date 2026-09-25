@@ -77,18 +77,29 @@ export function AddLlmKeyForm({
   // reached to check it, it would be saved and only fail on the agent's next run.
   const otherProvider = mismatchedProvider(key, provider);
 
-  async function submit() {
-    setError(null);
+  /**
+   * The checks that need no request. Kept out of `submit()` on purpose: a throw there
+   * turns the button into "Rejected", which reads as the provider refusing a key that
+   * was never sent.
+   */
+  function validate(): boolean {
+    const refuse = (message: string) => {
+      setError({ field: "key", message });
+      // By id, not a ref: `validate` is reached from a handler built during render.
+      document.getElementById(`${uid}-key`)?.focus();
+      return false;
+    };
     if (key.trim().length < KEY_MIN) {
-      setError({ field: "key", message: "That doesn’t look like a full API key — paste the whole thing." });
-      throw new Error("invalid key");
+      return refuse("That doesn’t look like a full API key — paste the whole thing.");
     }
     // Pressing Add past the note below. Refused here, not by disabling the button,
     // so the reason is said rather than hidden.
-    if (otherProvider) {
-      setError({ field: "key", message: wrongProviderOnAdd(otherProvider, provider) });
-      throw new Error("wrong provider");
-    }
+    if (otherProvider) return refuse(wrongProviderOnAdd(otherProvider, provider));
+    return true;
+  }
+
+  async function submit() {
+    setError(null);
     const optimistic: LlmKeyRow = {
       id: `local_${Date.now()}`,
       provider,
@@ -135,6 +146,11 @@ export function AddLlmKeyForm({
 
   const { state, run, reset } = useMorphAction(submit);
 
+  // Every submit path goes through here, so only a real server or probe refusal says "Rejected".
+  const attempt = () => {
+    if (validate()) void run();
+  };
+
   // Editing a field clears its error and takes the button out of "Rejected".
   const edited = (field: Field) => {
     if (error?.field === field) setError(null);
@@ -167,7 +183,7 @@ export function AddLlmKeyForm({
   };
 
   const submitOnEnter = enterSubmits(() => {
-    if (key.trim().length > 0) void run();
+    if (key.trim().length > 0) attempt();
   });
 
   const workspaceField = (
@@ -209,7 +225,7 @@ export function AddLlmKeyForm({
       }}
       onSubmit={(event) => {
         event.preventDefault();
-        if (key.trim().length > 0) void run();
+        if (key.trim().length > 0) attempt();
       }}
     >
       <div className="grid gap-4 sm:grid-cols-2">
@@ -339,7 +355,7 @@ export function AddLlmKeyForm({
         {/* Disabled while empty: an empty submit is not a rejected key, and should not look like one. */}
         <MorphButton
           state={state}
-          onClick={() => void run()}
+          onClick={attempt}
           size="sm"
           successLabel="Added"
           errorLabel="Rejected"

@@ -4,6 +4,7 @@ import { agents, follows, getDb, llmKeys, notifications, users, type Db } from "
 import type { LlmKeyRow, NotificationRow, Page, UserProfile } from "@/server/types";
 import { buildAgentCards, decodeCursor, encodeCursor, isFollowing, pageSize } from "./_shared";
 import { visibleRationale } from "./visibility";
+import { isLlmMock } from "@/lib/agent/mock-model";
 import { mutedKinds, sanitizePrefs, type NotificationPrefs } from "@/lib/notifications/prefs";
 
 async function readPrefs(db: Db, userId: string): Promise<NotificationPrefs> {
@@ -127,6 +128,8 @@ export async function getMyLlmKeys(userId: string): Promise<LlmKeyRow[]> {
  * construction: it counts the caller's own agents.
  */
 export async function countKeylessAgents(userId: string): Promise<number> {
+  // The mock model runs every agent without a key, so none of them is missing one.
+  if (isLlmMock()) return 0;
   const db = await getDb();
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })

@@ -152,6 +152,14 @@ const EXIT_TITLES: Record<ExitReason, string> = {
   liquidity_collapse: "Liquidity collapsed",
 };
 
+/**
+ * The owner's exit title leads with the agent: two agents can hold the same token, and
+ * "sold BONK" alone does not say which one acted.
+ */
+export function exitNotificationTitle(agentName: string, symbol: string, reason: ExitReason): string {
+  return `${agentName} sold ${symbol} · ${EXIT_TITLES[reason].toLowerCase()}`;
+}
+
 /** One-line summary for the run transcript and the tick prompt. */
 export function describeGuardian(result: GuardianResult): string {
   if (!result.ran) return result.note ?? "Guardian did not run.";
@@ -697,7 +705,7 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
     {
       userId: agent.ownerId,
       kind: "exit",
-      title: `${EXIT_TITLES[decision.reason]}: sold ${decision.symbol}`,
+      title: exitNotificationTitle(agent.name, decision.symbol, decision.reason),
       body: decision.rationale,
       href: `${href}?trade=${tradeId}`,
     },

@@ -83,7 +83,7 @@ export default async function AdminSettingsPage() {
     <div className="mx-auto w-full min-w-0 max-w-5xl px-5 py-8 sm:py-12">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">
+        <p className="mt-1.5 max-w-3xl text-sm text-muted-foreground">
           Everything on the platform, read-only. You are seeing this because{" "}
           <span className="font-mono text-foreground">{session.email}</span> is in{" "}
           <span className="font-mono text-foreground">ADMIN_EMAILS</span>. No strategy, universe rule or run transcript
@@ -154,7 +154,8 @@ export default async function AdminSettingsPage() {
         >
           <div className="min-w-0 space-y-4">
             <AdminUsersTable rows={userRows} />
-            <AdminAgentsTable rows={agentRows} balancesRead={balances !== null} />
+            {/* Without Privy every balance is a placeholder zero, not a reading. */}
+            <AdminAgentsTable rows={agentRows} balancesRead={balances !== null && balances.privyConfigured} />
           </div>
         </SettingsSection>
 

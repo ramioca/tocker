@@ -215,8 +215,11 @@ export function PositionsTable({
                   </span>
                 ) : null}
               </TableCell>
-              <TableCell className="tnum hidden text-right text-muted-foreground sm:table-cell">
-                {formatTokenAmount(position.amountToken)}
+              <TableCell
+                className="tnum hidden text-right text-muted-foreground sm:table-cell"
+                title={position.amountToken.toLocaleString("en-US", { maximumFractionDigits: 12 })}
+              >
+                {formatTokenAmount(position.amountToken, { fixed: true })}
               </TableCell>
               <TableCell className="tnum hidden text-right text-muted-foreground sm:table-cell">
                 {formatPriceUsd(position.avgCostUsd)}

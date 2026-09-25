@@ -77,6 +77,16 @@ async function livePortfolio(agentId: string): Promise<Portfolio | null> {
   }
 }
 
+/** A paper agent's cash from its ledger, or null when it cannot be read. */
+async function paperLedgerCash(agentId: string): Promise<number | null> {
+  try {
+    const { getPaperCash } = await import("@/lib/trading/paper");
+    return await getPaperCash(agentId);
+  } catch {
+    return null;
+  }
+}
+
 async function detailFor(agent: AgentRow | undefined, viewerId?: string | null): Promise<AgentDetail | null> {
   if (!agent) return null;
   const db = await getDb();
@@ -208,8 +218,13 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
   // has moved cash into a position, and the last snapshot (marks run every five
   // minutes) still shows the pre-fill book — "$15 cash, $4.77 position, $15 equity".
   // Read the wallet, and fall back to the snapshot only when the read fails.
+  // Paper cash is read from the ledger for the same reason: a manual buy between runs
+  // leaves the last snapshot's cash stale while the positions below already hold the
+  // fill, and the Equity card, the Cash row and the open PnL stop adding up.
   const liveCash = live?.cashUsd ?? null;
-  const cashUsd = liveCash ?? agg?.cashUsd ?? (agent.mode === "paper" ? toNum(agent.paperStartingUsd) : null);
+  const paperCash = agent.mode === "paper" ? await paperLedgerCash(agent.id) : null;
+  const cashUsd =
+    liveCash ?? paperCash ?? agg?.cashUsd ?? (agent.mode === "paper" ? toNum(agent.paperStartingUsd) : null);
   const equitySnapshot = computeEquity({
     cash: cashUsd ?? 0,
     positions: livePositions.map((p) => ({
@@ -223,8 +238,14 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
 
   const key = keyRow[0];
 
-  // Live and readable: cash now plus positions at their marks. Otherwise the series.
-  const equityUsd = live ? live.equityUsd : (equity.at(-1)?.equityUsd ?? equitySnapshot.equityUsd);
+  // Live and readable: cash now plus positions at their marks. Paper: the ledger's cash
+  // plus the same positions the table prints, so every number on the page comes from
+  // one book. The series only when neither can be read.
+  const equityUsd = live
+    ? live.equityUsd
+    : paperCash !== null
+      ? equitySnapshot.equityUsd
+      : (equity.at(-1)?.equityUsd ?? equitySnapshot.equityUsd);
   // All-time PnL is this equity against what the book started with — the subtraction
   // the chart readout and the Equity card make — so the header and the PnL card print
   // the same number as the chart instead of a last-snapshot-minus-first-snapshot one.

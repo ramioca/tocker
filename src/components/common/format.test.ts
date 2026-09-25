@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { formatExact, formatPreviewFees, formatPriceUsd, formatSignedPct, formatTokenAmount, formatUsd } from "./format";
+import {
+  formatExact,
+  formatPreviewFees,
+  formatPriceUsd,
+  formatRelative,
+  formatSignedPct,
+  formatTokenAmount,
+  formatUsd,
+} from "./format";
 
 /**
  * The finding: `toPrecision(2)` returns exponential notation for anything below 1e-6, so
@@ -103,6 +111,34 @@ describe("formatTokenAmount", () => {
     expect(formatTokenAmount(1.23456)).toBe("1.2346");
     expect(formatTokenAmount(0.000123456)).toBe("0.0001235");
     expect(formatTokenAmount(2_500_000)).toBe("2.5M");
+  });
+
+  it("keeps trailing zeros in a fixed column so the decimals line up", () => {
+    expect(formatTokenAmount(1_600_000, { fixed: true })).toBe("1.60M");
+    expect(formatTokenAmount(25_000_000, { fixed: true })).toBe("25.00M");
+    expect(formatTokenAmount(1_893.9, { fixed: true })).toBe("1,893.90");
+    expect(formatTokenAmount(36.65, { fixed: true })).toBe("36.6500");
+    expect(formatTokenAmount(0.00012, { fixed: true })).toBe("0.0001200");
+  });
+});
+
+describe("formatRelative", () => {
+  const now = Date.parse("2026-09-25T12:00:00Z");
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+  const DAY = 24 * 3_600_000;
+
+  it("counts back under a week", () => {
+    expect(formatRelative(ago(10_000), now)).toBe("just now");
+    expect(formatRelative(ago(12 * 60_000), now)).toBe("12m ago");
+    expect(formatRelative(ago(3 * 3_600_000), now)).toBe("3h ago");
+    expect(formatRelative(ago(DAY), now)).toBe("yesterday");
+    expect(formatRelative(ago(2 * DAY), now)).toBe("2d ago");
+    expect(formatRelative(ago(6 * DAY), now)).toBe("6d ago");
+  });
+
+  it("names the date from a week out, and the year only when it differs", () => {
+    expect(formatRelative("2026-08-26T12:00:00Z", now)).toBe("Aug 26");
+    expect(formatRelative("2025-12-30T12:00:00Z", now)).toBe("Dec 30, 2025");
   });
 });
 

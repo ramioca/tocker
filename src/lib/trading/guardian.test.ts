@@ -7,7 +7,7 @@ import { resetTokenCaches } from "@/lib/tokens";
 import { seedKnownTokens, tokenId } from "./tokens";
 import { applyFill, updatePeaks } from "./positions";
 import * as prices from "./prices";
-import { runGuardian } from "./guardian";
+import { exitNotificationTitle, runGuardian } from "./guardian";
 
 /**
  * The real paper executor is used throughout. To exercise the "one bad position must not
@@ -157,7 +157,8 @@ describe("runGuardian — stop loss", () => {
     const owner = await db.select().from(schema.notifications).where(eq(schema.notifications.userId, userId));
     expect(owner).toHaveLength(1);
     expect(owner[0]?.kind).toBe("exit");
-    expect(owner[0]?.title).toBe("Stop loss hit: sold BONK");
+    // The title names the agent: two agents can hold the same token.
+    expect(owner[0]?.title).toBe("Test Agent sold BONK · stop loss hit");
     expect(owner[0]?.href).toContain("/agents/");
     // The href names the trade so the notifications page can show its receipt under
     // the rationale; the body is the rationale alone, not the receipt summary again.
@@ -653,3 +654,10 @@ describe("position bookkeeping", () => {
   });
 });
 
+
+describe("exitNotificationTitle", () => {
+  it("leads with the agent, then the token, then the rule", () => {
+    expect(exitNotificationTitle("Momentum Mike", "BONK", "take_profit")).toBe("Momentum Mike sold BONK · take profit hit");
+    expect(exitNotificationTitle("Base Camp", "AERO", "max_hold")).toBe("Base Camp sold AERO · max hold reached");
+  });
+});

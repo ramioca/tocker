@@ -1,11 +1,10 @@
 import "server-only";
 import { and, asc, desc, eq, gte, inArray, ne, or, sql } from "drizzle-orm";
-import { agents, getDb, positions, tokenScores, tokens, trades, type Db } from "@/db";
-import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { agents, getDb, positions, publicTokenScores, tokenScores, tokens, trades, type Db } from "@/db";
 import { toNum, toNumOrNull } from "@/lib/money";
 import { unrealized } from "@/lib/pnl";
 import { getScoreHistory, isNoData } from "@/lib/tokens/history";
-import { universeKey } from "@/lib/tokens";
+import { PUBLIC_UNIVERSE_KEY } from "@/lib/tokens";
 import type {
   AgentCard,
   Chain,
@@ -24,8 +23,7 @@ import { loadTokens, toTokenRef, toTradeRow } from "./_shared";
  * strategy: a public blocker reading "liquidity below floor" computed against
  * someone's private threshold would publish that threshold.
  */
-const PUBLIC_UNIVERSE = DEFAULT_AGENT_CONFIG.universe;
-export const PUBLIC_UNIVERSE_KEY = universeKey(PUBLIC_UNIVERSE);
+export { PUBLIC_UNIVERSE_KEY };
 
 const RECENT_TRADE_LIMIT = 20;
 const FLOW_WINDOW_DAYS = 30;
@@ -42,29 +40,53 @@ async function cachedScore(
   db: Db,
   id: string,
 ): Promise<{ score: TokenScore | null; marketFacts: TokenMarketFacts | null }> {
-  const [row] = await db.select().from(tokenScores).where(eq(tokenScores.id, id)).limit(1);
-  if (!row) return { score: null, marketFacts: null };
+  const [[cacheRow], publicRow] = await Promise.all([
+    db.select().from(tokenScores).where(eq(tokenScores.id, id)).limit(1),
+    // The public reading lives in its own row, which no agent's rescore can replace.
+    // Unreadable (a database not yet migrated) is "none yet", not a broken page.
+    db
+      .select()
+      .from(publicTokenScores)
+      .where(eq(publicTokenScores.id, id))
+      .limit(1)
+      .then((rows) => rows[0] ?? null)
+      .catch(() => null),
+  ]);
+  if (!cacheRow && !publicRow) return { score: null, marketFacts: null };
 
-  // Market facts are the same under any universe, so they are shown whoever scored
-  // the token last. Only these fields leave this branch.
+  // Market facts are the same under any universe, so they come from whichever reading
+  // is newest, whoever took it. Only these fields leave that row.
+  const marketRow = publicRow && (!cacheRow || publicRow.scoredAt >= cacheRow.scoredAt) ? publicRow : cacheRow!;
   const marketFacts: TokenMarketFacts = {
-    priceUsd: toNumOrNull(row.priceUsd),
-    liquidityUsd: toNumOrNull(row.liquidityUsd),
-    volume24hUsd: toNumOrNull(row.volume24hUsd),
-    marketCapUsd: toNumOrNull(row.marketCapUsd),
-    holderCount: row.holderCount,
-    ageHours: toNumOrNull(row.ageHours),
-    priceChange24hPct: toNumOrNull(row.priceChange24hPct),
-    measuredAt: row.scoredAt.toISOString(),
+    priceUsd: toNumOrNull(marketRow.priceUsd),
+    liquidityUsd: toNumOrNull(marketRow.liquidityUsd),
+    volume24hUsd: toNumOrNull(marketRow.volume24hUsd),
+    marketCapUsd: toNumOrNull(marketRow.marketCapUsd),
+    holderCount: marketRow.holderCount,
+    ageHours: toNumOrNull(marketRow.ageHours),
+    priceChange24hPct: toNumOrNull(marketRow.priceChange24hPct),
+    measuredAt: marketRow.scoredAt.toISOString(),
   };
 
-  // A row scored under a different universe carries that universe's verdict and
-  // blockers. Reusing it here would leak another operator's thresholds.
-  if (row.universeKey !== PUBLIC_UNIVERSE_KEY) return { score: null, marketFacts };
+  // A cache row scored under a different universe carries that universe's verdict and
+  // blockers; reusing it here would leak another operator's thresholds. Before the
+  // public table existed, a cache row under the public key was the public reading, so it
+  // still stands in for a token that has not been scored in public since.
+  const row = publicRow ?? (cacheRow?.universeKey === PUBLIC_UNIVERSE_KEY ? cacheRow : null);
+  if (!row) return { score: null, marketFacts };
   // A reading no provider answered is an outage, not a verdict: "0 · avoid, 6 gates
   // failed" on a token that simply could not be looked up. New ones are no longer
   // cached (`getTokenScore`); this keeps any already stored off the public page.
-  if (isNoData({ ...marketFacts, sources: row.sources })) return { score: null, marketFacts };
+  if (
+    isNoData({
+      sources: row.sources,
+      priceUsd: toNumOrNull(row.priceUsd),
+      liquidityUsd: toNumOrNull(row.liquidityUsd),
+      holderCount: row.holderCount,
+    })
+  ) {
+    return { score: null, marketFacts };
+  }
 
   const c = row.components;
   const score: TokenScore = {
@@ -146,7 +168,9 @@ export async function getTokenPage(
   const since = new Date(Date.now() - FLOW_WINDOW_DAYS * 86_400_000);
 
   const [history, holderRows, tradeRows, flowRows] = await Promise.all([
-    getScoreHistory(id, { days: 30 }),
+    // Public readings only: an agent's total moves with its clip size and paid signals,
+    // and its verdict with its gates.
+    getScoreHistory(id, { days: 30, universeKey: PUBLIC_UNIVERSE_KEY }),
     db
       .select({
         agentId: agents.id,

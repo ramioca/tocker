@@ -1,7 +1,7 @@
 import { cache } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import { Bot } from "lucide-react";
 import { getSession } from "@/lib/auth";
 import { getUserProfile } from "@/server/queries/users";
@@ -23,24 +23,42 @@ const loadProfile = cache(async (handle: string) => {
   );
 });
 
+/**
+ * The handle from the URL, lowercased the way it is saved (actions/users.ts). An "@Dex"
+ * typed or pasted with capitals used to land on "Profile not found"; it now goes to the
+ * one canonical URL instead, so links and history never hold two spellings of a profile.
+ */
+async function canonicalHandle(params: Promise<{ handle: string }>): Promise<string> {
+  const { handle: raw } = await params;
+  let handle: string;
+  try {
+    handle = decodeURIComponent(raw);
+  } catch {
+    notFound();
+  }
+  const lower = handle.toLowerCase();
+  if (handle !== lower) permanentRedirect(`/u/${encodeURIComponent(lower)}`);
+  return handle;
+}
+
 export async function generateMetadata({
   params,
 }: {
   params: Promise<{ handle: string }>;
 }): Promise<Metadata> {
-  const { handle } = await params;
+  const handle = await canonicalHandle(params);
   // Built from the lookup, not the URL: "@nobody-xyz" over a "Nothing here" page claimed
   // a user that does not exist.
   const profile = await loadProfile(handle);
   if (!profile) return { title: "Profile not found" };
   return {
     title: `@${profile.handle}`, // the root layout appends " · Tocker"
-    description: `Agents, PnL and trading activity for @${profile.handle}.`,
+    description: `Agents, P&L and trading activity for @${profile.handle}.`,
   };
 }
 
 export default async function ProfilePage({ params }: { params: Promise<{ handle: string }> }) {
-  const { handle } = await params;
+  const handle = await canonicalHandle(params);
   const profile = await loadProfile(handle);
   if (!profile) notFound();
 

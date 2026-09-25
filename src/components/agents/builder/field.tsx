@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { parseTypedNumber, type ParseValue } from "./parse-value";
+import { ladderStops, nearestStopIndex } from "./types";
 
 /** Snap a typed number onto the slider's grid and inside its range. */
 export function clampToStep(value: number, min: number, max: number, step: number): number {
@@ -102,7 +103,8 @@ function EditableValue({
       className={cn(
         // 16px on phones (iOS zooms into anything smaller). Sized in ch so the widest
         // readout, "$5,000.00", fits at either font size; 8.5ch clipped its last digit.
-        "tnum w-[calc(9ch+0.75rem)] rounded-md border border-transparent bg-transparent px-1 text-right font-mono text-base md:text-sm",
+        // A faint border at rest: touch has no hover, and the number must read as editable.
+        "tnum w-[calc(9ch+0.75rem)] rounded-md border border-border/40 bg-transparent px-1 text-right font-mono text-base md:text-sm",
         "transition-colors duration-150 hover:border-border/70 focus:border-border focus:bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         "aria-invalid:border-destructive/60",
       )}
@@ -168,6 +170,7 @@ export function RiskSlider({
   step = 1,
   format,
   parse,
+  ladder,
   meaning,
   onChange,
 }: {
@@ -180,12 +183,20 @@ export function RiskSlider({
   format: (value: number) => string;
   /** How typed text becomes a number; defaults to a plain decimal. */
   parse?: ParseValue;
+  /** Rungs for the thumb when the range is log-ish; typing still takes any value in range. */
+  ladder?: readonly number[];
   meaning: string;
   onChange: (value: number) => void;
 }) {
   const [note, setNote] = useState<ValueNote | null>(null);
+  // An off-ladder value (typed, seeded) stays a stop until another one replaces it —
+  // remembered, not derived, or the stops would reshuffle under the thumb mid-drag.
+  const [extra, setExtra] = useState(value);
+  if (ladder && !ladder.includes(value) && value !== extra) setExtra(value);
+  const stops = ladder ? ladderStops(ladder, extra) : null;
   return (
-    <div className="rounded-xl border border-border/70 bg-card/30 p-3">
+    // relative anchors the sr-only note below to this card, wherever it is mounted.
+    <div className="relative rounded-xl border border-border/70 bg-card/30 p-3">
       <div className="flex items-baseline justify-between gap-3">
         {/* Names both controls: the typed value (htmlFor) and the slider (aria-labelledby). */}
         <label id={`${id}-label`} htmlFor={`${id}-value`} className="text-sm font-medium">
@@ -208,17 +219,18 @@ export function RiskSlider({
       </div>
       <Slider
         aria-labelledby={`${id}-label`}
-        getAriaValueText={(_, v) => format(v)}
+        // On a ladder the slider's value is a rung index; announce the amount, not "6".
+        getAriaValueText={(_, v) => format(stops ? (stops[v] ?? value) : v)}
         className="mt-3"
-        value={[value]}
-        min={min}
-        max={max}
-        step={step}
+        value={[stops ? nearestStopIndex(stops, value) : value]}
+        min={stops ? 0 : min}
+        max={stops ? stops.length - 1 : max}
+        step={stops ? 1 : step}
         onValueChange={(next) => {
           const first = Array.isArray(next) ? next[0] : next;
           if (typeof first === "number") {
             setNote(null);
-            onChange(first);
+            onChange(stops ? stops[first] : first);
           }
         }}
       />

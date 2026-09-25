@@ -23,6 +23,7 @@ import {
   positions,
   posts,
   tokenScoreHistory,
+  publicTokenScores,
   tokenScores,
   tokens,
   trades,
@@ -615,6 +616,8 @@ async function seed() {
           priceUsd: toNumeric(price, 12),
           liquidityUsd: toNumeric(liquidity, 2),
           holderCount: holders,
+          // Seeded readings are the public ones, so the token page charts them.
+          universeKey: PUBLIC_UNIVERSE_KEY,
           scoredAt: when,
         };
         historyRows.push(row);
@@ -656,6 +659,12 @@ async function seed() {
       scoredAt: new Date(NOW - Math.floor(between(0, 9 * 60_000))),
     };
     await db.insert(tokenScores).values(values).onConflictDoUpdate({ target: tokenScores.id, set: values });
+    // The same reading is the public one: token pages and /discover read it from here.
+    const { universeKey: _key, ...publicValues } = values;
+    await db
+      .insert(publicTokenScores)
+      .values(publicValues)
+      .onConflictDoUpdate({ target: publicTokenScores.id, set: publicValues });
   }
 
   console.log("· users");

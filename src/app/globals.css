@@ -439,6 +439,26 @@
   }
 }
 
+/*
+ * Forced colors (Windows High Contrast) throws away box-shadow, and with it every
+ * `focus-visible:ring-*` in the app: most of the nav, the Button primitive and the
+ * settings tabs had no focus mark at all. A real outline survives, in the system's own
+ * text colour. Borders also turn visible, so a row of tabs that marks the current one
+ * with a coloured border shows every tab as current; an underline under the text is
+ * the cue that is left.
+ */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid CanvasText !important;
+    outline-offset: 2px;
+  }
+  [aria-current="page"],
+  [role="tab"][aria-selected="true"] {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

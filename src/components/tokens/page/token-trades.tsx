@@ -39,7 +39,7 @@ import {
 } from "@/components/ui/table";
 import { EmptyState } from "@/components/common/empty-state";
 import { RelativeTime } from "@/components/common/relative-time";
-import { formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
+import { formatPriceUsd, formatRelative, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
 import type { TradeRow } from "@/server/types";
 import type { TradeReceiptData } from "@/db/schema";
@@ -181,7 +181,12 @@ export function TokenTrades({
                   {anyReceipt ? (
                     <TableCell className="hidden text-right sm:table-cell">
                       {receipt ? (
-                        <TradeReceiptSheet receipt={receipt} trigger="chip" title={title} />
+                        <TradeReceiptSheet
+                          receipt={receipt}
+                          trigger="chip"
+                          title={title}
+                          label={`Receipt: ${trade.side} ${trade.token.symbol}, ${formatUsd(trade.amountUsd)}, ${formatRelative(trade.filledAt ?? trade.createdAt)}`}
+                        />
                       ) : (
                         <span className="font-mono text-[11px] text-muted-foreground">—</span>
                       )}

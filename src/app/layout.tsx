@@ -15,7 +15,21 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+/**
+ * Absolute base for OG/Twitter image URLs. Without it Next only gets this right on a
+ * Vercel production deploy; everywhere else shared cards point at the wrong origin.
+ * A malformed value falls back rather than throwing here, which would take every page down.
+ */
+function appOrigin(): URL {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_APP_URL?.trim() || "http://localhost:3000");
+  } catch {
+    return new URL("http://localhost:3000");
+  }
+}
+
 export const metadata: Metadata = {
+  metadataBase: appOrigin(),
   title: {
     default: "Tocker — social agentic trading",
     template: "%s · Tocker",

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight, Coins, FlaskConical, Layers, Wallet } from "lucide-react";
+import { ArrowRight, Coins, FlaskConical, Layers, Wallet } from "lucide-react";
 import { Sparkline } from "@/components/social-common/sparkline";
 import { PnlText } from "@/components/common/pnl-text";
 import { ModeBadge } from "@/components/common/mode-badge";
@@ -119,7 +119,7 @@ export function PortfolioHero({ overview }: { overview: HomeOverview }) {
           className="focus-ring inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-[var(--glass-hairline)] px-3 text-xs font-medium transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted/60 active:scale-[0.97]"
         >
           Manage agents
-          <ArrowUpRight aria-hidden className="size-3.5" />
+          <ArrowRight aria-hidden className="size-3.5" />
         </Link>
       </div>
 

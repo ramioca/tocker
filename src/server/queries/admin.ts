@@ -37,6 +37,7 @@ import {
   type Db,
 } from "@/db";
 import { toNum } from "@/lib/money";
+import { isLlmMock } from "@/lib/agent/mock-model";
 import { SIMULATED_SETTLEMENT_TX } from "@/lib/platform/fee";
 import { isPaperWallet, readWalletBalances, type AgentWalletRow } from "@/lib/wallets";
 import type { AgentCard, Chain } from "@/server/types";
@@ -141,6 +142,8 @@ export interface AdminAgentRow {
   card: AgentCard;
   /** USDC across this agent's server wallets, from the balance snapshot. Null when unread. */
   fundedUsdc: number | null;
+  /** Whether a run can start: an LLM key is attached, or the mock model stands in for one. */
+  hasLlmKey: boolean;
 }
 
 export interface AdminTradeRow {
@@ -522,9 +525,13 @@ export async function listAdminAgents(
     usdcByAgent.set(row.agentId, (usdcByAgent.get(row.agentId) ?? 0) + row.usdc);
   }
 
+  const llmKeyById = new Map(rows.map((row) => [row.id, row.llmKeyId]));
+  const mock = isLlmMock();
+
   return cards.map((card) => ({
     card,
     fundedUsdc: balances === null ? null : (usdcByAgent.get(card.id) ?? 0),
+    hasLlmKey: llmKeyById.get(card.id) != null || mock,
   }));
 }
 

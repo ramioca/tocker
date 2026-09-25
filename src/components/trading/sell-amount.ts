@@ -35,3 +35,14 @@ export function pctLabel(pct: number): string {
   if (pct < 10) return `${pct.toFixed(1).replace(/\.0$/, "")}%`;
   return `${Math.round(pct)}%`;
 }
+
+/**
+ * The shares of a position offered as one-tap sell sizes. One list, so the Trade sheet
+ * and the Sell position dialog stop offering different slices of the same holding.
+ */
+export const SELL_SLICES = [25, 50, 75, 100] as const;
+
+/** A slice chip's text: 100% is "All". */
+export function sliceLabel(pct: number): string {
+  return pct === 100 ? "All" : `${pct}%`;
+}

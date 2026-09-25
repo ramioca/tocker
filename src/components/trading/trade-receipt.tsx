@@ -280,6 +280,7 @@ export function TradeReceiptDetail({
 export function TradeReceiptSheet({
   receipt,
   title,
+  label,
   trigger = "row",
   defaultOpen = false,
   className,
@@ -287,6 +288,11 @@ export function TradeReceiptSheet({
   receipt: TradeReceiptData | null | undefined;
   /** Sheet heading; defaults to "<SIDE> <symbol>". */
   title?: string;
+  /**
+   * The trigger's accessible name. In a table every row's default reads "Receipt for buy
+   * BONK", so a caller listing several fills passes one that tells them apart.
+   */
+  label?: string;
   /**
    * `row` is the full compact line, for anywhere with horizontal room. `chip` is an
    * icon and the slippage figure, for a table cell — where the full line would either
@@ -315,12 +321,18 @@ export function TradeReceiptSheet({
               "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
               className,
             )}
-            aria-label={`Receipt for ${receipt.side} ${receipt.symbol}`}
+            aria-label={label ?? `Receipt for ${receipt.side} ${receipt.symbol}`}
           >
             {trigger === "chip" ? (
               <>
                 <ReceiptText aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-                <SlippageValue receipt={receipt} className="text-[11px]" />
+                {/* A paper fill is the quote by construction, so "at the quote" on every
+                    row said nothing; say what kind of fill it is instead. */}
+                {receipt.simulated ? (
+                  <span className="text-[11px] text-muted-foreground">Paper</span>
+                ) : (
+                  <SlippageValue receipt={receipt} className="text-[11px]" />
+                )}
               </>
             ) : (
               <span className="flex items-center gap-2">

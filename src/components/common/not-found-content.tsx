@@ -8,8 +8,29 @@ import { viewerSession } from "@/components/common/data-access";
  * unmatched URL has no shell around it; the one inside the app shell sits in the page's
  * own column, because a full-height block under a 56px bar scrolls into empty space and
  * puts the message below the centre. The caller passes the frame.
+ *
+ * `subject` names what was looked for when the route knows it. The default stays vague
+ * on purpose: an agent that is private and one that never existed must read the same.
  */
-export async function NotFoundContent({ className }: { className?: string }) {
+export type NotFoundSubject = "token" | "profile";
+
+const COPY: Record<NotFoundSubject | "default", { sentence: string; secondary: { href: string; label: string } }> = {
+  default: {
+    sentence: "This agent, run or page does not exist — or it was deleted, or it is private and not yours to see.",
+    secondary: { href: "/discover", label: "Discover agents" },
+  },
+  token: {
+    sentence: "Tocker has not seen this token, or the address is wrong.",
+    secondary: { href: "/discover", label: "Browse tokens" },
+  },
+  profile: {
+    sentence: "No one goes by this handle.",
+    secondary: { href: "/discover", label: "Discover agents" },
+  },
+};
+
+export async function NotFoundContent({ className, subject }: { className?: string; subject?: NotFoundSubject }) {
+  const copy = COPY[subject ?? "default"];
   // Signed out, /home is a sign-in wall: someone who followed a dead shared link is
   // better served by the page that says what Tocker is. A failed session read is
   // treated as signed out rather than breaking the 404 itself.
@@ -25,8 +46,7 @@ export async function NotFoundContent({ className }: { className?: string }) {
       <div className="space-y-1.5">
         <h1 className="text-lg font-semibold tracking-tight">Nothing here</h1>
         <p className="mx-auto max-w-md text-sm text-muted-foreground">
-          This agent, run or page does not exist — or it was deleted, or it is private and not
-          yours to see.
+          {copy.sentence}
         </p>
       </div>
 
@@ -38,10 +58,10 @@ export async function NotFoundContent({ className }: { className?: string }) {
           {primary.label}
         </Link>
         <Link
-          href="/discover"
+          href={copy.secondary.href}
           className="inline-flex h-9 items-center rounded-lg border border-border px-3 text-sm transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          Discover agents
+          {copy.secondary.label}
         </Link>
       </div>
     </div>

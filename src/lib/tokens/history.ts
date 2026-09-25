@@ -15,15 +15,12 @@
  *  - nothing here ever throws for database reasons. History is a nice-to-have on
  *    the write path; a failed insert must not fail a run.
  *
- * KNOWN GAP (W7 review, not fixed here): rows carry no `universeKey`. Every scoring
- * appends, whichever agent's universe produced it, so a public token chart can mix
- * points computed under different thresholds and present them as one series — while the
- * token page tells the reader the score is the platform default's. It is a correctness
- * and an honesty problem, not a leak (only the total and components land here, never the
- * thresholds). Closing it needs a `universe_key` column on `token_score_history` plus a
- * filter in `getScoreHistory`, and `src/db/schema.ts` is another workstream's file.
+ * Every row carries the `universeKey` its total and verdict were computed under (null
+ * for a legacy row, or a default-universe reading taken with private inputs). A public
+ * chart asks for the public key only: an agent's reading would publish its thresholds
+ * through the verdict, and its clip size and paid signals through the total.
  */
-import { and, asc, desc, eq, gte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getDb, tokenScoreHistory } from "@/db";
 import { toNum, toNumOrNull } from "@/lib/money";
@@ -78,14 +75,21 @@ export function isNoData(
  * Append one point of history for a freshly computed score. Deduped per
  * {@link shouldRecord}, skipped for a no-data reading; never throws.
  */
-export async function recordScore(score: TokenScore): Promise<void> {
+export async function recordScore(score: TokenScore, universeKey: string | null = null): Promise<void> {
   if (isNoData(score)) return;
   try {
     const db = await getDb();
+    // Deduped per universe: a public reading right after an agent's at the same total is
+    // still the only public point in that window.
     const [last] = await db
       .select({ total: tokenScoreHistory.total, scoredAt: tokenScoreHistory.scoredAt })
       .from(tokenScoreHistory)
-      .where(eq(tokenScoreHistory.tokenId, score.tokenId))
+      .where(
+        and(
+          eq(tokenScoreHistory.tokenId, score.tokenId),
+          universeKey === null ? isNull(tokenScoreHistory.universeKey) : eq(tokenScoreHistory.universeKey, universeKey),
+        ),
+      )
       .orderBy(desc(tokenScoreHistory.scoredAt))
       .limit(1);
 
@@ -101,6 +105,7 @@ export async function recordScore(score: TokenScore): Promise<void> {
       priceUsd: score.priceUsd === null ? null : score.priceUsd.toFixed(12),
       liquidityUsd: score.liquidityUsd === null ? null : score.liquidityUsd.toFixed(2),
       holderCount: score.holderCount,
+      universeKey,
       scoredAt: new Date(score.scoredAt),
     });
   } catch {
@@ -108,10 +113,14 @@ export async function recordScore(score: TokenScore): Promise<void> {
   }
 }
 
-/** Score history for one token, oldest first. Empty when nothing was ever recorded. */
+/**
+ * Score history for one token, oldest first. Empty when nothing was ever recorded.
+ * `universeKey` keeps only readings taken under that universe; a public surface must
+ * pass the public key, or it charts other operators' totals and verdicts.
+ */
 export async function getScoreHistory(
   tokenId: string,
-  opts?: { days?: number; limit?: number },
+  opts?: { days?: number; limit?: number; universeKey?: string },
 ): Promise<ScoreHistoryPoint[]> {
   const days = opts?.days ?? DEFAULT_HISTORY_DAYS;
   const limit = opts?.limit ?? 1_000;
@@ -121,7 +130,13 @@ export async function getScoreHistory(
     const rows = await db
       .select()
       .from(tokenScoreHistory)
-      .where(and(eq(tokenScoreHistory.tokenId, tokenId), gte(tokenScoreHistory.scoredAt, since)))
+      .where(
+        and(
+          eq(tokenScoreHistory.tokenId, tokenId),
+          gte(tokenScoreHistory.scoredAt, since),
+          opts?.universeKey === undefined ? undefined : eq(tokenScoreHistory.universeKey, opts.universeKey),
+        ),
+      )
       .orderBy(asc(tokenScoreHistory.scoredAt))
       .limit(limit);
 

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight, Bot, Plus } from "lucide-react";
+import { ArrowRight, Bot, Plus } from "lucide-react";
 import { AgentCard } from "@/components/agents/agent-card";
 import { EmptyState } from "@/components/common/empty-state";
 import type { HomeOverview } from "@/server/queries/home";
@@ -58,7 +58,7 @@ export function AgentsOverview({
             className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.97]"
           >
             All agents
-            <ArrowUpRight aria-hidden className="size-3.5" />
+            <ArrowRight aria-hidden className="size-3.5" />
           </Link>
           <Link
             href="/agents/new"

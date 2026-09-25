@@ -16,6 +16,7 @@ import { FeesCovered } from "@/components/common/fees-covered";
 import { formatUsd } from "@/components/common/format";
 import {
   NETWORK_WORDING,
+  USDC_MINT,
   chainLabelFor,
   cashOn,
   unifiedCash,
@@ -250,6 +251,7 @@ export function DepositSheet({
                     <dt className="shrink-0 text-muted-foreground">Send only</dt>
                     <dd className="sm:text-right">{wording.asset}</dd>
                   </div>
+                  <TokenContractRow chain={chain} />
                 </dl>
 
                 <p className="flex gap-2 rounded-lg border border-destructive/25 bg-destructive/8 p-2.5 text-[11px] leading-relaxed text-muted-foreground">
@@ -334,6 +336,45 @@ export function DepositSheet({
 }
 
 /** Keyed by address, so switching chains never shows "Copied" for an address that was not. */
+/**
+ * The USDC contract, in full, for anyone checking the token in an exchange. Every
+ * character for the same reason as the address above: a first-and-last-few string is
+ * exactly what a look-alike token forges. Kept small and muted so it never competes
+ * with the address people actually paste.
+ */
+function TokenContractRow({ chain }: { chain: Chain }) {
+  const { copied, failed, copy } = useCopy();
+  const contract = USDC_MINT[chain];
+  const name = chain === "solana" ? "Mint" : "Token contract";
+  return (
+    <div className="flex flex-col gap-x-4 gap-y-0.5 sm:flex-row sm:justify-between">
+      <dt className="shrink-0 text-muted-foreground">{name}</dt>
+      <dd className="flex min-w-0 items-start gap-1.5 sm:justify-end sm:text-right">
+        <FullAddress address={contract} className="min-w-0 flex-wrap text-[11px] opacity-80" />
+        <button
+          type="button"
+          onClick={() => void copy(contract)}
+          aria-label={`Copy the USDC ${name.toLowerCase()}`}
+          title={failed ? "Couldn't copy — select it instead" : undefined}
+          className="-my-1 grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-[color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {copied ? (
+            <Check aria-hidden className="size-3.5 text-positive" />
+          ) : failed ? (
+            <AlertTriangle aria-hidden className="size-3.5 text-destructive" />
+          ) : (
+            <Copy aria-hidden className="size-3.5" />
+          )}
+        </button>
+        {/* The icon changes for the eye; this says it for a screen reader. */}
+        <span aria-live="polite" className="sr-only">
+          {copied ? "Copied" : failed ? "Couldn't copy — select the contract instead" : ""}
+        </span>
+      </dd>
+    </div>
+  );
+}
+
 function CopyAddressButton({ address }: { address: string }) {
   const { copied, failed, copy } = useCopy();
   return (

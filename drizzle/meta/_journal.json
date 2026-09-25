@@ -64,6 +64,13 @@
       "when": 1790283000444,
       "tag": "0008_colossal_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790330706871,
+      "tag": "0009_fuzzy_dreadnoughts",
+      "breakpoints": true
     }
   ]
 }

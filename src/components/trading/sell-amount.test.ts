@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { floorCents, pctLabel, sliceText } from "./sell-amount";
+import { SELL_SLICES, floorCents, pctLabel, sliceLabel, sliceText } from "./sell-amount";
 
 describe("floorCents", () => {
   it("rounds down, never up, so a figure never exceeds the mark", () => {
@@ -55,5 +55,12 @@ describe("pctLabel", () => {
   it("says 0% only for nothing", () => {
     expect(pctLabel(0)).toBe("0%");
     expect(pctLabel(Number.NaN)).toBe("0%");
+  });
+});
+
+describe("SELL_SLICES", () => {
+  it("ends at the whole position, labelled All", () => {
+    expect(SELL_SLICES.at(-1)).toBe(100);
+    expect(SELL_SLICES.map(sliceLabel)).toEqual(["25%", "50%", "75%", "All"]);
   });
 });

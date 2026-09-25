@@ -197,6 +197,13 @@ const KIND_ICON = {
   milestone: Trophy,
 } as const;
 
+// The icon is decorative, so the kind is said in words too; without it a launch
+// post reads as the agent's tagline posted out of nowhere.
+const KIND_LABEL: Partial<Record<FeedItem["kind"], string>> = {
+  agent_created: "Launched a new agent",
+  milestone: "Milestone",
+};
+
 // Memoized: a like patches one post in the cache, and without this every loaded card
 // (and its motion buttons) re-rendered with it, so a like got slower the deeper you
 // had scrolled. The list keeps `item`, `receipt` and both callbacks referentially stable.
@@ -252,7 +259,7 @@ export const FeedCard = memo(function FeedCard({
   return (
     <article
       id={item.id}
-      className="glass-card glass-hover isolate scroll-mt-24 rounded-2xl px-4 py-4 sm:px-5"
+      className="glass-card isolate scroll-mt-24 rounded-2xl px-4 py-4 sm:px-5"
     >
       <div className="flex gap-3">
         {agent ? (
@@ -292,7 +299,15 @@ export const FeedCard = memo(function FeedCard({
             <span aria-hidden className="text-muted-foreground/40">
               ·
             </span>
-            <RelativeTime iso={item.createdAt} className="text-xs" />
+            {/* The permalink. Only the time, not the whole card: the card is full of its
+                own links and buttons, and a stretched overlay would fight all of them. */}
+            <Link
+              href={sharePath}
+              className="focus-ring rounded text-muted-foreground hover:underline"
+            >
+              <span className="sr-only">Open post, </span>
+              <RelativeTime iso={item.createdAt} className="text-xs" />
+            </Link>
             {/* The agent's record, not this trade's result — labelled, or a green
                 number beside "Stop hit, small loss" reads as a contradiction. */}
             {agent?.pnlPct !== null && agent?.pnlPct !== undefined ? (
@@ -325,7 +340,14 @@ export const FeedCard = memo(function FeedCard({
                 {Icon ? (
                   <Icon aria-hidden className="mt-0.5 size-4 shrink-0 text-primary" />
                 ) : null}
-                <span>{item.body}</span>
+                <span>
+                  {KIND_LABEL[item.kind] ? (
+                    <span className="block text-xs font-medium text-muted-foreground">
+                      {KIND_LABEL[item.kind]}
+                    </span>
+                  ) : null}
+                  {item.body}
+                </span>
               </p>
             )
           ) : null}

@@ -6,7 +6,7 @@ import { ModeBadge } from "@/components/common/mode-badge";
 import { PnlText } from "@/components/common/pnl-text";
 import { RelativeTime } from "@/components/common/relative-time";
 import { StatusBadge } from "@/components/common/status-badge";
-import { formatUsd } from "@/components/common/format";
+import { formatSignedPct, formatSignedUsd, formatUsd } from "@/components/common/format";
 import { modelLabel } from "@/components/social-common/chain-badge";
 import { cn } from "@/lib/utils";
 import type { AgentCard as AgentCardModel } from "@/server/types";
@@ -29,9 +29,15 @@ export function AgentCard({
   /** The viewer's own agents only: what stops every tick, from `agentBlockers`. */
   blocker?: { label: string; detail: string } | null;
 }) {
+  // Named by the agent and a one-line summary, then the activity line. Named by its
+  // contents, the card read out as one run-on — tagline, "Equity trend", the figures,
+  // every chain — to anyone moving through the page by links.
+  const labelId = `agent-card-${agent.id}`;
+  const held = accountPaused && agent.status === "active";
   return (
     <Link
       href={`/agents/${agent.slug}`}
+      aria-labelledby={`${labelId}-name ${labelId}-summary ${labelId}-activity`}
       style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
       className={cn(
         "glass-card glass-hover focus-ring animate-rise group flex h-full flex-col gap-3 rounded-xl p-4",
@@ -44,7 +50,9 @@ export function AgentCard({
           {/* The name gets the whole line. Paper-vs-live is the most consequential
               fact on the card, but it is a badge, not a title, so it sits on the
               meta line where it cannot squeeze the thing you are scanning for. */}
-          <p className="truncate font-semibold tracking-tight">{agent.name}</p>
+          <p id={`${labelId}-name`} className="truncate font-semibold tracking-tight">
+            {agent.name}
+          </p>
           <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
             <ModeBadge mode={agent.mode} size="xs" />
             <span className="truncate" title={agent.model}>
@@ -67,16 +75,21 @@ export function AgentCard({
         </div>
       </div>
 
+      <span id={`${labelId}-summary`} className="sr-only">
+        {`${agent.mode}, ${held ? "paused (account)" : agent.status}`}
+        {blocker ? `, ${blocker.label}` : ""}
+        {`, equity ${formatUsd(agent.equityUsd)}`}
+        {agent.pnlUsd !== null ? `, ${formatSignedUsd(agent.pnlUsd)} ${formatSignedPct(agent.pnlPct)}` : ""}
+      </span>
+
       {agent.tagline ? (
         <p className="line-clamp-2 text-sm text-foreground/80">{agent.tagline}</p>
       ) : null}
 
-      <MiniSparkline
-        id={`agent-${agent.id}`}
-        values={agent.sparkline}
-        pnl={agent.pnlPct}
-        className="mt-auto"
-      />
+      {/* The figures below say the same thing in words; the trace is for the eye. */}
+      <div aria-hidden className="mt-auto flex">
+        <MiniSparkline id={`agent-${agent.id}`} values={agent.sparkline} pnl={agent.pnlPct} />
+      </div>
 
       <div className="flex items-end justify-between gap-3">
         <div>
@@ -85,9 +98,17 @@ export function AgentCard({
         </div>
         <div className="text-right">
           <PnlText usd={agent.pnlUsd} pct={agent.pnlPct} size="sm" className="block" />
-          <p className="tnum text-[11px] text-muted-foreground">
+          {/* "ran": the time is the last run, not the last trade — a quiet agent runs
+              hourly and trades rarely, and unlabelled it read as a fresh fill. */}
+          <p id={`${labelId}-activity`} className="tnum text-[11px] text-muted-foreground">
             {agent.tradeCount} trade{agent.tradeCount === 1 ? "" : "s"} ·{" "}
-            {agent.lastRunAt ? <RelativeTime iso={agent.lastRunAt} className="text-[11px]" /> : "never run"}
+            {agent.lastRunAt ? (
+              <>
+                ran <RelativeTime iso={agent.lastRunAt} className="text-[11px]" />
+              </>
+            ) : (
+              "never run"
+            )}
           </p>
         </div>
       </div>

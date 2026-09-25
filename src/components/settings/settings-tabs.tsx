@@ -36,10 +36,12 @@ export function SettingsTabs({ isAdmin = false }: { isAdmin?: boolean }) {
             aria-current={active ? "page" : undefined}
             className={cn(
               "-mb-px rounded-t-md border-b-2 px-3 py-2 text-sm transition-colors duration-150",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
               active
-                ? "border-primary font-medium text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground",
+                ? "border-primary font-medium text-foreground forced-colors:border-[Highlight]"
+                : // Forced colours repaint a transparent border as text colour, which would
+                  // underline every tab; Canvas (a system colour) is kept, and stays unseen.
+                  "border-transparent text-muted-foreground hover:text-foreground forced-colors:border-[Canvas]",
             )}
           >
             {tab.label}

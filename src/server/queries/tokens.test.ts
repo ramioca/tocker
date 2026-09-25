@@ -141,9 +141,15 @@ beforeAll(async () => {
   await writeScoreRow(score(), universeKey(DEFAULT_AGENT_CONFIG.universe));
 
   // 3 points of history
-  await recordScore(score({ total: 61, scoredAt: new Date(NOW - 3 * DAY).toISOString() }));
-  await recordScore(score({ total: 70, scoredAt: new Date(NOW - 2 * DAY).toISOString() }));
-  await recordScore(score({ total: 74, scoredAt: new Date(NOW - 60_000).toISOString() }));
+  const publicKey = universeKey(DEFAULT_AGENT_CONFIG.universe);
+  await recordScore(score({ total: 61, scoredAt: new Date(NOW - 3 * DAY).toISOString() }), publicKey);
+  await recordScore(score({ total: 70, scoredAt: new Date(NOW - 2 * DAY).toISOString() }), publicKey);
+  await recordScore(score({ total: 74, scoredAt: new Date(NOW - 60_000).toISOString() }), publicKey);
+  // An agent's reading under its own rules, and a legacy one with no universe on record:
+  // neither may chart as the public score.
+  const strictKey = universeKey({ ...DEFAULT_AGENT_CONFIG.universe, minLiquidityUsd: 5_000_000 });
+  await recordScore(score({ total: 88, verdict: "avoid", scoredAt: new Date(NOW - 1 * DAY).toISOString() }), strictKey);
+  await recordScore(score({ total: 55, scoredAt: new Date(NOW - 1.5 * DAY).toISOString() }));
 
   // public agent: bought 1,000,000 at 0.00004 → mark 0.00005 is +25%
   await insertTrade({
@@ -299,6 +305,44 @@ describe("getTokenPage", () => {
     expect(page!.marketFacts).toMatchObject({ liquidityUsd: 1_250_000, marketCapUsd: 2_100_000_000, holderCount: 812_000 });
     expect(Object.keys(page!.marketFacts!)).not.toContain("blockers");
     expect(Object.keys(page!.marketFacts!)).not.toContain("verdict");
+  });
+
+  it("keeps the public score when an agent rescores the token under its own rules", async () => {
+    const address = "Pk".repeat(20);
+    const id = `solana:${address}`;
+    const pub = score({ tokenId: id, address, symbol: "KEEP", total: 70, verdict: "candidate" });
+    await db.insert(schema.publicTokenScores).values({
+      id,
+      chain: pub.chain,
+      address,
+      symbol: pub.symbol,
+      total: "70.00",
+      verdict: pub.verdict,
+      components: { ...pub.components } as Record<string, number | null>,
+      blockers: [],
+      warnings: [],
+      priceUsd: "0.000040000000",
+      liquidityUsd: "1250000.00",
+      volume24hUsd: null,
+      marketCapUsd: null,
+      holderCount: 812_000,
+      ageHours: null,
+      priceChange24hPct: null,
+      sources: pub.sources,
+      scoredAt: new Date(NOW - 10 * 60_000),
+    });
+    // Later, an agent with a stricter floor scores it and overwrites the shared cache row.
+    await writeScoreRow(
+      score({ tokenId: id, address, symbol: "KEEP", total: 40, verdict: "avoid", blockers: ["liquidity_below_floor"], liquidityUsd: 2_000_000 }),
+      universeKey({ ...DEFAULT_AGENT_CONFIG.universe, minLiquidityUsd: 5_000_000 }),
+    );
+
+    const page = await getTokenPage("solana", address);
+    expect(page!.score?.total).toBeCloseTo(70, 2);
+    expect(page!.score?.verdict).toBe("candidate");
+    expect(page!.score?.blockers).toEqual([]);
+    // Market facts follow the newest reading, whoever took it.
+    expect(page!.marketFacts?.liquidityUsd).toBe(2_000_000);
   });
 
   it("never publishes a reading no provider answered as the token's verdict", async () => {

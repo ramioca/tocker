@@ -161,7 +161,9 @@ export function CommandMenu({
       onClose();
     };
 
-    const actions: Array<Omit<Row, "keywords">> = [
+    // `keywords` holds the words people type for a page that its title and description
+    // don't say: "deposit" should find the wallet, "api key" should find Settings.
+    const actions: Array<Omit<Row, "keywords"> & { keywords?: string }> = [
       {
         id: "action-new-agent",
         title: "Create a new agent",
@@ -173,7 +175,7 @@ export function CommandMenu({
       {
         id: "nav-home",
         title: "Home",
-        description: "Cash, capital at work, equity and PnL across every agent",
+        description: "Cash, capital at work, equity and P&L across every agent",
         category: "Pages",
         icon: <LayoutGrid className="h-4 w-4" />,
         action: go("/home"),
@@ -222,6 +224,7 @@ export function CommandMenu({
         id: "nav-approvals",
         title: "Trades awaiting approval",
         description: "Proposals your agents are holding for a decision",
+        keywords: "proposals approve reject",
         category: "Pages",
         icon: <Gavel className="h-4 w-4" />,
         action: go("/home#activity"),
@@ -230,6 +233,7 @@ export function CommandMenu({
         id: "nav-wallet",
         title: "Wallet & capital",
         description: "Unified USDC cash and what each agent is holding",
+        keywords: "deposit withdraw fund top up add money usdc balance",
         category: "Pages",
         icon: <Wallet className="h-4 w-4" />,
         action: go("/home"),
@@ -238,6 +242,7 @@ export function CommandMenu({
         id: "nav-notifications",
         title: "Notifications",
         description: "Fills, failures, follows and comments",
+        keywords: "alerts inbox bell",
         category: "Pages",
         icon: <Bell className="h-4 w-4" />,
         action: go("/notifications"),
@@ -246,6 +251,7 @@ export function CommandMenu({
         id: "nav-settings",
         title: "Settings",
         description: "LLM keys, profile, notifications",
+        keywords: "api key openai anthropic llm security sign out logout kill switch",
         category: "Pages",
         icon: <Settings className="h-4 w-4" />,
         action: go("/settings"),
@@ -313,7 +319,7 @@ export function CommandMenu({
     }));
 
     return [
-      ...actions.map((row) => ({ ...row, keywords: `${row.title} ${row.description}` })),
+      ...actions.map((row) => ({ ...row, keywords: `${row.title} ${row.description} ${row.keywords ?? ""}` })),
       ...agents,
       ...tokens,
       ...users,

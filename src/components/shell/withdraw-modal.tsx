@@ -29,6 +29,9 @@ import {
 import { quoteSponsoredWithdrawal } from "@/server/actions/sponsored-withdraw";
 import type { Chain, WalletBalance } from "@/server/types";
 import { sanitizeUsdInput } from "./usd-input";
+import { cn } from "@/lib/utils";
+import { MORPH_FOCUS } from "@/components/common/focus";
+import { shownCashTotal } from "@/components/wallets/cash-display";
 
 const PERCENT_CHIPS = [
   { label: "10%", fraction: 0.1 },
@@ -81,6 +84,9 @@ export function WithdrawModal({
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
   const [pending, setPending] = useState(false);
+  // Remounts the hold button after every attempt. It stays mounted with the dialog, and
+  // with no reset delay it would otherwise still read "Sending…" on the next open.
+  const [attempt, setAttempt] = useState(0);
   const [quote, setQuote] = useState<Quote | null>(null);
   const { send, available } = useTransfer();
   const refresh = useRefreshCash();
@@ -170,7 +176,11 @@ export function WithdrawModal({
   const canSend = validAmount && destinationOk && quoteReady && !pending && available;
 
   const confirm = async () => {
-    if (!canSend) return;
+    // A quote that went stale mid-hold lands here; reset the button or it sits at "Sending…".
+    if (!canSend) {
+      setAttempt((n) => n + 1);
+      return;
+    }
     setPending(true);
     try {
       const result = await send({
@@ -214,6 +224,7 @@ export function WithdrawModal({
       });
     } finally {
       setPending(false);
+      setAttempt((n) => n + 1);
     }
   };
 
@@ -307,6 +318,9 @@ export function WithdrawModal({
               <Input
                 id="withdraw-amount"
                 value={amount}
+                // No role="alert" on the hint: it would announce on every keystroke.
+                aria-invalid={amountHint ? true : undefined}
+                aria-describedby={amountHint ? "withdraw-amount-error" : "withdraw-amount-help"}
                 inputMode="decimal"
                 placeholder="0.00"
                 onChange={(event) => setAmount(sanitizeUsdInput(event.target.value))}
@@ -335,14 +349,16 @@ export function WithdrawModal({
               ))}
             </div>
             {amountHint ? (
-              <p className="tnum mt-2 text-xs text-destructive">{amountHint}</p>
+              <p id="withdraw-amount-error" className="tnum mt-2 text-xs text-destructive">
+                {amountHint}
+              </p>
             ) : amountPrompt ? (
-              <p className="tnum mt-2 text-xs text-muted-foreground">
+              <p id="withdraw-amount-help" className="tnum mt-2 text-xs text-muted-foreground">
                 Enter an amount to send. You have {formatUsd(sendable)} on {chainLabelFor(chain)}.
               </p>
             ) : (
-              <p className="tnum mt-2 text-xs text-muted-foreground">
-                {formatUsd(sendable)} on {chainLabelFor(chain)} · {formatUsd(cash.totalUsd)} across your wallets
+              <p id="withdraw-amount-help" className="tnum mt-2 text-xs text-muted-foreground">
+                {formatUsd(sendable)} on {chainLabelFor(chain)} · {formatUsd(shownCashTotal(cash))} across your wallets
               </p>
             )}
           </div>
@@ -451,15 +467,24 @@ export function WithdrawModal({
               gesture is the confirmation, and money leaving the app deserves one. The label
               carries the amount only — the full destination is spelled out above, where a
               look-alike address can actually be checked, and a nowrap label with both
-              overflowed a phone. */}
+              overflowed a phone. It never says "Sent": the hold ends before anything is
+              signed, so it holds at a pending label and the toast reports the outcome. */}
           <HoldToConfirmButton
+            key={attempt}
             duration={1_400}
+            resetDelay={0}
             disabled={!canSend}
             icon={<ArrowUpRight size={14} strokeWidth={2} />}
             label={pending ? "Sending…" : validAmount ? `Hold to send ${formatUsd(parsed)}` : "Hold to send"}
-            confirmedLabel="Sent"
+            confirmedLabel="Sending…"
             onConfirm={() => void confirm()}
-            className="h-10 w-full justify-center rounded-xl border-primary/40 bg-primary/10 text-sm font-medium text-foreground hover:bg-primary/15 dark:border-primary/40 dark:bg-primary/10 dark:text-foreground dark:hover:bg-primary/15"
+            className={cn(
+              MORPH_FOCUS,
+              "h-10 w-full justify-center rounded-xl border-primary/40 bg-primary/10 text-sm font-medium text-foreground hover:bg-primary/15 dark:border-primary/40 dark:bg-primary/10 dark:text-foreground dark:hover:bg-primary/15",
+              // Neutral, not the library's emerald: nothing has succeeded yet.
+              pending &&
+                "border-border bg-muted text-muted-foreground dark:border-border dark:bg-muted dark:text-muted-foreground",
+            )}
           />
         </div>
         )}
