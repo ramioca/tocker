@@ -137,9 +137,7 @@ export async function getTokenPage(
   const token = tokenRow ? toTokenRef(tokenRow) : placeholderToken(chain, address, score);
 
   // A private agent's holdings and fills are visible to its owner only.
-  const visibleAgent = viewerId
-    ? or(eq(agents.isPublic, true), eq(agents.ownerId, viewerId))
-    : eq(agents.isPublic, true);
+  const visibleAgent = visibleAgentFor(viewerId);
 
   const since = new Date(Date.now() - FLOW_WINDOW_DAYS * 86_400_000);
 
@@ -277,6 +275,8 @@ export interface BlocklistTarget {
   name: string;
   /** Already on this agent's blocklist — the menu item is then inert. */
   blocked: boolean;
+  /** Trades this token's chain. An agent that does not has nothing to block here. */
+  onChain: boolean;
 }
 
 /**
@@ -306,5 +306,47 @@ export async function myAgentsForBlocklist(
     blocked: (row.config?.universe?.blocklist ?? []).some(
       (entry) => entry.chain === chain && entry.address.toLowerCase() === wanted,
     ),
+    onChain: (row.config?.chains ?? []).includes(chain),
   }));
+}
+
+/** Longest trade id a `?trade=` link can carry; anything longer is not one of ours. */
+export const MAX_TRADE_ID_LENGTH = 64;
+
+/**
+ * The one fill a `?trade=<id>` link names — a fill notification's "see the receipt", an
+ * admin's Recent fills row — when it may be shown on this token's page.
+ *
+ * Same visibility as the table it lands in (`visibleAgentFor`): a public agent's fill,
+ * or one of the viewer's own. It must also be on *this* token and filled. Any miss is
+ * `null`, and the caller says the same thing for every miss, so a private trade's id
+ * reveals nothing about whether it exists.
+ */
+export async function getTokenTrade(
+  tradeId: string,
+  token: TokenRef,
+  viewerId: string | null,
+): Promise<TradeRow | null> {
+  if (tradeId.length === 0 || tradeId.length > MAX_TRADE_ID_LENGTH) return null;
+  const db = await getDb();
+  const [row] = await db
+    .select({ trade: trades, ownerId: agents.ownerId })
+    .from(trades)
+    .innerJoin(agents, eq(agents.id, trades.agentId))
+    .where(
+      and(
+        eq(trades.id, tradeId),
+        eq(trades.tokenId, token.id),
+        eq(trades.status, "filled"),
+        visibleAgentFor(viewerId),
+      ),
+    )
+    .limit(1);
+  if (!row) return null;
+  return toTradeRow(row.trade, token, { isOwner: Boolean(viewerId) && row.ownerId === viewerId });
+}
+
+/** A private agent's holdings and fills are visible to its owner only. */
+function visibleAgentFor(viewerId: string | null | undefined) {
+  return viewerId ? or(eq(agents.isPublic, true), eq(agents.ownerId, viewerId)) : eq(agents.isPublic, true);
 }

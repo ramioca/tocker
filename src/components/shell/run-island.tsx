@@ -10,6 +10,7 @@ import { DynamicIsland, DynamicIslandView } from "@/components/motion/dynamic-is
 import { useRunStatus } from "@/components/providers/run-status";
 import { useNow } from "@/hooks/use-now";
 import { AgentAvatar } from "@/components/common/agent-avatar";
+import { formatUsd } from "@/components/common/format";
 import { usePushSubscription } from "@/components/wallets/use-push";
 
 /**
@@ -22,6 +23,24 @@ const TOOL_ORB: Record<string, OrbState> = {
   score_token: "solving",
   place_trade: "connecting",
   finish: "composing",
+};
+
+/**
+ * The same tools in words, for the line under the agent's name. The raw ids read as
+ * code ("discover_tokens…"); an unknown or newer tool falls back to "Working".
+ */
+const TOOL_LABEL: Record<string, string> = {
+  get_portfolio: "Checking holdings",
+  review_positions: "Reviewing positions",
+  discover_tokens: "Finding tokens",
+  score_token: "Scoring a token",
+  get_token_price: "Checking a price",
+  get_token_intel: "Reading token intel",
+  search_data_sources: "Looking for data",
+  query_data_source: "Buying data",
+  place_trade: "Placing a trade",
+  post_note: "Writing a note",
+  finish: "Wrapping up",
 };
 
 /**
@@ -104,7 +123,7 @@ export function RunIsland() {
                 {/* Per-tick churn: kept out of the polite live region so a run
                     doesn't read "1s… 2s… 3s…" over the meaningful announcements. */}
                 <span className="truncate text-[11px] opacity-70" aria-hidden>
-                  {lastTool ? `${lastTool}…` : "thinking…"}
+                  {lastTool ? `${TOOL_LABEL[lastTool] ?? "Working"}…` : "Thinking…"}
                   {stepCount > 0 ? ` · ${stepCount} steps` : null}
                 </span>
               </span>
@@ -278,7 +297,7 @@ function ApprovalsIsland({
                 </span>
                 {latest ? (
                   <span className="tnum max-w-[18rem] truncate text-[11px] opacity-70">
-                    {latest.agentName} wants to {latest.side} ${Math.round(latest.requestedUsd)} of {latest.symbol}
+                    {latest.agentName} wants to {latest.side} {formatUsd(latest.requestedUsd)} of {latest.symbol}
                   </span>
                 ) : null}
               </span>

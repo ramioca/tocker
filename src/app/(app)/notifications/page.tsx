@@ -7,20 +7,39 @@ import { receiptsFor } from "@/server/queries/trading";
 import { withMock } from "@/lib/data";
 import { NOW, mockNotifications, mockSession } from "@/mocks/social";
 import { referenceNow } from "@/components/social-common/format";
+import { unreadNotifications } from "@/components/common/data-access";
 import { NotificationList, tradeIdFrom } from "@/components/notifications/notification-list";
 import { MarkAllRead } from "@/components/notifications/mark-all-read";
+import { MAX_NOTIFICATION_PAGES, collectPages, pagesParam } from "@/components/notifications/older-pages";
+import { ShowOlder } from "@/components/notifications/show-older";
 import { markNotificationRead } from "@/server/actions/users";
 
 export const metadata: Metadata = { title: "Notifications" }; // the root layout appends " · Tocker"
 
-export default async function NotificationsPage() {
+export default async function NotificationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ pages?: string | string[] }>;
+}) {
   const session = await withMock(getSession, mockSession);
   if (!session) redirect(`/login?next=${encodeURIComponent("/notifications")}`);
 
-  const page = await withMock(
-    () => getNotifications(session.userId),
-    () => mockNotifications(),
-  );
+  // "Show older" asks for one more page each time (see ShowOlder); the rows so far are
+  // re-read with it so the list stays one list, grouped by day, in one render.
+  const pages = pagesParam((await searchParams).pages);
+  // The header counts every unread row, as the bell does — not just the ones on screen,
+  // which left "Everything read" beside a bell still showing a badge.
+  const [page, unread] = await Promise.all([
+    collectPages(
+      (cursor) =>
+        withMock(
+          () => getNotifications(session.userId, cursor),
+          () => mockNotifications(cursor),
+        ),
+      pages,
+    ),
+    unreadNotifications(session.userId),
+  ]);
 
   // Proposals still awaiting a decision, so a "proposal" notification is a card with
   // Approve / Reject on it rather than a link to somewhere else. Fill rows get their
@@ -43,16 +62,14 @@ export default async function NotificationsPage() {
 
   // Mock fixtures are anchored to a fixed clock so relative times stay stable in dev.
   const now = referenceNow(process.env.MOCK_DATA === "1" ? NOW : undefined);
-  const unread = page.items.filter((item) => item.readAt === null).length;
 
   return (
     <div className="mx-auto w-full max-w-2xl px-5 py-8 sm:py-10">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Notifications</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            {unread > 0 ? `${unread} unread` : "Everything read"}
-          </p>
+          {/* Nothing unread says itself once, in MarkAllRead's "All caught up". */}
+          {unread > 0 ? <p className="mt-1.5 text-sm text-muted-foreground tabular-nums">{unread} unread</p> : null}
         </div>
         <MarkAllRead unreadCount={unread} />
       </header>
@@ -71,6 +88,17 @@ export default async function NotificationsPage() {
           receipts={receipts}
           markRead={markNotificationRead}
         />
+        {page.nextCursor ? (
+          pages < MAX_NOTIFICATION_PAGES ? (
+            <div className="mt-6 flex justify-center">
+              <ShowOlder nextPages={pages + 1} />
+            </div>
+          ) : (
+            <p className="mt-6 text-center text-xs text-muted-foreground tabular-nums">
+              Showing your latest {page.items.length} notifications.
+            </p>
+          )
+        ) : null}
       </div>
     </div>
   );

@@ -31,6 +31,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { agentRuns, agents, getDb, trades, users } from "@/db";
 import type { AgentConfig } from "@/db/schema";
 import { isWorkspaceScopeError } from "@/lib/agent/anthropic-workspace";
+import { isLlmMock } from "@/lib/agent/mock-model";
 import { getPortfolio } from "@/lib/agent/portfolio";
 import { getPlatformWallet, platformUsdcBalances } from "@/lib/platform/wallets";
 import { proposalExpiresAt } from "@/lib/trading/proposals";
@@ -539,7 +540,8 @@ export async function getAgentStatus(agentId: string, viewerId?: string | null):
       slug: agent.slug,
       status: agent.status,
       mode: agent.mode,
-      hasLlmKey: agent.llmKeyId !== null,
+      // Mock mode runs without a key, so the banner must not say one is missing.
+      hasLlmKey: agent.llmKeyId !== null || isLlmMock(),
       maxDailyTrades: config.risk.maxDailyTrades,
       maxTradeUsd: config.risk.maxTradeUsd,
       maxAgeHours: config.universe.maxAgeHours,

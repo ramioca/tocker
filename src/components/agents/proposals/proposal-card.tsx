@@ -31,6 +31,7 @@ import { toast } from "sonner";
 import type { ApprovalDecision } from "@/components/spectrumui/blocks/ai-assistants/approval-card";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { MorphButton } from "@/components/spectrumui/morph-button";
+import { MORPH_FOCUS } from "@/components/common/focus";
 import { AgentAvatar } from "@/components/common/agent-avatar";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { formatUsd } from "@/components/common/format";
@@ -196,6 +197,7 @@ export function ProposalCard({
         {proposal.isPaper ? (
           <MorphButton
             size="sm"
+            className={MORPH_FOCUS}
             disabled={blocked || pending === "rejected"}
             loadingLabel="Approving…"
             successLabel="Filled"

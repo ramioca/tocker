@@ -36,10 +36,12 @@ import {
   AVATAR_SEEDS,
   INTERVAL_PRESETS,
   LLM_BOUNDS,
+  MAX_AGENT_NAME,
   PAPER_BALANCES,
   RISK_BOUNDS,
   STRATEGY_PRESETS,
   type BuilderDraft,
+  type StrategyPreset,
 } from "./types";
 import { cn } from "@/lib/utils";
 import type { Chain, DataSourceInfo, LlmKeyRow } from "@/server/types";
@@ -69,7 +71,7 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
         <Input
           id="agent-name"
           value={draft.name}
-          maxLength={48}
+          maxLength={MAX_AGENT_NAME}
           placeholder="Momentum Mike"
           aria-invalid={Boolean(errors.name)}
           aria-describedby={errors.name ? "agent-name-error" : undefined}
@@ -277,6 +279,46 @@ export function AddKeyInline({
   );
 }
 
+/** How long a proposal waits for you, short enough for a summary line: "5 min", "1 h". */
+export function ttlLabel(minutes: number): string {
+  return minutes < 60 || minutes % 60 !== 0 ? `${minutes} min` : `${minutes / 60} h`;
+}
+
+const CHAIN_NAMES: Record<Chain, string> = { solana: "Solana", base: "Base" };
+
+/**
+ * What a strategy preset changed besides the prompt, in the words of the cards below.
+ * A preset rewrites whatever its way of trading needs in one tap — chains, sources, even
+ * the schedule — and those cards are collapsed, so the toast is where that gets said.
+ */
+function presetChanges(before: BuilderDraft["config"], next: BuilderDraft["config"]): string[] {
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const changes: string[] = [];
+  if (!same([...before.chains].sort(), [...next.chains].sort())) {
+    changes.push(
+      next.chains.length === 1
+        ? `${CHAIN_NAMES[next.chains[0]]} only`
+        : next.chains.map((chain) => CHAIN_NAMES[chain]).join(" and "),
+    );
+  }
+  if (!same([...before.dataSources].sort(), [...next.dataSources].sort())) {
+    changes.push(`${next.dataSources.length} data source${next.dataSources.length === 1 ? "" : "s"}`);
+  }
+  if (!same(before.universe, next.universe)) changes.push("its universe");
+  if (!same(before.risk, next.risk)) changes.push("its risk limits");
+  if (!same(before.schedule, next.schedule)) {
+    changes.push(intervalLabel(next.schedule.intervalMinutes).toLowerCase());
+  }
+  if (!same(before.execution, next.execution)) {
+    changes.push(
+      next.execution.mode === "approve"
+        ? `ask first, ${ttlLabel(next.execution.proposalTtlMinutes)} window`
+        : "trades on its own",
+    );
+  }
+  return changes;
+}
+
 export function BrainStep({
   draft,
   update,
@@ -289,6 +331,42 @@ export function BrainStep({
   const provider = draft.config.llm.provider;
   const models = DEFAULT_MODELS[provider];
   const keysForProvider = llmKeys.filter((key) => key.provider === provider);
+  /** The chip under the pointer or focus, whose blurb the line under the row shows. */
+  const [hintedPreset, setHintedPreset] = useState<string | null>(null);
+  const pressedPreset = STRATEGY_PRESETS.find((preset) => preset.prompt === draft.config.strategyPrompt) ?? null;
+  const shownPreset = STRATEGY_PRESETS.find((preset) => preset.id === hintedPreset) ?? pressedPreset;
+
+  const applyPreset = (preset: StrategyPreset) => {
+    const before = draft.config;
+    const next: BuilderDraft["config"] = {
+      ...before,
+      strategyPrompt: preset.prompt,
+      chains: preset.chains,
+      dataSources: preset.dataSources,
+      // A preset that is a whole way of trading also sets what it needs;
+      // one that only carries a prompt leaves the other steps as they are.
+      ...(preset.universe ? { universe: { ...before.universe, ...preset.universe } } : {}),
+      ...(preset.risk ? { risk: { ...before.risk, ...preset.risk } } : {}),
+      ...(preset.execution ? { execution: preset.execution } : {}),
+      ...(preset.schedule ? { schedule: preset.schedule } : {}),
+    };
+    const changes = presetChanges(before, next);
+    const replacedPrompt = before.strategyPrompt.trim() !== "" && before.strategyPrompt !== preset.prompt;
+    updateConfig(next);
+    if (!replacedPrompt && changes.length === 0) return;
+    // The draft autosaves 400ms later, so without this a hand-written strategy was gone
+    // for good the moment a chip was tapped to see what it did.
+    toast(`${preset.label} applied`, {
+      description: [
+        replacedPrompt ? "Replaced the strategy prompt." : null,
+        changes.length > 0 ? `Also set: ${changes.join(" · ")}.` : null,
+      ]
+        .filter(Boolean)
+        .join(" "),
+      action: { label: "Undo", onClick: () => updateConfig(before) },
+      duration: 8_000,
+    });
+  };
 
   return (
     <div className="space-y-5">
@@ -415,31 +493,46 @@ export function BrainStep({
         hint="This is the system prompt. Be specific about entries, exits and what it must never do."
       >
         <div className="space-y-2">
-          <div className="flex flex-wrap gap-1.5">
-            {STRATEGY_PRESETS.map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                onClick={() =>
-                  updateConfig({
-                    strategyPrompt: preset.prompt,
-                    chains: preset.chains,
-                    dataSources: preset.dataSources,
-                    // A preset that is a whole way of trading also sets what it needs;
-                    // one that only carries a prompt leaves the other steps as they are.
-                    ...(preset.universe ? { universe: { ...draft.config.universe, ...preset.universe } } : {}),
-                    ...(preset.risk ? { risk: { ...draft.config.risk, ...preset.risk } } : {}),
-                    ...(preset.execution ? { execution: preset.execution } : {}),
-                    ...(preset.schedule ? { schedule: preset.schedule } : {}),
-                  })
-                }
-                title={preset.blurb}
-                className="rounded-lg border border-border px-2.5 py-1 text-xs text-muted-foreground transition-[background-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted hover:text-foreground active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {preset.label}
-              </button>
-            ))}
+          <div className="flex flex-wrap gap-1.5" onMouseLeave={() => setHintedPreset(null)}>
+            {STRATEGY_PRESETS.map((preset) => {
+              const active = pressedPreset?.id === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  aria-pressed={active}
+                  aria-describedby={`strategy-preset-${preset.id}-blurb`}
+                  onClick={() => applyPreset(preset)}
+                  onFocus={() => setHintedPreset(preset.id)}
+                  onBlur={() => setHintedPreset(null)}
+                  onMouseEnter={() => setHintedPreset(preset.id)}
+                  className={cn(
+                    "rounded-lg border px-2.5 py-1 text-xs",
+                    "transition-[border-color,background-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    active
+                      ? "border-primary/50 bg-primary/8 text-foreground"
+                      : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
           </div>
+          {/* Visible, not a `title`: a tooltip never shows on touch, and what a chip does
+              is the thing to know before tapping it. Screen readers get each chip's own
+              blurb through aria-describedby, so this line stays out of their way. */}
+          <p aria-hidden className="text-[11px] leading-4 text-muted-foreground">
+            {shownPreset
+              ? shownPreset.blurb
+              : "Each preset replaces the prompt below and sets what its way of trading needs. You can undo it."}
+          </p>
+          {STRATEGY_PRESETS.map((preset) => (
+            <span key={preset.id} id={`strategy-preset-${preset.id}-blurb`} hidden>
+              {preset.blurb} Replaces the strategy prompt; you can undo it.
+            </span>
+          ))}
           <Textarea
             id="strategy-prompt"
             value={draft.config.strategyPrompt}
@@ -673,12 +766,23 @@ export function ScheduleStep({ draft, update, updateConfig, hideHeading }: StepP
         </div>
       </Field>
 
-      {draft.funding.mode === "fund" ? (
+      {/* Only a funded agent headed for the checklist has its schedule held (the create
+          sends `holdSchedule`). With "Go live after creating" off it ticks on paper, sized
+          to the money it is funded with, so saying "no paper ticks" there was untrue. */}
+      {draft.funding.mode === "fund" && draft.goLive ? (
         <div className="rounded-xl border border-border/70 bg-card/30 p-3">
           <p className="text-sm font-medium">Real money only</p>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             No paper balance. This agent trades the {formatUsd(draft.funding.amountUsd)} USDC you fund it with, and
             it takes no paper ticks in the meantime — its schedule starts the moment you switch it live.
+          </p>
+        </div>
+      ) : draft.funding.mode === "fund" ? (
+        <div className="rounded-xl border border-border/70 bg-card/30 p-3">
+          <p className="text-sm font-medium">Paper first, on the money you fund</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            Until you switch it live it trades paper on this schedule, against the{" "}
+            {formatUsd(draft.funding.amountUsd)} you fund it with — there is no separate paper balance to pick.
           </p>
         </div>
       ) : (
@@ -808,6 +912,8 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
   const chains = draft.config.chains as Chain[];
   const [depositFor, setDepositFor] = useState<Chain | null>(null);
   const [customAmount, setCustomAmount] = useState("");
+  /** Set once the box is left: "at least $5" flashing up on the "2" of "25" is noise. */
+  const [customLeft, setCustomLeft] = useState(false);
 
   const { plan, cash, wallets, loading } = useFundingPlan({
     mode: funding.mode,
@@ -833,6 +939,15 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
   };
 
   const paper = funding.mode === "paper";
+  const presetPressed = !funding.split && FUND_PRESETS.some((preset) => preset === funding.amountUsd);
+  // The summary and the commit bar both quote `amountUsd`, so some control on screen has
+  // to show it too. A restored draft can carry an amount no preset matches; the box shows
+  // it rather than sitting empty next to four unpressed buttons.
+  const customValue = customAmount !== "" || presetPressed || funding.split ? customAmount : String(funding.amountUsd);
+  const customError =
+    customLeft && customAmount !== "" && !(Number(customAmount) >= MIN_FUND_USD)
+      ? `Enter an amount of at least ${formatUsd(MIN_FUND_USD)}.`
+      : null;
 
   return (
     <div className="space-y-5">
@@ -903,6 +1018,8 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
 
           <Field
             label="Starting cash"
+            htmlFor="fund-custom"
+            error={customError}
             hint={`Minimum ${formatUsd(MIN_FUND_USD)}. Below that, fees and slippage eat the position before the strategy gets a say.`}
           >
             <div className="flex flex-wrap gap-2">
@@ -913,7 +1030,13 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
                     key={preset}
                     type="button"
                     aria-pressed={active}
-                    onClick={() => setAmount(preset)}
+                    onClick={() => {
+                      // A preset replaces whatever was typed, so the box cannot keep
+                      // saying 250 next to a pressed $50.00.
+                      setCustomAmount("");
+                      setCustomLeft(false);
+                      setAmount(preset);
+                    }}
                     className={cn(
                       "tnum rounded-xl border px-3 py-2 font-mono text-sm",
                       "transition-[border-color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]",
@@ -927,19 +1050,38 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
                   </button>
                 );
               })}
-              <Input
-                aria-label="Custom starting cash in USDC"
-                value={customAmount}
-                inputMode="decimal"
-                placeholder="Custom"
-                onChange={(event) => {
-                  const next = event.target.value.replace(/[^0-9.]/g, "");
-                  setCustomAmount(next);
-                  const parsed = Number(next);
-                  if (Number.isFinite(parsed) && parsed > 0) setAmount(round(parsed, 2));
-                }}
-                className="tnum h-10 w-28 font-mono"
-              />
+              <div className="relative">
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-y-0 left-2.5 grid place-items-center font-mono text-sm text-muted-foreground"
+                >
+                  $
+                </span>
+                <Input
+                  id="fund-custom"
+                  aria-label="Custom starting cash in USDC"
+                  aria-invalid={Boolean(customError)}
+                  aria-describedby={customError ? "fund-custom-error" : undefined}
+                  value={customValue}
+                  inputMode="decimal"
+                  placeholder="Custom"
+                  onChange={(event) => {
+                    const next = event.target.value.replace(/[^0-9.]/g, "");
+                    // One decimal point: "1.2.3" is not an amount, so the keystroke is refused
+                    // rather than silently read as something else.
+                    if (next.split(".").length > 2) return;
+                    setCustomAmount(next);
+                    setCustomLeft(false);
+                    // Emptied, the box asks for nothing, so the amount goes back to one a
+                    // button shows. Anything typed is the amount, even one too small: the
+                    // funding check then blocks create and this box says why.
+                    const parsed = Number(next);
+                    setAmount(next === "" ? FUND_PRESETS[0] : Number.isFinite(parsed) ? round(parsed, 2) : 0);
+                  }}
+                  onBlur={() => setCustomLeft(true)}
+                  className="tnum h-10 w-28 pl-6 font-mono"
+                />
+              </div>
             </div>
           </Field>
 

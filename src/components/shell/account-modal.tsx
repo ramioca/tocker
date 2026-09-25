@@ -1,10 +1,13 @@
 "use client";
 
-import { Check, Copy } from "lucide-react";
+import Link from "next/link";
+import { Check, Copy, TriangleAlert } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -12,9 +15,10 @@ import { useCopy } from "@/components/common/address";
 import type { Session } from "@/server/types";
 
 /**
- * The "Manage account" card: who you are logged in as, in copyable rows. Wallet
- * addresses are deliberately absent — funds live with each agent, and each agent
- * page carries its own funding drawer with the real addresses.
+ * The "Account details" card: who you are signed in as, in copyable rows, and the way
+ * to Settings → Profile, where the handle and display name are actually changed. Money
+ * is deliberately absent — your cash, with Deposit and Withdraw, hangs off the balance
+ * in the top bar, and each agent page carries its own funding drawer.
  */
 export function AccountModal({
   open,
@@ -29,9 +33,9 @@ export function AccountModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Manage account</DialogTitle>
+          <DialogTitle>Account details</DialogTitle>
           <DialogDescription>
-            Your login and identity. Agent wallets live on each agent&rsquo;s page.
+            How you sign in and how others see you. Your cash is under the balance in the top bar.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
@@ -39,13 +43,22 @@ export function AccountModal({
           <Row label="Handle" value={`@${session.handle}`} copyable />
           {session.displayName ? <Row label="Display name" value={session.displayName} /> : null}
         </div>
+        <DialogFooter>
+          <Link
+            href="/settings#profile"
+            onClick={() => onOpenChange(false)}
+            className={buttonVariants({ variant: "outline" })}
+          >
+            Edit profile
+          </Link>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
 function Row({ label, value, copyable = false }: { label: string; value: string; copyable?: boolean }) {
-  const { copied, copy } = useCopy();
+  const { copied, failed, copy } = useCopy();
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/20 px-3.5 py-3">
@@ -60,8 +73,20 @@ function Row({ label, value, copyable = false }: { label: string; value: string;
           aria-label={`Copy ${label.toLowerCase()}`}
           className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors duration-150 hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
-          {copied ? <Check aria-hidden className="size-4" /> : <Copy aria-hidden className="size-4" />}
+          {copied ? (
+            <Check aria-hidden className="size-4" />
+          ) : failed ? (
+            <TriangleAlert aria-hidden className="size-4 text-destructive" />
+          ) : (
+            <Copy aria-hidden className="size-4" />
+          )}
         </button>
+      ) : null}
+      {/* The icon swap is silent; this says what happened, including a refused clipboard. */}
+      {copyable ? (
+        <span aria-live="polite" className="sr-only">
+          {copied ? "Copied" : failed ? "Couldn't copy — select the text instead" : ""}
+        </span>
       ) : null}
     </div>
   );

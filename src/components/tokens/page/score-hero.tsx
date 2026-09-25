@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import type { TokenScore } from "@/server/types";
 import { formatRelative } from "@/components/common/format";
-import { BlockerList } from "@/components/tokens/blocker-list";
+import { BlockerList, visibleWarnings } from "@/components/tokens/blocker-list";
 import { ScoreBreakdown } from "@/components/tokens/score-breakdown";
 import { ScoreDial } from "@/components/tokens/score-dial";
 import { VERDICT_META, effectiveVerdict } from "@/components/tokens/verdict";
@@ -34,6 +34,8 @@ export function ScoreHero({
 }) {
   const verdict = score.verdict ?? effectiveVerdict(score.total, score.blockers);
   const meta = VERDICT_META[verdict];
+  // The gates are listed beside it, so a warning that repeats a failed gate goes.
+  const warnings = visibleWarnings(score.warnings, score.blockers);
 
   return (
     <section
@@ -66,8 +68,8 @@ export function ScoreHero({
             How the number was built
           </p>
           <ScoreBreakdown components={score.components} className="mt-2" />
-          {score.warnings.length > 0 ? (
-            <BlockerList warnings={score.warnings} className="mt-3" max={4} />
+          {warnings.length > 0 ? (
+            <BlockerList warnings={warnings} audience="public" className="mt-3" max={4} />
           ) : null}
         </div>
 

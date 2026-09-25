@@ -60,9 +60,16 @@ export function intervalLabel(minutes: number): string {
  */
 export function AgentConfigSummary({
   config,
+  sourceNames,
   className,
 }: {
   config: AgentConfig | null;
+  /**
+   * Display names for the ids the source catalog still carries, resolved by the page:
+   * the registry reaches the database, and this module is imported by client code for
+   * `intervalLabel`. An id missing from it is one the run loop drops.
+   */
+  sourceNames?: Readonly<Record<string, string>>;
   className?: string;
 }) {
   if (!config) return null;
@@ -231,14 +238,23 @@ export function AgentConfigSummary({
           {config.dataSources.length === 0 ? (
             <li className="text-sm text-muted-foreground">None — it scores on free data alone.</li>
           ) : (
-            config.dataSources.map((source) => (
-              <li
-                key={source}
-                className="rounded-md border border-border bg-muted/40 px-2 py-0.5 font-mono text-[11px]"
-              >
-                {source}
-              </li>
-            ))
+            // The source's own name, as Discover prints it; the id is what the transcript
+            // quotes, so it stays one hover away. An id the catalog no longer carries is
+            // dropped by the run loop, so it says so rather than posing as a live source.
+            config.dataSources.map((source) => {
+              const name = sourceNames && Object.hasOwn(sourceNames, source) ? sourceNames[source] : undefined;
+              const retired = sourceNames !== undefined && name === undefined;
+              return (
+                <li
+                  key={source}
+                  title={retired ? `${source} is no longer in the catalog; runs skip it.` : source}
+                  className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs"
+                >
+                  {name ?? source}
+                  {retired ? <span className="text-muted-foreground"> · retired</span> : null}
+                </li>
+              );
+            })
           )}
         </ul>
       </Section>

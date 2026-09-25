@@ -1,6 +1,6 @@
 import "server-only";
 import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
-import { agents, equitySnapshots, getDb, x402Payments } from "@/db";
+import { agents, equitySnapshots, getDb, trades, x402Payments } from "@/db";
 import { DATA_SOURCES } from "@/lib/data-sources/registry";
 import { toNum } from "@/lib/money";
 import { pnlOverWindow, WINDOW_DAYS } from "@/lib/pnl";
@@ -53,14 +53,38 @@ export async function getLeaderboard(window: LeaderboardWindow, limit = 25): Pro
     series.set(s.agentId, list);
   }
 
-  const cards = await buildAgentCards(db, agentRows);
+  const [cards, windowTrades] = await Promise.all([
+    buildAgentCards(db, agentRows),
+    // Trades inside the window itself — not `since`, which carries the extra baseline
+    // days. The card's count is lifetime, and printing it under "7 days" made every
+    // window show the same number.
+    days === null
+      ? Promise.resolve([])
+      : db
+          .select({ agentId: trades.agentId, n: sql<number>`count(*)::int` })
+          .from(trades)
+          .where(
+            and(
+              inArray(trades.agentId, ids),
+              eq(trades.status, "filled"),
+              sql`coalesce(${trades.filledAt}, ${trades.createdAt}) >= ${new Date(Date.now() - days * 86_400_000).toISOString()}`,
+            ),
+          )
+          .groupBy(trades.agentId),
+  ]);
   const cardById = new Map(cards.map((c) => [c.id, c]));
+  const windowCount = new Map(windowTrades.map((r) => [r.agentId, Number(r.n ?? 0)]));
 
   const scored = agentRows.flatMap((a) => {
     const pnl = pnlOverWindow(series.get(a.id) ?? [], window);
     const card = cardById.get(a.id);
     if (!pnl || !card) return [];
-    return [{ card, pnlPct: pnl.pnlPct, pnlUsd: pnl.pnlUsd, tradeCount: card.tradeCount }];
+    if (days === null) {
+      // All time is the number the agent's card prints further down the same page (a
+      // paper book measured from its notional, not its first mark), so take it from there.
+      return [{ card, pnlPct: card.pnlPct ?? pnl.pnlPct, pnlUsd: card.pnlUsd ?? pnl.pnlUsd, tradeCount: card.tradeCount }];
+    }
+    return [{ card, pnlPct: pnl.pnlPct, pnlUsd: pnl.pnlUsd, tradeCount: windowCount.get(a.id) ?? 0 }];
   });
 
   scored.sort((a, b) => b.pnlPct - a.pnlPct || b.tradeCount - a.tradeCount);

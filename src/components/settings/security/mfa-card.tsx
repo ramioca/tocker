@@ -29,9 +29,10 @@ const METHOD_LABEL: Record<string, string> = {
  * does real harm — it is what someone reads before deciding they do not need to be
  * careful about anything else. See the module doc in `src/lib/security/mfa.ts`.
  *
- * When the Privy app has no MFA methods turned on there is nothing to enrol in,
- * and a disabled button with no explanation is the worst version of that. The
- * exact dashboard path is printed instead.
+ * When there is nothing to enroll in (no Privy on this deployment, or no MFA methods
+ * turned on), the card is one quiet line and no controls: a disabled Enroll, a Re-check
+ * that can only fail and a paragraph about signing keys were all describing a feature
+ * the user cannot have. The operator's version of that lives on the admin page.
  */
 export function MfaCard({ initial }: { initial: MfaStatus }) {
   const router = useRouter();
@@ -42,19 +43,27 @@ export function MfaCard({ initial }: { initial: MfaStatus }) {
 
   const sync = useCallback(() => {
     startTransition(async () => {
-      const result = await noteMfaChangeAction();
-      if (result.ok) {
-        setStatus(result.data);
-        router.refresh();
-      } else {
-        const refreshed = await refreshMfaStatusAction();
-        if (refreshed.ok) setStatus(refreshed.data);
-        toast.error("Could not confirm your second factor", { description: result.error });
+      // A throw inside the transition would reach the route's error boundary and take
+      // the kill switch above down with this card.
+      try {
+        const result = await noteMfaChangeAction();
+        if (result.ok) {
+          setStatus(result.data);
+          router.refresh();
+        } else {
+          const refreshed = await refreshMfaStatusAction();
+          if (refreshed.ok) setStatus(refreshed.data);
+          toast.error("Could not confirm your second factor", { description: result.error });
+        }
+      } catch {
+        toast.error("Could not confirm your second factor", {
+          description: "Could not reach Tocker. Nothing changed.",
+        });
       }
     });
   }, [router]);
 
-  const enrol = useCallback(() => {
+  const enroll = useCallback(() => {
     if (!ready || !authenticated) {
       toast.error("Sign in first");
       return;
@@ -70,7 +79,33 @@ export function MfaCard({ initial }: { initial: MfaStatus }) {
   }, [authenticated, ready, showMfaEnrollmentModal, sync]);
 
   const enrolled = status.enrolled;
-  const canEnrol = status.available && status.appMethods.length > 0;
+  const canEnroll = status.available && status.appMethods.length > 0;
+
+  if (!enrolled && !canEnroll) {
+    // `operatorNote` is set only when the deployment itself has no factor to offer; a
+    // null one with `available: false` is a failed read, which is worth one more try.
+    const transient = !status.available && status.operatorNote === null;
+    return (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-border/70 bg-muted/20 p-4">
+        <Shield aria-hidden className="size-5 shrink-0 text-muted-foreground" />
+        <p className="min-w-0 flex-1 basis-56 text-sm leading-6 text-muted-foreground">
+          {transient && status.blockedReason
+            ? status.blockedReason
+            : "Two-factor sign-in isn’t available yet. Nothing in Tocker needs it today."}
+        </p>
+        {transient ? (
+          <button
+            type="button"
+            onClick={sync}
+            disabled={pending}
+            className="inline-flex h-9 items-center rounded-lg px-3 text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {pending ? "Checking…" : "Re-check"}
+          </button>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -98,16 +133,16 @@ export function MfaCard({ initial }: { initial: MfaStatus }) {
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
             {enrolled ? (
               <>
-                Privy reports{" "}
+                Your sign-in has{" "}
                 <span className="text-foreground">
                   {status.userMethods.map((m) => METHOD_LABEL[m] ?? m).join(", ")}
                 </span>
-                . Tocker does not require it, and never refused anything without it — but it is on the Privy
-                account that holds your money, which is where it counts.
+                . Tocker does not require it, and never refused anything without it — but it is on your Tocker
+                sign-in, which holds your money. That is where it counts.
               </>
             ) : (
               (status.blockedReason ??
-              "Nothing in Tocker is blocked without one. Enrol a second factor to protect the account that holds your money.")
+              "Nothing in Tocker is blocked without one. Enroll a second factor to protect the sign-in that holds your money.")
             )}
           </p>
         </div>
@@ -116,8 +151,8 @@ export function MfaCard({ initial }: { initial: MfaStatus }) {
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={enrol}
-          disabled={!canEnrol || pending}
+          onClick={enroll}
+          disabled={!canEnroll || pending}
           className={cn(
             "inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-sm font-medium",
             "transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]",
@@ -126,7 +161,7 @@ export function MfaCard({ initial }: { initial: MfaStatus }) {
           )}
         >
           <KeyRound aria-hidden className="size-4" />
-          {enrolled ? "Manage factors" : "Enrol a second factor"}
+          {enrolled ? "Manage factors" : "Enroll a second factor"}
         </button>
         <button
           type="button"
@@ -138,20 +173,14 @@ export function MfaCard({ initial }: { initial: MfaStatus }) {
         </button>
       </div>
 
-      {/* Saying exactly how far the guarantee goes is the point of a security screen. */}
+      {/* Saying exactly how far the guarantee goes is the point of a security screen —
+          in two sentences, not a paragraph about signing keys. */}
       <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
         <p className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
           <ShieldX aria-hidden className="mt-0.5 size-3.5 shrink-0" />
           <span>
-            <span className="font-medium text-foreground">What this does and does not do.</span> Tocker does
-            not require a second factor for anything: going live and withdrawing both work without one. What
-            this page does is read, server-side, whether your Privy account has one enrolled, and record it in
-            the audit log — so the badge above is true even though it gates nothing. Even as a gate it would be
-            a check on <em>enrolment</em> and not a fresh challenge per action: your agent&rsquo;s wallet is
-            signed server-side by the app&rsquo;s authorization key, so there is no user-side signing step to
-            attach a challenge to, and someone already holding a live session on your device would not be
-            stopped. Enrol one because it protects the Privy account that holds your money, not because Tocker
-            asks for it.
+            <span className="font-medium text-foreground">Optional:</span> going live and withdrawing work without
+            it. It protects your sign-in, not individual actions.
           </span>
         </p>
       </div>

@@ -14,18 +14,32 @@ import {
   applyFirstTradePresetAction,
   checkLiveReadinessAction,
   goLiveAction,
+  noteBudgetChangeAction,
   noteManualRunAction,
   pauseAgentAction,
   tradeReceiptAction,
 } from "@/server/actions/security";
+import { updateAgentAction } from "@/components/agents/agent-actions";
 import type { LiveReadiness } from "@/lib/security/types";
-import type { TradeReceiptData } from "@/db/schema";
+import type { AgentConfig, TradeReceiptData } from "@/db/schema";
 import type { AgentDetail, RunDetail } from "@/server/types";
 import { Checklist } from "./checklist";
 import { FirstFillPanel } from "./trade-receipt";
 import { ProposalPanel } from "./proposal-panel";
 import { deriveRunOutcome } from "./run-outcome";
 import { cn } from "@/lib/utils";
+
+/**
+ * What the first-trade preset clamps to. `FIRST_TRADE_PRESET` lives in a server-only
+ * module, so the numbers are repeated here for the sentence that describes them; the
+ * server applies its own.
+ */
+const FIRST_TRADE = { maxTradeUsd: 2, maxDailyTrades: 1, stopLossPct: 25 } as const;
+
+function listPhrase(items: string[]): string {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
 
 /** How often to poll the run while it is in flight. */
 const POLL_MS = 1_500;
@@ -60,6 +74,9 @@ export function LiveWizard({
   const [readiness, setReadiness] = useState(initialReadiness);
   const [mode, setMode] = useState(agent.mode);
   const [checking, startChecking] = useTransition();
+  // Its own transition: applying the preset saves config and a wallet policy, which is
+  // not "Checking…", and the Re-check spinner used to stand in for it.
+  const [presetPending, startPreset] = useTransition();
   const [run, setRun] = useState<RunDetail | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -100,8 +117,56 @@ export function LiveWizard({
     return () => clearInterval(id);
   }, [pendingSteps, recheck]);
 
+  // The config as the server last rendered it. Read at undo time, not click time, so an
+  // undo lays the old caps over whatever the page now knows rather than a stale copy.
+  const configRef = useRef(agent.config);
+  useEffect(() => {
+    configRef.current = agent.config;
+  }, [agent.config]);
+
+  /** Put back the four fields the preset touches: chains, per-trade and daily caps, stop. */
+  const undoPreset = useCallback(
+    (before: AgentConfig) => {
+      startPreset(async () => {
+        const current = configRef.current ?? before;
+        const restored: AgentConfig = {
+          ...current,
+          chains: before.chains,
+          risk: {
+            ...current.risk,
+            maxTradeUsd: before.risk.maxTradeUsd,
+            maxDailyTrades: before.risk.maxDailyTrades,
+            stopLossPct: before.risk.stopLossPct,
+          },
+        };
+        // The same save the settings form makes, which also lifts the wallet policy
+        // back up to the restored per-trade cap.
+        const result = await updateAgentAction(agent.id, { config: restored });
+        if (!result.ok) {
+          toast.error("Preset not undone", { description: result.error });
+          return;
+        }
+        const capsOf = (config: AgentConfig) => ({
+          maxTradeUsd: config.risk.maxTradeUsd,
+          maxDailyTrades: config.risk.maxDailyTrades,
+          maxPositionPct: config.risk.maxPositionPct,
+          maxDataSpendUsdPerRun: config.risk.maxDataSpendUsdPerRun,
+        });
+        void noteBudgetChangeAction({ agentId: agent.id, before: capsOf(current), after: capsOf(restored) });
+        const again = await checkLiveReadinessAction(agent.id, restored.risk.maxTradeUsd);
+        if (again.ok) setReadiness(again.data);
+        toast.success("Preset undone", {
+          description: `Back to ${formatUsd(restored.risk.maxTradeUsd)} a trade and ${restored.risk.maxDailyTrades} a day.`,
+        });
+        router.refresh();
+      });
+    },
+    [agent.id, router],
+  );
+
   const applyPreset = useCallback(() => {
-    startChecking(async () => {
+    const before = configRef.current;
+    startPreset(async () => {
       const result = await applyFirstTradePresetAction(agent.id);
       if (!result.ok) {
         toast.error("Preset not applied", { description: result.error });
@@ -109,11 +174,13 @@ export function LiveWizard({
       }
       setReadiness(result.data);
       toast.success("First-trade preset applied", {
-        description: "One chain, $2 a trade, one trade a day, with a stop loss under it.",
+        description: `One chain, ${formatUsd(FIRST_TRADE.maxTradeUsd)} a trade, one trade a day, with a stop loss under it.`,
+        // One tap rewrote saved caps and a wallet policy; one tap puts them back.
+        ...(before ? { action: { label: "Undo", onClick: () => undoPreset(before) }, duration: 10_000 } : {}),
       });
       router.refresh();
     });
-  }, [agent.id, router]);
+  }, [agent.id, router, undoPreset]);
 
   const goLive = useCallback(async () => {
     const result = await goLiveAction({ agentId: agent.id, capUsd: cap }).catch(() => ({
@@ -216,6 +283,20 @@ export function LiveWizard({
     ? outcome.trade
     : null;
   const live = mode === "live";
+  // What the preset would change, from the caps the checklist just read (the server's
+  // `withFirstTradePreset` only ever lowers them, keeps the first chain, adds a stop).
+  const presetChanges = [
+    readiness.caps.maxTradeUsd > FIRST_TRADE.maxTradeUsd
+      ? `${formatUsd(readiness.caps.maxTradeUsd)} → ${formatUsd(FIRST_TRADE.maxTradeUsd)} a trade`
+      : null,
+    readiness.caps.maxDailyTrades > FIRST_TRADE.maxDailyTrades
+      ? `${readiness.caps.maxDailyTrades} → ${FIRST_TRADE.maxDailyTrades} trade a day`
+      : null,
+    readiness.caps.chains.length > 1
+      ? `${readiness.caps.chains.map(chainLabelFor).join(" and ")} → ${chainLabelFor(readiness.caps.chains[0])} only`
+      : null,
+    agent.config && agent.config.risk.stopLossPct === null ? `a ${FIRST_TRADE.stopLossPct}% stop loss` : null,
+  ].filter((change): change is string => change !== null);
   /** Owner-only page, so `config` is never null here; the fallback is the product default. */
   const executionMode = agent.config?.execution?.mode ?? "approve";
   const proposalTtlMinutes = agent.config?.execution?.proposalTtlMinutes ?? 60;
@@ -267,7 +348,8 @@ export function LiveWizard({
             <button
               type="button"
               onClick={applyPreset}
-              disabled={checking}
+              disabled={checking || presetPending}
+              aria-describedby="first-trade-preset-desc"
               className={cn(
                 "inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs font-medium",
                 "transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97]",
@@ -275,12 +357,12 @@ export function LiveWizard({
               )}
             >
               <Sparkles aria-hidden className="size-3.5" />
-              First-trade preset
+              {presetPending ? "Applying…" : "First-trade preset"}
             </button>
             <button
               type="button"
               onClick={recheck}
-              disabled={checking}
+              disabled={checking || presetPending}
               className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors duration-150 hover:text-foreground disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <RefreshCw aria-hidden className={cn("size-3.5", checking && "animate-spin")} />
@@ -289,12 +371,24 @@ export function LiveWizard({
           </div>
         </div>
 
-        <Checklist steps={readiness.steps} />
-
-        <p className="text-xs leading-5 text-muted-foreground">
-          The preset clamps this agent to one chain, {formatUsd(2)} a trade, one trade a day and a stop loss —
-          the smallest shape that still proves the whole pipeline. Widen it once you have seen a fill.
+        {/* Next to the button, in this agent's own numbers: the button rewrites saved caps in
+            one tap, and the sentence saying so used to sit under all ten checklist rows. */}
+        <p id="first-trade-preset-desc" className="text-xs leading-5 text-muted-foreground">
+          {presetChanges.length > 0 ? (
+            <>
+              The first-trade preset sets <span className="tnum">{listPhrase(presetChanges)}</span> — the smallest
+              shape that still proves the whole pipeline. Widen it once you have seen a fill.
+            </>
+          ) : (
+            <>
+              Already in first-trade shape: <span className="tnum">{formatUsd(readiness.caps.maxTradeUsd)}</span> a
+              trade, <span className="tnum">{readiness.caps.maxDailyTrades}</span> a day, one chain, with a stop loss.
+              Widen it once you have seen a fill.
+            </>
+          )}
         </p>
+
+        <Checklist steps={readiness.steps} />
       </section>
 
       {/* ---------------------------------------------------------- 2. confirm */}

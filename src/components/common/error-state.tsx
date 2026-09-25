@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { RotateCcw, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -27,9 +27,17 @@ export function RouteErrorState({
   retry: () => void;
   fullScreen?: boolean;
 }) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
   useEffect(() => {
     console.error(error);
   }, [error]);
+
+  // Focus moves here so a keyboard or screen-reader user lands on what replaced the
+  // page, not on whatever link they last pressed, which may no longer exist.
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, []);
 
   return (
     <div
@@ -43,10 +51,13 @@ export function RouteErrorState({
       </span>
 
       <div className="space-y-1.5">
-        <h1 className="text-lg font-semibold tracking-tight">That did not load</h1>
-        <p className="mx-auto max-w-md text-sm text-muted-foreground">
-          Something went wrong while loading this page. Trying again usually fixes it; if not,
-          head home and come back in a minute.
+        <h1 ref={headingRef} tabIndex={-1} className="text-lg font-semibold tracking-tight outline-none">
+          That did not load
+        </h1>
+        {/* Not only a page load: a failed render after an action lands here too. */}
+        <p role="alert" className="mx-auto max-w-md text-sm text-muted-foreground">
+          Something went wrong. Trying again usually fixes it; if not, head home and come back in a
+          minute.
         </p>
         {error.digest ? (
           <p className="font-mono text-[11px] text-muted-foreground">digest {error.digest}</p>

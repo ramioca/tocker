@@ -23,3 +23,15 @@ export function floorCents(value: number): number {
 export function sliceText(valueUsd: number, pct: number): string {
   return floorCents((valueUsd * pct) / 100).toFixed(2);
 }
+
+/**
+ * A share of the position, as the dialog and the published note say it. Whole percents
+ * called a $10 sell of a $2,140 position "0% of the position" — in the trade's public
+ * note too — so small shares keep a decimal and anything under 1% says so.
+ */
+export function pctLabel(pct: number): string {
+  if (!Number.isFinite(pct) || pct <= 0) return "0%";
+  if (pct < 1) return "<1%";
+  if (pct < 10) return `${pct.toFixed(1).replace(/\.0$/, "")}%`;
+  return `${Math.round(pct)}%`;
+}

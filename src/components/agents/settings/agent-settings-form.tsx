@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Pause, Play } from "lucide-react";
 import { toast } from "sonner";
 import { MorphButton } from "@/components/spectrumui/morph-button";
+import { MORPH_FOCUS } from "@/components/common/focus";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/common/status-badge";
@@ -20,13 +21,14 @@ import { DEFAULT_MODELS } from "@/lib/agent/config";
 import { DataSourcePicker } from "@/components/agents/data-source-picker";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
 import { ExitRulesFields } from "@/components/agents/exit-rules";
-import { INTERVAL_PRESETS, LLM_BOUNDS, RISK_BOUNDS } from "@/components/agents/builder/types";
+import { INTERVAL_PRESETS, LLM_BOUNDS, MAX_AGENT_NAME, RISK_BOUNDS } from "@/components/agents/builder/types";
 import { EmptyState } from "@/components/common/empty-state";
 import { setAgentStatusAction, updateAgentAction } from "@/components/agents/agent-actions";
 import { SizingControls } from "@/components/trading";
 import { readSizing } from "@/lib/trading/sizing";
 import { noteBudgetChangeAction } from "@/server/actions/security";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
+import { safeAction } from "@/lib/safe-action";
 import { cn } from "@/lib/utils";
 import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { AgentDetail, DataSourceInfo, LlmKeyRow } from "@/server/types";
@@ -103,6 +105,7 @@ function SettingsForm({
 }) {
   const router = useRouter();
   const [name, setName] = useState(agent.name);
+  const [nameError, setNameError] = useState<string | null>(null);
   const [tagline, setTagline] = useState(agent.tagline ?? "");
   const [isPublic, setIsPublic] = useState(agent.isPublic);
   const [config, setConfig] = useState<AgentConfig>(initialConfig);
@@ -148,8 +151,22 @@ function SettingsForm({
   }, [dirty]);
 
   const save = async () => {
-    if (name.trim().length < 2) {
-      toast.error("The name is too short");
+    const trimmed = name.trim();
+    const problem =
+      trimmed.length < 2
+        ? "Give it a name — at least two characters."
+        : trimmed.length > MAX_AGENT_NAME
+          ? `Keep the name to ${MAX_AGENT_NAME} characters or fewer.`
+          : null;
+    if (problem) {
+      // At the field, not in a toast: Save sits at the bottom of a long page, and a toast
+      // that vanished in four seconds left the operator hunting for what it meant.
+      setNameError(problem);
+      requestAnimationFrame(() => {
+        const input = document.getElementById("settings-name");
+        input?.scrollIntoView({ behavior: "smooth", block: "center" });
+        input?.focus({ preventScroll: true });
+      });
       throw new Error("invalid");
     }
     const result = await updateAgentAction(agent.id, {
@@ -177,7 +194,7 @@ function SettingsForm({
 
   const toggleStatus = async () => {
     const next = agent.status === "active" ? "paused" : "active";
-    const result = await setAgentStatusAction(agent.id, next);
+    const result = await safeAction(() => setAgentStatusAction(agent.id, next));
     if (!result.ok) {
       toast.error("Status not changed", { description: result.error });
       return;
@@ -237,6 +254,16 @@ function SettingsForm({
                 </Link>{" "}
                 in Security to let it run again.
               </>
+            ) : agent.llmKeyId === null ? (
+              // The saved key, not the draft: this is what the next tick will run with. A
+              // green Active over "Next tick is scheduled" read as healthy while every run
+              // failed, and the only warning sat 1,000px down in Brain.
+              <span className="text-destructive">
+                Active, but every tick fails before it starts: no API key attached.{" "}
+                <a href="#brain" className="rounded underline underline-offset-2 hover:text-foreground focus-ring">
+                  Choose a key
+                </a>
+              </span>
             ) : (
               `Running ${intervalLabel(config.schedule.intervalMinutes).toLowerCase()}. Next tick ${
                 agent.nextRunAt ? "is scheduled" : "unscheduled"
@@ -251,8 +278,18 @@ function SettingsForm({
       <section className="space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
         <h2 className="text-sm font-medium">Identity</h2>
 
-        <Field label="Name" htmlFor="settings-name">
-          <Input id="settings-name" value={name} onChange={(event) => setName(event.target.value)} />
+        <Field label="Name" htmlFor="settings-name" error={nameError}>
+          <Input
+            id="settings-name"
+            value={name}
+            maxLength={MAX_AGENT_NAME}
+            aria-invalid={Boolean(nameError)}
+            aria-describedby={nameError ? "settings-name-error" : undefined}
+            onChange={(event) => {
+              setName(event.target.value);
+              setNameError(null);
+            }}
+          />
         </Field>
 
         <Field label="Tagline" htmlFor="settings-tagline">
@@ -281,6 +318,10 @@ function SettingsForm({
           onChange={(event) =>
             setConfig((current) => ({ ...current, strategyPrompt: event.target.value }))
           }
+          // A focused text field only scrolls its caret into view, so a tall prompt whose
+          // first line was visible stayed half under the Save bar. "nearest" honours the
+          // bar's scroll padding and does nothing when the box is already clear.
+          onFocus={(event) => event.currentTarget.scrollIntoView({ block: "nearest" })}
           className="font-mono text-xs leading-relaxed"
           aria-label="Strategy prompt"
         />
@@ -341,9 +382,20 @@ function SettingsForm({
           }
         />
         <div className="space-y-2">
-          <span className="block text-xs text-muted-foreground">API key</span>
+          {/* A real label when there is a select to name; with no key yet, the add button
+              names itself and a label would rename it "API key". */}
+          {keysForProvider.length > 0 ? (
+            <label htmlFor="settings-llm-key" className="block text-xs text-muted-foreground">
+              API key
+            </label>
+          ) : (
+            <span className="block text-xs text-muted-foreground">API key</span>
+          )}
           {keysForProvider.length > 0 ? (
             <SimpleSelect
+              id="settings-llm-key"
+              invalid={llmKeyId === null}
+              describedBy={llmKeyId === null ? "settings-llm-key-error" : undefined}
               value={llmKeyId}
               placeholder="Choose a key"
               options={keysForProvider.map((key) => ({
@@ -358,13 +410,16 @@ function SettingsForm({
           )}
           <AddKeyInline
             provider={config.llm.provider}
+            describedBy={keysForProvider.length === 0 && llmKeyId === null ? "settings-llm-key-error" : undefined}
             onAdded={(key) => {
               setKeys((current) => [key, ...current]);
               setLlmKeyId(key.id);
             }}
           />
           {llmKeyId === null ? (
-            <p className="text-xs text-destructive">No key attached: every run will fail until one is chosen.</p>
+            <p id="settings-llm-key-error" className="text-xs text-destructive">
+              No key attached: every run will fail until one is chosen.
+            </p>
           ) : null}
         </div>
       </section>
@@ -555,13 +610,20 @@ function SettingsForm({
         <ExitRulesFields value={config.risk} onChange={(risk) => setConfig((current) => ({ ...current, risk }))} />
       </section>
 
-      <div className="sticky bottom-20 z-10 flex items-center gap-3 rounded-xl border border-border bg-background/90 px-3 py-2.5 backdrop-blur-md md:bottom-4">
+      {/* `data-sticky-actionbar` opts the page into the scroll padding in globals.css, so a
+          control that takes focus scrolls clear of this bar instead of sitting under it. The
+          phone offset matches what that padding reserves: the tab bar, then this bar. */}
+      <div
+        data-sticky-actionbar
+        className="sticky bottom-[calc(4rem+env(safe-area-inset-bottom)+0.5rem)] z-10 flex items-center gap-3 rounded-xl border border-border bg-background/90 px-3 py-2.5 backdrop-blur-md md:bottom-4"
+      >
         <p className="text-xs text-muted-foreground">
           {dirty ? "Unsaved changes" : "Everything is saved"}
         </p>
         <div className="ml-auto">
           <MorphButton
             size="sm"
+            className={MORPH_FOCUS}
             onAction={save}
             disabled={!dirty}
             loadingLabel="Saving…"

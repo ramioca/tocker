@@ -16,12 +16,19 @@ export function AgentsOverview({
   agents,
   counts,
   accountPaused = false,
+  blockers,
 }: {
   agents: HomeOverview["agents"];
   counts: HomeOverview["counts"];
   /** Trading is paused account-wide, so no agent here is actually running. */
   accountPaused?: boolean;
+  /** What stops each of these agents ticking, by agent id; absent means nothing does. */
+  blockers?: Map<string, { label: string; detail: string }>;
 }) {
+  // Counted over every agent, not just the six shown: the subtitle speaks for the fleet.
+  const stuck = blockers ? agents.filter((agent) => blockers.has(agent.id)).length : 0;
+  const attention = stuck > 0 ? ` · ${stuck} need${stuck === 1 ? "s" : ""} attention` : "";
+
   return (
     <section aria-labelledby="home-agents-heading" id="agents" className="scroll-mt-20">
       <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
@@ -37,8 +44,8 @@ export function AgentsOverview({
             {counts.total === 0
               ? "Nothing deployed yet."
               : accountPaused
-                ? `${counts.total} agent${counts.total === 1 ? "" : "s"} · all trading paused account-wide.`
-                : `${counts.active} active · ${counts.paused} paused · ${counts.live} trading live money.`}
+                ? `${counts.total} agent${counts.total === 1 ? "" : "s"} · all trading paused account-wide${attention}.`
+                : `${counts.active} active · ${counts.paused} paused · ${counts.live} trading live money${attention}.`}
           </p>
         </div>
 
@@ -79,7 +86,12 @@ export function AgentsOverview({
         <ul className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {agents.slice(0, 6).map((agent, index) => (
             <li key={agent.id}>
-              <AgentCard agent={agent} index={index} accountPaused={accountPaused} />
+              <AgentCard
+                agent={agent}
+                index={index}
+                accountPaused={accountPaused}
+                blocker={blockers?.get(agent.id)}
+              />
             </li>
           ))}
         </ul>

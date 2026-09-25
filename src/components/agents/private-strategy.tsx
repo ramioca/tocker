@@ -1,10 +1,13 @@
 import { Lock } from "lucide-react";
+import { ChainBadge } from "@/components/common/chain-badge";
+import { modelLabel } from "@/components/social-common/chain-badge";
+import { intervalLabel } from "./agent-config-summary";
 import type { AgentDetail } from "@/server/types";
 
 /**
  * What a non-owner sees where the owner sees their strategy.
  *
- * This is deliberately not an empty state or an error. The operator's edge being private
+ * This is deliberately not an empty state or an error. The author's edge being private
  * is the product working as designed, so the panel says so plainly and then spends its
  * space on what *is* public: the shape of the agent, and a pointer at the record.
  *
@@ -12,20 +15,15 @@ import type { AgentDetail } from "@/server/types";
  * from `publicProfile`, which carries only chains, model, cadence and a count.
  */
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value, title }: { label: string; value: React.ReactNode; title?: string }) {
   return (
     <div className="glass-inset rounded-lg px-3 py-2.5">
       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="tnum mt-0.5 truncate text-sm font-medium">{value}</p>
+      <div className="tnum mt-0.5 truncate text-sm font-medium" title={title}>
+        {value}
+      </div>
     </div>
   );
-}
-
-function cadence(intervalMinutes: number | null): string {
-  if (intervalMinutes === null) return "Manual";
-  if (intervalMinutes < 60) return `Every ${intervalMinutes}m`;
-  if (intervalMinutes % 60 === 0) return `Every ${intervalMinutes / 60}h`;
-  return `Every ${Math.floor(intervalMinutes / 60)}h ${intervalMinutes % 60}m`;
 }
 
 export function PrivateStrategyPanel({ agent }: { agent: AgentDetail }) {
@@ -51,7 +49,7 @@ export function PrivateStrategyPanel({ agent }: { agent: AgentDetail }) {
             </h3>
             <p className="mt-1.5 max-w-prose text-sm leading-relaxed text-muted-foreground">
               The prompt, the universe rules, the score thresholds and the data sources it
-              pays for stay with the operator who wrote them. A strategy anyone can copy is
+              pays for stay with the person who built it. A strategy anyone can copy is
               worth nothing to its author — so instead of the recipe, you get the receipts.
             </p>
             <p className="mt-2 max-w-prose text-sm leading-relaxed text-muted-foreground">
@@ -67,17 +65,33 @@ export function PrivateStrategyPanel({ agent }: { agent: AgentDetail }) {
           What is public
         </h3>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Fact label="Chains" value={chains.length ? chains.join(", ") : "—"} />
-          <Fact label="Model" value={model || "—"} />
-          <Fact label="Cadence" value={cadence(intervalMinutes)} />
+          <Fact
+            label="Chains"
+            value={
+              chains.length ? (
+                <span className="flex flex-wrap gap-1 whitespace-normal">
+                  {chains.map((chain) => (
+                    <ChainBadge key={chain} chain={chain} />
+                  ))}
+                </span>
+              ) : (
+                "—"
+              )
+            }
+          />
+          <Fact label="Model" value={model ? modelLabel(model) : "—"} title={model || undefined} />
+          <Fact
+            label="Cadence"
+            value={intervalMinutes === null ? "Manual" : intervalLabel(intervalMinutes)}
+          />
           <Fact
             label="Paid sources"
             value={dataSourceCount === 1 ? "1 source" : `${dataSourceCount} sources`}
           />
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          How many sources it buys, never which ones — the queries an operator sends are
-          part of the system.
+          How many sources it buys, never their names — which ones it queries is part of
+          the strategy.
         </p>
       </section>
     </div>

@@ -60,10 +60,22 @@ function round2(n: number): number {
 }
 
 /**
+ * A reading no provider answered: no source, or not one market fact. The chart already
+ * draws these as gaps (`isNoDataReading`); they are not observations, so none are kept.
+ */
+function isNoData(score: TokenScore): boolean {
+  return (
+    score.sources.length === 0 ||
+    (score.priceUsd === null && score.liquidityUsd === null && score.holderCount === null)
+  );
+}
+
+/**
  * Append one point of history for a freshly computed score. Deduped per
- * {@link shouldRecord}; never throws.
+ * {@link shouldRecord}, skipped for a no-data reading; never throws.
  */
 export async function recordScore(score: TokenScore): Promise<void> {
+  if (isNoData(score)) return;
   try {
     const db = await getDb();
     const [last] = await db

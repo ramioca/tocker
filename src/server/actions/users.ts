@@ -1,5 +1,6 @@
 "use server";
 import { discoverAnthropicWorkspace, needsWorkspaceHeader } from "@/lib/agent/anthropic-workspace";
+import { probeLlmKey } from "@/lib/agent/key-probe";
 import { providerLabel } from "@/lib/agent/models";
 import { revalidatePath } from "next/cache";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
@@ -18,6 +19,11 @@ function withArticle(word: string): string {
 
 function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
+}
+
+/** Said under the key field when the provider answered 401 to it. */
+function rejectedBy(provider: string): string {
+  return `${providerLabel(provider)} rejected this key — check you copied all of it`;
 }
 
 const HANDLE_RE = /^[a-z0-9_]{2,20}$/;
@@ -77,7 +83,7 @@ export async function addLlmKey(input: {
   label?: string;
   /** Anthropic only: the workspace an organization-level key should act in. */
   workspaceId?: string;
-}): Promise<ActionResult<{ id: string; last4: string }>> {
+}): Promise<ActionResult<{ id: string; last4: string; unverified?: boolean }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
@@ -101,6 +107,12 @@ export async function addLlmKey(input: {
       );
     }
   }
+
+  // Ask the provider before saving: a key it refuses would otherwise be "Added" here and
+  // surface only as a failed run hours later. When it cannot be asked (down, slow, a
+  // network in the way) the key is saved and comes back `unverified`, for the form to say.
+  const probe = await probeLlmKey(input.provider, key, workspaceId);
+  if (probe === "rejected") return fail(rejectedBy(input.provider));
 
   const db = await getDb();
   const id = newId("key");
@@ -132,7 +144,7 @@ export async function addLlmKey(input: {
 
   revalidatePath("/settings");
   revalidatePath("/settings/security");
-  return { ok: true, data: { id, last4: last4(key) } };
+  return { ok: true, data: { id, last4: last4(key), ...(probe === "unreachable" ? { unverified: true } : {}) } };
 }
 
 export async function removeLlmKey(id: string): Promise<ActionResult<{ detachedAgents: number }>> {
@@ -181,7 +193,10 @@ export async function removeLlmKey(id: string): Promise<ActionResult<{ detachedA
  * there is no window where a live agent has no brain. The old ciphertext is
  * overwritten in place — we never keep a previous secret "just in case".
  */
-export async function rotateLlmKey(input: { id: string; key: string }): Promise<ActionResult<{ last4: string }>> {
+export async function rotateLlmKey(input: {
+  id: string;
+  key: string;
+}): Promise<ActionResult<{ last4: string; unverified?: boolean }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
@@ -190,11 +205,17 @@ export async function rotateLlmKey(input: { id: string; key: string }): Promise<
 
   const db = await getDb();
   const [existing] = await db
-    .select({ id: llmKeys.id, provider: llmKeys.provider, last4: llmKeys.last4 })
+    .select({ id: llmKeys.id, provider: llmKeys.provider, last4: llmKeys.last4, workspaceId: llmKeys.workspaceId })
     .from(llmKeys)
     .where(and(eq(llmKeys.id, input.id), eq(llmKeys.userId, session.userId)))
     .limit(1);
   if (!existing) return fail("Key not found");
+
+  // Every agent on this key picks up the new secret on its next run, so a refused one
+  // would take all of them down at once. Checked against the saved workspace: rotation
+  // replaces the secret, not where it acts.
+  const probe = await probeLlmKey(existing.provider, key, existing.workspaceId);
+  if (probe === "rejected") return fail(rejectedBy(existing.provider));
 
   const [{ n: agentCount }] = await db
     .select({ n: sql<number>`count(*)::int` })
@@ -222,7 +243,7 @@ export async function rotateLlmKey(input: { id: string; key: string }): Promise<
 
   revalidatePath("/settings");
   revalidatePath("/settings/security");
-  return { ok: true, data: { last4: last4(key) } };
+  return { ok: true, data: { last4: last4(key), ...(probe === "unreachable" ? { unverified: true } : {}) } };
 }
 
 export async function markNotificationsRead(): Promise<ActionResult> {

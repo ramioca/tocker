@@ -2,29 +2,48 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowDownToLine, Lock, Play, Settings2, Zap } from "lucide-react";
+import { ArrowDownToLine, Link2, Lock, Play, Settings2, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { FollowButton } from "@/components/spectrumui/follow-button";
 import { MorphButton } from "@/components/spectrumui/morph-button";
 import { ShareButton } from "@/components/spectrumui/share-button";
 import { AgentAvatar } from "@/components/common/agent-avatar";
+import { copyLink } from "@/components/common/copy-link";
+import { MORPH_FOCUS } from "@/components/common/focus";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { ModeBadge } from "@/components/common/mode-badge";
-import { PnlText } from "@/components/common/pnl-text";
 import { RelativeTime } from "@/components/common/relative-time";
 import { StatusBadge } from "@/components/common/status-badge";
+import { modelLabel } from "@/components/social-common/chain-badge";
 import { useRunStatus } from "@/components/providers/run-status";
 import { followUser } from "@/components/feed/feed-actions";
 import { FundAgentDrawer } from "./settings/fund-agent-drawer";
 import { useWalletBalances } from "./settings/wallets-card";
 import { ManualTradeSheet } from "./manual-trade";
 import { triggerRunAction } from "./agent-actions";
+import { safeAction } from "@/lib/safe-action";
 import { cn } from "@/lib/utils";
+import type { AgentStatusItem } from "@/server/queries/agent-status";
 import type { AgentDetail } from "@/server/types";
 
-export function AgentHeader({ agent, accountPaused = false }: { agent: AgentDetail; accountPaused?: boolean }) {
+export function AgentHeader({
+  agent,
+  accountPaused = false,
+  runBlocker = null,
+}: {
+  agent: AgentDetail;
+  accountPaused?: boolean;
+  /**
+   * Owner only: the status item that makes a run fail before it starts (no LLM key).
+   * "Run now" is disabled while it holds, rather than reporting "Run started" for a
+   * run that is already lost.
+   */
+  runBlocker?: Pick<AgentStatusItem, "action"> | null;
+}) {
   const { watchRun } = useRunStatus();
   const [following, setFollowing] = useState(agent.isFollowedByViewer);
+  // The count sits in the same header as the button, so it moves with it.
+  const followers = agent.followerCount + (following === agent.isFollowedByViewer ? 0 : following ? 1 : -1);
 
   const shareUrl =
     typeof window === "undefined"
@@ -49,7 +68,7 @@ export function AgentHeader({ agent, accountPaused = false }: { agent: AgentDeta
 
   const onFollow = async (next: boolean) => {
     setFollowing(next);
-    const result = await followUser("agent", agent.id, next);
+    const result = await safeAction(() => followUser("agent", agent.id, next));
     if (!result.ok) {
       setFollowing(!next);
       toast.error("Follow failed", { description: result.error });
@@ -58,10 +77,22 @@ export function AgentHeader({ agent, accountPaused = false }: { agent: AgentDeta
 
   return (
     <header className="glass-panel glass-grain rounded-2xl px-4 py-5 sm:px-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-        <AgentAvatar seed={agent.avatarSeed} name={agent.name} size="xl" className="rounded-2xl" />
+      {/*
+        A grid so the avatar can sit beside the name on a phone without narrowing the
+        buttons: there the actions span both columns under it. On its own row, with the
+        PnL block stacked under the buttons, the header used to fill the first screen.
+        The PnL itself is the first stat card below, with its realised/open split.
+      */}
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-4 sm:gap-x-4">
+        <AgentAvatar seed={agent.avatarSeed} name={agent.name} size="lg" className="rounded-xl sm:hidden" />
+        <AgentAvatar
+          seed={agent.avatarSeed}
+          name={agent.name}
+          size="xl"
+          className="rounded-2xl max-sm:hidden sm:row-span-2"
+        />
 
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold tracking-tight">{agent.name}</h1>
             <ModeBadge mode={agent.mode} />
@@ -81,7 +112,7 @@ export function AgentHeader({ agent, accountPaused = false }: { agent: AgentDeta
               @{agent.owner.handle}
             </Link>
             <span aria-hidden>·</span>
-            <span className="font-mono text-xs">{agent.model}</span>
+            <span title={agent.model}>{modelLabel(agent.model)}</span>
             <span aria-hidden>·</span>
             {agent.chains.map((chain) => (
               <ChainBadge key={chain} chain={chain} />
@@ -94,6 +125,10 @@ export function AgentHeader({ agent, accountPaused = false }: { agent: AgentDeta
                 </span>
               </>
             ) : null}
+            <span aria-hidden>·</span>
+            <span className="tnum text-xs">
+              {followers.toLocaleString()} follower{followers === 1 ? "" : "s"}
+            </span>
           </p>
 
           {agent.tagline ? (
@@ -106,56 +141,68 @@ export function AgentHeader({ agent, accountPaused = false }: { agent: AgentDeta
               Strategy private · record public
             </p>
           ) : null}
-
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            {agent.isOwner ? (
-              <>
-                <MorphButton
-                  size="sm"
-                  onAction={runNow}
-                  loadingLabel="Starting…"
-                  successLabel="Running"
-                  errorLabel="Failed"
-                  disabled={agent.status === "draft"}
-                >
-                  <span className="flex items-center gap-1.5">
-                    <Play aria-hidden className="size-3.5" />
-                    Run now
-                  </span>
-                </MorphButton>
-
-                {/* Owner-only: trade the agent's book by hand. */}
-                <ManualTradeSheet agent={agent} />
-
-                <OwnerMoneyActions agent={agent} />
-
-                <Link
-                  href={`/agents/${agent.slug}/settings`}
-                  className={cn(HEADER_ACTION, "border-border hover:bg-muted")}
-                >
-                  <Settings2 aria-hidden className="size-3.5" />
-                  Settings
-                </Link>
-              </>
-            ) : (
-              <FollowButton
-                size="sm"
-                following={following}
-                onFollowingChange={(next) => void onFollow(next)}
-              />
-            )}
-
-            <ShareButton size="sm" copyValue={shareUrl} label="Share this agent" actions={[]} />
-          </div>
         </div>
 
-        <div className="shrink-0 text-left sm:text-right">
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">All-time PnL</p>
-          <PnlText usd={agent.pnlUsd} size="lg" className="block" />
-          <PnlText pct={agent.pnlPct} size="xs" className="block" />
-          <p className="tnum mt-1 text-xs text-muted-foreground">
-            {agent.followerCount.toLocaleString()} follower{agent.followerCount === 1 ? "" : "s"}
-          </p>
+        <div className="col-span-2 flex flex-wrap items-center gap-2 sm:col-span-1 sm:col-start-2">
+          {agent.isOwner ? (
+            <>
+              <MorphButton
+                size="sm"
+                className={MORPH_FOCUS}
+                onAction={runNow}
+                loadingLabel="Starting…"
+                successLabel="Running"
+                errorLabel="Failed"
+                disabled={agent.status === "draft" || runBlocker !== null}
+              >
+                <span className="flex items-center gap-1.5">
+                  <Play aria-hidden className="size-3.5" />
+                  Run now
+                </span>
+              </MorphButton>
+
+              {/* Visible, not a tooltip: a disabled button explains nothing on touch. */}
+              {runBlocker ? (
+                <Link
+                  href={runBlocker.action?.href ?? `/agents/${agent.slug}/settings#brain`}
+                  className="rounded text-xs font-medium text-foreground/85 underline decoration-muted-foreground/50 underline-offset-2 transition-colors duration-150 hover:decoration-foreground focus-ring"
+                >
+                  Attach a key to run
+                </Link>
+              ) : null}
+
+              {/* Owner-only: trade the agent's book by hand. */}
+              <ManualTradeSheet agent={agent} />
+
+              <OwnerMoneyActions agent={agent} />
+
+              <Link
+                href={`/agents/${agent.slug}/settings`}
+                className={cn(HEADER_ACTION, "border-border hover:bg-muted")}
+              >
+                <Settings2 aria-hidden className="size-3.5" />
+                Settings
+              </Link>
+            </>
+          ) : (
+            <FollowButton
+              size="sm"
+              following={following}
+              onFollowingChange={(next) => void onFollow(next)}
+            />
+          )}
+
+          <ShareButton
+            size="sm"
+            label="Share this agent"
+            actions={[
+              {
+                icon: <Link2 aria-hidden className="size-3.5" />,
+                label: "Copy link",
+                onSelect: () => copyLink(shareUrl),
+              },
+            ]}
+          />
         </div>
       </div>
     </header>

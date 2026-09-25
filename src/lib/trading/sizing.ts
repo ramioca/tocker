@@ -27,6 +27,7 @@
  * Nothing here reads a database, a clock or the network, so every edge is testable.
  */
 import type { AgentRiskWithSizing, PositionSizingConfig, PositionSizingMode } from "@/db/schema";
+import { fmtUsd } from "@/lib/money";
 
 export type { PositionSizingConfig, PositionSizingMode };
 
@@ -165,14 +166,14 @@ export function sizeOrder(input: SizingInput): SizedOrder {
       scale,
       explanation:
         amount > maxTradeUsd + 1e-9
-          ? `${how}, capped at your max trade size of $${round2(maxTradeUsd)}.`
+          ? `${how}, capped at your max trade size of ${fmtUsd(maxTradeUsd)}.`
           : `${how}.`,
       belowMinimum: amountUsd < sizing.minTradeUsd,
     };
   };
 
   if (sizing.mode === "fixed_usd") {
-    return capped(maxTradeUsd, "fixed_usd", 1, `Fixed ticket of $${round2(maxTradeUsd)}`);
+    return capped(maxTradeUsd, "fixed_usd", 1, `Fixed ticket of ${fmtUsd(maxTradeUsd)}`);
   }
 
   if (equity === null) {
@@ -182,7 +183,7 @@ export function sizeOrder(input: SizingInput): SizedOrder {
       maxTradeUsd,
       "fixed_usd",
       1,
-      `No equity figure available, so this falls back to the fixed $${round2(maxTradeUsd)} ticket`,
+      `No equity figure available, so this falls back to the fixed ${fmtUsd(maxTradeUsd)} ticket`,
     );
   }
 
@@ -193,7 +194,7 @@ export function sizeOrder(input: SizingInput): SizedOrder {
       base,
       "percent_equity",
       1,
-      `${round2(sizing.percentOfEquity)}% of $${round2(equity)} equity = $${round2(base)}`,
+      `${round2(sizing.percentOfEquity)}% of ${fmtUsd(equity)} equity = ${fmtUsd(base)}`,
     );
   }
 
@@ -205,7 +206,7 @@ export function sizeOrder(input: SizingInput): SizedOrder {
       1,
       `No recent range for this token, so volatility scaling has nothing to shrink: ${round2(
         sizing.percentOfEquity,
-      )}% of $${round2(equity)} equity = $${round2(base)}`,
+      )}% of ${fmtUsd(equity)} equity = ${fmtUsd(base)}`,
     );
   }
 
@@ -213,14 +214,14 @@ export function sizeOrder(input: SizingInput): SizedOrder {
   const scaled = base * scale;
   const how =
     scale >= 1
-      ? `${round2(sizing.percentOfEquity)}% of $${round2(equity)} equity = $${round2(base)}; ${round2(
+      ? `${round2(sizing.percentOfEquity)}% of ${fmtUsd(equity)} equity = ${fmtUsd(base)}; ${round2(
           rangePct,
         )}% recent range is inside the ${round2(sizing.referenceRangePct)}% reference, so no shrink`
-      : `${round2(sizing.percentOfEquity)}% of $${round2(equity)} equity = $${round2(
+      : `${round2(sizing.percentOfEquity)}% of ${fmtUsd(equity)} equity = ${fmtUsd(
           base,
         )}, shrunk ×${scale.toFixed(2)} because the ${round2(rangePct)}% recent range is wider than the ${round2(
           sizing.referenceRangePct,
-        )}% reference = $${round2(scaled)}`;
+        )}% reference = ${fmtUsd(scaled)}`;
   return capped(scaled, "volatility_scaled", scale, how);
 }
 

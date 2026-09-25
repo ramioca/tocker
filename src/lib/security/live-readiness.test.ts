@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FIRST_TRADE_PRESET, evaluateFirstTradeRisk, simulateFirstTrade, withFirstTradePreset } from "./live-readiness";
+import {
+  FIRST_TRADE_PRESET,
+  databaseStep,
+  evaluateFirstTradeRisk,
+  simulateFirstTrade,
+  withFirstTradePreset,
+  type DatabaseStepInput,
+} from "./live-readiness";
 import { dataChainsFor } from "@/lib/data-sources/registry";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import type { AgentConfig } from "@/db/schema";
@@ -221,5 +228,44 @@ describe("dataChainsFor", () => {
 
   it("is empty for an agent that buys no data", () => {
     expect(dataChainsFor([])).toEqual([]);
+  });
+});
+
+describe("databaseStep", () => {
+  const LEAK = "connect ECONNREFUSED db.internal:5432 (postgres://tocker:hunter2@db.internal/tocker)";
+  const step = (overrides: Partial<DatabaseStepInput>) =>
+    databaseStep({ embedded: false, production: true, error: null, viewerIsAdmin: false, ...overrides });
+
+  it("passes a real database for everyone, with nothing to fix", () => {
+    for (const viewerIsAdmin of [false, true]) {
+      const out = step({ viewerIsAdmin });
+      expect(out.state).toBe("pass");
+      expect(out.fix).toBeNull();
+    }
+  });
+
+  it("never shows an owner the driver's words, the engine or the health endpoint", () => {
+    const cases: Array<Partial<DatabaseStepInput>> = [
+      { error: LEAK },
+      { embedded: true, production: true },
+      { embedded: true, production: false },
+    ];
+    for (const c of cases) {
+      const out = step(c);
+      expect(out.detail).not.toContain("hunter2");
+      expect(out.detail).not.toContain("db.internal");
+      expect(out.detail).not.toMatch(/PGlite|health/i);
+      expect(out.fix).toBeNull();
+    }
+    expect(step({ error: LEAK }).state).toBe("fail");
+    expect(step({ embedded: true, production: true }).state).toBe("fail");
+    expect(step({ embedded: true, production: false }).state).toBe("warn");
+  });
+
+  it("gives an admin the diagnosis and the link", () => {
+    const failed = step({ error: LEAK, viewerIsAdmin: true });
+    expect(failed.detail).toContain("ECONNREFUSED");
+    expect(failed.fix?.href).toBe("/api/health");
+    expect(step({ embedded: true, production: false, viewerIsAdmin: true }).detail).toContain("PGlite");
   });
 });

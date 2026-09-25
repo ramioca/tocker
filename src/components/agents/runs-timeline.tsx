@@ -3,13 +3,14 @@
 import { useId, useState } from "react";
 import Link from "next/link";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { ChevronDown, ExternalLink, History } from "lucide-react";
+import { ChevronDown, ChevronRight, History } from "lucide-react";
 import { RunStatusBadge } from "@/components/common/status-badge";
 import { RelativeTime } from "@/components/common/relative-time";
 import { EmptyState, ErrorState } from "@/components/common/empty-state";
 import { formatDuration, formatUsd } from "@/components/common/format";
 import { RunSteps } from "./run-steps";
 import { fetchAgentRuns, fetchRunDetail } from "./agent-actions";
+import { LoadMoreFailed } from "./load-more-failed";
 import { cn } from "@/lib/utils";
 import type { Page, RunSummary } from "@/server/types";
 
@@ -107,7 +108,8 @@ function RunRow({
           aria-describedby={toggleId}
           className="grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-ring"
         >
-          <ExternalLink aria-hidden className="size-3.5" />
+          {/* A page in this tab, not a new one: the external-link glyph belongs to GeckoTerminal. */}
+          <ChevronRight aria-hidden className="size-3.5" />
         </Link>
       </div>
 
@@ -121,8 +123,20 @@ function RunRow({
       >
         <div className="overflow-hidden">
           <div className="px-3 pb-4 pl-10">
-            {detail.isPending && open ? (
+            {open && (detail.isPending || (detail.isError && detail.isFetching)) ? (
               <p className="text-xs text-muted-foreground">Loading steps…</p>
+            ) : detail.isError ? (
+              // The request failed; that is not the same as a run with nothing stored.
+              <p className="text-xs text-muted-foreground">
+                Couldn&rsquo;t load this run&rsquo;s steps.{" "}
+                <button
+                  type="button"
+                  onClick={() => void detail.refetch()}
+                  className="rounded underline underline-offset-2 transition-colors duration-150 hover:text-foreground focus-ring"
+                >
+                  Retry
+                </button>
+              </p>
             ) : detail.data && !detail.data.transcriptVisible ? (
               /*
                 Somebody else's run. The transcript is owner-only — which sources were
@@ -142,7 +156,7 @@ function RunRow({
               </p>
             ) : detail.data ? (
               <RunSteps steps={detail.data.steps} status={detail.data.status} durationMs={elapsed} />
-            ) : open ? (
+            ) : open && detail.data === null ? (
               <p className="text-xs text-muted-foreground">
                 No step transcript was stored for this run.
               </p>
@@ -189,16 +203,18 @@ export function RunsTimeline({
     );
   }
 
-  if (query.isError) {
+  // Only when there is nothing to show. `isError` is also true when just an older page
+  // failed, and the pages already loaded are still in `query.data` — those must stay.
+  if (query.isError && !query.data) {
     return (
       <ErrorState
         title="Run history did not load"
-        description={(query.error as Error).message}
+        description="Try again in a moment."
         action={
           <button
             type="button"
             onClick={() => void query.refetch()}
-            className="rounded-lg border border-border px-3 py-1.5 text-xs transition-colors duration-150 hover:bg-muted"
+            className="focus-ring rounded-lg border border-border px-3 py-1.5 text-xs transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.97]"
           >
             Try again
           </button>
@@ -225,7 +241,9 @@ export function RunsTimeline({
         ))}
       </ul>
 
-      {query.hasNextPage ? (
+      {query.isFetchNextPageError && !query.isFetchingNextPage ? (
+        <LoadMoreFailed what="runs" onRetry={() => void query.fetchNextPage()} />
+      ) : query.hasNextPage ? (
         <button
           type="button"
           onClick={() => void query.fetchNextPage()}

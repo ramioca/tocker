@@ -75,5 +75,14 @@ export function AgentStats({ agent }: { agent: AgentDetail }) {
     },
   ];
 
-  return <StatCards cards={cards} columns={3} />;
+  return (
+    <StatCards
+      cards={cards}
+      columns={3}
+      // The registry card clips its caption to one nowrap line, which cut captions off
+      // at 390; phones let them wrap. The last rule gives the sparkline's own focus
+      // state our ring colour.
+      className="max-sm:[&_p.whitespace-nowrap]:!h-auto max-sm:[&_p.whitespace-nowrap]:!whitespace-normal max-sm:[&_p.whitespace-nowrap]:!leading-snug [&_.cursor-crosshair:focus-visible]:!ring-ring"
+    />
+  );
 }

@@ -51,7 +51,7 @@ export function ScoreBadge({
       {numberOnly ? (
         <span className="sr-only">{meta.label}</span>
       ) : (
-        <span className="opacity-85">{meta.label}</span>
+        <span>{meta.label}</span>
       )}
     </span>
   );

@@ -60,6 +60,7 @@ export function PostView({
         </h2>
         <CommentThread
           postId={item.id}
+          kind={item.kind}
           onCommented={() =>
             setItem((current) => ({ ...current, commentCount: current.commentCount + 1 }))
           }

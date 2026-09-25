@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Activity, Users } from "lucide-react";
+import { Users } from "lucide-react";
 import type { AgentCard as AgentCardType } from "@/server/types";
 import { AgentAvatar } from "@/components/common/agent-avatar";
 import { ChainBadges, ModeBadge, ModelChip } from "@/components/social-common/chain-badge";
@@ -9,7 +9,9 @@ import { formatCount, formatUsd } from "@/components/social-common/format";
 
 /**
  * `h-full` plus `mt-auto` on the footer: a one-line tagline and a two-line one
- * still produce a grid with a single baseline across the row.
+ * still produce a grid with a single baseline across the row. The chip row's `mb-4`
+ * is the floor of that gap — `mt-auto` resolves to 0 on the tallest card, which left
+ * its chips sitting on the footer's hairline.
  */
 export function AgentGridCard({ agent }: { agent: AgentCardType }) {
   return (
@@ -42,7 +44,7 @@ export function AgentGridCard({ agent }: { agent: AgentCardType }) {
         <p className="mt-3 line-clamp-2 text-sm leading-6 text-muted-foreground">{agent.tagline}</p>
       ) : null}
 
-      <div className="mt-3 flex flex-wrap gap-1">
+      <div className="mt-3 mb-4 flex flex-wrap gap-1">
         <ChainBadges chains={agent.chains} />
         <ModelChip model={agent.model} />
       </div>
@@ -72,10 +74,6 @@ export function AgentGridCard({ agent }: { agent: AgentCardType }) {
         <span className="inline-flex items-center gap-1">
           <Users className="size-3" aria-hidden />
           {formatCount(agent.followerCount)}
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <Activity className="size-3" aria-hidden />
-          {formatCount(agent.tradeCount)}
         </span>
         <span className="ml-auto relative z-10 text-primary opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
           Open →

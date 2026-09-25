@@ -176,12 +176,9 @@ function GateShell({
   action?: React.ReactNode;
 }) {
   return (
-    <div
-      className={cn(
-        "rounded-xl border border-border/70 bg-card/30 p-3",
-        disabled && "opacity-55",
-      )}
-    >
+    // Only the control dims when a gate is off: dimming the whole card took its label and
+    // explanation under 4.5:1, and those are what say why it is off.
+    <div className="rounded-xl border border-border/70 bg-card/30 p-3">
       <div className="flex items-baseline justify-between gap-3">
         {/* The slider is named by aria-labelledby; Base UI puts an id on its root div,
             which a <label htmlFor> cannot label. */}
@@ -195,7 +192,7 @@ function GateShell({
       </div>
       {/* No transition on the slider itself — a dragged control must track the
           finger exactly, and 150ms of easing reads as lag. */}
-      <div className="mt-3">{children}</div>
+      <div className={cn("mt-3", disabled && "opacity-55")}>{children}</div>
       <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">{meaning}</p>
     </div>
   );
@@ -242,7 +239,28 @@ export function universeSentence(universe: UniverseConfig, chains: Chain[]): str
       ? ` ${universe.blocklist.length} token${universe.blocklist.length === 1 ? " is" : "s are"} blocked outright.`
       : "";
 
-  return `On ${where}, from ${feeds}: buy nothing scoring under ${Math.round(universe.minScore)} — ${verdict} and up — with ${listSentence(gates)}.${authorities}${blocked}`;
+  // Said as what it buys, not what it refuses: "buy nothing scoring under 62 … with at
+  // least $15K of liquidity" read as a ban on exactly the tokens the gates let through.
+  return `On ${where}, from ${feeds}: it only buys tokens scoring ${Math.round(universe.minScore)}+ (${verdict} and up) with ${listSentence(gates)}.${authorities}${blocked}`;
+}
+
+/**
+ * The universe in a glance, for a collapsed card. The full sentence runs to four lines
+ * and a two-line clamp cut it off mid-rule, so the summary carries only the numbers that
+ * decide the most and leaves the rest to the open card.
+ */
+export function universeSummary(universe: UniverseConfig, chains: Chain[]): string {
+  const where = chains.map((chain) => (chain === "solana" ? "Solana" : "Base")).join(" + ") || "No chain";
+  const feeds = universe.discovery.length;
+  return [
+    where,
+    `score ${Math.round(universe.minScore)}+`,
+    `${formatCompactUsd(universe.minLiquidityUsd)}+ liquidity`,
+    `${feeds} feed${feeds === 1 ? "" : "s"}`,
+    universe.blocklist.length > 0 ? `${universe.blocklist.length} blocked` : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
 }
 
 const BALANCED = UNIVERSE_PRESETS.find((preset) => preset.id === "balanced")!.values;
@@ -255,6 +273,8 @@ const BALANCED = UNIVERSE_PRESETS.find((preset) => preset.id === "balanced")!.va
 export function compareToBalanced(universe: UniverseConfig): {
   tighter: string[];
   looser: string[];
+  /** The bar may match while the feeds it sweeps do not; that is not "exactly" Balanced. */
+  feedsDiffer: boolean;
 } {
   const tighter: string[] = [];
   const looser: string[] = [];
@@ -272,8 +292,15 @@ export function compareToBalanced(universe: UniverseConfig): {
   note("buy tax", Math.sign(BALANCED.maxBuyTaxPct - universe.maxBuyTaxPct));
   if (universe.maxAgeHours !== null && BALANCED.maxAgeHours === null) tighter.push("maximum age");
   if (universe.maxAgeHours === null && BALANCED.maxAgeHours !== null) looser.push("maximum age");
+  note("mint authority", Number(universe.requireMintRevoked) - Number(BALANCED.requireMintRevoked));
+  note("freeze authority", Number(universe.requireFreezeRevoked) - Number(BALANCED.requireFreezeRevoked));
 
-  return { tighter, looser };
+  return { tighter, looser, feedsDiffer: !sameSet(universe.discovery, BALANCED.discovery) };
+}
+
+/** Feeds are a set: the order they were switched on in changes nothing. */
+function sameSet<T>(a: readonly T[], b: readonly T[]): boolean {
+  return a.length === b.length && a.every((entry) => b.includes(entry));
 }
 
 // -------------------------------------------------------------- the control
@@ -304,9 +331,7 @@ export function UniverseControls({
     (Object.keys(preset.values) as Array<keyof typeof preset.values>).every((key) => {
       const a = preset.values[key];
       const b = universe[key];
-      return Array.isArray(a) && Array.isArray(b)
-        ? a.length === b.length && a.every((entry, index) => entry === b[index])
-        : a === b;
+      return Array.isArray(a) && Array.isArray(b) ? sameSet<unknown>(a, b) : a === b;
     }),
   );
 
@@ -673,13 +698,15 @@ export function UniverseControls({
             {comparison.looser.length > 0 ? (
               <> looser on {listSentence(comparison.looser)}</>
             ) : null}
-            .
+            .{comparison.feedsDiffer ? " It sweeps different feeds, too." : null}
           </p>
-        ) : (
+        ) : comparison.feedsDiffer ? (
+          <p className="mt-2 text-xs text-muted-foreground">Same bar as Balanced, different feeds.</p>
+        ) : activePreset?.id === "balanced" ? (
           <p className="mt-2 text-xs text-muted-foreground">
             This is exactly the Balanced default.
           </p>
-        )}
+        ) : null}
 
         <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
           How many tokens a day actually clear this depends on the market, so we will not guess.

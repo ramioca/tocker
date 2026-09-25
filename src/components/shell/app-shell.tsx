@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { CircleStop } from "lucide-react";
 import { RelativeTime } from "@/components/common/relative-time";
@@ -30,11 +30,25 @@ export function AppShell({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const owned = useMemo(() => (ownedSlugs ? new Set(ownedSlugs) : undefined), [ownedSlugs]);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
+  // Read by the key listener below, which is bound once and so cannot close over state.
+  const paletteOpenRef = useRef(paletteOpen);
+  useEffect(() => {
+    paletteOpenRef.current = paletteOpen;
+  }, [paletteOpen]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() !== "k") return;
       if (!event.metaKey && !event.ctrlKey) return;
+      // Another modal (onboarding, Withdraw, a sheet) owns the screen: the palette would
+      // open underneath it and take the focus with it. Popovers are dialogs too, but
+      // non-modal ones — the Cash panel should not stop ⌘K. ⌘K still closes the palette.
+      if (
+        !paletteOpenRef.current &&
+        document.querySelector('[role="dialog"][data-open]:not([data-slot="popover-content"])')
+      ) {
+        return;
+      }
       event.preventDefault();
       setPaletteOpen((open) => !open);
     };
@@ -50,7 +64,9 @@ export function AppShell({
       */}
       <a
         href="#main"
-        className="glass-heavy focus-ring sr-only rounded-lg px-3 py-2 text-sm font-medium focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-[60]"
+        // `!` on the padding: `not-sr-only` resets it to 0 at the same specificity. Opaque
+        // on focus, because the glass let the wordmark and Search read through the text.
+        className="glass-heavy focus-ring sr-only rounded-lg px-3 py-2 text-sm font-medium focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-[60] focus:!px-3 focus:!py-2 focus:bg-background focus:shadow-lg"
       >
         Skip to content
       </a>

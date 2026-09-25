@@ -77,7 +77,9 @@ function TabsContent({ className, ...props }: TabsPrimitive.Panel.Props) {
   return (
     <TabsPrimitive.Panel
       data-slot="tabs-content"
-      className={cn("flex-1 text-sm outline-none", className)}
+      // Base UI gives the panel tabIndex=0 (a panel with nothing focusable inside must
+      // still be reachable), so it is a tab stop and has to show focus like one.
+      className={cn("flex-1 rounded-xl text-sm focus-ring", className)}
       {...props}
     />
   )

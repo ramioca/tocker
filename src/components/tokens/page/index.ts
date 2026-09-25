@@ -1,5 +1,5 @@
 /** The token page, in one import. */
-export { AgentsHolding } from "./agents-holding";
+export { AgentsHolding, sharedHolderMode } from "./agents-holding";
 export { BlockMenu } from "./block-menu";
 export { FlowStats } from "./flow-stats";
 export { GateList } from "./gate-list";

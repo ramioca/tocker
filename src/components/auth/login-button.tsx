@@ -38,7 +38,7 @@ export function LoginButton({ className }: { className?: string }) {
   }, [open]);
 
   if (!ready) {
-    return <div className={cn("h-8 w-24 animate-pulse rounded-lg bg-muted", className)} aria-hidden />;
+    return <div className={cn("h-8 w-24 motion-safe:animate-pulse rounded-lg bg-muted", className)} aria-hidden />;
   }
 
   if (!session) {

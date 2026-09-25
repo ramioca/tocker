@@ -36,7 +36,9 @@ export function PnlText({
     <span className={cn("tnum font-medium", tone, sizes[size], className)}>
       {usd !== undefined && usd !== null ? formatSignedUsd(usd) : null}
       {usd !== undefined && usd !== null && pct !== undefined && pct !== null ? (
-        <span className="ml-1.5 opacity-70">{formatSignedPct(pct, dp)}</span>
+        // Weight, not opacity, sets it back: dimmed red on the dark card measured 3.65:1 at
+        // 11px, and the percentage is the half of the figure people compare across rows.
+        <span className="ml-1.5 font-normal">{formatSignedPct(pct, dp)}</span>
       ) : pct !== undefined && pct !== null ? (
         formatSignedPct(pct, dp)
       ) : null}

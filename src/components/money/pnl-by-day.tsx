@@ -1,6 +1,7 @@
 import { formatSignedPct, formatSignedUsd } from "@/components/common/format";
 import { cn } from "@/lib/utils";
 import type { PnlDay } from "@/server/queries/money";
+import { tallyDays } from "./day-tally";
 
 /**
  * Thirty days of P&L as one row each: the date, a bar either side of zero, the number.
@@ -38,10 +39,13 @@ export function PnlByDay({ days }: { days: PnlDay[] }) {
   }
 
   const peak = Math.max(...scored.map((d) => Math.abs(d.pnlUsd ?? 0)), 0);
-  const up = scored.filter((d) => (d.pnlUsd ?? 0) > 0).length;
-  const down = scored.filter((d) => (d.pnlUsd ?? 0) < 0).length;
-  const best = scored.reduce((a, b) => ((b.pnlUsd ?? 0) > (a.pnlUsd ?? 0) ? b : a));
-  const worst = scored.reduce((a, b) => ((b.pnlUsd ?? 0) < (a.pnlUsd ?? 0) ? b : a));
+  const { up, down, flat, best, worst } = tallyDays(days);
+  // Only a gain is a "best" and only a loss a "worst": a month of green days must
+  // not print "worst +$2.10".
+  const extremes = [
+    best ? `best ${formatSignedUsd(best.pnlUsd)} on ${label(best.day)}` : null,
+    worst ? `worst ${formatSignedUsd(worst.pnlUsd)} on ${label(worst.day)}` : best ? "no down days" : null,
+  ].filter(Boolean);
   const today = days.at(-1)?.day;
 
   return (
@@ -49,12 +53,11 @@ export function PnlByDay({ days }: { days: PnlDay[] }) {
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-[var(--glass-hairline)] px-4 py-3">
         <p className="tnum text-xs text-muted-foreground">
           <span className="text-positive">{up} up</span> · <span className="text-negative">{down} down</span> ·{" "}
-          {scored.length - up - down} flat
+          {flat} flat
         </p>
-        <p className="tnum text-[11px] text-muted-foreground">
-          best {formatSignedUsd(best.pnlUsd)} on {label(best.day)} · worst {formatSignedUsd(worst.pnlUsd)} on{" "}
-          {label(worst.day)}
-        </p>
+        {extremes.length > 0 ? (
+          <p className="tnum text-[11px] text-muted-foreground">{extremes.join(" · ")}</p>
+        ) : null}
       </div>
 
       <ul className="divide-y divide-[var(--glass-hairline)]">
@@ -93,7 +96,12 @@ export function PnlByDay({ days }: { days: PnlDay[] }) {
 
               <span className="tnum flex items-baseline justify-end gap-2 text-right text-xs">
                 {pnl === null ? (
-                  <span className="text-muted-foreground">—</span>
+                  // Same widths as a day with a number, so this row's `auto` column
+                  // matches the rest and the zero line does not shift.
+                  <>
+                    <span className="w-[5.5rem] text-muted-foreground">—</span>
+                    <span aria-hidden className="hidden w-14 sm:inline-block" />
+                  </>
                 ) : (
                   <>
                     <span

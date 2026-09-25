@@ -15,7 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { placeManualTrade, previewTrade } from "@/server/actions/trading";
-import { floorCents, sliceText } from "@/components/trading/sell-amount";
+import { floorCents, pctLabel, sliceText } from "@/components/trading/sell-amount";
 import { cn } from "@/lib/utils";
 import type { Position, TradePreview } from "@/server/types";
 
@@ -136,7 +136,7 @@ function SellPositionDialog({
         sellAll,
         note: sellAll
           ? "Manual sell from the positions table (everything)."
-          : `Manual sell from the positions table (${pct.toFixed(0)}% of the position).`,
+          : `Manual sell from the positions table (${pctLabel(pct)} of the position).`,
       });
       if (!result.ok) {
         toast.error(`${position.token.symbol} not sold`, { description: result.error });
@@ -205,7 +205,7 @@ function SellPositionDialog({
                 : !current?.data
                   ? "Checking with the guard and Jupiter…"
                   : current.data.allowed
-                    ? `${sellAll ? "Everything" : `${pct.toFixed(0)}% of the position`}${current.data.priceUsd !== null ? `, quoted at ${formatPriceUsd(current.data.priceUsd)}` : ""}. Sells right away — your click is the approval.`
+                    ? `${sellAll ? "Everything" : `${pctLabel(pct)} of the position`}${current.data.priceUsd !== null ? `, quoted at ${formatPriceUsd(current.data.priceUsd)}` : ""}. Sells right away — your click is the approval.`
                     : `Not allowed: ${current.data.reason ?? "the guard refused this size"}`}
           </p>
         </div>

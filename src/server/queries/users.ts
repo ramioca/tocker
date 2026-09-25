@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, isNull, lt, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, exists, ilike, inArray, isNull, lt, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { agents, follows, getDb, llmKeys, notifications, users, type Db } from "@/db";
 import type { LlmKeyRow, NotificationRow, Page, UserProfile } from "@/server/types";
 import { buildAgentCards, decodeCursor, encodeCursor, isFollowing, pageSize } from "./_shared";
@@ -25,6 +25,43 @@ async function visibleKinds(db: Db, userId: string): Promise<SQL | undefined> {
   return muted.length > 0 ? notInArray(notifications.kind, muted) : undefined;
 }
 
+/**
+ * People whose handle or display name contains `query`, for ⌘K. Only owners of a
+ * public agent, like the palette's own index: someone who has never published an
+ * agent is not listed by name. The caller strips LIKE wildcards from `query`.
+ */
+export async function searchUsers(
+  query: string,
+  limit = 8,
+): Promise<Array<{ handle: string; displayName: string | null }>> {
+  const q = query.trim();
+  if (q.length === 0) return [];
+  const db = await getDb();
+  const like = `%${q}%`;
+  return db
+    .select({ handle: users.handle, displayName: users.displayName })
+    .from(users)
+    .where(
+      and(
+        or(ilike(users.handle, like), ilike(users.displayName, like)),
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(agents)
+            .where(
+              and(
+                eq(agents.ownerId, users.id),
+                eq(agents.isPublic, true),
+                inArray(agents.status, ["active", "paused"]),
+              ),
+            ),
+        ),
+      ),
+    )
+    .orderBy(asc(sql`length(${users.handle})`), asc(users.handle))
+    .limit(Math.min(50, Math.max(1, limit)));
+}
+
 export async function getUserProfile(handle: string, viewerId?: string | null): Promise<UserProfile | null> {
   const db = await getDb();
   const [user] = await db.select().from(users).where(eq(users.handle, handle)).limit(1);
@@ -46,7 +83,6 @@ export async function getUserProfile(handle: string, viewerId?: string | null): 
   ]);
 
   const agentCards = await buildAgentCards(db, agentRows);
-  const totalPnlUsd = agentCards.reduce((sum, a) => sum + (a.pnlUsd ?? 0), 0);
 
   return {
     id: user.id,
@@ -60,7 +96,6 @@ export async function getUserProfile(handle: string, viewerId?: string | null): 
     isFollowedByViewer: followed,
     isSelf,
     agents: agentCards,
-    totalPnlUsd,
   };
 }
 

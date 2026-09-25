@@ -2,7 +2,7 @@
 
 import { PetriMark } from "@/components/brand/petri-mark";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Plus, Search } from "lucide-react";
@@ -27,6 +27,14 @@ const noSubscribe = () => () => {};
 const isApplePlatform = () => /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
 
 /**
+ * How long the "New agent" chrome runs after the bar mounts before it rests. Long
+ * enough for the ring to paint and be seen once; after that it is persistent chrome
+ * on every page, and a shader that never stops is motion nobody asked for, a busy
+ * main thread and a warm laptop. It wakes again under the pointer or keyboard focus.
+ */
+const METAL_WAKE_MS = 1_500;
+
+/**
  * The whole app frame in one bar, fomo-style: brand and primary links on the
  * left, search in the middle, money-and-me on the right. Navigation is a hot
  * path — the active state is a plain class swap, nothing animates on click.
@@ -45,6 +53,20 @@ export function TopBar({
   // Server and first client render agree on ⌘K; a non-Apple keyboard swaps after hydration.
   const apple = useSyncExternalStore(noSubscribe, isApplePlatform, () => true);
   const onNotifications = isActivePath(pathname, "/notifications");
+
+  const [metalWaking, setMetalWaking] = useState(true);
+  const [metalHovered, setMetalHovered] = useState(false);
+  const [metalFocused, setMetalFocused] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setMetalWaking(false), METAL_WAKE_MS);
+    return () => window.clearTimeout(id);
+  }, []);
+
+  // The bell is a button (the registry component takes no href), so it gets the
+  // prefetch a nav link would: the page is warm by the time it is pressed.
+  useEffect(() => {
+    router.prefetch("/notifications");
+  }, [router]);
 
   return (
     <header className="glass-bar sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border/60 px-4">
@@ -105,8 +127,22 @@ export function TopBar({
       {/* Visibility lives on this wrapper, not on the MetalFx root: the library's own
           display rules (inline style on the fallback, an injected stylesheet on the live
           root) outrank Tailwind's `hidden`, so at phone widths the button showed anyway. */}
-      <div className="hidden shrink-0 lg:block">
-      <LiquidMetal preset="chromatic" theme="dark" strength={0.85}>
+      <div
+        className="hidden shrink-0 lg:block"
+        onPointerEnter={() => setMetalHovered(true)}
+        onPointerLeave={() => setMetalHovered(false)}
+        // Keyboard focus only: a click also focuses the link, and the ring would then run
+        // on the builder page for as long as nothing else took the focus.
+        onFocus={(event) => setMetalFocused(event.target.matches(":focus-visible"))}
+        onBlur={() => setMetalFocused(false)}
+      >
+      {/* Paused keeps the last frame on screen: at rest the ring is still chrome, just still. */}
+      <LiquidMetal
+        preset="chromatic"
+        theme="dark"
+        strength={0.85}
+        paused={!(metalWaking || metalHovered || metalFocused)}
+      >
         <Link
           href="/agents/new"
           className={cn(
@@ -144,7 +180,9 @@ export function TopBar({
           size="sm"
           onClick={() => router.push("/notifications")}
           className={cn(
-            "shrink-0",
+            // The bar's focus ring, not the registry's 1px grey: tailwind-merge in the
+            // bell's own `cn` lets these replace its ring width and colours.
+            "shrink-0 focus-visible:ring-2 focus-visible:ring-ring dark:focus-visible:ring-ring",
             onNotifications &&
               "border-primary/40 bg-accent text-accent-foreground dark:border-primary/40 dark:bg-accent dark:text-accent-foreground",
           )}

@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { ArrowRight, ChevronDown } from "lucide-react";
 import type { DiscoveryFeed, TokenCandidate, TokenScore } from "@/server/types";
-import { ChainBadge } from "@/components/common/chain-badge";
+import { ChainBadge, chainLabel } from "@/components/common/chain-badge";
 import { TokenIcon } from "@/components/common/token-icon";
 import { formatSignedPct } from "@/components/common/format";
 import { pnlTone } from "@/components/common/pnl-text";
@@ -16,6 +16,12 @@ import { formatAge, formatCompactUsd, formatHolders } from "./format";
 
 /** Same warm amber the blocker list uses — never the PnL red. */
 const BLOCKER_COLOR = "oklch(0.7 0.16 45)";
+
+/**
+ * Discovery rows are public scores, taken under the platform's default universe, so a
+ * failed gate is "the platform's floor", never "your floor".
+ */
+const AUDIENCE = "public";
 
 export const FEED_LABEL: Record<DiscoveryFeed, string> = {
   new_launches: "New launch",
@@ -43,6 +49,11 @@ export function TokenScoreRow({
    * a phone too — the row's own side link is hidden there to keep rows to two lines.
    */
   href,
+  /**
+   * The list is sorted by 24h change. A phone hides the change column, so the row then
+   * prints it in its meta line — otherwise the order reads as random.
+   */
+  emphasizeChange = false,
   className,
 }: {
   score: TokenScore;
@@ -50,6 +61,7 @@ export function TokenScoreRow({
   defaultOpen?: boolean;
   showTopBlocker?: boolean;
   href?: string;
+  emphasizeChange?: boolean;
   className?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -75,6 +87,17 @@ export function TokenScoreRow({
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
             <span className="truncate text-sm font-medium">{score.symbol}</span>
+            {/* The badge does not fit a phone row; a dot in its colour still tells a Base
+                token from the Solana ones around it. */}
+            <span
+              role="img"
+              aria-label={chainLabel(score.chain)}
+              title={chainLabel(score.chain)}
+              className={cn(
+                "size-1.5 shrink-0 rounded-full sm:hidden",
+                score.chain === "solana" ? "bg-[oklch(0.75_0.17_160)]" : "bg-[oklch(0.68_0.16_255)]",
+              )}
+            />
             <ChainBadge chain={score.chain} className="hidden sm:inline-flex" />
             {origin ? (
               <span className="hidden rounded border border-border/70 px-1.5 py-px text-[10px] text-muted-foreground md:inline">
@@ -82,16 +105,25 @@ export function TokenScoreRow({
               </span>
             ) : null}
           </span>
-          <span className="tnum mt-0.5 flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+          {/* Wraps between items, never inside one: "15d / old" split across two lines
+              read as two facts. */}
+          <span className="tnum mt-0.5 flex flex-wrap items-center gap-x-2 font-mono text-[11px] text-muted-foreground *:whitespace-nowrap">
             <span>{formatAge(score.ageHours)} old</span>
             <span aria-hidden>·</span>
             <span>{formatCompactUsd(score.liquidityUsd)} liq</span>
+            {/* No separator: when this wraps to its own line a leading "·" dangles, and
+                the colour already sets it apart. */}
+            {emphasizeChange ? (
+              <span className={cn("sm:hidden", pnlTone(score.priceChange24hPct, 1))}>
+                {formatSignedPct(score.priceChange24hPct, 1)} 24h
+              </span>
+            ) : null}
             <span aria-hidden className="hidden sm:inline">·</span>
             <span className="hidden sm:inline">{formatHolders(score.holderCount)} holders</span>
           </span>
           {showTopBlocker && score.blockers.length > 0 ? (
             <span className="mt-1 block truncate text-[11px] leading-relaxed" style={{ color: BLOCKER_COLOR }}>
-              {describeBlocker(score.blockers[0]).title}
+              {describeBlocker(score.blockers[0], AUDIENCE).title}
               {score.blockers.length > 1 ? ` +${score.blockers.length - 1} more` : ""}
             </span>
           ) : null}
@@ -132,7 +164,7 @@ export function TokenScoreRow({
 
           <ScoreBreakdown components={score.components} dense />
 
-          <BlockerList blockers={score.blockers} warnings={score.warnings} />
+          <BlockerList blockers={score.blockers} warnings={score.warnings} audience={AUDIENCE} />
 
           <p className="text-[11px] text-muted-foreground">
             Scored from {score.sources.join(", ")}.

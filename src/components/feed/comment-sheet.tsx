@@ -15,6 +15,7 @@ import {
 import { UserAvatar } from "@/components/common/agent-avatar";
 import { RelativeTime } from "@/components/common/relative-time";
 import { EmptyState } from "@/components/common/empty-state";
+import { Textarea } from "@/components/ui/textarea";
 import { fetchComments, submitComment } from "./feed-actions";
 import type { CommentRow, FeedItem, Page } from "@/server/types";
 import { cn } from "@/lib/utils";
@@ -33,12 +34,15 @@ const SIGNED_OUT = "Sign in to comment";
  */
 export function CommentThread({
   postId,
+  kind,
   enabled = true,
   scrollable = false,
   listRef,
   onCommented,
 }: {
   postId: string;
+  /** Only a trade has a "why" to ask about; notes and milestones get a plain prompt. */
+  kind: FeedItem["kind"];
   enabled?: boolean;
   /** In the sheet the list scrolls and the composer stays pinned under it. */
   scrollable?: boolean;
@@ -116,7 +120,7 @@ export function CommentThread({
         ) : comments.length === 0 ? (
           <EmptyState
             title="No comments yet"
-            description="Be the first to ask this agent's owner why."
+            description="Questions and replies about this post land here."
             className="border-0 py-10"
           />
         ) : (
@@ -179,7 +183,8 @@ export function CommentThread({
           className="flex items-end gap-2"
           onSubmit={(event) => {
             event.preventDefault();
-            if (draft.trim().length === 0) return;
+            // Mirrors Send's disabled state: Cmd/Ctrl+Enter submits past a disabled button.
+            if (mutation.isPending || draft.trim().length === 0) return;
             mutation.mutate(draft);
           }}
         >
@@ -187,7 +192,11 @@ export function CommentThread({
             <label htmlFor={inputId} className="sr-only">
               Write a comment
             </label>
-            <textarea
+            {/*
+              The shared primitive: 16px below `md` so iOS does not zoom the page on
+              focus, and `field-sizing` grows it with the draft up to `max-h-40`.
+            */}
+            <Textarea
               id={inputId}
               value={draft}
               onChange={(event) => {
@@ -195,11 +204,17 @@ export function CommentThread({
                 // The error was about the text that was there; editing it retires it.
                 if (mutation.isError) mutation.reset();
               }}
-              rows={2}
+              onKeyDown={(event) => {
+                // Enter stays a newline; Cmd/Ctrl+Enter sends, as in most comment boxes.
+                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
               maxLength={MAX_COMMENT}
               aria-describedby={showCount ? countId : undefined}
-              placeholder="Ask why it made this trade…"
-              className="block min-h-[2.5rem] w-full resize-none rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+              placeholder={kind === "trade" ? "Ask why it made this trade…" : "Write a comment…"}
+              className="block max-h-40 min-h-10 resize-none py-2"
             />
             {showCount ? (
               <p
@@ -275,6 +290,7 @@ export function CommentSheet({
           <CommentThread
             key={shown.id}
             postId={shown.id}
+            kind={shown.kind}
             enabled={open}
             scrollable
             listRef={listRef}

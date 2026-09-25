@@ -297,7 +297,6 @@ export function mockUserProfile(handle: string): UserProfile | null {
     isFollowedByViewer: user.handle === "nova",
     isSelf: user.handle === "rami",
     agents,
-    totalPnlUsd: round(agents.reduce((sum, a) => sum + (a.pnlUsd ?? 0), 0)),
   };
 }
 

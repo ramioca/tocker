@@ -29,6 +29,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { MorphButton } from "@/components/spectrumui/morph-button";
+import { MORPH_FOCUS } from "@/components/common/focus";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { Address } from "@/components/common/address";
 import { formatUsd } from "@/components/common/format";
@@ -172,155 +173,160 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
 
       {/* The primitive sizes a right sheet with `data-[side=right]:` classes, so the
           override has to use the same variant for tailwind-merge to replace them; a
-          bare `w-full` lost to its 75% and left 292px on a phone. */}
-      <SheetContent side="right" className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md">
-        <SheetHeader>
-          <SheetTitle>Trade on {agent.name}</SheetTitle>
-          <SheetDescription>
-            Your order, its book. It still goes through this agent&rsquo;s score, its caps and its
-            blocklist — manual means you choose, not that the rules stop applying.
-          </SheetDescription>
-        </SheetHeader>
+          bare `w-full` lost to its 75% and left 292px on a phone.
+          The form scrolls and the footer does not: with the whole sheet scrolling, the
+          preview pushed the Buy button below the fold on a phone, so the one control
+          the preview exists to inform was the one you could not see. */}
+      <SheetContent side="right" className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <SheetHeader>
+            <SheetTitle>Trade on {agent.name}</SheetTitle>
+            <SheetDescription>
+              Your order, its book. It still goes through this agent&rsquo;s score, its caps and its
+              blocklist — manual means you choose, not that the rules stop applying.
+            </SheetDescription>
+          </SheetHeader>
 
-        <div className="space-y-4 px-4">
-          <div className="grid grid-cols-2 gap-2">
-            {(["buy", "sell"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={side === option}
-                onClick={() => setSide(option)}
-                className={cn(
-                  "rounded-lg border py-2 text-sm font-medium capitalize",
-                  "transition-[border-color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  side === option
-                    ? option === "buy"
-                      ? "border-[oklch(0.72_0.17_150)]/50 bg-[oklch(0.72_0.17_150)]/10"
-                      : "border-[oklch(0.68_0.2_25)]/50 bg-[oklch(0.68_0.2_25)]/10"
-                    : "border-border/70 hover:border-border hover:bg-muted/40",
-                )}
-              >
-                {option}
-              </button>
-            ))}
-          </div>
+          <div className="space-y-4 px-4 pb-4">
+            <div className="grid grid-cols-2 gap-2">
+              {(["buy", "sell"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={side === option}
+                  onClick={() => setSide(option)}
+                  className={cn(
+                    "rounded-lg border py-2 text-sm font-medium capitalize",
+                    "transition-[border-color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    side === option
+                      ? option === "buy"
+                        ? "border-[oklch(0.72_0.17_150)]/50 bg-[oklch(0.72_0.17_150)]/10"
+                        : "border-[oklch(0.68_0.2_25)]/50 bg-[oklch(0.68_0.2_25)]/10"
+                      : "border-border/70 hover:border-border hover:bg-muted/40",
+                  )}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
 
-          {agent.chains.length > 1 ? (
-            <Field label="Chain">
-              <div className="flex flex-wrap gap-2">
-                {agent.chains.map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    aria-pressed={chain === option}
-                    onClick={() => setChain(option)}
-                    className={cn(
-                      "rounded-lg border px-2.5 py-1.5",
-                      "transition-[border-color,background-color] duration-150",
-                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      chain === option ? "border-primary/50 bg-primary/8" : "border-border/70 hover:bg-muted/40",
-                    )}
+            {agent.chains.length > 1 ? (
+              <Field label="Chain">
+                <div className="flex flex-wrap gap-2">
+                  {agent.chains.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      aria-pressed={chain === option}
+                      onClick={() => setChain(option)}
+                      className={cn(
+                        "rounded-lg border px-2.5 py-1.5",
+                        "transition-[border-color,background-color] duration-150",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        chain === option ? "border-primary/50 bg-primary/8" : "border-border/70 hover:bg-muted/40",
+                      )}
+                    >
+                      <ChainBadge chain={option} />
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            ) : null}
+
+            <Field
+              label="Token"
+              htmlFor="manual-token"
+              hint={
+                chain === "solana"
+                  ? "Paste the mint. A symbol works for tokens Tocker has already seen."
+                  : "Paste the contract address (0x…)."
+              }
+            >
+              <Input
+                id="manual-token"
+                value={tokenAddress}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder={chain === "solana" ? "DezXAZ8z…B263" : "0x532f27…42E4"}
+                onChange={(event) => setTokenAddress(event.target.value)}
+                className="font-mono text-xs"
+              />
+            </Field>
+
+            <Field label="Size" htmlFor="manual-amount" hint={`Capped at ${formatUsd(agent.config?.risk.maxTradeUsd ?? 0)} per trade by this agent's own risk rules.`}>
+              <div className="space-y-2">
+                <div className="relative">
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute inset-y-0 left-2.5 grid place-items-center font-mono text-sm text-muted-foreground"
                   >
-                    <ChainBadge chain={option} />
-                  </button>
-                ))}
+                    $
+                  </span>
+                  <Input
+                    id="manual-amount"
+                    value={amount}
+                    inputMode="decimal"
+                    onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ""))}
+                    className="tnum pl-6 font-mono"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {SIZE_PRESETS.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setAmount(String(preset))}
+                      className="tnum rounded-md border border-border/70 px-2 py-1 font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      ${preset}
+                    </button>
+                  ))}
+                </div>
               </div>
             </Field>
-          ) : null}
 
-          <Field
-            label="Token"
-            htmlFor="manual-token"
-            hint={
-              chain === "solana"
-                ? "Paste the mint. A symbol works for tokens Tocker has already seen."
-                : "Paste the contract address (0x…)."
-            }
-          >
-            <Input
-              id="manual-token"
-              value={tokenAddress}
-              spellCheck={false}
-              autoComplete="off"
-              placeholder={chain === "solana" ? "DezXAZ8z…B263" : "0x532f27…42E4"}
-              onChange={(event) => setTokenAddress(event.target.value)}
-              className="font-mono text-xs"
+            <Field label="Note" htmlFor="manual-note" hint="Published with the fill, like any other trade's rationale. Left blank it reads “Manual trade by the owner.”">
+              <Textarea
+                id="manual-note"
+                value={note}
+                rows={2}
+                maxLength={500}
+                onChange={(event) => setNote(event.target.value)}
+                placeholder="Why you are taking this one yourself."
+                className="text-xs leading-relaxed"
+              />
+            </Field>
+
+            {/* The size the agent's own sizing mode allows right now, and why. Shown next
+                to the amount field so a refusal is never the first time anyone sees it. */}
+            <SizingSummary
+              sizing={readSizing(agent.config?.risk as AgentRiskWithSizing | undefined)}
+              maxTradeUsd={agent.config?.risk.maxTradeUsd ?? 0}
+              equityUsd={agent.equityUsd}
             />
-          </Field>
 
-          <Field label="Size" htmlFor="manual-amount" hint={`Capped at ${formatUsd(agent.config?.risk.maxTradeUsd ?? 0)} per trade by this agent's own risk rules.`}>
-            <div className="space-y-2">
-              <div className="relative">
-                <span
-                  aria-hidden
-                  className="pointer-events-none absolute inset-y-0 left-2.5 grid place-items-center font-mono text-sm text-muted-foreground"
-                >
-                  $
-                </span>
-                <Input
-                  id="manual-amount"
-                  value={amount}
-                  inputMode="decimal"
-                  onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ""))}
-                  className="tnum pl-6 font-mono"
-                />
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {SIZE_PRESETS.map((preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => setAmount(String(preset))}
-                    className="tnum rounded-md border border-border/70 px-2 py-1 font-mono text-[11px] text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    ${preset}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </Field>
-
-          <Field label="Note" htmlFor="manual-note" hint="Published with the fill, like any other trade's rationale. Left blank it reads “Manual trade by the owner.”">
-            <Textarea
-              id="manual-note"
-              value={note}
-              rows={2}
-              maxLength={500}
-              onChange={(event) => setNote(event.target.value)}
-              placeholder="Why you are taking this one yourself."
-              className="text-xs leading-relaxed"
+            <PreviewPanel
+              preview={preview}
+              side={side}
+              amountUsd={amountUsd}
+              error={previewError}
+              loading={previewing}
+              ready={ready}
             />
-          </Field>
 
-          {/* The size the agent's own sizing mode allows right now, and why. Shown next
-              to the amount field so a refusal is never the first time anyone sees it. */}
-          <SizingSummary
-            sizing={readSizing(agent.config?.risk as AgentRiskWithSizing | undefined)}
-            maxTradeUsd={agent.config?.risk.maxTradeUsd ?? 0}
-            equityUsd={agent.equityUsd}
-          />
-
-          <PreviewPanel
-            preview={preview}
-            side={side}
-            amountUsd={amountUsd}
-            error={previewError}
-            loading={previewing}
-            ready={ready}
-          />
-
-          {receipt ? (
-            <section aria-label="Fill receipt" className="space-y-2">
-              <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-                Filled
-              </h3>
-              <TradeReceiptCard receipt={receipt} />
-            </section>
-          ) : null}
+            {receipt ? (
+              <section aria-label="Fill receipt" className="space-y-2">
+                <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+                  Filled
+                </h3>
+                <TradeReceiptCard receipt={receipt} />
+              </section>
+            ) : null}
+          </div>
         </div>
 
-        <SheetFooter>
+        <SheetFooter className="border-t border-border/60 bg-background/95 pb-[calc(1rem+env(safe-area-inset-bottom))]">
           {preview?.requiresApproval ? (
             <p className="text-[11px] leading-relaxed text-muted-foreground">
               This agent runs in approval mode, but a trade you place yourself is already approved —
@@ -343,7 +349,7 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
           ) : (
             <MorphButton
               size="md"
-              className="w-full"
+              className={cn("w-full", MORPH_FOCUS)}
               disabled={blocked}
               loadingLabel="Routing…"
               successLabel="Filled"

@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, Copy, RefreshCw } from "lucide-react";
+import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { AlertTriangle, Check, ChevronDown, Copy, RefreshCw } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -78,6 +78,10 @@ export function DepositSheet({
   // Why a sync came back empty. Without it the button just stopped spinning.
   const [syncNote, setSyncNote] = useState<string | null>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
+  const selectedTabRef = useRef<HTMLButtonElement>(null);
+  const uid = useId();
+  const tabId = (entry: Chain) => `${uid}-tab-${entry}`;
+  const panelId = `${uid}-panel`;
 
   const resync = async () => {
     setSyncing(true);
@@ -98,6 +102,31 @@ export function DepositSheet({
     }
   };
 
+  const selectChain = (next: Chain) => {
+    setChain(next);
+    setSyncNote(null);
+  };
+
+  // Roving focus per the ARIA tabs pattern, as on the leaderboard: one tab stop, and
+  // the arrows move the selection with the focus.
+  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    const last = CHAINS.length - 1;
+    const next =
+      event.key === "ArrowRight"
+        ? (i + 1) % CHAINS.length
+        : event.key === "ArrowLeft"
+          ? (i + last) % CHAINS.length
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? last
+              : null;
+    if (next === null) return;
+    event.preventDefault();
+    selectChain(CHAINS[next]);
+    event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+  };
+
   // "Deposit on …" sits at the bottom of the sheet; the tabs and address it switches are
   // at the top, so bring them into view instead of changing something off-screen.
   const depositOn = (next: Chain) => {
@@ -110,8 +139,11 @@ export function DepositSheet({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       {/* `data-[side=right]:` so these replace the sheet's own 3/4 width and max-w-sm rather than lose to them. */}
+      {/* Opens on the selected network, not the first tab: a sheet opened for Solana
+          used to put focus on Base. */}
       <SheetContent
         side="right"
+        initialFocus={selectedTabRef}
         className="overflow-y-auto data-[side=right]:w-full data-[side=right]:sm:max-w-md"
       >
         <SheetHeader>
@@ -147,18 +179,20 @@ export function DepositSheet({
             aria-label="Deposit network"
             className="scroll-mt-4 grid grid-cols-2 gap-1 rounded-xl border border-border/60 bg-muted/20 p-1"
           >
-            {CHAINS.map((entry) => {
+            {CHAINS.map((entry, i) => {
               const active = entry === chain;
               return (
                 <button
                   key={entry}
+                  ref={active ? selectedTabRef : undefined}
+                  id={tabId(entry)}
                   role="tab"
                   type="button"
                   aria-selected={active}
-                  onClick={() => {
-                    setChain(entry);
-                    setSyncNote(null);
-                  }}
+                  aria-controls={panelId}
+                  tabIndex={active ? 0 : -1}
+                  onClick={() => selectChain(entry)}
+                  onKeyDown={(event) => onTabKeyDown(event, i)}
                   className={cn(
                     "h-9 rounded-lg text-sm font-medium",
                     "transition-[background-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]",
@@ -174,7 +208,12 @@ export function DepositSheet({
             })}
           </div>
 
-          <div className="glass space-y-3 rounded-2xl border border-border/60 p-4">
+          <div
+            id={panelId}
+            role="tabpanel"
+            aria-labelledby={tabId(chain)}
+            className="glass space-y-3 rounded-2xl border border-border/60 p-4"
+          >
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-medium">Receive</h3>
               <ChainBadge chain={chain} />
@@ -222,8 +261,13 @@ export function DepositSheet({
                   picking the wrong one loses the money.
                 */}
                 <details className="group border-t border-border/50 pt-3">
-                  <summary className="cursor-pointer list-none text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  {/* The chevron is what says this opens; without it the line read as a caption. */}
+                  <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
                     Sending from Coinbase, Kraken or Binance?
+                    <ChevronDown
+                      aria-hidden
+                      className="size-3 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] group-open:rotate-180"
+                    />
                   </summary>
                   <ol className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-muted-foreground">
                     <li>
@@ -272,7 +316,7 @@ export function DepositSheet({
             <div className="space-y-1.5">
               <OnrampButton chain={chain} address={chainCash.address ?? ""} amountUsd={25} />
               <p className="text-center text-[11px] text-muted-foreground">
-                Card or exchange, through Privy. Settles in a few minutes.
+                Card or exchange. Settles in a few minutes.
               </p>
             </div>
           ) : null}
@@ -289,11 +333,21 @@ export function DepositSheet({
 
 /** Keyed by address, so switching chains never shows "Copied" for an address that was not. */
 function CopyAddressButton({ address }: { address: string }) {
-  const { copied, copy } = useCopy();
+  const { copied, failed, copy } = useCopy();
   return (
     <Button variant="outline" size="lg" className="w-full" onClick={() => void copy(address)}>
-      {copied ? <Check aria-hidden className="text-positive" /> : <Copy aria-hidden />}
-      {copied ? "Copied" : "Copy address"}
+      {copied ? (
+        <Check aria-hidden className="text-positive" />
+      ) : failed ? (
+        <AlertTriangle aria-hidden className="text-destructive" />
+      ) : (
+        <Copy aria-hidden />
+      )}
+      {/* Said in the button, not a toast: a toast behind this modal sheet may never be
+          announced, and a refused clipboard used to look like nothing happened. */}
+      <span aria-live="polite">
+        {copied ? "Copied" : failed ? "Couldn't copy — select the address above" : "Copy address"}
+      </span>
     </Button>
   );
 }

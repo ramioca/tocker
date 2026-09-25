@@ -9,6 +9,13 @@ import { DEFAULT_SIZING } from "@/lib/trading/sizing";
 export const chainSchema = z.enum(["solana", "base"]);
 
 /**
+ * The longest name an agent can have. One constant for the builder, the settings form
+ * and the server: the builder used to stop at 48 and settings not at all, so a name
+ * could be typed in one place that the other would not take.
+ */
+export const MAX_AGENT_NAME = 60;
+
+/**
  * How big a ticket is. Optional, because every config written before sizing existed
  * has no such block and must keep behaving exactly as it did — `readSizing()` in
  * `src/lib/trading/sizing.ts` turns an absent block into plain `fixed_usd`.

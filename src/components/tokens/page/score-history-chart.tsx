@@ -7,6 +7,8 @@ import { formatAbsolute, formatUsd } from "@/components/common/format";
 import { VERDICT_META, verdictTint } from "@/components/tokens/verdict";
 import { formatCompactUsd } from "@/components/tokens/format";
 import { cn } from "@/lib/utils";
+import { isNoDataReading, scorePaths } from "./score-history-paths";
+import { axisLabels } from "./time-span";
 
 /**
  * 30 days of score, with the verdict bands shaded behind the line.
@@ -24,6 +26,10 @@ import { cn } from "@/lib/utils";
  * 720-unit viewBox letterboxed instead: at 390px the drawing shrank to 46% (9px labels
  * at 4px) inside a tall empty band, and at 1440px it sat centred with ~110px of dead
  * space either side.
+ *
+ * A reading where no provider answered (no price, liquidity or holders) is a gap, not
+ * a point: the line breaks around it and it sits on the baseline as a hollow tick.
+ * Drawn as a point it was a vertical crash to 0 that read as a rug.
  */
 
 const BANDS = [
@@ -43,10 +49,16 @@ export function ScoreHistoryChart({
   history,
   height = 220,
   className,
+  padLeft = PAD.left,
 }: {
   history: ScoreHistoryPoint[];
   height?: number;
   className?: string;
+  /**
+   * The left gutter, in px. Pass the price chart's own (`priceAxisPadLeft`) so a
+   * micro-cap's wider price labels do not push its plot right of this one.
+   */
+  padLeft?: number;
 }) {
   const [active, setActive] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -58,13 +70,13 @@ export function ScoreHistoryChart({
   const points = useMemo(
     () =>
       history
-        .map((p) => ({ ...p, t: new Date(p.at).getTime() }))
+        .map((p) => ({ ...p, t: new Date(p.at).getTime(), gap: isNoDataReading(p) }))
         .filter((p) => Number.isFinite(p.t))
         .sort((a, b) => a.t - b.t),
     [history],
   );
 
-  const plotW = Math.max(1, viewW - PAD.left - PAD.right);
+  const plotW = Math.max(1, viewW - padLeft - PAD.right);
   const plotH = height - PAD.top - PAD.bottom;
 
   const geometry = useMemo(() => {
@@ -72,11 +84,11 @@ export function ScoreHistoryChart({
     const first = points[0].t;
     const last = points[points.length - 1].t;
     const span = Math.max(1, last - first);
-    const x = (t: number) => PAD.left + ((t - first) / span) * plotW;
+    const x = (t: number) => padLeft + ((t - first) / span) * plotW;
     const y = (total: number) => PAD.top + (1 - Math.max(0, Math.min(100, total)) / 100) * plotH;
     const coords = points.map((p) => ({ ...p, cx: x(p.t), cy: y(p.total) }));
     return { coords, first, last, x, y };
-  }, [points, plotW, plotH]);
+  }, [points, plotW, plotH, padLeft]);
 
   const onMove = useCallback(
     (event: React.PointerEvent<SVGSVGElement>) => {
@@ -99,7 +111,9 @@ export function ScoreHistoryChart({
     [geometry, viewW],
   );
 
-  if (!geometry || points.length < 2) {
+  const validCount = points.filter((p) => !p.gap).length;
+
+  if (!geometry || points.length < 2 || validCount === 0) {
     return (
       <div ref={frameRef} className={cn("w-full min-w-0", className)}>
         <ChartEmpty
@@ -113,10 +127,13 @@ export function ScoreHistoryChart({
   }
 
   const { coords } = geometry;
-  const line = coords.map((p, i) => `${i === 0 ? "M" : "L"}${p.cx.toFixed(2)},${p.cy.toFixed(2)}`).join(" ");
-  const area = `${line} L${coords[coords.length - 1].cx.toFixed(2)},${(PAD.top + plotH).toFixed(2)} L${coords[0].cx.toFixed(2)},${(PAD.top + plotH).toFixed(2)} Z`;
+  const baseline = PAD.top + plotH;
+  const { line, area, lone } = scorePaths(coords, baseline);
+  const gaps = coords.filter((p) => p.gap);
   const hovered = active === null ? null : coords[active];
-  const latest = coords[coords.length - 1];
+  // The newest *reading*: a trailing gap is not the latest score.
+  const latest = coords.findLast((p) => !p.gap) ?? coords[coords.length - 1];
+  const [firstLabel, lastLabel] = axisLabels(coords[0].t, coords[coords.length - 1].t);
 
   return (
     <div ref={frameRef} className={cn("w-full min-w-0", className)}>
@@ -127,7 +144,7 @@ export function ScoreHistoryChart({
           width="100%"
           height={height}
           role="img"
-          aria-label={`Score history, ${points.length} points, latest ${Math.round(latest.total)} out of 100`}
+          aria-label={`Score history, ${validCount} reading${validCount === 1 ? "" : "s"}${gaps.length > 0 ? `, ${gaps.length} where no provider answered` : ""}, latest ${Math.round(latest.total)} out of 100`}
           // Hidden only until the first measurement, so the drawing never visibly snaps
           // from the 720-unit fallback to the real width after hydration.
           style={{ opacity: measured > 0 ? 1 : 0 }}
@@ -150,7 +167,7 @@ export function ScoreHistoryChart({
             return (
               <g key={band.verdict}>
                 <rect
-                  x={PAD.left}
+                  x={padLeft}
                   y={top}
                   width={plotW}
                   height={bandHeight}
@@ -159,8 +176,8 @@ export function ScoreHistoryChart({
                 {band.lo > 0 ? (
                   <>
                     <line
-                      x1={PAD.left}
-                      x2={PAD.left + plotW}
+                      x1={padLeft}
+                      x2={padLeft + plotW}
                       y1={top + bandHeight}
                       y2={top + bandHeight}
                       stroke={verdictTint(color, 30)}
@@ -168,7 +185,7 @@ export function ScoreHistoryChart({
                       strokeDasharray="3 4"
                     />
                     <text
-                      x={PAD.left - 6}
+                      x={padLeft - 6}
                       y={top + bandHeight + 3}
                       textAnchor="end"
                       className="tnum fill-muted-foreground font-mono text-[9px]"
@@ -190,6 +207,20 @@ export function ScoreHistoryChart({
             strokeLinejoin="round"
             strokeLinecap="round"
           />
+          {lone.map((p, i) => (
+            <circle key={`lone-${i}`} cx={p.cx} cy={p.cy} r="1.75" fill="var(--primary)" />
+          ))}
+          {gaps.map((p, i) => (
+            <circle
+              key={`gap-${i}`}
+              cx={p.cx}
+              cy={baseline - 3}
+              r="2.5"
+              fill="var(--background)"
+              stroke="var(--muted-foreground)"
+              strokeWidth="1"
+            />
+          ))}
 
           {hovered ? (
             <g>
@@ -201,14 +232,25 @@ export function ScoreHistoryChart({
                 stroke="var(--border)"
                 strokeWidth="1"
               />
-              <circle
-                cx={hovered.cx}
-                cy={hovered.cy}
-                r="3.5"
-                fill={VERDICT_META[hovered.verdict].color}
-                stroke="var(--background)"
-                strokeWidth="1.5"
-              />
+              {hovered.gap ? (
+                <circle
+                  cx={hovered.cx}
+                  cy={baseline - 3}
+                  r="3.5"
+                  fill="var(--background)"
+                  stroke="var(--foreground)"
+                  strokeWidth="1.25"
+                />
+              ) : (
+                <circle
+                  cx={hovered.cx}
+                  cy={hovered.cy}
+                  r="3.5"
+                  fill={VERDICT_META[hovered.verdict].color}
+                  stroke="var(--background)"
+                  strokeWidth="1.5"
+                />
+              )}
             </g>
           ) : (
             <circle
@@ -221,21 +263,23 @@ export function ScoreHistoryChart({
             />
           )}
 
-          <text
-            x={PAD.left}
-            y={height - 6}
-            className="tnum fill-muted-foreground font-mono text-[9px]"
-          >
-            {shortDate(coords[0].at)}
-          </text>
-          <text
-            x={PAD.left + plotW}
-            y={height - 6}
-            textAnchor="end"
-            className="tnum fill-muted-foreground font-mono text-[9px]"
-          >
-            {shortDate(latest.at)}
-          </text>
+          {/* Client-only, like the measured width: the labels are in the viewer's time
+              zone, which the server cannot know, and a mismatch would fail hydration. */}
+          {measured > 0 ? (
+            <>
+              <text x={padLeft} y={height - 6} className="tnum fill-muted-foreground font-mono text-[9px]">
+                {firstLabel}
+              </text>
+              <text
+                x={padLeft + plotW}
+                y={height - 6}
+                textAnchor="end"
+                className="tnum fill-muted-foreground font-mono text-[9px]"
+              >
+                {lastLabel}
+              </text>
+            </>
+          ) : null}
         </svg>
 
         <figcaption
@@ -244,6 +288,14 @@ export function ScoreHistoryChart({
         >
           {(() => {
             const point = hovered ?? latest;
+            if (point.gap) {
+              return (
+                <>
+                  <span className="font-sans">{formatAbsolute(point.at)}</span>
+                  <span className="font-sans">No provider answered</span>
+                </>
+              );
+            }
             const meta = VERDICT_META[point.verdict];
             return (
               <>
@@ -260,12 +312,6 @@ export function ScoreHistoryChart({
       </figure>
     </div>
   );
-}
-
-function shortDate(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 /**

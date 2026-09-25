@@ -34,8 +34,10 @@ export function TokenHeader({
   const change24h = facts?.priceChange24hPct ?? null;
 
   return (
-    <header className="border-b border-border/70 px-4 pt-6 pb-5 sm:px-6">
-      <div className="mx-auto w-full max-w-5xl">
+    // Padding inside the max-w box, as the body below does it — outside it, the header
+    // ran 24px wider than every card under it at desktop widths.
+    <header className="border-b border-border/70 pt-6 pb-5">
+      <div className="mx-auto w-full max-w-5xl px-4 sm:px-6">
         <div className="flex flex-wrap items-start gap-3">
           <TokenIcon token={token} size="md" className="mt-0.5" />
 

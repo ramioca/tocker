@@ -240,7 +240,7 @@ export async function evaluateLiveReadiness(input: ReadinessInput): Promise<Live
   const viewerIsAdmin = await ownerIsAdmin(input.ownerId);
 
   const [database, privy, mfa, wallets, killSwitch, data] = await Promise.all([
-    checkDatabase(),
+    checkDatabase(viewerIsAdmin),
     Promise.resolve(checkPrivy(viewerIsAdmin)),
     checkMfa(input.ownerId),
     checkWallets(input.agentId, input.config.chains, settings),
@@ -295,39 +295,71 @@ export async function evaluateLiveReadiness(input: ReadinessInput): Promise<Live
 
 // ---------------------------------------------------------------- individual checks
 
-async function checkDatabase(): Promise<ReadinessStep> {
+async function checkDatabase(viewerIsAdmin: boolean): Promise<ReadinessStep> {
   const embedded = isPglite();
+  let error: string | null = null;
   try {
     const db = await getDb();
     await db.execute(sql`select 1`);
-    if (embedded && process.env.NODE_ENV === "production") {
-      return {
-        id: "database",
-        title: "Production database reachable",
-        state: "fail",
-        detail:
-          "This deploy is running on embedded PGlite — a file on an ephemeral disk. Every trade it records is lost when the instance recycles.",
-        fix: { label: "Read /api/health", href: "/api/health" },
-      };
-    }
-    return {
-      id: "database",
-      title: "Production database reachable",
-      state: embedded ? "warn" : "pass",
-      detail: embedded
-        ? "Answering, but this is the local embedded PGlite file. Fine for development; never for real money."
-        : "Answering queries.",
-      fix: embedded ? { label: "Read /api/health", href: "/api/health" } : null,
-    };
   } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+    // A driver error can name the host or carry a connection string, so its words go to
+    // the server log, where the operator reads them, and never into a tenant's checklist.
+    console.error("[live-readiness] database", error);
+  }
+  return databaseStep({ embedded, production: process.env.NODE_ENV === "production", error, viewerIsAdmin });
+}
+
+export interface DatabaseStepInput {
+  /** Running on the embedded PGlite file rather than a real Postgres. */
+  embedded: boolean;
+  production: boolean;
+  /** What the driver said when `select 1` failed; null when it answered. */
+  error: string | null;
+  viewerIsAdmin: boolean;
+}
+
+/**
+ * The "Production database reachable" row, pure so both audiences are testable.
+ *
+ * Which database a deployment runs on, and why it failed, is the operator's business:
+ * an admin gets the diagnosis and the /api/health link, everyone else the outcome.
+ */
+export function databaseStep(input: DatabaseStepInput): ReadinessStep {
+  const { embedded, production, error, viewerIsAdmin } = input;
+  const health = viewerIsAdmin ? { label: "Read /api/health", href: "/api/health" } : null;
+  const step = { id: "database", title: "Production database reachable" } as const;
+  if (error !== null) {
     return {
-      id: "database",
-      title: "Production database reachable",
+      ...step,
       state: "fail",
-      detail: `The database did not answer: ${err instanceof Error ? err.message : String(err)}`,
-      fix: { label: "Read /api/health", href: "/api/health" },
+      detail: viewerIsAdmin
+        ? `The database did not answer: ${error}`
+        : "Tocker can't reach its database right now. Try again in a minute.",
+      fix: health,
     };
   }
+  if (embedded && production) {
+    return {
+      ...step,
+      state: "fail",
+      detail: viewerIsAdmin
+        ? "This deploy is running on embedded PGlite — a file on an ephemeral disk. Every trade it records is lost when the instance recycles."
+        : "Real-money trading isn't available on this deployment yet.",
+      fix: health,
+    };
+  }
+  if (embedded) {
+    return {
+      ...step,
+      state: "warn",
+      detail: viewerIsAdmin
+        ? "Answering, but this is the local embedded PGlite file. Fine for development; never for real money."
+        : "Running on a development database — fine for paper, never for real money.",
+      fix: health,
+    };
+  }
+  return { ...step, state: "pass", detail: "Answering queries.", fix: null };
 }
 
 /** What an owner is told when the deployment itself cannot hold real wallets. */

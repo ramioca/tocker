@@ -326,7 +326,9 @@ describe("myAgentsForBlocklist", () => {
   it("lists the viewer's agents and whether each already blocks the token", async () => {
     const before = await myAgentsForBlocklist(publicAgent.userId, "solana", ADDRESS);
     expect(before).toHaveLength(1);
-    expect(before[0]).toMatchObject({ id: publicAgent.agentId, blocked: false });
+    expect(before[0]).toMatchObject({ id: publicAgent.agentId, blocked: false, onChain: true });
+    const onBase = await myAgentsForBlocklist(publicAgent.userId, "base", ADDRESS);
+    expect(onBase[0].onChain).toBe(false);
 
     const [row] = await db
       .select({ config: schema.agents.config })

@@ -61,6 +61,8 @@ export interface CalendarHeatmapProps {
   data?: CalendarDay[];
   cell?: number;
   label?: string;
+  /** How the accessible name describes the span shown. Default 'over the last year'. */
+  rangeLabel?: string;
   hue?: string;
   status?: ChartStatus;
   onRetry?: () => void;
@@ -71,6 +73,7 @@ export function CalendarHeatmap({
   data = CONTRIBUTIONS,
   cell = 13,
   label = 'contributions',
+  rangeLabel = 'over the last year',
   hue = 'var(--spectrum-series-3)',
   status = 'ready',
   onRetry,
@@ -196,7 +199,7 @@ export function CalendarHeatmap({
             viewBox={`0 0 ${w} ${h}`}
             className="block select-none"
             role="img"
-            aria-label={`${formatCount(total)} ${label} over the last year. Longest streak ${streaks.longest} days.`}
+            aria-label={`${formatCount(total)} ${label} ${rangeLabel}. Longest streak ${streaks.longest} days.`}
             onPointerLeave={() => setHovered(null)}
           >
             <g className="font-mono">

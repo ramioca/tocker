@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   useInfiniteQuery,
   useQueryClient,
@@ -46,7 +47,12 @@ function patchPost(
 }
 
 export function FeedList({ initialPage }: { initialPage: FeedPage }) {
-  const [scope, setScope] = useState<Scope>("global");
+  // The scope lives in `?tab=`, so Back from a post or an agent lands on the list
+  // it was opened from. Read with `useSearchParams` rather than handed down by the
+  // page: Back restores the page from the router cache, while the hook follows the entry.
+  const searchParams = useSearchParams();
+  const scope: Scope = searchParams.get("tab") === "following" ? "following" : "global";
+  const scrollOnSwitch = useRef(false);
   const [commentTarget, setCommentTarget] = useState<FeedItem | null>(null);
   const queryClient = useQueryClient();
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -63,6 +69,24 @@ export function FeedList({ initialPage }: { initialPage: FeedPage }) {
   });
 
   const { fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } = query;
+
+  function selectScope(next: Scope) {
+    if (next === scope) return;
+    scrollOnSwitch.current = true;
+    // Native `replaceState` is synced into the Next router without a server round
+    // trip, and replacing rather than pushing keeps Back meaning "the page before".
+    window.history.replaceState(null, "", next === "following" ? "/feed?tab=following" : "/feed");
+  }
+
+  // The strip is sticky, so a switch from deep in one list would land just as deep
+  // in the other, with the sentinel quietly fetching pages to fill the gap. Start
+  // the new list at its first post instead — after the commit, before the paint, so
+  // the old list is never seen jumping. Only on a switch: a Back must keep its place.
+  useLayoutEffect(() => {
+    if (!scrollOnSwitch.current) return;
+    scrollOnSwitch.current = false;
+    if (window.scrollY > 0) window.scrollTo({ top: 0, behavior: "instant" });
+  }, [scope]);
 
   // Infinite scroll. No animation on the appended rows: the feed is scrolled
   // dozens of times a session and motion on arrival reads as jank, not polish.
@@ -119,7 +143,7 @@ export function FeedList({ initialPage }: { initialPage: FeedPage }) {
       {/* The only blurred surface in the feed viewport: the cards underneath are
           `.glass`, which carries the same tint with no backdrop-filter. */}
       <div data-sticky-subnav className="glass-bar sticky top-14 z-20 -mx-4 border-b border-b-[var(--glass-hairline)] px-4 py-2 sm:-mx-5 sm:px-5">
-        <Tabs value={scope} onValueChange={(value) => setScope(value as Scope)}>
+        <Tabs value={scope} onValueChange={(value) => selectScope(value as Scope)}>
           <TabsList variant="line" className="h-8">
             <TabsTrigger value="global" className="px-3">
               Global

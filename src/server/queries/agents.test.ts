@@ -153,6 +153,56 @@ describe("all-time PnL has one basis", () => {
     const [card] = await listMyAgents(agent.userId);
     expect(card.pnlUsd).toBeCloseTo(756.58, 6);
   });
+
+  it("puts the same all-time number on the leaderboard as on the card below it", async () => {
+    const agent = await seedAgent(db, { mode: "paper" });
+    await snapshot(agent.agentId, daysAgo(5), 9_998.16, "paper");
+    await snapshot(agent.agentId, daysAgo(1), 10_756.58, "paper");
+
+    const row = (await getLeaderboard("all", 500)).find((r) => r.agent.id === agent.agentId);
+    expect(row!.pnlPct).toBeCloseTo(7.5658, 4);
+    expect(row!.pnlPct).toBe(row!.agent.pnlPct);
+  });
+});
+
+describe("the leaderboard's trade count follows its window", () => {
+  async function seedFill(agentId: string, ownerId: string, at: Date) {
+    await db.insert(schema.trades).values({
+      id: nanoid(),
+      agentId,
+      ownerId,
+      chain: "solana",
+      side: "buy",
+      tokenId: BONK_ID,
+      quoteTokenId: USDC_ID,
+      amountToken: toNumeric(1, 12),
+      amountUsd: toNumeric(2, 6),
+      priceUsd: toNumeric(0.000021, 12),
+      feeUsd: toNumeric(0.1, 6),
+      status: "filled",
+      isPaper: true,
+      origin: "agent",
+      createdAt: at,
+      filledAt: at,
+    });
+  }
+
+  it("counts only fills inside the window, and every fill under all time", async () => {
+    const agent = await seedAgent(db, { mode: "paper" });
+    await snapshot(agent.agentId, daysAgo(40), 10_000, "paper");
+    await snapshot(agent.agentId, daysAgo(8), 10_100, "paper");
+    await snapshot(agent.agentId, daysAgo(1), 10_200, "paper");
+    // Eight days ago is inside the snapshot baseline margin but outside the 7-day window.
+    await seedFill(agent.agentId, agent.userId, daysAgo(20));
+    await seedFill(agent.agentId, agent.userId, daysAgo(8));
+    await seedFill(agent.agentId, agent.userId, daysAgo(2));
+
+    const count = async (window: "7d" | "30d" | "all") =>
+      (await getLeaderboard(window, 500)).find((r) => r.agent.id === agent.agentId)?.tradeCount;
+    expect(await count("7d")).toBe(1);
+    expect(await count("30d")).toBe(3);
+    expect(await count("all")).toBe(3);
+  });
 });
 
 describe("run and trade history are gated on the viewer", () => {

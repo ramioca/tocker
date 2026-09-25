@@ -117,6 +117,8 @@ export interface AuditRow {
   summary: string;
   agentId: string | null;
   agentName: string | null;
+  /** Set while the agent still exists (and is the viewer's), so its name can link to it. */
+  agentSlug: string | null;
   metadata: Record<string, unknown> | null;
   ip: string | null;
   userAgent: string | null;

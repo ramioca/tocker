@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { agentConfigSchema } from "@/lib/agent/config";
 import { LiquidMetal } from "@/components/common/liquid-metal";
 import { MorphButton } from "@/components/spectrumui/morph-button";
+import { MORPH_FOCUS } from "@/components/common/focus";
 import { formatUsd } from "@/components/common/format";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { createAgentAction } from "@/components/agents/agent-actions";
@@ -18,8 +19,9 @@ import {
   RiskStep,
   ScheduleStep,
   UniverseStep,
+  ttlLabel,
 } from "./steps";
-import { universeSentence } from "./universe-controls";
+import { universeSummary } from "./universe-controls";
 import { useDraft } from "./use-draft";
 import { useFundingPlan } from "@/components/wallets/use-funding-plan";
 import { useRefreshCash } from "@/components/wallets/use-cash";
@@ -293,6 +295,15 @@ export function AgentBuilder({
   const interval = draft.config.schedule.intervalMinutes;
   const runsPerDay = interval === 0 ? 0 : Math.round(1_440 / interval);
   const risk = draft.config.risk;
+  const execution = draft.config.execution;
+  // "Ask me first" is the default, and an agent in it never fills until you approve; with
+  // the Schedule card collapsed, nothing else on the page said so.
+  const executionLabel =
+    execution.mode === "approve"
+      ? `asks before each trade (${ttlLabel(execution.proposalTtlMinutes)} to decide)`
+      : "trades on its own";
+  // Funded and headed for the checklist: the create holds its schedule until the switch.
+  const heldForLive = draft.funding.mode === "fund" && draft.goLive;
   // The same short form as the balance buttons in the Schedule card.
   const paperLabel =
     draft.paperStartingUsd >= 1_000 ? `$${draft.paperStartingUsd / 1_000}K` : formatUsd(draft.paperStartingUsd);
@@ -329,12 +340,16 @@ export function AgentBuilder({
         if (target) {
           target.scrollIntoView({ behavior: "smooth", block: "center" });
           target.focus({ preventScroll: true });
-        } else if (badRules.length > 0) {
+          // The focused field carries its own message; a toast repeating it only
+          // covers the commit bar on a phone.
+          return;
+        }
+        if (badRules.length > 0) {
           rulesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
         }
-      });
-      toast.error("Something is still missing", {
-        description: Object.values(allErrors)[0],
+        toast.error("Something is still missing", {
+          description: Object.values(allErrors)[0],
+        });
       });
       throw new Error("invalid");
     }
@@ -506,7 +521,7 @@ export function AgentBuilder({
 
           <RuleCard
             title="Where it hunts"
-            summary={universeSentence(draft.config.universe as AgentConfig["universe"], draft.config.chains)}
+            summary={universeSummary(draft.config.universe as AgentConfig["universe"], draft.config.chains)}
             open={open.has("universe")}
             onToggle={() => toggle("universe")}
             hasError={attempted && RULE_ERROR_KEYS.universe.some((key) => errors[key])}
@@ -561,9 +576,11 @@ export function AgentBuilder({
           <RuleCard
             title="Schedule & mode"
             summary={
-              draft.funding.mode === "fund"
-                ? `${intervalLabel(interval)} · real money only · ${draft.goLive ? "live after the checklist" : "paper until you go live"}`
-                : `${intervalLabel(interval)} · ${draft.activate ? "starts active" : "starts paused"} · ${paperLabel} paper`
+              heldForLive
+                ? `${intervalLabel(interval)} · ${executionLabel} · real money only, live after the checklist`
+                : draft.funding.mode === "fund"
+                  ? `${intervalLabel(interval)} · ${executionLabel} · paper on the funded amount until you go live`
+                  : `${intervalLabel(interval)} · ${executionLabel} · ${draft.activate ? "starts active" : "starts paused"} · ${paperLabel} paper`
             }
             open={open.has("schedule")}
             onToggle={() => toggle("schedule")}
@@ -591,12 +608,20 @@ export function AgentBuilder({
           ) : null}
           {runsPerDay === 0 ? (
             <>Manual runs only — nothing is spent until you press Run now.</>
+          ) : heldForLive ? (
+            // The Mode card promises it never trades paper, so this line cannot count
+            // paper runs: nothing ticks until the hold-to-confirm on the checklist.
+            <>
+              No ticks until you switch it live on the checklist — then ~
+              <span className="tnum font-mono">{runsPerDay}</span> runs/day, up to{" "}
+              <span className="tnum font-mono">{formatUsd(costPerRun)}</span> data each.
+            </>
           ) : (
             <>
               ~<span className="tnum font-mono">{runsPerDay}</span> runs/day · up to{" "}
               <span className="tnum font-mono">{formatUsd(costPerRun)}</span> data each, capped at{" "}
-              <span className="tnum font-mono">{formatUsd(risk.maxDataSpendUsdPerRun)}</span>/run —
-              paper trades until you go live.
+              <span className="tnum font-mono">{formatUsd(risk.maxDataSpendUsdPerRun)}</span>/run —{" "}
+              {execution.mode === "approve" ? "proposes paper trades for you to approve." : "paper trades until you go live."}
             </>
           )}
         </p>
@@ -609,7 +634,7 @@ export function AgentBuilder({
             loadingLabel="Creating…"
             successLabel="Created"
             errorLabel="Check the form"
-            className="text-foreground dark:text-foreground"
+            className={cn("text-foreground dark:text-foreground", MORPH_FOCUS)}
           >
             Create agent
           </MorphButton>

@@ -1,6 +1,6 @@
 import "server-only";
 import type { Portfolio } from "@/lib/agent/portfolio";
-import { and, asc, desc, eq, gte, inArray, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, lt, ne, or, sql } from "drizzle-orm";
 import {
   agentRunSteps,
   agentRuns,
@@ -273,6 +273,34 @@ export async function listMyAgents(userId: string): Promise<AgentCard[]> {
     .where(eq(agents.ownerId, userId))
     .orderBy(desc(agents.createdAt));
   return buildAgentCards(db, rows);
+}
+
+/**
+ * Public agents whose name, slug or tagline contains `query`, for ⌘K. The same
+ * visibility rule as `listPublicAgents`, and only the four fields the palette shows:
+ * never config or runs. The caller strips LIKE wildcards from `query`.
+ */
+export async function searchPublicAgents(
+  query: string,
+  limit = 8,
+): Promise<Array<{ slug: string; name: string; tagline: string | null; mode: "paper" | "live" }>> {
+  const q = query.trim();
+  if (q.length === 0) return [];
+  const db = await getDb();
+  const like = `%${q}%`;
+  return db
+    .select({ slug: agents.slug, name: agents.name, tagline: agents.tagline, mode: agents.mode })
+    .from(agents)
+    .where(
+      and(
+        eq(agents.isPublic, true),
+        inArray(agents.status, ["active", "paused"]),
+        or(ilike(agents.name, like), ilike(agents.slug, like), ilike(agents.tagline, like)),
+      ),
+    )
+    // Shortest name first, as token search does: "Mike" should beat "Mike's Big Fund".
+    .orderBy(asc(sql`length(${agents.name})`), asc(agents.name))
+    .limit(Math.min(50, Math.max(1, limit)));
 }
 
 export async function listPublicAgents(opts?: {

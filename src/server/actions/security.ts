@@ -107,7 +107,7 @@ export async function noteMfaChangeAction(): Promise<ActionResult<MfaStatus>> {
 
   const before = await import("@/lib/security/mfa").then((m) => m.lastKnownMfaMethods(session.userId));
   const status = await getMfaStatus(session.userId);
-  if (!status.available) return fail(status.blockedReason ?? "Could not reach Privy");
+  if (!status.available) return fail(status.blockedReason ?? "Could not check your second factor right now");
 
   await rememberMfaStatus(session.userId, status.userMethods);
 

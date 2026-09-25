@@ -21,6 +21,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { MorphButton } from "@/components/spectrumui/morph-button";
+import { MORPH_FOCUS } from "@/components/common/focus";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { formatUsd } from "@/components/common/format";
 import {
@@ -160,6 +161,7 @@ export function ProposalPanel({
           {trade.isPaper ? (
             <MorphButton
               size="sm"
+              className={MORPH_FOCUS}
               loadingLabel="Approving…"
               successLabel="Filled"
               errorLabel="Refused"

@@ -14,6 +14,8 @@ import { TradesTable } from "@/components/agents/trades-table";
 import { PerformancePanel } from "@/components/agents/analytics";
 import { EquityChart } from "@/components/charts/equity-chart";
 import { accountPaused, agentBySlug, equitySeries, viewerSession } from "@/components/common/data-access";
+import { isLlmMock } from "@/lib/agent/mock-model";
+import { getDataSource } from "@/lib/data-sources/registry";
 import { getAgentStatus } from "@/server/queries/agent-status";
 import { listProposals } from "@/server/queries/proposals";
 import { getAgentAnalyticsWindows } from "@/server/queries/analytics";
@@ -65,9 +67,22 @@ export default async function AgentPage({ params }: Params) {
     agent.isOwner ? accountPaused(session?.userId ?? null) : Promise.resolve(false),
   ]);
 
+  // The one blocker that loses a run before it starts. A pause, a spent daily limit or
+  // a thin platform wallet still leave a run that can think and sell, so they leave
+  // "Run now" alone. `LLM_MOCK=1` thinks without a key.
+  const runBlocker = isLlmMock() ? null : (status.find((item) => item.kind === "no_llm_key") ?? null);
+
+  // The owner's sources by name, as Discover prints them. Resolved here because the
+  // registry is server-side and the summary is also imported by client code.
+  const sourceNames: Record<string, string> = {};
+  for (const id of agent.config?.dataSources ?? []) {
+    const source = getDataSource(id);
+    if (source) sourceNames[id] = source.name;
+  }
+
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
-      <AgentHeader agent={agent} accountPaused={paused} />
+      <AgentHeader agent={agent} accountPaused={paused} runBlocker={runBlocker} />
 
       <div className="mt-6 space-y-6">
         {/* Why it is not trading, above everything it is not trading with. Renders
@@ -120,7 +135,7 @@ export default async function AgentPage({ params }: Params) {
            */
           config={
             agent.config ? (
-              <AgentConfigSummary config={agent.config} />
+              <AgentConfigSummary config={agent.config} sourceNames={sourceNames} />
             ) : (
               <PrivateStrategyPanel agent={agent} />
             )

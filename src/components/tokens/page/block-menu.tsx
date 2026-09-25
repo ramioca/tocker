@@ -1,19 +1,24 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Ban, Check, Loader2 } from "lucide-react";
+import { Ban, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { addToBlocklist, removeFromBlocklist } from "@/server/actions/blocklist";
+import { safeAction } from "@/lib/safe-action";
 import type { BlocklistTarget } from "@/server/queries/tokens";
 import type { Chain } from "@/server/types";
+import { chainLabel } from "@/components/common/chain-badge";
+
+/** `onChain` is optional so an older caller that does not know it still gets a working menu. */
+type BlockTarget = BlocklistTarget & { onChain?: boolean };
 
 /**
  * "Block on…" — the only control a token page has over an agent.
@@ -25,6 +30,12 @@ import type { Chain } from "@/server/types";
  *
  * Only the viewer's own agents are listed — the server action re-checks
  * ownership, this is not the enforcement.
+ *
+ * Items are checkboxes, so a screen reader hears "checked" on a blocked agent instead
+ * of finding out only from text that appears after a click. An agent that does not
+ * trade this chain is listed but disabled — blocking it would toast "Base Camp will
+ * never touch WIF" about a token it could never reach — unless it is already blocked,
+ * in which case it stays enabled so the block can be lifted.
  */
 export function BlockMenu({
   chain,
@@ -35,7 +46,7 @@ export function BlockMenu({
   chain: Chain;
   address: string;
   symbol: string;
-  agents: BlocklistTarget[];
+  agents: BlockTarget[];
 }) {
   const [state, setState] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(agents.map((agent) => [agent.id, agent.blocked])),
@@ -47,13 +58,16 @@ export function BlockMenu({
 
   const blockedCount = Object.values(state).filter(Boolean).length;
 
-  const toggle = (agent: BlocklistTarget) => {
+  const toggle = (agent: BlockTarget) => {
     const currentlyBlocked = state[agent.id] === true;
     setBusyId(agent.id);
     startTransition(async () => {
-      const result = currentlyBlocked
-        ? await removeFromBlocklist(agent.id, chain, address)
-        : await addToBlocklist(agent.id, chain, address, symbol);
+      // Guarded, so a throw (offline, a deploy mid-flight) clears the spinner too.
+      const result = await safeAction<{ blocked: boolean; count: number }>(() =>
+        currentlyBlocked
+          ? removeFromBlocklist(agent.id, chain, address)
+          : addToBlocklist(agent.id, chain, address, symbol),
+      );
       setBusyId(null);
       if (!result.ok) {
         toast.error(result.error);
@@ -82,31 +96,33 @@ export function BlockMenu({
         {/* A description, not a group label: Base UI's GroupLabel throws outside a Group,
             and that took the whole token page down to the error screen. */}
         <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
-          Your agents will never trade {symbol}. This is the only list in Tocker, and it only
-          subtracts.
+          Stop an agent from ever trading {symbol}. Pick it again to lift the block. This list
+          only subtracts.
         </p>
         <DropdownMenuSeparator />
         {agents.map((agent) => {
           const blocked = state[agent.id] === true;
           const busy = pending && busyId === agent.id;
+          const offChain = agent.onChain === false;
           return (
-            <DropdownMenuItem
+            <DropdownMenuCheckboxItem
               key={agent.id}
+              checked={blocked}
+              onCheckedChange={() => toggle(agent)}
               closeOnClick={false}
-              disabled={busy}
-              onClick={() => toggle(agent)}
-              className="justify-between gap-2"
+              disabled={busy || (offChain && !blocked)}
+              className="gap-2"
             >
-              <span className="truncate">{agent.name}</span>
-              {busy ? (
-                <Loader2 aria-hidden className="size-3.5 animate-spin text-muted-foreground" />
-              ) : blocked ? (
-                <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                  <Check aria-hidden className="size-3.5" />
-                  blocked
-                </span>
-              ) : null}
-            </DropdownMenuItem>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{agent.name}</span>
+                {offChain ? (
+                  <span className="block text-[11px] text-muted-foreground">
+                    Doesn&rsquo;t trade {chainLabel(chain)}
+                  </span>
+                ) : null}
+              </span>
+              {busy ? <Loader2 aria-hidden className="size-3.5 animate-spin text-muted-foreground" /> : null}
+            </DropdownMenuCheckboxItem>
           );
         })}
       </DropdownMenuContent>

@@ -42,20 +42,31 @@ export function NotificationPrefs({ initial }: { initial: Prefs }) {
   return (
     <div className="space-y-4">
       <ul className="divide-y divide-border/70">
-        {NOTIFICATION_PREF_GROUPS.map((group) => (
-          <li key={group.id} className="flex items-center gap-4 py-3.5 first:pt-0 last:pb-0">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">{group.label}</p>
-              <p className="text-sm text-muted-foreground">{group.description}</p>
-            </div>
-            <AnimatedSwitch
-              checked={groupEnabled(prefs, group)}
-              onCheckedChange={(value) => set(group, value)}
-              label={group.label}
-              size="sm"
-            />
-          </li>
-        ))}
+        {NOTIFICATION_PREF_GROUPS.map((group) => {
+          const on = groupEnabled(prefs, group);
+          return (
+            <li key={group.id} className="flex items-center gap-4 py-3.5 first:pt-0 last:pb-0">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">{group.label}</p>
+                <p className="text-sm text-muted-foreground">{group.description}</p>
+              </div>
+              <AnimatedSwitch
+                checked={on}
+                onCheckedChange={(value) => set(group, value)}
+                label={group.label}
+                size="sm"
+                // The registry's off track is near-black on the dark card (well under
+                // the 3:1 a control's boundary needs); a lighter track, an edge and a
+                // lighter knob make "off" read as a switch rather than a gap.
+                className={
+                  on
+                    ? undefined
+                    : "dark:bg-neutral-600 dark:ring-1 dark:ring-inset dark:ring-white/25 dark:[&>span:nth-child(2)]:!bg-neutral-300"
+                }
+              />
+            </li>
+          );
+        })}
       </ul>
       <p className="text-xs leading-5 text-muted-foreground">
         Trades waiting for your approval and exits that failed to fill always come through.

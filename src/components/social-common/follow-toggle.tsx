@@ -19,6 +19,7 @@ export function FollowToggle({
   defaultFollowing = false,
   size = "sm",
   label,
+  targetName,
   className,
 }: {
   targetType: "user" | "agent";
@@ -26,6 +27,12 @@ export function FollowToggle({
   defaultFollowing?: boolean;
   size?: "sm" | "md" | "lg";
   label?: string;
+  /**
+   * Who this follows, e.g. "Bonk Maxi" or "@dex". A row of identical "Follow" buttons
+   * is ambiguous out of context (tabbing a leaderboard), so the name becomes a group
+   * label announced before the button, leaving the pill's own label untouched.
+   */
+  targetName?: string;
   className?: string;
 }) {
   const [following, setFollowing] = useState(defaultFollowing);
@@ -48,7 +55,7 @@ export function FollowToggle({
     });
   }
 
-  return (
+  const button = (
     <FollowButton
       following={following}
       onFollowingChange={onChange}
@@ -56,5 +63,11 @@ export function FollowToggle({
       followLabel={label ?? "Follow"}
       className={className}
     />
+  );
+  if (!targetName) return button;
+  return (
+    <span role="group" aria-label={targetName} className="inline-flex">
+      {button}
+    </span>
   );
 }

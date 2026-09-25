@@ -31,25 +31,32 @@ export function AdminBalancesTable({ snapshot }: { snapshot: AdminBalancesSnapsh
       hint={`${snapshot.fundedCount} funded · ${formatUsd(snapshot.totalUsdc)} USDC`}
       action={<RefreshBalances readAt={snapshot.readAt} />}
       maxHeightClass="max-h-[30rem]"
+      notice={
+        <>
+          {snapshot.privyConfigured ? null : (
+            <p className="border-b border-[var(--glass-hairline)] bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">Privy is not configured</span> — every balance below is a
+              placeholder zero, not a reading. Set <span className="font-mono">NEXT_PUBLIC_PRIVY_APP_ID</span> and{" "}
+              <span className="font-mono">PRIVY_APP_SECRET</span>.
+            </p>
+          )}
+          {snapshot.capped ? (
+            <p className="border-b border-[var(--glass-hairline)] bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+              Showing the most recently active wallets. {snapshot.walletsOnRecord} agent wallets are on record and
+              reading all of them would be two Privy calls each, so the read is capped.
+            </p>
+          ) : null}
+        </>
+      }
     >
-      {snapshot.privyConfigured ? null : (
-        <p className="border-b border-[var(--glass-hairline)] bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">Privy is not configured</span> — every balance below is a
-          placeholder zero, not a reading. Set <span className="font-mono">NEXT_PUBLIC_PRIVY_APP_ID</span> and{" "}
-          <span className="font-mono">PRIVY_APP_SECRET</span>.
-        </p>
-      )}
-      {snapshot.capped ? (
-        <p className="border-b border-[var(--glass-hairline)] bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
-          Showing the most recently active wallets. {snapshot.walletsOnRecord} agent wallets are on record and reading
-          all of them would be two Privy calls each, so the read is capped.
-        </p>
-      ) : null}
-
-      <DataTable label="Agent wallet balances" minWidth="52rem">
+      <DataTable label="Agent wallet balances" minWidth="40rem">
         <thead>
           <tr>
-            <Th sticky>Agent</Th>
+            {/* `w-[1%]` sizes the pinned column to its content: auto layout otherwise hands
+                it all the spare width, and on a phone it filled the whole scroller. */}
+            <Th sticky className="w-[1%]">
+              Agent
+            </Th>
             <Th>Chain</Th>
             <Th>Address</Th>
             <Th numeric>USDC</Th>
@@ -64,16 +71,26 @@ export function AdminBalancesTable({ snapshot }: { snapshot: AdminBalancesSnapsh
           ) : (
             rows.map((row) => (
               <tr key={row.walletId} className="hover:bg-muted/25">
-                <Td sticky className="max-w-[14rem]">
-                  <Link
-                    href={`/agents/${row.agentSlug}`}
-                    className="truncate underline-offset-2 hover:underline focus-visible:underline"
-                  >
-                    {row.agentName}
-                  </Link>
-                  {row.isPaper ? (
-                    <span className="ml-2 text-[10px] tracking-wide text-muted-foreground uppercase">paper</span>
-                  ) : null}
+                <Td sticky>
+                  {/* The cap lives on this span, not the cell — a table cell ignores max-width.
+                      Under `lg` the Chain column is scrolled off, so the chain rides along
+                      under the name: every agent has two wallets, and the rows read as
+                      duplicates without it. */}
+                  <span className="flex max-w-[7.5rem] flex-col sm:max-w-[14rem] lg:flex-row lg:items-baseline">
+                    <Link
+                      href={`/agents/${row.agentSlug}`}
+                      className="min-w-0 truncate underline-offset-2 hover:underline focus-visible:underline"
+                    >
+                      {row.agentName}
+                    </Link>
+                    <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground uppercase lg:ml-2">
+                      <span className="lg:hidden">
+                        {chainLabel(row.chain)}
+                        {row.isPaper ? " · " : null}
+                      </span>
+                      {row.isPaper ? "paper" : null}
+                    </span>
+                  </span>
                 </Td>
                 <Td muted className="font-sans text-xs">
                   {chainLabel(row.chain)}

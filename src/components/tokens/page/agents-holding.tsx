@@ -7,6 +7,11 @@
  *
  * Private agents appear only for their own owner (the query decides; this just
  * renders what it was handed).
+ *
+ * The name gets the row's width. It used to share one line with the mode badge, the
+ * value and a fixed-width PnL, and in the 22rem desktop column that left
+ * "Narrative Vel…". The count lives in the section heading, not in an avatar stack
+ * restating the rows under it.
  */
 import Link from "next/link";
 import { Users } from "lucide-react";
@@ -15,10 +20,16 @@ import { EmptyState } from "@/components/common/empty-state";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { PnlText } from "@/components/common/pnl-text";
 import { formatUsd } from "@/components/common/format";
-import { AvatarStack } from "@/components/spectrumui/avatar-stack";
-import type { TokenPage } from "@/server/types";
+import type { AgentMode, TokenPage } from "@/server/types";
 
 type Holder = TokenPage["holders"][number];
+
+/** The one mode every holder shares, or null when they differ (or there are none). */
+export function sharedHolderMode(holders: readonly Holder[]): AgentMode | null {
+  const first = holders[0]?.agent.mode;
+  if (!first) return null;
+  return holders.every((holder) => holder.agent.mode === first) ? first : null;
+}
 
 export function AgentsHolding({ holders }: { holders: Holder[] }) {
   if (holders.length === 0) {
@@ -31,20 +42,11 @@ export function AgentsHolding({ holders }: { holders: Holder[] }) {
     );
   }
 
+  // Shared by all of them → the heading carries one badge (page.tsx) instead of a row each.
+  const perRowMode = sharedHolderMode(holders) === null;
+
   return (
     <div className="overflow-hidden rounded-2xl border border-border/80 bg-card/40">
-      <div className="flex items-center gap-3 border-b border-border/60 px-3 py-2.5 sm:px-4">
-        <AvatarStack
-          items={holders.map((h) => ({ name: h.agent.name }))}
-          max={5}
-          size="sm"
-          expandable={false}
-        />
-        <p className="tnum text-xs text-muted-foreground">
-          {holders.length} agent{holders.length === 1 ? "" : "s"} holding
-        </p>
-      </div>
-
       <ul className="divide-y divide-border/60">
         {holders.map((holder) => (
           <li key={holder.agent.id}>
@@ -54,15 +56,19 @@ export function AgentsHolding({ holders }: { holders: Holder[] }) {
             >
               <AgentAvatar seed={holder.agent.avatarSeed} name={holder.agent.name} size="sm" />
               <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-1.5">
-                  <span className="truncate text-sm font-medium">{holder.agent.name}</span>
-                  <ModeBadge mode={holder.agent.mode} size="xs" />
+                <span className="block truncate text-sm font-medium">{holder.agent.name}</span>
+                {perRowMode ? (
+                  <span className="mt-0.5 flex">
+                    <ModeBadge mode={holder.agent.mode} size="xs" />
+                  </span>
+                ) : null}
+              </span>
+              <span className="flex shrink-0 flex-col items-end">
+                <span className="tnum text-xs text-muted-foreground">
+                  {formatUsd(holder.valueUsd, { compact: true })}
                 </span>
+                <PnlText pct={holder.unrealizedPnlPct} dp={1} size="xs" />
               </span>
-              <span className="tnum shrink-0 text-right text-xs text-muted-foreground">
-                {formatUsd(holder.valueUsd, { compact: true })}
-              </span>
-              <PnlText pct={holder.unrealizedPnlPct} dp={1} size="xs" className="w-16 shrink-0 text-right" />
             </Link>
           </li>
         ))}

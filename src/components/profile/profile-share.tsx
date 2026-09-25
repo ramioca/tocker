@@ -1,8 +1,9 @@
 "use client";
 
-import { UserPlus } from "lucide-react";
+import { Link2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { ShareButton } from "@/components/spectrumui/share-button";
+import { copyLink } from "@/components/common/copy-link";
 
 /**
  * Copy link, plus a ready-to-paste invite. Only share actions belong in the fan —
@@ -29,10 +30,14 @@ export function ProfileShare({ handle }: { handle: string }) {
   return (
     <ShareButton
       label={`Share @${handle}`}
-      copyValue={url}
       size="sm"
       direction="left"
       actions={[
+        {
+          icon: <Link2 className="size-4" aria-hidden />,
+          label: "Copy link",
+          onSelect: () => copyLink(url),
+        },
         {
           icon: <UserPlus className="size-4" aria-hidden />,
           label: "Copy an invite",

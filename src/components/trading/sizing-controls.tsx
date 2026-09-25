@@ -33,6 +33,73 @@ import { formatUsd } from "@/components/common/format";
 
 const MODES: PositionSizingMode[] = ["fixed_usd", "percent_equity", "volatility_scaled"];
 
+/** The bounds `positionSizingSchema` enforces on the server, so a Save can never trip them. */
+const PERCENT_BOUNDS = {
+  percentOfEquity: { min: 0.1, max: 100 },
+  referenceRangePct: { min: 1, max: 500 },
+} as const;
+
+/**
+ * A percentage typed freely and clamped when it is left — the same pattern as the risk
+ * sliders' exact-value box. Reporting every keystroke let "" and "500" reach the form,
+ * whose Save then failed on a schema path ("risk.sizing.percentOfEquity: Too big")
+ * the field itself never mentioned.
+ */
+function PercentInput({
+  id,
+  value,
+  min,
+  max,
+  describedBy,
+  onCommit,
+}: {
+  id: string;
+  value: number;
+  min: number;
+  max: number;
+  describedBy?: string;
+  onCommit: (value: number) => void;
+}) {
+  const [text, setText] = useState<string | null>(null);
+
+  const commit = () => {
+    if (text === null) return;
+    const parsed = Number(text);
+    // Emptied or unreadable: keep the value it had rather than inventing one.
+    if (text.trim() !== "" && Number.isFinite(parsed)) {
+      const clamped = Math.min(max, Math.max(min, Math.round(parsed * 100) / 100));
+      if (clamped !== value) onCommit(clamped);
+    }
+    setText(null);
+  };
+
+  return (
+    <div className="relative">
+      <Input
+        id={id}
+        type="text"
+        inputMode="decimal"
+        aria-describedby={describedBy}
+        className="tnum pr-7 font-mono"
+        value={text ?? String(value)}
+        onChange={(event) => setText(event.target.value.replace(/[^0-9.]/g, ""))}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            event.currentTarget.blur();
+          } else if (event.key === "Escape") {
+            setText(null);
+          }
+        }}
+      />
+      <span className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-xs text-muted-foreground">
+        %
+      </span>
+    </div>
+  );
+}
+
 export function SizingControls({
   value,
   maxTradeUsd,
@@ -62,7 +129,9 @@ export function SizingControls({
     setError(null);
     setSaved(false);
     startTransition(async () => {
-      const message = await onSave(draft);
+      // A throw is a save that never landed; say so rather than leave the spinner's
+      // silence to read as success.
+      const message = await onSave(draft).catch(() => "Could not reach Tocker. Not saved.");
       if (message) setError(message);
       else setSaved(true);
     });
@@ -113,21 +182,16 @@ export function SizingControls({
             <Label htmlFor="sizing-pct" className="text-xs">
               Share of equity
             </Label>
-            <div className="relative">
-              <Input
-                id="sizing-pct"
-                type="number"
-                min={0.1}
-                max={100}
-                step={0.5}
-                className="tnum pr-7 font-mono"
-                value={draft.percentOfEquity}
-                onChange={(e) => set("percentOfEquity", Number(e.target.value))}
-              />
-              <span className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-xs text-muted-foreground">
-                %
-              </span>
-            </div>
+            <PercentInput
+              id="sizing-pct"
+              value={draft.percentOfEquity}
+              {...PERCENT_BOUNDS.percentOfEquity}
+              describedBy="sizing-pct-range"
+              onCommit={(next) => set("percentOfEquity", next)}
+            />
+            <p id="sizing-pct-range" className="tnum text-[11px] leading-5 text-muted-foreground">
+              {PERCENT_BOUNDS.percentOfEquity.min}–{PERCENT_BOUNDS.percentOfEquity.max}% of equity
+            </p>
           </div>
 
           {draft.mode === "volatility_scaled" ? (
@@ -135,22 +199,17 @@ export function SizingControls({
               <Label htmlFor="sizing-range" className="text-xs">
                 Reference range
               </Label>
-              <div className="relative">
-                <Input
-                  id="sizing-range"
-                  type="number"
-                  min={1}
-                  max={500}
-                  step={5}
-                  className="tnum pr-7 font-mono"
-                  value={draft.referenceRangePct}
-                  onChange={(e) => set("referenceRangePct", Number(e.target.value))}
-                />
-                <span className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-xs text-muted-foreground">
-                  %
-                </span>
-              </div>
-              <p className="text-[11px] leading-5 text-muted-foreground">
+              <PercentInput
+                id="sizing-range"
+                value={draft.referenceRangePct}
+                {...PERCENT_BOUNDS.referenceRangePct}
+                describedBy="sizing-range-hint"
+                onCommit={(next) => set("referenceRangePct", next)}
+              />
+              <p id="sizing-range-hint" className="text-[11px] leading-5 text-muted-foreground">
+                <span className="tnum">
+                  {PERCENT_BOUNDS.referenceRangePct.min}–{PERCENT_BOUNDS.referenceRangePct.max}%.
+                </span>{" "}
                 A token that has ranged this much recently still gets a full clip. One ranging twice as wide gets half.
                 It never sizes <em>up</em>.
               </p>

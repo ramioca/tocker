@@ -45,6 +45,9 @@ export interface BuilderDraft {
   config: AgentConfigInput;
 }
 
+/** The longest name an agent can have; defined once, beside the config schema. */
+export { MAX_AGENT_NAME } from "@/lib/agent/config";
+
 export const AVATAR_SEEDS = [
   "aurora",
   "basilisk",
@@ -238,6 +241,8 @@ export interface UniversePreset {
   values: Omit<UniverseConfig, "blocklist">;
 }
 
+const DEFAULT_UNIVERSE = DEFAULT_AGENT_CONFIG.universe;
+
 /**
  * The fastest path for most people: one click sets the whole group. Each one is
  * a real posture, not a difficulty slider — they disagree about what to hunt,
@@ -265,17 +270,19 @@ export const UNIVERSE_PRESETS: UniversePreset[] = [
     id: "balanced",
     label: "Balanced",
     blurb: "Young enough to matter, liquid enough to leave. The default.",
+    // Read from the shipped default rather than restated: it said "The default" while
+    // adding top_organic, so a fresh agent never matched the card that claims to be it.
     values: {
-      discovery: ["gecko_launches", "paid_launches", "new_launches", "trending", "top_organic"],
-      minScore: 62,
-      minLiquidityUsd: 15_000,
-      minHolderCount: 150,
-      minAgeMinutes: 30,
-      maxAgeHours: null,
-      maxTop10HolderPct: 60,
-      maxBuyTaxPct: 5,
-      requireMintRevoked: true,
-      requireFreezeRevoked: true,
+      discovery: [...DEFAULT_UNIVERSE.discovery],
+      minScore: DEFAULT_UNIVERSE.minScore,
+      minLiquidityUsd: DEFAULT_UNIVERSE.minLiquidityUsd,
+      minHolderCount: DEFAULT_UNIVERSE.minHolderCount,
+      minAgeMinutes: DEFAULT_UNIVERSE.minAgeMinutes,
+      maxAgeHours: DEFAULT_UNIVERSE.maxAgeHours,
+      maxTop10HolderPct: DEFAULT_UNIVERSE.maxTop10HolderPct,
+      maxBuyTaxPct: DEFAULT_UNIVERSE.maxBuyTaxPct,
+      requireMintRevoked: DEFAULT_UNIVERSE.requireMintRevoked,
+      requireFreezeRevoked: DEFAULT_UNIVERSE.requireFreezeRevoked,
     },
   },
   {

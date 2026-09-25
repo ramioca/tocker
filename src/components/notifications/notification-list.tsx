@@ -42,6 +42,14 @@ const ICONS: Record<string, typeof Bell> = {
   digest: CalendarDays,
 };
 
+/**
+ * The kinds where money is at risk or a run broke: a stop or target that did not
+ * fill, a trade that confirmed but was never recorded, a failed run. They get the red
+ * tile and a "Needs attention" line, so they are the first rows the eye lands on
+ * rather than looking like a like or a follow.
+ */
+const ALERT_KINDS = new Set(["run_failed", "exit_failed", "trade_unsettled"]);
+
 /** `?trade=<id>` on a fill notification's href — how a row finds its own receipt. */
 export function tradeIdFrom(href: string | null): string | null {
   if (!href) return null;
@@ -155,7 +163,7 @@ function Row({
 }) {
   const Icon = ICONS[row.kind] ?? Bell;
   const unread = row.readAt === null;
-  const failed = row.kind === "run_failed";
+  const failed = ALERT_KINDS.has(row.kind);
 
   const content = (
     <div className="flex gap-3 px-4 py-3.5 sm:px-5">
@@ -169,6 +177,8 @@ function Row({
         <Icon className="size-4" aria-hidden />
       </span>
       <div className="min-w-0 flex-1">
+        {/* Words as well as the red tile, so the difference does not rest on colour. */}
+        {failed ? <p className="mb-0.5 text-[11px] font-medium text-destructive">Needs attention</p> : null}
         <p className={`text-sm ${unread ? "font-medium" : ""}`}>{row.title}</p>
         {row.body ? (
           <p className="mt-0.5 line-clamp-2 text-sm leading-6 text-muted-foreground">{row.body}</p>
@@ -203,7 +213,10 @@ function Row({
       href={row.href}
       unread={unread}
       markRead={markRead}
-      className={`block transition-colors duration-150 hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:-outline-offset-2 ${
+      // Inset, and rounded to match the list's own corners on the first and last rows:
+      // an outer ring is clipped by the list's overflow and covered by the next row,
+      // which left only a line along the bottom that read as a divider.
+      className={`block transition-colors duration-150 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none [li:first-child>&]:rounded-t-[15px] [li:last-child>&]:rounded-b-[15px] ${
         unread ? "bg-primary/[0.04]" : ""
       }`}
     >

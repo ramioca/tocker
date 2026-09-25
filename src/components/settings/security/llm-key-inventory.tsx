@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { KeyRound, Lock, RotateCcw } from "lucide-react";
@@ -51,15 +51,62 @@ export function LlmKeyInventory({ keys: initial, isAdmin = false }: { keys: LlmK
   }
   const [rotating, setRotating] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+  // Bumped per key when a revoke fails, to remount its hold button idle. Its confirmed
+  // state never resets on its own (`resetDelay={0}`), so without this a failed revoke
+  // left the row wearing a finished check with nothing left to hold.
+  const [attempts, setAttempts] = useState<Record<string, number>>({});
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const rotateRefs = useRef(new Map<string, HTMLButtonElement>());
+  // Where focus goes once the row it was in has left the DOM, or its hold button has
+  // remounted: resolved after the commit, when the target exists.
+  const focusAfter = useRef<(() => HTMLElement | null | undefined) | null>(null);
+
+  useEffect(() => {
+    const target = focusAfter.current;
+    if (target === null) return;
+    focusAfter.current = null;
+    // Only when focus actually fell with the element: someone who moved on during the
+    // round trip keeps their place.
+    if (document.activeElement && document.activeElement !== document.body) return;
+    target()?.focus();
+  });
+
+  // To the neighbouring row's Rotate button, or the section heading once the list is empty.
+  const removeRow = (key: LlmKeyDetail) => {
+    const index = keys.findIndex((k) => k.id === key.id);
+    const neighbour = keys[index + 1] ?? keys[index - 1];
+    focusAfter.current = neighbour
+      ? () => rotateRefs.current.get(neighbour.id)
+      : () => rootRef.current?.closest("section")?.querySelector<HTMLElement>("h2");
+    setKeys((current) => current.filter((k) => k.id !== key.id));
+  };
 
   const revoke = (key: LlmKeyDetail) => {
+    setRevoking(key.id);
     startTransition(async () => {
-      const result = await removeLlmKey(key.id);
+      // A throw here would reach the route's error boundary and replace the page.
+      const result = await removeLlmKey(key.id).catch(() => ({
+        ok: false as const,
+        error: "Could not reach Tocker. The key is still there.",
+      }));
+      setRevoking(null);
       if (!result.ok) {
+        // Revoked from another tab, or on the Account tab: the key is gone, which is
+        // what was asked for. Say so, rather than "Not revoked" beside a row that isn't there.
+        if (result.error === "Key not found") {
+          removeRow(key);
+          toast.info("That key was already revoked");
+          router.refresh();
+          return;
+        }
+        focusAfter.current = () =>
+          rootRef.current?.querySelector<HTMLElement>(`li[data-key-id="${key.id}"] button[aria-label^="Hold to revoke"]`);
+        setAttempts((current) => ({ ...current, [key.id]: (current[key.id] ?? 0) + 1 }));
         toast.error("Not revoked", { description: result.error });
         return;
       }
-      setKeys((current) => current.filter((k) => k.id !== key.id));
+      removeRow(key);
       const detached = result.data.detachedAgents;
       toast.success(`Revoked the ${PROVIDER_LABEL[key.provider]} key ending ${key.last4}`, {
         description: detached > 0 ? agentsWithoutKey(detached) : "No agent was using it.",
@@ -69,7 +116,7 @@ export function LlmKeyInventory({ keys: initial, isAdmin = false }: { keys: LlmK
   };
 
   return (
-    <div className="space-y-4">
+    <div ref={rootRef} className="space-y-4">
       {keys.length === 0 ? (
         <EmptyState
           icon={<KeyRound aria-hidden />}
@@ -80,7 +127,7 @@ export function LlmKeyInventory({ keys: initial, isAdmin = false }: { keys: LlmK
       ) : (
         <ul className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border/70">
           {keys.map((key) => (
-            <li key={key.id} className="bg-card/40 p-4">
+            <li key={key.id} data-key-id={key.id} className="bg-card/40 p-4">
               <div className="flex flex-wrap items-start gap-3">
                 <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border border-border/70 bg-muted/40 text-muted-foreground">
                   <KeyRound aria-hidden className="size-4" />
@@ -122,6 +169,13 @@ export function LlmKeyInventory({ keys: initial, isAdmin = false }: { keys: LlmK
                 </div>
                 <div className="ml-11 flex shrink-0 items-center gap-2 sm:ml-0">
                   <button
+                    ref={(el) => {
+                      if (!el) return;
+                      rotateRefs.current.set(key.id, el);
+                      return () => {
+                        rotateRefs.current.delete(key.id);
+                      };
+                    }}
                     type="button"
                     onClick={() => setRotating((current) => (current === key.id ? null : key.id))}
                     aria-expanded={rotating === key.id}
@@ -134,12 +188,20 @@ export function LlmKeyInventory({ keys: initial, isAdmin = false }: { keys: LlmK
                     <RotateCcw aria-hidden className="size-3.5" />
                     Rotate
                   </button>
+                  {/* "Revoking…" in a neutral tone, not a green "Revoked": the hold only
+                      asks, and the server has not answered yet. The row leaving is the
+                      answer; a refusal remounts the button idle (see `attempts`). */}
                   <HoldToConfirmButton
+                    key={`${key.id}-${attempts[key.id] ?? 0}`}
                     size="sm"
                     duration={1_500}
                     resetDelay={0}
                     label="Hold to revoke"
-                    confirmedLabel="Revoked"
+                    confirmedLabel="Revoking…"
+                    className={cn(
+                      revoking === key.id &&
+                        "border-border bg-muted text-muted-foreground dark:border-border dark:bg-muted dark:text-muted-foreground",
+                    )}
                     onConfirm={() => revoke(key)}
                   />
                 </div>
@@ -208,11 +270,15 @@ function RotateForm({
       setError(result.error);
       throw new Error(result.error);
     }
-    toast.success(`Rotated the ${provider} key`, {
-      description: `Now ending ${result.data.last4}.${
-        agentCount > 0 ? ` ${agentCount} agent${agentCount === 1 ? "" : "s"} kept running.` : ""
-      }`,
-    });
+    const description = `Now ending ${result.data.last4}.${
+      agentCount > 0 ? ` ${agentCount} agent${agentCount === 1 ? "" : "s"} kept running.` : ""
+    }`;
+    if (result.data.unverified) {
+      // Saved, but the provider could not be asked; a wrong key shows up on the next run.
+      toast.warning(`Saved — couldn’t reach ${provider} to check it`, { description });
+    } else {
+      toast.success(`Rotated the ${provider} key`, { description });
+    }
     setValue("");
     onDone(result.data.last4);
   };

@@ -1,7 +1,27 @@
 import Link from "next/link";
 import { RelativeTime } from "@/components/common/relative-time";
 import type { AdminAuditRow } from "@/server/queries/admin";
+import type { AuditKind } from "@/lib/security/types";
 import { DataTable, EmptyRow, TableShell, Td, Th } from "./table-shell";
+
+/** Words for the enum. A `Record` so a new kind is a type error here, not a raw `snake_case` cell. */
+const KIND_LABEL: Record<AuditKind, string> = {
+  withdraw: "Withdrawal",
+  budget_change: "Budget change",
+  go_live: "Went live",
+  go_paper: "Back to paper",
+  agent_paused: "Agent paused",
+  agent_resumed: "Agent resumed",
+  llm_key_added: "Key added",
+  llm_key_rotated: "Key rotated",
+  llm_key_removed: "Key revoked",
+  kill_switch_on: "Kill switch on",
+  kill_switch_off: "Kill switch off",
+  mfa_enrolled: "2FA enrolled",
+  mfa_unenrolled: "2FA removed",
+  first_trade_preset: "First-trade preset",
+  manual_run: "Manual run",
+};
 
 /**
  * The audit trail across every user — the one read in the app that is not user-scoped.
@@ -49,8 +69,9 @@ export function AdminAuditTable({ rows }: { rows: AdminAuditRow[] }) {
                     <span className="text-muted-foreground">deleted</span>
                   )}
                 </Td>
-                <Td muted className="font-mono text-[11px]">
-                  {row.kind}
+                {/* The raw kind stays in the tooltip: it is what an admin greps the logs for. */}
+                <Td muted className="font-sans text-xs">
+                  <span title={row.kind}>{KIND_LABEL[row.kind as AuditKind] ?? row.kind}</span>
                 </Td>
                 <Td className="max-w-[24rem] font-sans whitespace-normal">{row.summary}</Td>
                 <Td muted className="max-w-[10rem] truncate font-sans text-xs">

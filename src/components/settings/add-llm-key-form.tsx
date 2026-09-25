@@ -2,7 +2,9 @@
 
 import { useId, useState } from "react";
 import { Eye, EyeOff, Lock } from "lucide-react";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { MorphButton } from "@/components/spectrumui/morph-button";
 import { addLlmKey } from "@/server/actions/users";
 import type { LlmKeyRow } from "@/server/types";
@@ -27,11 +29,21 @@ const PROVIDERS: Array<{ id: Provider; label: string; hint: string }> = [
   { id: "openrouter", label: "OpenRouter", hint: "sk-or-…" },
 ];
 
+function providerLabel(provider: Provider): string {
+  return PROVIDERS.find((p) => p.id === provider)?.label ?? provider;
+}
+
 export function AddLlmKeyForm({
   onAdded,
+  onCancel,
+  autoFocus = false,
   submitLabel = "Add key",
 }: {
   onAdded?: (key: LlmKeyRow) => void;
+  /** Set when the form was opened on demand, so there is somewhere to go back to. Escape calls it too. */
+  onCancel?: () => void;
+  /** Focus the first field on mount: the button that opened the form has just unmounted. */
+  autoFocus?: boolean;
   submitLabel?: string;
 }) {
   const uid = useId();
@@ -68,6 +80,13 @@ export function AddLlmKeyForm({
         setError({ field: fieldFor(result.error), message: result.error });
         throw new Error(result.error);
       }
+      if (result.data.unverified) {
+        // Saved, but the provider could not be asked (down, slow, a network in the way).
+        // A toast, not the button: the form closes as soon as the key is added.
+        toast.warning(`Saved — couldn’t reach ${providerLabel(provider)} to check it`, {
+          description: "If the key is wrong, the agent’s next run will fail and say so.",
+        });
+      }
       onAdded?.({ ...optimistic, id: result.data.id, last4: result.data.last4 });
     } catch (e) {
       const message = e instanceof Error ? e.message : "Could not add the key";
@@ -102,13 +121,22 @@ export function AddLlmKeyForm({
   const invalid = (field: Field) =>
     error?.field === field ? { "aria-invalid": true, "aria-describedby": `${uid}-${field}-error` } : {};
 
+  const submitOnEnter = enterSubmits(() => {
+    if (key.trim().length > 0) void run();
+  });
+
   return (
     <form
       className="space-y-4"
       noValidate
-      onKeyDown={enterSubmits(() => {
-        if (key.trim().length > 0) void run();
-      })}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && onCancel) {
+          event.preventDefault();
+          onCancel();
+          return;
+        }
+        submitOnEnter(event);
+      }}
       onSubmit={(event) => {
         event.preventDefault();
         if (key.trim().length > 0) void run();
@@ -121,9 +149,10 @@ export function AddLlmKeyForm({
           </label>
           <select
             id={`${uid}-provider`}
+            autoFocus={autoFocus}
             value={provider}
             onChange={(event) => setProvider(event.target.value as Provider)}
-            className="mt-2 h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            className="mt-2 h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-base outline-none md:text-sm transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             {PROVIDERS.map((p) => (
               <option key={p.id} value={p.id} className="bg-card">
@@ -147,7 +176,7 @@ export function AddLlmKeyForm({
               setLabel(event.target.value);
               edited("label");
             }}
-            className="mt-2 h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm outline-none transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive"
+            className="mt-2 h-9 w-full rounded-lg border border-input bg-transparent px-3 text-base outline-none md:text-sm transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive"
           />
           {errorFor("label")}
         </div>
@@ -220,18 +249,31 @@ export function AddLlmKeyForm({
         you can read anyway.
       </p>
 
-      {/* Disabled while empty: an empty submit is not a rejected key, and should not look like one. */}
-      <MorphButton
-        state={state}
-        onClick={() => void run()}
-        size="sm"
-        successLabel="Added"
-        errorLabel="Rejected"
-        disabled={state === "idle" && key.trim().length === 0}
-        className={MORPH_FOCUS}
-      >
-        {submitLabel}
-      </MorphButton>
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Disabled while empty: an empty submit is not a rejected key, and should not look like one. */}
+        <MorphButton
+          state={state}
+          onClick={() => void run()}
+          size="sm"
+          successLabel="Added"
+          errorLabel="Rejected"
+          disabled={state === "idle" && key.trim().length === 0}
+          className={MORPH_FOCUS}
+        >
+          {submitLabel}
+        </MorphButton>
+        {onCancel ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onCancel}
+            className="h-8 text-xs text-muted-foreground"
+          >
+            Cancel
+          </Button>
+        ) : null}
+      </div>
     </form>
   );
 }

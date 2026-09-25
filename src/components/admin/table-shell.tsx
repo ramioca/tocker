@@ -22,6 +22,7 @@ export function TableShell({
   title,
   hint,
   action,
+  notice,
   children,
   className,
   maxHeightClass = "max-h-[26rem]",
@@ -30,6 +31,11 @@ export function TableShell({
   /** One short line: what the limit is, what the ordering is. */
   hint?: string;
   action?: ReactNode;
+  /**
+   * Caveats about the whole table. Outside the scroll container on purpose: inside it,
+   * they scrolled off sideways with the columns and left a blank band above the header.
+   */
+  notice?: ReactNode;
   children: ReactNode;
   className?: string;
   maxHeightClass?: string;
@@ -41,6 +47,7 @@ export function TableShell({
         {hint ? <p className="text-[11px] text-muted-foreground">{hint}</p> : null}
         {action}
       </header>
+      {notice}
       <div className={cn("w-full overflow-auto overscroll-x-contain", maxHeightClass)}>{children}</div>
     </section>
   );

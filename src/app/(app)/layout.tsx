@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/shell/app-shell";
-import { OnboardingModal } from "@/components/onboarding/onboarding-modal";
+import { EMPTY_COMMAND_INDEX } from "@/components/shell/command-index";
+import { OnboardingGate } from "@/components/onboarding/onboarding-gate";
 import { commandIndex, myAgents, unreadNotifications, viewerSession } from "@/components/common/data-access";
 import { withMock } from "@/lib/data";
 import { getKillSwitch, type KillSwitchState } from "@/lib/security/kill-switch";
@@ -23,11 +24,24 @@ function killSwitchFor(userId: string | null): Promise<KillSwitchState> {
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const session = await viewerSession();
   const userId = session?.userId ?? null;
+  // Everything below only decorates the chrome — a badge, the ⌘K index, which nav item
+  // is lit. The route's error boundary cannot catch this layout's own errors, so a throw
+  // here would replace every page, top bar and tab bar included, with the root error
+  // screen. Each read degrades to its empty answer instead, as the kill switch does.
   const [unreadCount, index, mine, killSwitch] = await Promise.all([
-    unreadNotifications(userId),
-    commandIndex(userId),
+    unreadNotifications(userId).catch((error: unknown) => {
+      console.error("[app-layout] unread count failed", error);
+      return 0;
+    }),
+    commandIndex(userId).catch((error: unknown) => {
+      console.error("[app-layout] command index failed", error);
+      return EMPTY_COMMAND_INDEX;
+    }),
     // Only the slugs: "My agents" lights up on the viewer's own agent pages and no one else's.
-    myAgents(userId),
+    myAgents(userId).catch((error: unknown) => {
+      console.error("[app-layout] my agents failed", error);
+      return [];
+    }),
     killSwitchFor(userId),
   ]);
 
@@ -40,8 +54,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       pausedAt={killSwitch.pausedAt}
     >
       {children}
-      {/* Owned by UI-SOCIAL; a null-rendering stub lives at this path on ui-core. */}
-      <OnboardingModal />
+      {/* First-run only, so the modal's code loads behind a gate rather than on every page. */}
+      <OnboardingGate />
     </AppShell>
   );
 }

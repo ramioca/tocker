@@ -10,7 +10,7 @@
  * as a profit.
  */
 import Link from "next/link";
-import { ArrowDownRight, ArrowUpRight } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 import { PnlText } from "@/components/common/pnl-text";
 import { RelativeTime } from "@/components/common/relative-time";
 import { TokenIcon } from "@/components/common/token-icon";
@@ -18,6 +18,13 @@ import { formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
 import type { TradeRow } from "@/server/types";
 import { cn } from "@/lib/utils";
+import { highlightLabel, type HighlightSlot, type HighlightTone } from "./highlight-label";
+
+const TONE: Record<HighlightTone, { card: string; icon: string }> = {
+  positive: { card: "border-positive/25 hover:bg-positive/5", icon: "text-positive" },
+  negative: { card: "border-negative/25 hover:bg-negative/5", icon: "text-negative" },
+  neutral: { card: "border-border hover:bg-muted/40", icon: "text-muted-foreground" },
+};
 
 export function TradeHighlights({
   best,
@@ -34,8 +41,9 @@ export function TradeHighlights({
   if (!best && !worst) return null;
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      {best ? <Highlight trade={best} pnlUsd={bestPnlUsd} tone="best" /> : null}
-      {worst ? <Highlight trade={worst} pnlUsd={worstPnlUsd} tone="worst" /> : null}
+      {/* One closed exit is both ends of the ranking; the query drops the second card. */}
+      {best ? <Highlight trade={best} pnlUsd={bestPnlUsd} slot={worst ? "best" : "only"} /> : null}
+      {worst ? <Highlight trade={worst} pnlUsd={worstPnlUsd} slot="worst" /> : null}
     </div>
   );
 }
@@ -43,31 +51,26 @@ export function TradeHighlights({
 function Highlight({
   trade,
   pnlUsd,
-  tone,
+  slot,
 }: {
   trade: TradeRow;
   pnlUsd: number | null;
-  tone: "best" | "worst";
+  slot: HighlightSlot;
 }) {
-  const Icon = tone === "best" ? ArrowUpRight : ArrowDownRight;
+  const { label, tone } = highlightLabel(slot, pnlUsd);
+  // The arrow follows what the exit made, not which end of the ranking it sits at.
+  const Icon = pnlUsd === null || pnlUsd === 0 ? Minus : pnlUsd > 0 ? ArrowUpRight : ArrowDownRight;
   return (
     <Link
       href={`/tokens/${trade.token.chain}/${trade.token.address}`}
       className={cn(
         "group block rounded-xl border bg-card/40 p-3 transition-colors duration-150 focus-ring sm:p-4",
-        tone === "best"
-          ? "border-positive/25 hover:bg-positive/5"
-          : "border-negative/25 hover:bg-negative/5",
+        TONE[tone].card,
       )}
     >
       <div className="flex items-center gap-1.5">
-        <Icon
-          aria-hidden
-          className={cn("size-3.5", tone === "best" ? "text-positive" : "text-negative")}
-        />
-        <p className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
-          {tone === "best" ? "Best exit" : "Worst exit"}
-        </p>
+        <Icon aria-hidden className={cn("size-3.5", TONE[tone].icon)} />
+        <p className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">{label}</p>
         <RelativeTime iso={trade.filledAt ?? trade.createdAt} className="ml-auto text-[10px]" />
       </div>
 

@@ -66,7 +66,7 @@ export function BudgetCard({
       </div>
 
       <p className="mt-2 text-xs leading-5 text-muted-foreground">
-        A cap the wallet enforces itself, via a Privy policy: no single USDC{" "}
+        A cap the wallet enforces itself, in its signing policy: no single USDC{" "}
         <em className="not-italic text-foreground">transfer</em> above this amount gets signed —
         a withdrawal, or Tocker&rsquo;s own fee sweep — whatever this app&rsquo;s code says. Key
         export is always denied.

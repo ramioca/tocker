@@ -157,7 +157,7 @@ function Row({
   const printed = Number(Math.abs(row.pnlPct).toFixed(1));
 
   return (
-    <li className="flex items-center gap-x-3 px-4 py-3 transition-colors duration-150 hover:bg-foreground/[0.04] sm:gap-x-4 sm:px-5 sm:py-3.5">
+    <li className="relative flex items-center gap-x-3 px-4 py-3 transition-colors duration-150 hover:bg-foreground/[0.04] active:bg-foreground/[0.06] sm:gap-x-4 sm:px-5 sm:py-3.5">
       <span
         className={`w-6 shrink-0 text-center font-mono text-sm tabular-nums ${
           row.rank <= 3 ? "font-semibold text-primary" : "text-muted-foreground"
@@ -169,15 +169,19 @@ function Row({
       <AgentAvatar seed={agent.avatarSeed ?? agent.slug} name={agent.name} size="sm" />
 
       <div className="min-w-0 flex-1">
+        {/* The name's hit area is stretched over the whole row (`before:inset-0` against
+            the li): on a phone the row is the obvious target, and a 148×20 name was the
+            only thing in it that went anywhere. The li is not itself a link because it
+            holds the handle link and the Follow button, which sit above it on `z-10`. */}
         <Link
           href={`/agents/${agent.slug}`}
-          className="block truncate rounded text-sm font-medium hover:text-primary focus-ring"
+          className="block truncate rounded text-sm font-medium before:absolute before:inset-0 before:content-[''] hover:text-primary focus-ring"
         >
           {agent.name}
         </Link>
         <Link
           href={`/u/${agent.owner.handle}`}
-          className="block truncate rounded text-xs text-muted-foreground hover:text-foreground focus-ring"
+          className="relative z-10 block truncate rounded text-xs text-muted-foreground hover:text-foreground focus-ring"
         >
           @{agent.owner.handle}
         </Link>
@@ -215,16 +219,26 @@ function Row({
         </p>
       </div>
 
-      <p className="hidden w-16 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground sm:block">
+      <p className="hidden w-20 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground sm:block">
         {formatCount(row.tradeCount)}
-        <span className="block text-[10px] tracking-wide uppercase">trades</span>
+        {/* Counted inside the window, like the PnL beside it; saying so keeps a 6 on the
+            7-day board from reading as the agent's whole record. */}
+        <span className="block text-[10px] tracking-wide whitespace-nowrap uppercase">
+          {win === "7d" ? "trades · 7d" : win === "30d" ? "trades · 30d" : "trades"}
+        </span>
       </p>
 
       {/* Fixed width so the numbers stay in columns whether the pill reads Follow,
           Following or — on your own agent — nothing. */}
-      <div className="hidden w-[6.75rem] shrink-0 justify-end sm:flex">
+      <div className="relative z-10 hidden w-[6.75rem] shrink-0 justify-end sm:flex">
         {own ? null : (
-          <FollowToggle targetType="agent" targetId={agent.id} defaultFollowing={following} size="sm" />
+          <FollowToggle
+            targetType="agent"
+            targetId={agent.id}
+            defaultFollowing={following}
+            size="sm"
+            targetName={agent.name}
+          />
         )}
       </div>
     </li>

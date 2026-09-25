@@ -218,12 +218,12 @@ export function namesOf(gates: string[]): string {
 function PreviewSkeleton() {
   return (
     <div aria-hidden className="space-y-2.5">
-      <div className="h-3.5 w-3/5 animate-pulse rounded bg-muted/60" />
+      <div className="h-3.5 w-3/5 motion-safe:animate-pulse rounded bg-muted/60" />
       <div className="space-y-1">
         {[0, 1, 2].map((row) => (
           <div key={row} className="flex items-center gap-2">
-            <div className="h-5 w-8 animate-pulse rounded-md bg-muted/60" />
-            <div className="h-3 flex-1 animate-pulse rounded bg-muted/40" />
+            <div className="h-5 w-8 motion-safe:animate-pulse rounded-md bg-muted/60" />
+            <div className="h-3 flex-1 motion-safe:animate-pulse rounded bg-muted/40" />
           </div>
         ))}
       </div>

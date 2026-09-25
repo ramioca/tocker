@@ -101,6 +101,16 @@ describe("recordScore + getScoreHistory", () => {
     expect(history[0].liquidityUsd).toBeCloseTo(1_250_000, 2);
   });
 
+  it("skips a reading no provider answered", async () => {
+    const empty = "solana:NODATA";
+    const at = new Date(Date.now() - 60_000).toISOString();
+    await recordScore(score({ tokenId: empty, sources: [], scoredAt: at }));
+    await recordScore(
+      score({ tokenId: empty, priceUsd: null, liquidityUsd: null, holderCount: null, scoredAt: at }),
+    );
+    expect(await getScoreHistory(empty, { days: 30 })).toEqual([]);
+  });
+
   it("returns nothing for a token nobody ever scored", async () => {
     expect(await getScoreHistory("base:0xdeadbeef", { days: 30 })).toEqual([]);
   });

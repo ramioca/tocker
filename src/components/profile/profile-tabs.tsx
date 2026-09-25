@@ -75,7 +75,11 @@ export function ProfileTabs({
           >
             {tab.label}
             {tab.id === "agents" ? (
-              <span className="ml-1.5 font-mono tabular-nums opacity-60">{agentCount}</span>
+              <>
+                {/* Read as "Agents, 2" rather than "Agents2". */}
+                <span className="sr-only">, </span>
+                <span className="ml-1.5 font-mono tabular-nums opacity-60">{agentCount}</span>
+              </>
             ) : null}
           </button>
         ))}

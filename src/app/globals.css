@@ -540,4 +540,12 @@ html:has(#main [data-sticky-actionbar]) {
     opacity: 1;
     transform: none;
   }
+
+  /* The Spectrum charts check reduced motion in an effect, so the server-rendered HTML
+     carries their inline entrance animation and it plays before the effect turns it
+     off. A stylesheet !important beats a non-important inline declaration, and every
+     spectrum-mc keyframe ends on the element's own resting style. */
+  [style*="spectrum-mc-"] {
+    animation: none !important;
+  }
 }

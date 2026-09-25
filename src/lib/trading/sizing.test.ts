@@ -124,6 +124,18 @@ describe("sizeOrder", () => {
     expect(out.belowMinimum).toBe(true);
   });
 
+  it("writes money in the explanation the way the figure beside it is written", () => {
+    const pct = sizeOrder({
+      sizing: sizing({ mode: "percent_equity", percentOfEquity: 50 }),
+      maxTradeUsd: 400,
+      equityUsd: 10_756.58,
+    });
+    expect(pct.explanation).toBe("50% of $10,756.58 equity = $5,378.29, capped at your max trade size of $400.00.");
+
+    const fixed = sizeOrder({ sizing: sizing(), maxTradeUsd: 400, equityUsd: 10_000 });
+    expect(fixed.explanation).toBe("Fixed ticket of $400.00.");
+  });
+
   it("never returns a negative or non-finite size", () => {
     const out = sizeOrder({ sizing: sizing(), maxTradeUsd: Number.NaN, equityUsd: 1_000 });
     expect(out.amountUsd).toBe(0);

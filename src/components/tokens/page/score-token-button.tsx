@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/common/empty-state";
 import { RelativeTime } from "@/components/common/relative-time";
+import { safeAction } from "@/lib/safe-action";
 import { scoreTokenNow } from "@/server/actions/blocklist";
 import type { Chain } from "@/server/types";
 
@@ -45,7 +46,10 @@ export function ScoreTokenPanel({
   const run = () => {
     setFailed(null);
     startTransition(async () => {
-      const result = await scoreTokenNow(chain, address);
+      const result = await safeAction(
+        () => scoreTokenNow(chain, address),
+        "Could not reach Tocker. Try again in a moment.",
+      );
       if (!result.ok) {
         setFailed(result.error);
         toast.error(result.error);

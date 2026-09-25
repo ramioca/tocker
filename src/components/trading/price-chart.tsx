@@ -3,9 +3,10 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { ChartEmpty, useElementWidth } from "@/components/spectrumui/charts/chart-engine";
 import { formatAbsolute, formatUsd } from "@/components/common/format";
+import { axisLabels } from "@/components/tokens/page/time-span";
 import { cn } from "@/lib/utils";
 import type { TokenMarker } from "@/server/queries/trading";
-import type { PricePoint } from "./price-points";
+import { priceAxisPadLeft, priceAxisRange, type PricePoint } from "./price-points";
 
 /**
  * Price over the charted window, with the viewer's **own** entries and exits on it.
@@ -31,9 +32,10 @@ import type { PricePoint } from "./price-points";
  * no interpolation.
  */
 
-// Left and right match the score chart under it (`tokens/page/score-history-chart.tsx`),
-// so the two plots share an x range.
-const PAD = { top: 12, right: 10, bottom: 22, left: 44 };
+// Right matches the score chart under it (`tokens/page/score-history-chart.tsx`). Left is
+// 44 there too, but here it grows with the price labels (`priceAxisPadLeft`): a page that
+// draws both passes the same `padLeft` to each so the two plots share an x range.
+const PAD = { top: 12, right: 10, bottom: 22 };
 /** Width before the first measurement (server render). After it, one unit = one CSS px. */
 const VIEW_W = 720;
 
@@ -48,6 +50,7 @@ export function PriceChart({
   /** Public aggregate shown when the viewer has no markers of their own. */
   agentCount = 0,
   height = 240,
+  padLeft: padLeftProp,
   className,
 }: {
   points: readonly PricePoint[];
@@ -55,6 +58,8 @@ export function PriceChart({
   markers?: readonly TokenMarker[];
   agentCount?: number;
   height?: number;
+  /** Left padding shared with a chart drawn under this one; measured from the labels when omitted. */
+  padLeft?: number;
   className?: string;
 }) {
   const [active, setActive] = useState<number | null>(null);
@@ -75,7 +80,8 @@ export function PriceChart({
     [points],
   );
 
-  const plotW = Math.max(1, viewW - PAD.left - PAD.right);
+  const padLeft = padLeftProp ?? priceAxisPadLeft(series, markers);
+  const plotW = Math.max(1, viewW - padLeft - PAD.right);
   const plotH = height - PAD.top - PAD.bottom;
 
   const geometry = useMemo(() => {
@@ -87,17 +93,11 @@ export function PriceChart({
     // The y range has to cover the markers too. A stop loss that filled below every
     // price we ever sampled would otherwise be drawn off the bottom of the plot — the
     // one marker you most need to see, missing.
-    const prices = [...series.map((p) => p.priceUsd), ...markers.map((m) => m.priceUsd)].filter(
-      (p) => Number.isFinite(p) && p > 0,
-    );
-    const lo = Math.min(...prices);
-    const hi = Math.max(...prices);
-    const pad = (hi - lo) * 0.08 || hi * 0.08 || 1;
-    const yLo = Math.max(0, lo - pad);
-    const yHi = hi + pad;
+    // The same range `priceAxisPadLeft` measured its labels from.
+    const { yLo, yHi } = priceAxisRange([...series.map((p) => p.priceUsd), ...markers.map((m) => m.priceUsd)])!;
     const range = yHi - yLo || 1;
 
-    const x = (t: number) => PAD.left + ((t - first) / span) * plotW;
+    const x = (t: number) => padLeft + ((t - first) / span) * plotW;
     const y = (price: number) => PAD.top + (1 - (price - yLo) / range) * plotH;
 
     const coords = series.map((p) => ({ ...p, cx: x(p.t), cy: y(p.priceUsd) }));
@@ -106,12 +106,12 @@ export function PriceChart({
       if (!Number.isFinite(t) || !(m.priceUsd > 0)) return [];
       // Clamped into the plot so a fill just outside the charted window still shows at
       // the edge rather than vanishing.
-      const cx = Math.min(PAD.left + plotW, Math.max(PAD.left, x(t)));
+      const cx = Math.min(padLeft + plotW, Math.max(padLeft, x(t)));
       return [{ ...m, cx, cy: y(m.priceUsd) }];
     });
 
     return { coords, placed, yLo, yHi, first, last };
-  }, [series, markers, plotW, plotH]);
+  }, [series, markers, padLeft, plotW, plotH]);
 
   const onMove = useCallback(
     (event: React.PointerEvent<SVGSVGElement>) => {
@@ -151,6 +151,9 @@ export function PriceChart({
   const line = coords.map((p, i) => `${i === 0 ? "M" : "L"}${p.cx.toFixed(2)},${p.cy.toFixed(2)}`).join(" ");
   const area = `${line} L${coords[coords.length - 1].cx.toFixed(2)},${(PAD.top + plotH).toFixed(2)} L${coords[0].cx.toFixed(2)},${(PAD.top + plotH).toFixed(2)} Z`;
   const latest = coords[coords.length - 1];
+  // Span-aware, like the score chart under it: an afternoon of readings reads
+  // "Sep 24 08:10 … 14:05", not "Sep 24 … Sep 24".
+  const [firstLabel, lastLabel] = axisLabels(coords[0].t, latest.t);
   const hovered = active === null ? null : coords[active];
   const rising = latest.priceUsd >= coords[0].priceUsd;
   const stroke = rising ? "var(--positive)" : "var(--negative)";
@@ -188,8 +191,8 @@ export function PriceChart({
             return (
               <g key={price}>
                 <line
-                  x1={PAD.left}
-                  x2={PAD.left + plotW}
+                  x1={padLeft}
+                  x2={padLeft + plotW}
                   y1={cy}
                   y2={cy}
                   stroke="var(--border)"
@@ -198,7 +201,7 @@ export function PriceChart({
                   opacity="0.6"
                 />
                 <text
-                  x={PAD.left - 6}
+                  x={padLeft - 6}
                   y={cy + (i === 0 ? 8 : 0)}
                   textAnchor="end"
                   className="tnum fill-muted-foreground font-mono text-[9px]"
@@ -246,17 +249,23 @@ export function PriceChart({
             </g>
           ))}
 
-          <text x={PAD.left} y={height - 6} className="tnum fill-muted-foreground font-mono text-[9px]">
-            {shortDate(coords[0].at)}
-          </text>
-          <text
-            x={PAD.left + plotW}
-            y={height - 6}
-            textAnchor="end"
-            className="tnum fill-muted-foreground font-mono text-[9px]"
-          >
-            {shortDate(latest.at)}
-          </text>
+          {/* Client-only, like the measured width: the labels are in the viewer's time
+              zone, which the server cannot know, and a mismatch would fail hydration. */}
+          {measured > 0 ? (
+            <>
+              <text x={padLeft} y={height - 6} className="tnum fill-muted-foreground font-mono text-[9px]">
+                {firstLabel}
+              </text>
+              <text
+                x={padLeft + plotW}
+                y={height - 6}
+                textAnchor="end"
+                className="tnum fill-muted-foreground font-mono text-[9px]"
+              >
+                {lastLabel}
+              </text>
+            </>
+          ) : null}
         </svg>
 
         <figcaption
@@ -296,10 +305,4 @@ export function PriceChart({
       </figure>
     </div>
   );
-}
-
-function shortDate(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }

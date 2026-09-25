@@ -8,7 +8,7 @@ import { SettingsSection } from "@/components/settings/settings-section";
 import { ProfileForm } from "@/components/settings/profile-form";
 import { LlmKeysSection } from "@/components/settings/llm-keys-section";
 import { NotificationPrefs } from "@/components/settings/notification-prefs";
-import { DangerZone } from "@/components/settings/danger-zone";
+import { SignOutSection } from "@/components/settings/sign-out-section";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { isAdminEmail } from "@/lib/admin";
 
@@ -75,8 +75,9 @@ export default async function SettingsPage() {
           `requireAdmin()`. The platform's own wallets and fee ledger are not a tenant's
           business, and this page is every tenant's.
         */}
-        <SettingsSection id="danger" tone="danger" title="Danger zone">
-          <DangerZone />
+        {/* Default tone: signing out is reversible and loses nothing, so it gets no red frame. */}
+        <SettingsSection id="sign-out" title="Sign out">
+          <SignOutSection />
         </SettingsSection>
       </div>
     </div>

@@ -2,7 +2,7 @@
 
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Plus } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -18,9 +18,16 @@ import { formatUsd, truncateAddress } from "@/components/common/format";
 import { useRefreshCash } from "@/components/wallets/use-cash";
 import { useTransfer } from "@/components/wallets/use-transfer";
 import { addressHintForChain, isValidAddressForChain } from "@/lib/wallet-address";
-import { NETWORK_WORDING, cashOn, chainLabelFor, unifiedCash } from "@/lib/wallets/funding";
+import {
+  NETWORK_WORDING,
+  cashOn,
+  chainLabelFor,
+  preferredDepositChain,
+  unifiedCash,
+} from "@/lib/wallets/funding";
 import { quoteSponsoredWithdrawal } from "@/server/actions/sponsored-withdraw";
 import type { Chain, WalletBalance } from "@/server/types";
+import { sanitizeUsdInput } from "./usd-input";
 
 const PERCENT_CHIPS = [
   { label: "10%", fraction: 0.1 },
@@ -53,18 +60,24 @@ const floorCents = (value: number) => Math.floor(value * 100 + 1e-9) / 100;
  * the hold — never SOL, and never a surprise.
  *
  * A withdrawal is per-chain even though the balance above it is unified: the
- * USDC has to leave from where it actually is, and the chain picker says so.
+ * USDC has to leave from where it actually is, and the chain picker says so. It
+ * opens on the chain holding the most USDC (the same pick Deposit makes), so "Max"
+ * is never a zero while the cash sits on the other chain.
  */
 export function WithdrawModal({
   open,
   onOpenChange,
   wallets,
+  onDeposit,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   wallets: WalletBalance[];
+  /** Where an empty balance sends the user instead of an unusable form. */
+  onDeposit?: () => void;
 }) {
-  const [chain, setChain] = useState<Chain>(wallets[0]?.chain ?? "base");
+  const cash = useMemo(() => unifiedCash(wallets), [wallets]);
+  const [chain, setChain] = useState<Chain>(() => preferredDepositChain(cash));
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
   const [pending, setPending] = useState(false);
@@ -72,7 +85,20 @@ export function WithdrawModal({
   const { send, available } = useTransfer();
   const refresh = useRefreshCash();
 
-  const cash = useMemo(() => unifiedCash(wallets), [wallets]);
+  // Every open starts clean, on the chain the cash is on: an address typed last time
+  // (for the other chain, perhaps) is not one to carry into a new withdrawal. Adjusted
+  // during render, as DepositSheet does, so the old values never paint.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setChain(preferredDepositChain(cash));
+      setAmount("");
+      setDestination("");
+      setQuote(null);
+    }
+  }
+
   const chainCash = cashOn(cash, chain);
   const availableUsdc = chainCash.usdc;
   const target = destination.trim();
@@ -114,7 +140,9 @@ export function WithdrawModal({
   const minAmount = chain === "solana" ? (ready?.minAmountUsdc ?? DEFAULT_SOLANA_MIN) : 0;
   const spendable = Math.max(0, availableUsdc - feeUsdc);
 
-  const parsed = Number(amount);
+  // The input is capped at cents as it is typed; the floor is what makes "what they
+  // receive", the hold label and the signed amount one number whatever reaches here.
+  const parsed = floorCents(Number(amount));
   const entered = Number.isFinite(parsed) && parsed > 0;
   const underMinimum = entered && parsed < minAmount;
   const overBalance = entered && parsed + feeUsdc > availableUsdc + 1e-9;
@@ -170,6 +198,7 @@ export function WithdrawModal({
   };
 
   let amountHint: ReactNode = null;
+  let amountPrompt = false;
   if (underMinimum) {
     amountHint = `The smallest withdrawal on ${chainLabelFor(chain)} is ${formatUsd(minAmount)}.`;
   } else if (overBalance) {
@@ -177,7 +206,12 @@ export function WithdrawModal({
       feeUsdc > 0
         ? `With the ${formatUsd(feeUsdc)} account fee, the most you can send here is ${formatUsd(floorCents(spendable))}.`
         : `You have ${formatUsd(availableUsdc)} on ${chainLabelFor(chain)}.`;
+  } else if (destinationOk && !entered) {
+    // The address is in and the hold is still disabled: say what it is waiting for.
+    amountPrompt = true;
   }
+
+  const empty = cash.totalUsd === 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -189,8 +223,28 @@ export function WithdrawModal({
           </DialogDescription>
         </DialogHeader>
 
-        {/* min-w-0: a grid item's floor is its content, so one long unbreakable child
-            would otherwise widen the whole form past the dialog's padding. */}
+        {empty ? (
+          // A chain, an amount and an address to send nothing from is a form that can
+          // only fail. Say so, and offer the way to have something to send.
+          <div className="space-y-3 rounded-xl border border-border/70 bg-muted/20 p-4 text-center">
+            <p className="text-sm font-medium">Nothing to withdraw yet.</p>
+            <p className="text-xs text-muted-foreground">
+              Deposit USDC first; once it lands you can send it to any wallet from here.
+            </p>
+            {onDeposit ? (
+              <button
+                type="button"
+                onClick={onDeposit}
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-primary/90 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Plus aria-hidden className="size-4" />
+                Deposit
+              </button>
+            ) : null}
+          </div>
+        ) : (
+        /* min-w-0: a grid item's floor is its content, so one long unbreakable child
+           would otherwise widen the whole form past the dialog's padding. */
         <div className="min-w-0 space-y-3">
           <div>
             <label htmlFor="withdraw-chain" className="mb-1 block text-xs text-muted-foreground">
@@ -203,7 +257,12 @@ export function WithdrawModal({
                 value: entry.chain,
                 label: chainLabelFor(entry.chain),
               }))}
-              onChange={(next) => setChain(next as Chain)}
+              onChange={(next) => {
+                setChain(next as Chain);
+                // An address for one chain is never valid on the other.
+                setDestination("");
+                setQuote(null);
+              }}
             />
             <p className="mt-1 text-[11px] text-muted-foreground">
               Leaves on {NETWORK_WORDING[chain].network}. Make sure the destination accepts it.
@@ -219,7 +278,7 @@ export function WithdrawModal({
               value={amount}
               inputMode="decimal"
               placeholder="0"
-              onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))}
+              onChange={(event) => setAmount(sanitizeUsdInput(event.target.value))}
               className="tnum font-mono"
             />
             <div className="mt-2 flex items-center gap-1.5">
@@ -238,6 +297,10 @@ export function WithdrawModal({
             </div>
             {amountHint ? (
               <p className="tnum mt-2 text-xs text-destructive">{amountHint}</p>
+            ) : amountPrompt ? (
+              <p className="tnum mt-2 text-xs text-muted-foreground">
+                Enter an amount to send. You have {formatUsd(chainCash.usdcUsd)} on {chainLabelFor(chain)}.
+              </p>
             ) : (
               <p className="tnum mt-2 text-xs text-muted-foreground">
                 {formatUsd(chainCash.usdcUsd)} on {chainLabelFor(chain)} · {formatUsd(cash.totalUsd)} across your wallets
@@ -343,6 +406,7 @@ export function WithdrawModal({
             className="h-10 w-full justify-center rounded-xl border-primary/40 bg-primary/10 text-sm font-medium text-foreground hover:bg-primary/15 dark:border-primary/40 dark:bg-primary/10 dark:text-foreground dark:hover:bg-primary/15"
           />
         </div>
+        )}
       </DialogContent>
     </Dialog>
   );

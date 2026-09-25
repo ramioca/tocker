@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CircleStop, Play } from "lucide-react";
 import { toast } from "sonner";
@@ -22,12 +22,42 @@ export function KillSwitchCard({ paused: initialPaused, pausedAt }: { paused: bo
   const router = useRouter();
   const [paused, setPaused] = useState(initialPaused);
   const [pending, startTransition] = useTransition();
+  // Bumped when a pause fails, to remount the hold button idle: it stays "confirmed"
+  // until the server answers (`resetDelay={0}`), so a refusal must reset it by hand.
+  const [attempt, setAttempt] = useState(0);
+  const [pausing, setPausing] = useState(false);
+  const controlsRef = useRef<HTMLDivElement>(null);
+  // Set when the control that had focus is replaced (pause ⇄ resume, or a remount after a
+  // failure), so focus lands on its replacement instead of falling to <body>.
+  const refocus = useRef(false);
+
+  // Not while pending: the replacement is disabled until the transition settles, and a
+  // disabled button refuses focus.
+  useEffect(() => {
+    if (!refocus.current || pending) return;
+    refocus.current = false;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    controlsRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+  });
 
   const flip = (next: boolean) => {
+    if (next) setPausing(true);
     startTransition(async () => {
-      const result = await setTradingPausedAction(next);
+      // This is the control someone reaches for on a bad connection. A throw here used to
+      // reach the route's error boundary and replace the page, so nobody could tell
+      // whether trading had stopped.
+      const result = await setTradingPausedAction(next).catch(() => ({
+        ok: false as const,
+        error: "Could not reach Tocker. Nothing changed.",
+      }));
+      refocus.current = true;
+      setPausing(false);
       if (!result.ok) {
-        toast.error("Not changed", { description: result.error });
+        setAttempt((n) => n + 1);
+        toast.error(next ? "Trading is not paused" : "Trading is not resumed", {
+          description: result.error,
+          action: { label: "Retry", onClick: () => flip(next) },
+        });
         return;
       }
       setPaused(next);
@@ -76,7 +106,7 @@ export function KillSwitchCard({ paused: initialPaused, pausedAt }: { paused: bo
         </div>
       </div>
 
-      <div>
+      <div ref={controlsRef}>
         {paused ? (
           <button
             type="button"
@@ -93,13 +123,20 @@ export function KillSwitchCard({ paused: initialPaused, pausedAt }: { paused: bo
             {pending ? "Resuming…" : "Resume trading"}
           </button>
         ) : (
+          // "Pausing…" in a neutral tone until the server answers: a green "Paused" before
+          // it had was a claim, and on a refusal it sat beside the error toast.
           <HoldToConfirmButton
+            key={attempt}
             size="sm"
             duration={1_200}
+            resetDelay={0}
             label="Hold to pause all trading"
-            confirmedLabel="Paused"
+            confirmedLabel="Pausing…"
             icon={<CircleStop className="size-3.5" />}
-            disabled={pending}
+            className={cn(
+              pausing &&
+                "border-border bg-muted text-muted-foreground dark:border-border dark:bg-muted dark:text-muted-foreground",
+            )}
             onConfirm={() => flip(true)}
           />
         )}

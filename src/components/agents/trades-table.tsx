@@ -20,6 +20,7 @@ import { TokenIcon } from "@/components/common/token-icon";
 import { formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
 import { fetchAgentTrades } from "./agent-actions";
+import { LoadMoreFailed } from "./load-more-failed";
 import { cn } from "@/lib/utils";
 import type { Page, TradeRow } from "@/server/types";
 import { txExplorerUrl } from "@/lib/tokens/links";
@@ -67,16 +68,18 @@ export function TradesTable({
 
   const trades = query.data?.pages.flatMap((page) => page.items) ?? [];
 
-  if (query.isError) {
+  // Only when there is nothing to show. `isError` is also true when just an older page
+  // failed, and the pages already loaded are still in `query.data` — those must stay.
+  if (query.isError && !query.data) {
     return (
       <ErrorState
         title="Trade history did not load"
-        description={(query.error as Error).message}
+        description="Try again in a moment."
         action={
           <button
             type="button"
             onClick={() => void query.refetch()}
-            className="rounded-lg border border-border px-3 py-1.5 text-xs transition-colors duration-150 hover:bg-muted"
+            className="focus-ring rounded-lg border border-border px-3 py-1.5 text-xs transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.97]"
           >
             Try again
           </button>
@@ -133,7 +136,7 @@ export function TradesTable({
                           {trade.runId ? (
                             <Link
                               href={`/agents/${agentSlug}/runs/${trade.runId}`}
-                              className="rounded hover:underline focus-ring"
+                              className="rounded underline decoration-muted-foreground/50 decoration-dotted underline-offset-2 transition-colors duration-150 hover:decoration-foreground hover:decoration-solid focus-ring"
                               title="Open the run that placed this trade"
                             >
                               <RelativeTime iso={trade.createdAt} />
@@ -194,10 +197,9 @@ export function TradesTable({
                             fill. Never the transcript that led to it.
                           */}
                           {trade.rationale ? (
-                            <p
-                              title={trade.rationale}
-                              className="mt-0.5 hidden max-w-[18rem] truncate text-[11px] text-muted-foreground sm:block"
-                            >
+                            // The cell is `whitespace-nowrap`, so the sentence has to be let wrap;
+                            // `max-sm:hidden` rather than `sm:block`, which would undo the clamp.
+                            <p className="mt-0.5 line-clamp-2 max-w-[28rem] whitespace-normal text-[11px] leading-snug text-muted-foreground max-sm:hidden">
                               {trade.rationale}
                             </p>
                           ) : null}
@@ -272,7 +274,9 @@ export function TradesTable({
             </Table>
           </div>
 
-          {query.hasNextPage ? (
+          {query.isFetchNextPageError && !query.isFetchingNextPage ? (
+            <LoadMoreFailed what="trades" onRetry={() => void query.fetchNextPage()} />
+          ) : query.hasNextPage ? (
             <button
               type="button"
               onClick={() => void query.fetchNextPage()}

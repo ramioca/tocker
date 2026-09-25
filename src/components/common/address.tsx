@@ -7,23 +7,38 @@ import { truncateAddress } from "./format";
 
 export function useCopy(resetMs = 1_600) {
   const [copied, setCopied] = useState(false);
+  // The clipboard is refused on an insecure origin, with permission denied and in some
+  // in-app browsers. A button that just stays "Copy" then looks broken, so the caller
+  // gets to say it failed and what to do instead.
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (!copied) return;
-    const id = window.setTimeout(() => setCopied(false), resetMs);
+    if (!copied && !failed) return;
+    // A failure carries an instruction ("select it instead"), which takes longer to read
+    // than a tick does.
+    const id = window.setTimeout(
+      () => {
+        setCopied(false);
+        setFailed(false);
+      },
+      failed ? Math.max(resetMs, 4_000) : resetMs,
+    );
     return () => window.clearTimeout(id);
-  }, [copied, resetMs]);
+  }, [copied, failed, resetMs]);
 
   const copy = useCallback(async (value: string) => {
     try {
+      if (!navigator.clipboard) throw new Error("clipboard unavailable");
       await navigator.clipboard.writeText(value);
+      setFailed(false);
       setCopied(true);
     } catch {
       setCopied(false);
+      setFailed(true);
     }
   }, []);
 
-  return { copied, copy };
+  return { copied, failed, copy };
 }
 
 /**
@@ -81,15 +96,29 @@ export function Address({
 export function FullAddress({ address, className }: { address: string; className?: string }) {
   const groups = address.match(/.{1,4}/g) ?? [];
   return (
-    <span
-      className={cn("inline-flex flex-wrap gap-x-1 font-mono text-xs leading-relaxed break-all", className)}
-      aria-label={address}
-    >
-      {groups.map((group, index) => (
-        <span key={index} aria-hidden className={index % 2 === 0 ? "text-foreground" : "text-muted-foreground"}>
-          {group}
-        </span>
-      ))}
+    <span className={cn("inline-flex font-mono text-xs leading-relaxed", className)}>
+      {/* One click or long-press selects every character — the fallback when the
+          clipboard refuses. The groups are inline-blocks spaced by margin, not a flex row
+          with a gap: flex items copy out one per line, and a pasted address with nine
+          line breaks in it is not the address. */}
+      <span className="select-all">
+        {/* An aria-label on a plain span is ignored, so the address is real text for a
+            screen reader, kept out of the selection so it is not copied twice. */}
+        <span className="sr-only select-none">{address}</span>
+        {groups.map((group, index) => (
+          <span
+            key={index}
+            aria-hidden
+            className={cn(
+              "inline-block",
+              index < groups.length - 1 && "mr-1",
+              index % 2 === 0 ? "text-foreground" : "text-muted-foreground",
+            )}
+          >
+            {group}
+          </span>
+        ))}
+      </span>
     </span>
   );
 }

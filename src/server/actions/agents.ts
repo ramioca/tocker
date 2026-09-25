@@ -3,7 +3,8 @@ import { MAX_AGENTS_PER_USER, RATE_LIMITS, limiter } from "@/lib/security/rate-l
 import { revalidatePath } from "next/cache";
 import { and, eq, sql } from "drizzle-orm";
 import { agentRuns, agents, getDb, llmKeys, posts } from "@/db";
-import { agentConfigSchema, type AgentConfigInput } from "@/lib/agent/config";
+import { MAX_AGENT_NAME, agentConfigSchema, type AgentConfigInput } from "@/lib/agent/config";
+import { isLlmMock } from "@/lib/agent/mock-model";
 import { getSession } from "@/lib/auth";
 import { applyAgentBudgetPolicy, createAgentWallets } from "@/lib/wallets";
 import { describeStranded } from "@/lib/wallets/funding";
@@ -12,8 +13,8 @@ import { newId, uniqueSlug } from "@/server/queries/_shared";
 import type { ActionResult, AgentMode, AgentStatus } from "@/server/types";
 import { slowDown } from "./_shared";
 
-/** Matches the `maxLength` on the builder's and the settings form's inputs. */
-const MAX_NAME = 60;
+/** The same constant as the `maxLength` on the builder's and the settings form's inputs. */
+const MAX_NAME = MAX_AGENT_NAME;
 const MAX_TAGLINE = 120;
 const MAX_AVATAR_SEED = 64;
 /**
@@ -61,11 +62,34 @@ function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
 }
 
+/**
+ * Plain words for the fields a save can fail on. A full sentence where zod's own
+ * message ("Too small: expected number to be >=0.1") would say nothing useful; a label
+ * to put in front of it otherwise.
+ */
+const ISSUE_SENTENCE: Record<string, string> = {
+  percentOfEquity: "Share of equity must be between 0.1% and 100%",
+  referenceRangePct: "Reference range must be between 1% and 500%",
+};
+const ISSUE_LABEL: Record<string, string> = {
+  minTradeUsd: "Minimum ticket",
+  maxTradeUsd: "Max per trade",
+  maxDailyTrades: "Max trades per day",
+  maxPositionPct: "Max position size",
+  maxDataSpendUsdPerRun: "Data spend cap per run",
+  slippageBps: "Slippage tolerance",
+  strategyPrompt: "Strategy",
+  name: "Name",
+};
+
+/** The first problem, in words: never a dotted path like `risk.sizing.percentOfEquity`. */
 function firstIssue(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
   const issue = error.issues[0];
   if (!issue) return "Invalid agent configuration";
-  const path = issue.path.filter((p) => typeof p === "string").join(".");
-  return path ? `${path}: ${issue.message}` : issue.message;
+  const leaf = [...issue.path].reverse().find((p): p is string => typeof p === "string");
+  if (leaf && ISSUE_SENTENCE[leaf]) return ISSUE_SENTENCE[leaf];
+  if (leaf && ISSUE_LABEL[leaf]) return `${ISSUE_LABEL[leaf]}: ${issue.message}`;
+  return issue.message;
 }
 
 function revalidateAgent(slug?: string, handle?: string) {
@@ -332,6 +356,9 @@ export async function triggerRun(id: string): Promise<ActionResult<{ runId: stri
   if (!agent) return fail("Agent not found");
   if (agent.ownerId !== session.userId) return fail("You do not own this agent");
   if (agent.status === "draft") return fail("Activate the agent before running it");
+  // The page disables Run now without a key, but a stale page or a direct call would
+  // otherwise start a run that can only fail.
+  if (!agent.llmKeyId && !isLlmMock()) return fail("Attach an LLM key before running this agent");
 
   // A run that stopped moving more than ten minutes ago was killed by the platform, not
   // by us. Reap it before looking for a live one: returning `{ok: true}` pointing at a

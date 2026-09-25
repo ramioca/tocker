@@ -8,7 +8,7 @@ import { AgentAvatar } from "@/components/common/agent-avatar";
 import { RelativeTime } from "@/components/common/relative-time";
 import { RunStatusBadge } from "@/components/common/status-badge";
 import { TokenIcon } from "@/components/common/token-icon";
-import { formatDuration, formatUsd } from "@/components/common/format";
+import { formatDuration, formatPriceUsd, formatUsd } from "@/components/common/format";
 import { agentBySlug, runDetail, viewerSession } from "@/components/common/data-access";
 import { cn } from "@/lib/utils";
 
@@ -130,7 +130,7 @@ export default async function RunPage({ params }: Params) {
                 <span className="text-sm font-medium">{trade.token.symbol}</span>
                 <span className="tnum text-sm">{formatUsd(trade.amountUsd)}</span>
                 <span className="tnum text-xs text-muted-foreground">
-                  @ {formatUsd(trade.priceUsd)}
+                  @ {formatPriceUsd(trade.priceUsd)}
                 </span>
                 {trade.rationale ? (
                   <p className="w-full border-l-2 border-primary/40 pl-3 text-sm leading-relaxed text-foreground/80">

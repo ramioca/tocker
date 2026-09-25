@@ -1,6 +1,5 @@
 import { useId } from "react";
 import Link from "next/link";
-import { ModeBadge } from "@/components/common/mode-badge";
 import { formatPct, formatSignedUsd, formatUsd } from "@/components/common/format";
 import { cn } from "@/lib/utils";
 import type { MoneyAgentRow, MoneyTotals } from "@/server/queries/money";
@@ -19,7 +18,7 @@ import type { MoneyAgentRow, MoneyTotals } from "@/server/queries/money";
 
 /**
  * The agent column stays put while the numbers scroll under it: on a phone the table
- * is twice the card's width, and a row of figures with its name scrolled away is a
+ * is wider than the card, and a row of figures with its name scrolled away is a
  * row of figures about nobody. It has to be opaque or the cells sliding beneath show
  * through, so it paints `.glass-card`'s own mix pre-composited on the page ground —
  * plain `bg-card` read as a lighter stripe. The hairline is the column's edge.
@@ -100,7 +99,7 @@ export function AgentMoneyTable({
   const captionId = useId();
   return (
     <div className="glass-card overflow-hidden rounded-2xl">
-      {/* Outside the scroller: as a <caption> it took the table's 52rem width and was
+      {/* Outside the scroller: as a <caption> it took the table's full width and was
           cut off mid-sentence on a phone. */}
       {caption ? (
         <p
@@ -111,9 +110,12 @@ export function AgentMoneyTable({
         </p>
       ) : null}
       <div className="w-full overflow-x-auto overscroll-x-contain">
+        {/*
+          Sized to its content, not a fixed 52rem: on a phone that pushed P&L past the
+          edge. `min-w-full` still fills the card on a desktop.
+        */}
         <table
-          className={cn("tnum w-full border-collapse text-left text-[13px]", STICKY_BG)}
-          style={{ minWidth: "52rem" }}
+          className={cn("tnum w-max min-w-full border-collapse text-left text-[13px]", STICKY_BG)}
           aria-describedby={caption ? captionId : undefined}
         >
           <thead className="border-b border-[var(--glass-hairline)]">
@@ -133,6 +135,7 @@ export function AgentMoneyTable({
             {rows.map((row) => (
               <tr key={row.id} className="group transition-colors duration-100 hover:bg-muted/30">
                 <Td className={cn(STICKY_CELL, STICKY_HOVER, "max-w-[11rem]")}>
+                  {/* No mode badge: each table holds one mode, and its label says which. */}
                   <span className="flex min-w-0 items-center gap-2">
                     <Link
                       href={`/agents/${row.slug}`}
@@ -140,7 +143,6 @@ export function AgentMoneyTable({
                     >
                       {row.name}
                     </Link>
-                    <ModeBadge mode={row.mode} size="xs" />
                     {row.stale ? (
                       <span
                         className="text-[10px] uppercase tracking-wide text-muted-foreground"

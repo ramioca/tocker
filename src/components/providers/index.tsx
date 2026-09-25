@@ -45,7 +45,11 @@ export function Providers({ children, nonce }: { children: ReactNode; nonce?: st
               page, sign-in). Below `md` it clears the phone tab bar — Sonner's mobile
               breakpoint is 600px, so both offsets read it — and at any width it clears
               a docked run/approvals island, which would otherwise sit on the same spot.
-              The island rule chains both :has() so it outranks the tab-bar one.
+              The island rule chains both :has() so it outranks the tab-bar one. A page
+              with a sticky action bar on a phone (the builder's Create, an agent's Save)
+              lifts it past that bar and whatever is under it — otherwise the toast
+              explaining a failed save covers the button that retries it. Important,
+              because it has to win over all three of the rules above.
             */}
             <Toaster
               theme="dark"
@@ -58,6 +62,7 @@ export function Providers({ children, nonce }: { children: ReactNode; nonce?: st
                 "max-md:[body:has([data-tab-bar])_&]:[--toast-bottom:calc(4.5rem+env(safe-area-inset-bottom))]",
                 "max-md:[body:has([data-tab-bar]):has([data-run-island])_&]:[--toast-bottom:calc(8rem+env(safe-area-inset-bottom))]",
                 "md:[body:has([data-run-island])_&]:[--toast-bottom:6rem]",
+                "max-md:[body:has([data-sticky-actionbar])_&]:[--toast-bottom:calc(9rem+env(safe-area-inset-bottom))]!",
               )}
               toastOptions={{
                 classNames: {

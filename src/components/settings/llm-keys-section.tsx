@@ -31,6 +31,13 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
   // with a full countdown instead of inheriting what was left of the previous one.
   const [pillRound, setPillRound] = useState(0);
   const [adding, setAdding] = useState(initialKeys.length === 0);
+  // Opened by the button rather than shown by default: focus goes into the form then,
+  // since the button that had it is gone.
+  const [openedOnDemand, setOpenedOnDemand] = useState(false);
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+  // Set when the form closes (added or cancelled). The button it hands focus back to
+  // only exists after that render, so the effect below does the focusing.
+  const focusAddButton = useRef(false);
   // The same pending removal, readable from the unmount and pagehide handlers, which
   // run outside render and would otherwise see a stale closure.
   const pendingRef = useRef<PendingRemoval | null>(null);
@@ -87,6 +94,17 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
     if (entry) void commitRemoval(entry);
   }, [commitRemoval, track]);
 
+  useEffect(() => {
+    if (!focusAddButton.current) return;
+    focusAddButton.current = false;
+    addButtonRef.current?.focus();
+  });
+
+  const closeForm = useCallback(() => {
+    focusAddButton.current = true;
+    setAdding(false);
+  }, []);
+
   // Leaving ends the undo window: switching to the Security tab unmounts this, closing
   // or reloading the page fires pagehide. Either way the removal goes through rather
   // than quietly never happening.
@@ -131,9 +149,17 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{keyName(key)}</p>
-                    <p className="tnum truncate font-mono text-xs text-muted-foreground">
-                      {PROVIDER_LABEL[key.provider]} · ••••{key.last4} · added{" "}
-                      <RelativeTime iso={key.createdAt} />
+                    {/* Wraps rather than truncating: on a phone the cut fell in "added just…".
+                        Each fact leads with a dot and the row is pulled left by one dot, so a
+                        wrapped line never starts on a stray "·". */}
+                    <p className="overflow-hidden font-mono text-xs text-muted-foreground">
+                      <span className="tnum -ml-[calc(1ch+0.375rem)] flex w-[calc(100%+1ch+0.375rem)] flex-wrap gap-x-1.5 [&>*]:before:mr-1.5 [&>*]:before:content-['·']">
+                        <span>{PROVIDER_LABEL[key.provider]}</span>
+                        <span>••••{key.last4}</span>
+                        <span>
+                          added <RelativeTime iso={key.createdAt} />
+                        </span>
+                      </span>
                     </p>
                   </div>
                   <HoldToConfirmButton
@@ -155,16 +181,22 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
       {adding ? (
         <div className="rounded-xl border border-border/80 bg-background/40 p-4">
           <AddLlmKeyForm
+            autoFocus={openedOnDemand}
+            onCancel={keys.length > 0 ? closeForm : undefined}
             onAdded={(key) => {
               setKeys((current) => [...current, key]);
-              setAdding(false);
+              closeForm();
             }}
           />
         </div>
       ) : (
         <button
+          ref={addButtonRef}
           type="button"
-          onClick={() => setAdding(true)}
+          onClick={() => {
+            setOpenedOnDemand(true);
+            setAdding(true);
+          }}
           className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-sm transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           <Plus className="size-4" aria-hidden />

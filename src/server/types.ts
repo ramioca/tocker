@@ -348,7 +348,8 @@ export interface UserProfile extends UserCard {
   isFollowedByViewer: boolean;
   isSelf: boolean;
   agents: AgentCard[];
-  totalPnlUsd: number;
+  // No total PnL: one figure summed across paper and live agents adds imaginary money
+  // to real. A surface that needs a total splits by mode (`profile/pnl-by-mode.ts`).
 }
 
 export interface LlmKeyRow {

@@ -3,15 +3,17 @@
  *
  * A list of failures alone is misleading: "one blocker" reads very differently
  * from "one of nine checks failed". So every gate is shown with a green check or
- * a red cross, and a failing one borrows its sentence from
- * {@link explainBlocker} — the same prose the run transcript and the model's
- * prompt see, so the UI and the agent can never tell different stories.
+ * a red cross, and a failing one borrows its sentence from {@link describeBlocker}
+ * — the same words the Discover radar uses for the same failure, in the public
+ * voice ("the platform's floor"), because this score was taken under the default
+ * universe and there is no "your" to address. `explainBlocker` stays the prompt's
+ * vocabulary; it is written for a model, not a reader.
  *
  * Server-safe: no state, no motion. It sits inside a page a person opened
  * deliberately, and it must be readable before hydration.
  */
 import { Check, X } from "lucide-react";
-import { explainBlocker } from "@/lib/tokens/score";
+import { describeBlocker } from "@/components/tokens/blocker-copy";
 import { cn } from "@/lib/utils";
 
 /** Same warm amber the blocker list uses. Red belongs to PnL. */
@@ -123,7 +125,7 @@ export function GateList({
               )}
               <span className="min-w-0">
                 <span className={cn("block text-xs leading-relaxed", ok ? "text-foreground/80" : "font-medium")}>
-                  {ok ? gate.passes : capitalise(failing.map(explainBlocker).join("; "))}
+                  {ok ? gate.passes : failing.map((code) => describeBlocker(code, "public").title).join("; ")}
                 </span>
                 <span className="sr-only">{ok ? "passed" : "failed"}: {gate.label}</span>
               </span>
@@ -133,14 +135,10 @@ export function GateList({
         {unmatched.map((code) => (
           <li key={code} className="flex items-start gap-2">
             <X aria-hidden className="mt-0.5 size-3.5 shrink-0" style={{ color: FAIL }} />
-            <span className="text-xs leading-relaxed font-medium">{capitalise(explainBlocker(code))}</span>
+            <span className="text-xs leading-relaxed font-medium">{describeBlocker(code, "public").title}</span>
           </li>
         ))}
       </ul>
     </div>
   );
-}
-
-function capitalise(text: string): string {
-  return text.length === 0 ? text : text.charAt(0).toUpperCase() + text.slice(1);
 }

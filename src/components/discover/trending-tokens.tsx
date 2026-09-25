@@ -163,6 +163,7 @@ export function TrendingTokens({ scores }: { scores: TokenScore[] }) {
             <TokenScoreRow
               score={score}
               showTopBlocker
+              emphasizeChange={sort === "change"}
               href={`/tokens/${score.chain}/${score.address}`}
               className="min-w-0 flex-1"
             />

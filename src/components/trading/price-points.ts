@@ -1,3 +1,4 @@
+import { formatUsd } from "@/components/common/format";
 import type { ScoreHistoryPoint } from "@/server/types";
 
 /**
@@ -31,4 +32,42 @@ export function pricePointsFrom(history: readonly ScoreHistoryPoint[]): PricePoi
       ? [{ at: p.at, priceUsd: p.priceUsd }]
       : [],
   );
+}
+
+/**
+ * The price range the chart plots and labels: every price it draws, padded 8% so the
+ * line never touches the top or bottom edge. Null when there is nothing to plot.
+ */
+export function priceAxisRange(prices: readonly number[]): { yLo: number; yHi: number } | null {
+  const valid = prices.filter((price) => Number.isFinite(price) && price > 0);
+  if (valid.length === 0) return null;
+  const lo = Math.min(...valid);
+  const hi = Math.max(...valid);
+  const pad = (hi - lo) * 0.08 || hi * 0.08 || 1;
+  return { yLo: Math.max(0, lo - pad), yHi: hi + pad };
+}
+
+/** The floor: what the axis always had, and what the score chart under it uses. */
+export const MIN_PRICE_AXIS_PAD_LEFT = 44;
+/** A 9px mono glyph is about 5.4px wide; a little over, so a label never touches the edge. */
+const AXIS_CHAR_PX = 5.6;
+/** The labels sit 6px left of the plot; the rest is breathing room from the card edge. */
+const AXIS_GAP_PX = 10;
+
+/**
+ * How much room the price axis needs on the left for its two labels.
+ *
+ * A fixed 44px fits "$1.23" but not a micro-cap's "$0.00000065", which ran past the card
+ * edge on a phone and lost its "$". Pass the same points and markers the chart gets; a
+ * page that draws a second chart under it passes the result to both, so the two plots
+ * keep one x range.
+ */
+export function priceAxisPadLeft(
+  points: readonly { priceUsd: number }[],
+  markers: readonly { priceUsd: number }[] = [],
+): number {
+  const range = priceAxisRange([...points, ...markers].map((point) => point.priceUsd));
+  if (!range) return MIN_PRICE_AXIS_PAD_LEFT;
+  const longest = Math.max(formatUsd(range.yHi).length, formatUsd(range.yLo).length);
+  return Math.max(MIN_PRICE_AXIS_PAD_LEFT, Math.ceil(longest * AXIS_CHAR_PX) + AXIS_GAP_PX);
 }

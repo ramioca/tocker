@@ -33,9 +33,15 @@ function Tile({
     <div className={cn("min-w-0 px-4 py-3.5", className)}>
       <p className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">{label}</p>
       <p className="tnum mt-1 truncate font-mono text-xl leading-tight text-foreground">{value}</p>
+      {/* Every fact leads with a dot, and the row is pulled left by exactly one dot so
+          whichever fact starts a line has its dot clipped. Without dots the facts ran
+          together ("276 fills $0.00 live $191K paper"); with a plain dot between them, a
+          wrapped line at 390px started with a stray "·". */}
       {sub ? (
-        <p className="tnum mt-1 flex flex-wrap items-baseline gap-x-2 font-mono text-[11px] text-muted-foreground">
-          {sub}
+        <p className="mt-1 overflow-hidden font-mono text-[11px] text-muted-foreground">
+          <span className="tnum -ml-[calc(1ch+0.5rem)] flex w-[calc(100%+1ch+0.5rem)] flex-wrap items-baseline gap-x-2">
+            {sub}
+          </span>
         </p>
       ) : null}
     </div>
@@ -52,7 +58,17 @@ function Tile({
  * fixes every one of those.
  */
 function Sub({ children, className }: { children: ReactNode; className?: string }) {
-  return <span className={cn("min-w-0", className)}>{children}</span>;
+  // Flex, so a fact that wraps inside itself wraps under its own text, not under the dot.
+  return (
+    <span className={cn("flex min-w-0 before:mr-2 before:text-muted-foreground before:content-['·']", className)}>
+      <span className="min-w-0">{children}</span>
+    </span>
+  );
+}
+
+/** Compact, except that nothing is "$0" — not a cents-precision "$0.00" beside "$191K". */
+function compactUsd(n: number): string {
+  return n === 0 ? "$0" : fmtUsd(n, { compact: true });
 }
 
 export function HeadlineTiles({
@@ -73,8 +89,8 @@ export function HeadlineTiles({
         value={formatCount(users.total)}
         sub={
           <>
-            <Sub>+{formatCount(users.new7d)} · 7d</Sub>
-            <Sub>+{formatCount(users.new30d)} · 30d</Sub>
+            <Sub>+{formatCount(users.new7d)} in 7d</Sub>
+            <Sub>+{formatCount(users.new30d)} in 30d</Sub>
           </>
         }
       />
@@ -135,8 +151,8 @@ export function HeadlineTiles({
         sub={
           <>
             <Sub>{formatCount(volume.allTime.count)} fills</Sub>
-            <Sub>{fmtUsd(volume.allTime.liveNotionalUsd, { compact: true })} live</Sub>
-            <Sub>{fmtUsd(volume.allTime.paperNotionalUsd, { compact: true })} paper</Sub>
+            <Sub>{compactUsd(volume.allTime.liveNotionalUsd)} live</Sub>
+            <Sub>{compactUsd(volume.allTime.paperNotionalUsd)} paper</Sub>
           </>
         }
       />

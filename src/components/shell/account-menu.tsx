@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { Bot, LogOut, Settings, UserCircle, Wallet } from "lucide-react";
+import { Bot, IdCard, LogOut, Settings, UserCircle } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -15,16 +16,22 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LoginButton } from "@/components/auth/login-button";
 import { useSession } from "@/hooks/use-session";
-import { AccountModal } from "./account-modal";
+
+// Opened a handful of times ever; loaded on the first click rather than with every page.
+const AccountModal = dynamic(() => import("./account-modal").then((mod) => mod.AccountModal), {
+  ssr: false,
+});
 
 /**
  * The top-right account entry, fomo-style: everything about "me" hangs off the
- * avatar. Navigation destinations are plain links; "Manage account" is a modal
+ * avatar. Navigation destinations are plain links; "Account details" is a modal
  * because it is a reference card (email, handle), not a place.
  */
 export function AccountMenu() {
   const { ready, session, logout } = useSession();
   const [accountOpen, setAccountOpen] = useState(false);
+  // Latches on the first open, so the modal stays mounted for its close transition.
+  const [accountWanted, setAccountWanted] = useState(false);
 
   // Privy not hydrated yet: hold the space so the bar doesn't reflow on login.
   if (!ready) return <div className="size-8 rounded-full bg-muted/40" aria-hidden />;
@@ -69,9 +76,14 @@ export function AccountMenu() {
             <Bot aria-hidden className="size-4" />
             My agents
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setAccountOpen(true)}>
-            <Wallet aria-hidden className="size-4" />
-            Manage account
+          <DropdownMenuItem
+            onClick={() => {
+              setAccountWanted(true);
+              setAccountOpen(true);
+            }}
+          >
+            <IdCard aria-hidden className="size-4" />
+            Account details
           </DropdownMenuItem>
           <DropdownMenuItem render={<Link href="/settings" />}>
             <Settings aria-hidden className="size-4" />
@@ -80,12 +92,12 @@ export function AccountMenu() {
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onClick={() => void logout()}>
             <LogOut aria-hidden className="size-4" />
-            Log out
+            Sign out
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <AccountModal open={accountOpen} onOpenChange={setAccountOpen} session={session} />
+      {accountWanted ? <AccountModal open={accountOpen} onOpenChange={setAccountOpen} session={session} /> : null}
     </>
   );
 }

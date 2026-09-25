@@ -1,11 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { MorphButton } from "@/components/spectrumui/morph-button";
 import { updateProfile } from "@/server/actions/users";
 import type { Session } from "@/server/types";
 import { AgentAvatar } from "@/components/social-common/agent-avatar";
+import { SESSION_QUERY_KEY } from "@/hooks/use-session";
 import { MORPH_FOCUS, enterSubmits, useMorphAction } from "./use-morph-action";
 
 const BIO_MAX = 240;
@@ -27,6 +30,16 @@ export function ProfileForm({ session, bio: initialBio }: { session: Session; bi
   const [displayName, setDisplayName] = useState(session.displayName ?? "");
   const [bio, setBio] = useState(initialBio);
   const [error, setError] = useState<{ field: Field; message: string } | null>(null);
+  // What the server last accepted. Save stays disabled until something differs from it:
+  // saving an untouched form played the whole save and said "Saved" about nothing.
+  const [saved, setSaved] = useState({
+    handle: session.handle,
+    displayName: session.displayName ?? "",
+    bio: initialBio,
+  });
+  const dirty = handle !== saved.handle || displayName !== saved.displayName || bio !== saved.bio;
+  const queryClient = useQueryClient();
+  const router = useRouter();
 
   async function save() {
     setError(null);
@@ -40,6 +53,12 @@ export function ProfileForm({ session, bio: initialBio }: { session: Session; bi
         setError({ field: fieldFor(result.error), message: result.error });
         throw new Error(result.error);
       }
+      setSaved({ handle, displayName, bio });
+      // The account menu reads the session query (fresh for 30s, no refetch on focus), so
+      // without this its Profile link kept pointing at the old handle — a page that no
+      // longer exists. The refresh does the same for everything server-rendered.
+      void queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
+      router.refresh();
     } catch (e) {
       const message = e instanceof Error ? e.message : "Something went wrong";
       // Foundation hasn't landed yet — treat the stub as a no-op success in dev.
@@ -71,10 +90,12 @@ export function ProfileForm({ session, bio: initialBio }: { session: Session; bi
     <form
       className="space-y-5"
       noValidate
-      onKeyDown={enterSubmits(() => void run())}
+      onKeyDown={enterSubmits(() => {
+        if (dirty) void run();
+      })}
       onSubmit={(event) => {
         event.preventDefault();
-        void run();
+        if (dirty) void run();
       }}
     >
       <div className="flex items-center gap-4">
@@ -155,6 +176,7 @@ export function ProfileForm({ session, bio: initialBio }: { session: Session; bi
         successLabel="Saved"
         errorLabel="Not saved"
         size="sm"
+        disabled={state === "idle" && !dirty}
         className={MORPH_FOCUS}
       >
         Save profile

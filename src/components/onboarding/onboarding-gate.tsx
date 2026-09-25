@@ -1,0 +1,51 @@
+"use client";
+
+import { useState, useSyncExternalStore } from "react";
+import dynamic from "next/dynamic";
+import { useSession } from "@/hooks/use-session";
+
+/*
+ * The modal, its three steps and the key form behind them are a first-run surface:
+ * a user sees them once. Every other page view would download them for nothing, so
+ * they load only once the gate below has decided this visit might show them.
+ */
+const OnboardingModal = dynamic(() => import("./onboarding-modal").then((mod) => mod.OnboardingModal), {
+  ssr: false,
+});
+
+/** Same key the modal writes when it is dismissed. */
+const STORAGE_KEY = "tocker:onboarding-dismissed";
+
+const noSubscribe = () => () => {};
+const isForced = () => new URLSearchParams(window.location.search).get("onboarding") === "1";
+const isDismissed = () => {
+  try {
+    return localStorage.getItem(STORAGE_KEY) === "1";
+  } catch {
+    // localStorage unavailable (private mode, sandboxed webviews): let the modal decide.
+    return false;
+  }
+};
+
+/**
+ * Mounted from the app layout in place of the modal. It rules out what can be ruled
+ * out without a request — signed out, or dismissed on this device — and hands the
+ * rest (does this account have a key yet?) to the modal, which still decides for
+ * itself. `?onboarding=1` forces it, as it always has.
+ *
+ * The URL and localStorage are the browser's, so the server snapshots say "no" and
+ * the first client render agrees; the real answer lands right after hydration.
+ */
+export function OnboardingGate() {
+  const { ready, session } = useSession();
+  const forced = useSyncExternalStore(noSubscribe, isForced, () => false);
+  const dismissed = useSyncExternalStore(noSubscribe, isDismissed, () => true);
+  const candidate = forced || (ready && session !== null && !dismissed);
+
+  // Latched: dismissing writes the flag this reads, and unmounting the modal then
+  // would cut its exit transition off mid-way.
+  const [mounted, setMounted] = useState(false);
+  if (candidate && !mounted) setMounted(true);
+
+  return mounted ? <OnboardingModal /> : null;
+}

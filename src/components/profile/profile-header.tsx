@@ -4,11 +4,14 @@ import type { UserProfile } from "@/server/types";
 import { AgentAvatar } from "@/components/social-common/agent-avatar";
 import { FollowToggle } from "@/components/social-common/follow-toggle";
 import { PnlText } from "@/components/social-common/pnl-text";
-import { formatCount, formatJoined } from "@/components/social-common/format";
+import { formatCount, formatJoined, formatUsd } from "@/components/social-common/format";
+import { ModeBadge } from "@/components/common/mode-badge";
 import { ProfileShare } from "./profile-share";
+import { pnlByMode } from "./pnl-by-mode";
 
 export function ProfileHeader({ profile }: { profile: UserProfile }) {
-  const liveAgents = profile.agents.filter((a) => a.mode === "live").length;
+  const pnl = pnlByMode(profile.agents);
+  const liveAgents = pnl.liveAgents;
   const totalTrades = profile.agents.reduce((sum, a) => sum + a.tradeCount, 0);
 
   return (
@@ -47,6 +50,7 @@ export function ProfileHeader({ profile }: { profile: UserProfile }) {
               targetId={profile.id}
               defaultFollowing={profile.isFollowedByViewer}
               size="sm"
+              targetName={`@${profile.handle}`}
             />
           )}
         </div>
@@ -91,8 +95,36 @@ export function ProfileHeader({ profile }: { profile: UserProfile }) {
       </div>
 
       <dl className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border/70 bg-border/60 sm:grid-cols-4">
-        <Stat label="Total PnL">
-          <PnlText usd={profile.totalPnlUsd} size="lg" />
+        {/*
+          Live money and paper money are never summed (Home and Money keep them apart
+          too). With any live agent the tile is live PnL, paper trailing underneath;
+          with only paper agents it is paper PnL. Either way the label carries the mode
+          badge every other surface uses — "Paper PnL [PAPER]" said it twice.
+        */}
+        <Stat
+          label={
+            pnl.liveAgents + pnl.paperAgents > 0 ? (
+              <span className="flex items-center gap-1.5">
+                PnL
+                <ModeBadge mode={liveAgents > 0 ? "live" : "paper"} size="xs" />
+              </span>
+            ) : (
+              "PnL"
+            )
+          }
+        >
+          {liveAgents > 0 ? (
+            <span className="flex flex-col">
+              <PnlText usd={pnl.live} size="lg" />
+              {pnl.paper !== null ? (
+                <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                  {formatUsd(pnl.paper, { signed: true, compact: true })} paper
+                </span>
+              ) : null}
+            </span>
+          ) : (
+            <PnlText usd={pnl.paper} size="lg" />
+          )}
         </Stat>
         <Stat label="Agents">
           <span className="font-mono text-lg font-medium tabular-nums">
@@ -117,7 +149,7 @@ export function ProfileHeader({ profile }: { profile: UserProfile }) {
   );
 }
 
-function Stat({ label, children }: { label: string; children: React.ReactNode }) {
+function Stat({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="bg-card px-4 py-3">
       <dt className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">

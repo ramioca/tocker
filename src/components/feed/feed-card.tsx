@@ -2,9 +2,10 @@
 
 import { useSyncExternalStore } from "react";
 import Link from "next/link";
-import { ArrowUpRight, MessageCircle, Rocket, Share, Sparkles, Trophy } from "lucide-react";
+import { ArrowUpRight, Link2, MessageCircle, Rocket, Share, Sparkles, Trophy } from "lucide-react";
 import { LikeButton } from "@/components/spectrumui/like-button";
 import { ShareButton } from "@/components/spectrumui/share-button";
+import { copyLink } from "@/components/common/copy-link";
 import { AgentAvatar } from "@/components/common/agent-avatar";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { ModeBadge } from "@/components/common/mode-badge";
@@ -190,26 +191,35 @@ export function FeedCard({
   const sharePath = `/feed/${item.id}`;
   const shareUrl =
     typeof window === "undefined" ? sharePath : `${window.location.origin}${sharePath}`;
-  const shareActions = canNativeShare
-    ? [
-        {
-          icon: <Share aria-hidden className="size-3.5" />,
-          label: "Share via…",
-          onSelect: () => {
-            const title = agent ? `${agent.name} on Tocker` : "A post on Tocker";
-            // AbortError is the user closing the sheet; nothing to report.
-            navigator.share({ title, url: shareUrl }).catch(() => {});
+  // Our own "Copy link" rather than the share button's built-in one, which swallows a
+  // refused clipboard and confirms only in an aria-hidden tooltip.
+  const shareActions = [
+    {
+      icon: <Link2 aria-hidden className="size-3.5" />,
+      label: "Copy link",
+      onSelect: () => copyLink(shareUrl),
+    },
+    ...(canNativeShare
+      ? [
+          {
+            icon: <Share aria-hidden className="size-3.5" />,
+            label: "Share via…",
+            onSelect: () => {
+              const title = agent ? `${agent.name} on Tocker` : "A post on Tocker";
+              // AbortError is the user closing the sheet; nothing to report.
+              navigator.share({ title, url: shareUrl }).catch(() => {});
+            },
           },
-        },
-      ]
-    : [];
+        ]
+      : []),
+  ];
 
   const Icon = item.kind === "trade" ? null : KIND_ICON[item.kind];
 
   return (
     <article
       id={item.id}
-      className="glass-card glass-hover scroll-mt-24 rounded-2xl px-4 py-4 sm:px-5"
+      className="glass-card glass-hover isolate scroll-mt-24 rounded-2xl px-4 py-4 sm:px-5"
     >
       <div className="flex gap-3">
         {agent ? (
@@ -310,7 +320,6 @@ export function FeedCard({
 
             <ShareButton
               size="sm"
-              copyValue={shareUrl}
               direction="right"
               label="Share this post"
               actions={shareActions}

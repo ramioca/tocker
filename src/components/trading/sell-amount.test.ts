@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { floorCents, sliceText } from "./sell-amount";
+import { floorCents, pctLabel, sliceText } from "./sell-amount";
 
 describe("floorCents", () => {
   it("rounds down, never up, so a figure never exceeds the mark", () => {
@@ -32,5 +32,28 @@ describe("sliceText", () => {
     expect(sliceText(3528.146, 100)).toBe("3528.14");
     expect(sliceText(3528.146, 50)).toBe("1764.07");
     expect(sliceText(573.42, 25)).toBe("143.35");
+  });
+});
+
+describe("pctLabel", () => {
+  it("never calls a real sell 0%", () => {
+    expect(pctLabel((10 / 2140.64) * 100)).toBe("<1%");
+    expect(pctLabel(0.01)).toBe("<1%");
+  });
+
+  it("keeps one decimal under 10%, dropping a trailing .0", () => {
+    expect(pctLabel(4.67)).toBe("4.7%");
+    expect(pctLabel(5)).toBe("5%");
+    expect(pctLabel(9.96)).toBe("10%");
+  });
+
+  it("rounds to whole percents from 10% up", () => {
+    expect(pctLabel(25)).toBe("25%");
+    expect(pctLabel(66.6)).toBe("67%");
+  });
+
+  it("says 0% only for nothing", () => {
+    expect(pctLabel(0)).toBe("0%");
+    expect(pctLabel(Number.NaN)).toBe("0%");
   });
 });

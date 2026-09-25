@@ -1,7 +1,7 @@
 import "server-only";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
-import { auditEvents, getDb } from "@/db";
+import { agents, auditEvents, getDb } from "@/db";
 import { newId } from "@/server/queries/_shared";
 import type { AuditKind, AuditRow } from "./types";
 
@@ -82,19 +82,23 @@ async function requestFingerprint(): Promise<{ ip: string | null; userAgent: str
 /** Newest first. Owner-scoped by construction: the caller passes a session user id. */
 export async function listAuditEvents(userId: string, limit = 60): Promise<AuditRow[]> {
   const db = await getDb();
+  // Left-joined, and only onto the viewer's own agents: a deleted agent keeps its
+  // denormalised name and simply loses the link.
   const rows = await db
-    .select()
+    .select({ event: auditEvents, agentSlug: agents.slug })
     .from(auditEvents)
+    .leftJoin(agents, and(eq(agents.id, auditEvents.agentId), eq(agents.ownerId, userId)))
     .where(eq(auditEvents.userId, userId))
     .orderBy(desc(auditEvents.createdAt))
     .limit(Math.min(Math.max(limit, 1), 200));
 
-  return rows.map((r) => ({
+  return rows.map(({ event: r, agentSlug }) => ({
     id: r.id,
     kind: r.kind,
     summary: r.summary,
     agentId: r.agentId,
     agentName: r.agentName,
+    agentSlug: agentSlug ?? null,
     metadata: r.metadata ?? null,
     ip: r.ip,
     userAgent: r.userAgent,

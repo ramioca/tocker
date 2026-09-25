@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { CheckCheck } from "lucide-react";
 import { MorphButton } from "@/components/spectrumui/morph-button";
+import { MORPH_FOCUS } from "@/components/common/focus";
 import { markNotificationsRead } from "@/server/actions/users";
 
 export function MarkAllRead({ unreadCount }: { unreadCount: number }) {
@@ -20,6 +21,7 @@ export function MarkAllRead({ unreadCount }: { unreadCount: number }) {
   return (
     <MorphButton
       size="sm"
+      className={MORPH_FOCUS}
       successLabel="Marked read"
       errorLabel="Failed"
       onAction={async () => {

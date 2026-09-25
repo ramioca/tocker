@@ -81,8 +81,7 @@ export async function getMfaStatus(userId: string): Promise<MfaStatus> {
       appMethods: appMethods ?? [],
       userMethods: userMethods ?? [],
       enrolled: false,
-      blockedReason:
-        "Could not reach Privy to check your second factor. It is optional, so nothing is blocked — refresh in a moment to see its status.",
+      blockedReason: "Could not check your second factor right now. It is optional, so nothing is blocked.",
       operatorNote: null,
     };
   }

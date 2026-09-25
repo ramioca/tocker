@@ -4,8 +4,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "re
 import type { MorphButtonState } from "@/components/spectrumui/morph-button";
 
 /** Focus ring for a MorphButton on a card: its own ring-1 disappears against the glass. */
-export const MORPH_FOCUS =
-  "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+export { MORPH_FOCUS } from "@/components/common/focus";
 
 /**
  * Enter in a text field submits. A MorphButton is `type="button"`, and a form with

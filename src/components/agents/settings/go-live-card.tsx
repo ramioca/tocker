@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { LiquidMetal } from "@/components/common/liquid-metal";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { formatUsd } from "@/components/common/format";
+import { safeAction } from "@/lib/safe-action";
 import { backToPaperAction } from "@/server/actions/security";
 import { useWalletBalances } from "./wallets-card";
 import { FundAgentDrawer } from "./fund-agent-drawer";
@@ -47,7 +48,7 @@ export function GoLiveCard({ agent }: { agent: AgentDetail }) {
   const approves = agent.config?.execution.mode === "approve";
 
   const backToPaper = async () => {
-    const result = await backToPaperAction(agent.id);
+    const result = await safeAction(() => backToPaperAction(agent.id));
     if (!result.ok) {
       toast.error("Mode not changed", { description: result.error });
       return;

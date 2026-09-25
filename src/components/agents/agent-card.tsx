@@ -7,6 +7,7 @@ import { PnlText } from "@/components/common/pnl-text";
 import { RelativeTime } from "@/components/common/relative-time";
 import { StatusBadge } from "@/components/common/status-badge";
 import { formatUsd } from "@/components/common/format";
+import { modelLabel } from "@/components/social-common/chain-badge";
 import { cn } from "@/lib/utils";
 import type { AgentCard as AgentCardModel } from "@/server/types";
 
@@ -15,12 +16,18 @@ export function AgentCard({
   className,
   index = 0,
   accountPaused = false,
+  showOwner = false,
+  blocker = null,
 }: {
   agent: AgentCardModel;
   className?: string;
   index?: number;
   /** The viewer's own agents only: trading is paused account-wide. */
   accountPaused?: boolean;
+  /** Off by default: both places this card appears list the viewer's own agents. */
+  showOwner?: boolean;
+  /** The viewer's own agents only: what stops every tick, from `agentBlockers`. */
+  blocker?: { label: string; detail: string } | null;
 }) {
   return (
     <Link
@@ -40,12 +47,24 @@ export function AgentCard({
           <p className="truncate font-semibold tracking-tight">{agent.name}</p>
           <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
             <ModeBadge mode={agent.mode} size="xs" />
-            <span className="truncate">
-              @{agent.owner.handle} · <span className="font-mono">{agent.model}</span>
+            <span className="truncate" title={agent.model}>
+              {showOwner ? `@${agent.owner.handle} · ` : null}
+              {modelLabel(agent.model)}
             </span>
           </p>
         </div>
-        <StatusBadge status={agent.status} accountPaused={accountPaused} short />
+        {/* Stacked, not side by side: a second chip in the row would take the name's width. */}
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <StatusBadge status={agent.status} accountPaused={accountPaused} short />
+          {blocker ? (
+            <span
+              title={blocker.detail}
+              className="inline-flex items-center rounded-md border border-destructive/40 bg-destructive/12 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-destructive uppercase"
+            >
+              {blocker.label}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       {agent.tagline ? (

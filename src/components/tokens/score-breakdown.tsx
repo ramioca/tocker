@@ -46,8 +46,12 @@ export function ScoreBreakdown({
                 <Tooltip>
                   <TooltipTrigger
                     type="button"
+                    // Said in words: the row's text alone reads "Safety 30% 78", two
+                    // numbers with nothing to say which is the weight and which the score.
+                    aria-label={`${component.label}: ${missing ? "not measured" : `${Math.round(value)} out of 100`}${component.weight === null ? "" : `, ${component.weight}% of the score`}`}
                     aria-expanded={isPinned}
-                    aria-controls={`${listId}-${component.key}`}
+                    // Only while the note exists — pointing at a missing id is a broken reference.
+                    aria-controls={isPinned ? `${listId}-${component.key}` : undefined}
                     onClick={() => setPinned(isPinned ? null : component.key)}
                     className={cn(
                       "flex w-full items-center gap-2.5 rounded-md px-1 py-1 text-left",
@@ -55,11 +59,12 @@ export function ScoreBreakdown({
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     )}
                   >
-                      <span className="flex w-[5.5rem] shrink-0 items-baseline gap-1.5 sm:w-24">
+                      {/* Wide enough for "Distribution 15%" untruncated on a phone. */}
+                      <span className="flex w-[6.5rem] shrink-0 items-baseline gap-1.5">
                         <span className="truncate text-xs font-medium">{component.label}</span>
                         {component.weight === null ? null : (
                           <span className="tnum font-mono text-[10px] text-muted-foreground">
-                            {component.weight}
+                            {component.weight}%
                           </span>
                         )}
                       </span>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { KeyRound, Loader2 } from "lucide-react";
 import { useLoginWithEmail, useLoginWithOAuth, useLoginWithPasskey } from "@privy-io/react-auth";
 import { cn } from "cn";
@@ -467,7 +468,14 @@ function Card({ children }: { children: ReactNode }) {
 function Header({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div className="flex flex-col items-center text-center">
-      <PetriClock size={44} />
+      {/* The way back for someone who changes their mind, without the browser's back. */}
+      <Link
+        href="/"
+        aria-label="Tocker home"
+        className="flex rounded-lg focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      >
+        <PetriClock size={44} />
+      </Link>
       <h1 className="mt-3 text-lg font-semibold tracking-tight">{title}</h1>
       {subtitle ? <p className="mt-1 text-sm text-balance text-muted-foreground">{subtitle}</p> : null}
     </div>

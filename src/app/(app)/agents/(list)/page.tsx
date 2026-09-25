@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Bot, Plus } from "lucide-react";
 import { AgentCard } from "@/components/agents/agent-card";
+import { agentBlockers } from "@/components/agents/agent-blockers";
 import { EmptyState } from "@/components/common/empty-state";
 import { accountPaused, myAgents, viewerSession } from "@/components/common/data-access";
 
@@ -14,10 +15,17 @@ export const metadata: Metadata = {
 export default async function MyAgentsPage() {
   const session = await viewerSession();
   if (!session) redirect(`/login?next=${encodeURIComponent("/agents")}`);
-  const [agents, paused] = await Promise.all([myAgents(session?.userId ?? null), accountPaused(session?.userId ?? null)]);
+  const [agents, paused, blockers] = await Promise.all([
+    myAgents(session?.userId ?? null),
+    accountPaused(session?.userId ?? null),
+    agentBlockers(session?.userId ?? null),
+  ]);
 
   const live = agents.filter((agent) => agent.mode === "live").length;
   const active = agents.filter((agent) => agent.status === "active").length;
+  // "2 active" is not the whole truth when both fail every tick before it starts.
+  const stuck = agents.filter((agent) => blockers.has(agent.id)).length;
+  const attention = stuck > 0 ? ` · ${stuck} need${stuck === 1 ? "s" : ""} attention` : "";
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
@@ -28,8 +36,8 @@ export default async function MyAgentsPage() {
             {agents.length === 0
               ? "Nothing deployed yet."
               : paused
-                ? `${agents.length} agent${agents.length === 1 ? "" : "s"} · all trading paused account-wide.`
-                : `${agents.length} agent${agents.length === 1 ? "" : "s"} · ${active} active · ${live} trading live money.`}
+                ? `${agents.length} agent${agents.length === 1 ? "" : "s"} · all trading paused account-wide${attention}.`
+                : `${agents.length} agent${agents.length === 1 ? "" : "s"} · ${active} active · ${live} trading live money${attention}.`}
           </p>
         </div>
 
@@ -61,7 +69,7 @@ export default async function MyAgentsPage() {
         <ul className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {agents.map((agent, index) => (
             <li key={agent.id}>
-              <AgentCard agent={agent} index={index} accountPaused={paused} />
+              <AgentCard agent={agent} index={index} accountPaused={paused} blocker={blockers.get(agent.id)} />
             </li>
           ))}
         </ul>

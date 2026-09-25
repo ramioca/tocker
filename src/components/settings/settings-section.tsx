@@ -25,9 +25,12 @@ export function SettingsSection({
         className,
       )}
     >
+      {/* Focusable from script only: where focus lands when the last item in a section
+          is removed, so it does not fall to <body>. */}
       <h2
         id={id ? `${id}-heading` : undefined}
-        className={cn("text-base font-medium tracking-tight", tone === "danger" && "text-destructive")}
+        tabIndex={-1}
+        className={cn("text-base font-medium tracking-tight outline-none", tone === "danger" && "text-destructive")}
       >
         {title}
       </h2>
