@@ -30,7 +30,7 @@ export function CashTotal({
     return (
       <span
         className={cn("block motion-safe:animate-pulse rounded bg-muted/60", className)}
-        style={{ width: size === "lg" ? "6rem" : "4rem", height: size === "lg" ? "1.9rem" : "1.1rem" }}
+        style={{ width: size === "lg" ? "6rem" : size === "sm" ? "2.5rem" : "4rem", height: size === "lg" ? "1.9rem" : "1.1rem" }}
         aria-label="Loading your balance"
       />
     );

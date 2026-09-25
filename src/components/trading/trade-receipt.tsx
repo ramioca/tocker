@@ -273,6 +273,7 @@ export function TradeReceiptSheet({
   receipt,
   title,
   trigger = "row",
+  defaultOpen = false,
   className,
 }: {
   receipt: TradeReceiptData | null | undefined;
@@ -284,9 +285,11 @@ export function TradeReceiptSheet({
    * blow out the column or force the table into a horizontal scroll.
    */
   trigger?: "row" | "chip";
+  /** Open on mount, for a fill the URL points at (`?trade=`). Pass it to one instance only. */
+  defaultOpen?: boolean;
   className?: string;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   if (!receipt) return null;
 
   return (

@@ -206,7 +206,7 @@ export function TokenTrades({
                       {/* Desktop has the receipt column; only the focused fill spells it out. */}
                       {receipt ? (
                         <div className={cn(trade.rationale && "mt-1", !focused && "sm:hidden")}>
-                          <TradeReceiptSheet receipt={receipt} trigger="row" title={title} />
+                          <TradeReceiptSheet receipt={receipt} trigger="row" title={title} defaultOpen={focused} />
                         </div>
                       ) : null}
                     </TableCell>
