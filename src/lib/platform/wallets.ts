@@ -309,3 +309,41 @@ export async function platformUsdcBalance(chain: Chain): Promise<number | null> 
   if (!row) return null;
   return (await readPlatformBalance(row)).usdc;
 }
+
+/**
+ * Send funds out of a platform wallet, signed with the app's authorization key.
+ *
+ * Callers must already have checked the caller is an admin, the address matches the
+ * chain, and the amount clears `platformWithdrawProblem` against a fresh balance read —
+ * this only signs. The same Privy `transfer` an agent withdrawal on Base uses, and the
+ * same polling: a wallet action comes back `pending`, and only `succeeded` means the
+ * money moved. On Solana the platform wallet is its own fee payer; on Base Privy
+ * sponsors the gas.
+ */
+export async function withdrawFromPlatformWallet(input: {
+  chain: Chain;
+  asset: "usdc" | "native";
+  /** Human units. */
+  amount: number;
+  toAddress: string;
+}): Promise<import("@/lib/wallets").WithdrawResult> {
+  const row = await getPlatformWallet(input.chain);
+  if (!row) throw new PlatformWalletError(`There is no platform ${input.chain} wallet to withdraw from.`, input.chain);
+
+  const { privy, authorizationContext, isPrivyConfigured } = await import("@/lib/privy");
+  if (!isPrivyConfigured()) {
+    throw new PlatformWalletError("Privy is not configured, so the platform wallets cannot sign.", input.chain, row.address);
+  }
+  const { pollWithdrawal } = await import("@/lib/wallets");
+
+  const created = await privy()
+    .wallets()
+    .transfer(row.walletId, {
+      source: { asset: input.asset === "usdc" ? "usdc" : NATIVE_ASSET[input.chain], chain: CHAIN_NAME[input.chain] },
+      destination: { address: input.toAddress },
+      amount: String(input.amount),
+      authorization_context: authorizationContext(),
+    });
+  resetPlatformBalanceCache();
+  return pollWithdrawal(row.walletId, created.id, created);
+}

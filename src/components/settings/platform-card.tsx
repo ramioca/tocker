@@ -5,6 +5,7 @@ import { getPlatformOverview } from "@/server/queries/platform";
 import { DATA_SOURCES } from "@/lib/data-sources/registry";
 import { chainForNetwork } from "@/lib/x402/types";
 import { MIN_PLATFORM_SOL } from "@/lib/wallets/gas";
+import { PlatformWithdraw } from "@/components/settings/platform-withdraw";
 import type { Chain } from "@/server/types";
 import { cn } from "@/lib/utils";
 
@@ -185,6 +186,12 @@ export async function PlatformCard() {
                     Send it ~0.05 SOL.
                   </p>
                 ) : null}
+                <PlatformWithdraw
+                  chain={wallet.chain}
+                  address={wallet.address}
+                  usdc={wallet.usdcBalance}
+                  native={wallet.nativeBalance}
+                />
               </li>
             );
           })}
