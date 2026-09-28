@@ -13,7 +13,7 @@
  * switching an agent to live in the first place, for the same reason.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeftRight, Loader2, ShieldAlert, ShieldCheck, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { TokenPicker, type PickedToken } from "@/components/trading/token-picker";
 import { Textarea } from "@/components/ui/textarea";
 import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { MorphButton } from "@/components/spectrumui/morph-button";
@@ -39,12 +40,12 @@ import { Field } from "@/components/agents/builder/field";
 import { ScoreBadge } from "@/components/tokens";
 import { placeManualTrade, previewTrade } from "@/server/actions/trading";
 import { TradeReceiptCard } from "@/components/trading";
-import { SELL_SLICES, sliceLabel, sliceText } from "@/components/trading/sell-amount";
+import { SELL_SLICES, floorCents, sliceLabel, sliceText } from "@/components/trading/sell-amount";
 import { cn } from "@/lib/utils";
 import type { AgentDetail, Chain, TradePreview } from "@/server/types";
 import type { TradeReceiptData } from "@/db/schema";
 
-const SIZE_PRESETS = [10, 25, 50, 100, 250] as const;
+const SIZE_PRESETS: readonly number[] = [10, 25, 50, 100, 250];
 
 /**
  * Digits and one decimal point, at most two places. The old filter kept every dot, so
@@ -73,13 +74,31 @@ function firstSentence(text: string): string {
 /** Debounce for the preview: every keystroke would re-score the token otherwise. */
 const PREVIEW_DEBOUNCE_MS = 500;
 
+/**
+ * The size chips a buy offers: the fixed ladder, cut at this agent's per-trade cap (a chip
+ * the guard will refuse is a trap), plus the cap itself so "as much as it allows" is one tap.
+ */
+function buyPresets(maxTrade: number): Array<{ value: number; label: string }> {
+  const ladder = SIZE_PRESETS.filter((preset) => maxTrade <= 0 || preset <= maxTrade).map((preset) => ({
+    value: preset,
+    label: `$${preset}`,
+  }));
+  if (maxTrade > 0 && !ladder.some((preset) => preset.value === maxTrade)) {
+    ladder.push({ value: maxTrade, label: `Max ${formatUsd(maxTrade)}` });
+  }
+  return ladder;
+}
+
 export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [chain, setChain] = useState<Chain>(agent.chains[0] ?? "solana");
-  const [tokenAddress, setTokenAddress] = useState("");
-  const [amount, setAmount] = useState("25");
+  const [picked, setPicked] = useState<PickedToken | null>(null);
+  const maxTrade = agent.config?.risk.maxTradeUsd ?? 0;
+  // The default size has to be one the guard accepts: $25 against a $10 cap opened the
+  // sheet on an error.
+  const [amount, setAmount] = useState(() => (maxTrade > 0 && maxTrade < 25 ? String(maxTrade) : "25"));
   const [note, setNote] = useState("");
   /**
    * The preview is keyed by the exact order it describes, so a stale answer for a
@@ -98,15 +117,62 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   /** What the agent holds of the token in the box, from the last preview of it. */
   const [holding, setHolding] = useState<{ key: string; valueUsd: number | null; symbol: string } | null>(null);
 
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+
+  // `?trade=buy&chain=solana&token=<mint>` — where a token page's "Buy" lands. Opens the
+  // sheet on that order, then drops the params so a refresh or a Back does not re-open it.
+  useEffect(() => {
+    const wanted = searchParams.get("trade");
+    if (wanted !== "buy" && wanted !== "sell") return;
+    const wantedChain = searchParams.get("chain");
+    const wantedToken = searchParams.get("token")?.trim() ?? "";
+    const nextChain = agent.chains.find((option) => option === wantedChain) ?? agent.chains[0] ?? "solana";
+    const known = agent.positions.find(
+      (position) => position.token.chain === nextChain && position.token.address === wantedToken,
+    );
+    /* eslint-disable react-hooks/set-state-in-effect -- the URL is the input here; it can only be read after mount */
+    setSide(wanted);
+    setChain(nextChain);
+    if (wantedToken) {
+      setPicked({
+        chain: nextChain,
+        address: wantedToken,
+        symbol: known?.token.symbol ?? searchParams.get("sym"),
+        name: known?.token.name ?? null,
+        logoUrl: known?.token.logoUrl ?? null,
+      });
+      if (wanted === "sell" && known?.valueUsd) setAmount(sliceText(known.valueUsd, 100));
+    }
+    setReceipt(null);
+    setOpen(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    const rest = new URLSearchParams(searchParams.toString());
+    for (const name of ["trade", "chain", "token", "sym"]) rest.delete(name);
+    const query = rest.toString();
+    // The History API rather than router.replace: nothing needs re-rendering on the server,
+    // and Next keeps useSearchParams in step with replaceState.
+    window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
+  }, [searchParams, pathname, agent.chains, agent.positions]);
+
+  // A token picked on the other chain is not this order's token.
+  const token = picked && picked.chain === chain ? picked : null;
   const amountUsd = Number(amount);
-  const address = tokenAddress.trim();
+  const address = token?.address ?? "";
   const amountValid = Number.isFinite(amountUsd) && amountUsd > 0;
   const amountError = amount !== "" && !amountValid ? "Enter an amount above $0, like 25 or 12.50" : null;
   const ready = address.length >= 3 && amountValid;
+  const bookPosition = agent.positions.find(
+    (position) => position.token.chain === chain && position.token.address === address,
+  );
+  // Asking for the whole position is asking for everything: the server sells the balance,
+  // not a dollar figure the mark has already moved past (same rule as the Sell dialog).
+  // Read off the book, which the preview cannot change, so it can ride on the preview too.
+  const bookUsd = bookPosition?.valueUsd ?? 0;
+  const sellAll = side === "sell" && bookUsd > 0 && amountValid && amountUsd >= floorCents(bookUsd);
   // Said at the Size box, not only by the guard at the bottom of the preview: on a phone
   // that line sat under the footer, next to a Buy button that was simply dead. Buys only —
   // a full exit may sell past the cap (see risk.test.ts).
-  const maxTrade = agent.config?.risk.maxTradeUsd ?? 0;
   const overCap = side === "buy" && maxTrade > 0 && Number.isFinite(amountUsd) && amountUsd > maxTrade;
   const isLive = agent.mode === "live";
   const key = open && ready ? `${chain}|${side}|${address}|${amountUsd}` : null;
@@ -117,7 +183,15 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
     if (key === null) return;
     let cancelled = false;
     const timer = window.setTimeout(async () => {
-      const answer = await previewTrade({ agentId: agent.id, chain, side, tokenAddress: address, amountUsd });
+      const request: Parameters<typeof previewTrade>[0] & { sellAll: boolean } = {
+        agentId: agent.id,
+        chain,
+        side,
+        tokenAddress: address,
+        amountUsd,
+        sellAll,
+      };
+      const answer = await previewTrade(request);
       if (cancelled) return;
       setResult(
         answer.ok ? { key, data: answer.data, error: null } : { key, data: null, error: answer.error },
@@ -135,7 +209,7 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [key, agent.id, chain, side, address, amountUsd]);
+  }, [key, agent.id, chain, side, address, amountUsd, sellAll]);
 
   // The fill lands at the end of a long form, below the fold on a phone, while the token
   // box above it has just been cleared — which read as the sheet resetting. Take the
@@ -150,13 +224,22 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   const preview = current?.data ?? null;
   const previewError = current?.error ?? null;
   const previewing = key !== null && current === null;
-  const held = holding !== null && holding.key === `${chain}|${address}` ? holding : null;
+  // The book already knows what is held; the preview's figure is fresher when it has one.
+  const previewHeld = holding !== null && holding.key === `${chain}|${address}` ? holding : null;
+  const held =
+    previewHeld ??
+    (bookPosition ? { key: `${chain}|${address}`, valueUsd: bookPosition.valueUsd, symbol: bookPosition.token.symbol } : null);
   const heldUsd = side === "sell" ? (held?.valueUsd ?? null) : null;
   const overPosition = heldUsd !== null && amountValid && amountUsd > heldUsd;
   // The amount only rides on the button when the order can go: "Sell $99,999.00" under
   // "more than the position is worth" read as an offer the sheet was refusing.
   const orderable = amountValid && !overCap && !overPosition && preview?.allowed !== false;
-  const orderLabel = `${side === "buy" ? "Buy" : "Sell"}${orderable ? ` ${formatUsd(amountUsd)}` : ""}`;
+  const orderLabel =
+    side === "sell" && sellAll && orderable
+      ? `Sell all ${token?.symbol ?? held?.symbol ?? ""}`.trim()
+      : `${side === "buy" ? "Buy" : "Sell"}${orderable ? ` ${formatUsd(amountUsd)}` : ""}${
+          orderable && (token?.symbol ?? held?.symbol) ? ` of ${token?.symbol ?? held?.symbol}` : ""
+        }`;
 
   /**
    * In flight. A live swap can take longer than the hold button's re-arm, and a second
@@ -173,6 +256,7 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
       side,
       tokenAddress: address,
       amountUsd,
+      ...(sellAll ? { sellAll: true } : {}),
       ...(note.trim() ? { note: note.trim() } : {}),
     });
     if (!placed.ok) {
@@ -186,11 +270,11 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
       },
     );
     setReceipt(placed.data.receipt);
-    setTokenAddress("");
+    setPicked(null);
     setNote("");
     setResult(null);
     router.refresh();
-  }, [agent.id, chain, side, address, amountUsd, note, router]);
+  }, [agent.id, chain, side, address, amountUsd, sellAll, note, router]);
 
   const submit = useCallback(async () => {
     setSubmitting(true);
@@ -241,7 +325,7 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
             )}
           >
             <ArrowLeftRight aria-hidden className="size-3.5" />
-            Trade
+            Buy / Sell
           </button>
         }
       />
@@ -281,7 +365,14 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
                   key={option}
                   type="button"
                   aria-pressed={side === option}
-                  onClick={() => setSide(option)}
+                  onClick={() => {
+                    setSide(option);
+                    // Switching a token you hold to Sell offers all of it, like picking it
+                    // from the position chips does; a leftover "$25" read as the suggestion.
+                    if (option === "sell" && side !== "sell" && bookPosition?.valueUsd) {
+                      setAmount(sliceText(bookPosition.valueUsd, 100));
+                    }
+                  }}
                   className={cn(
                     "rounded-lg border py-2 text-sm font-medium capitalize",
                     "transition-[border-color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]",
@@ -321,24 +412,24 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
               </Field>
             ) : null}
 
-            <Field
-              label="Token"
-              htmlFor="manual-token"
-              hint={
-                chain === "solana"
-                  ? "Paste the mint. A symbol works for tokens Tocker has already seen."
-                  : "Paste the contract address (0x…)."
-              }
-            >
-              <Input
+            <Field label="Token" htmlFor="manual-token">
+              <TokenPicker
                 id="manual-token"
-                value={tokenAddress}
-                spellCheck={false}
-                autoComplete="off"
-                placeholder={chain === "solana" ? "DezXAZ8z…B263" : "0x532f27…42E4"}
-                onChange={(event) => setTokenAddress(event.target.value)}
-                // 16px on phones: iOS zooms the page into any input smaller than that.
-                className="font-mono text-base md:text-xs"
+                chain={chain}
+                side={side}
+                value={token}
+                holdings={agent.positions}
+                onChange={(next) => {
+                  setPicked(next);
+                  // Picking something you hold on a sell sizes it to the whole position:
+                  // "sell my BONK" is the common case, and a smaller slice is one tap away.
+                  if (next && side === "sell") {
+                    const position = agent.positions.find(
+                      (p) => p.token.chain === next.chain && p.token.address === next.address,
+                    );
+                    if (position?.valueUsd) setAmount(sliceText(position.valueUsd, 100));
+                  }
+                }}
               />
             </Field>
 
@@ -379,17 +470,17 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
                 </div>
                 {side === "buy" ? (
                   <div className="flex flex-wrap gap-1.5">
-                    {SIZE_PRESETS.map((preset) => {
-                      const active = amount === String(preset);
+                    {buyPresets(maxTrade).map((preset) => {
+                      const active = amount === String(preset.value);
                       return (
                         <button
-                          key={preset}
+                          key={preset.value}
                           type="button"
                           aria-pressed={active}
-                          onClick={() => setAmount(String(preset))}
+                          onClick={() => setAmount(String(preset.value))}
                           className={cn(PRESET_CLASS, active ? PRESET_ACTIVE : PRESET_IDLE)}
                         >
-                          ${preset}
+                          {preset.label}
                         </button>
                       );
                     })}
@@ -469,7 +560,7 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
             </p>
           ) : !ready && !receipt ? (
             <p className="text-xs text-muted-foreground">
-              {address.length < 3 ? "Paste a token to preview." : "Enter a size to preview."}
+              {address.length < 3 ? "Pick a token to preview." : "Enter a size to preview."}
             </p>
           ) : null}
           {receipt && !ready ? (
@@ -549,7 +640,7 @@ function PreviewPanel({
   if (!ready) {
     return (
       <p className="rounded-lg border border-dashed border-border/70 px-3 py-4 text-center text-xs text-muted-foreground">
-        Paste a token and a size to see its score and whether your agent&rsquo;s rules allow it.
+        Pick a token and a size to see its score and whether your agent&rsquo;s rules allow it.
       </p>
     );
   }

@@ -12,6 +12,7 @@ import {
   ScoreTokenPanel,
   TokenHeader,
   TokenTrades,
+  TradeMenu,
   sharedHolderMode,
 } from "@/components/tokens/page";
 import { isNoDataReading } from "@/components/tokens/page/score-history-paths";
@@ -132,6 +133,18 @@ export default async function TokenPageRoute({ params, searchParams }: Props) {
   const blockMenu = targets.some((agent) => agent.onChain || agent.blocked) ? (
     <BlockMenu chain={chain} address={address} symbol={page.token.symbol} agents={blockTargets} />
   ) : null;
+  // "native" is the gas asset's bookkeeping name, not something a swap can target.
+  const tradeMenu =
+    address === "native" ? null : (
+      <TradeMenu chain={chain} address={address} symbol={page.token.symbol} agents={blockTargets} />
+    );
+  const actions =
+    tradeMenu || blockMenu ? (
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        {tradeMenu}
+        {blockMenu}
+      </div>
+    ) : null;
   const holderMode = sharedHolderMode(page.holders);
   // A URL pointed at a token nobody has scored, traded or held: every section below would
   // be its own empty box (four of them, two nested in the price card). The one thing to
@@ -141,7 +154,7 @@ export default async function TokenPageRoute({ params, searchParams }: Props) {
 
   return (
     <div className="w-full">
-      <TokenHeader page={page} action={blockMenu} />
+      <TokenHeader page={page} action={actions} />
 
       <div className="mx-auto w-full max-w-5xl space-y-8 px-4 py-6 sm:px-6">
         {page.score ? (

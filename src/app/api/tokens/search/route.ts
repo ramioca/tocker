@@ -54,6 +54,8 @@ export async function GET(request: Request) {
           name: token.name,
           chain: token.chain,
           address: token.address,
+          // Public already (every token page shows it); the Trade sheet's picker draws it.
+          logoUrl: token.logoUrl,
         })),
         // Mapped field by field so nothing beyond these can ever ride along.
         agents: agents.map((agent) => ({

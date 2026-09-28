@@ -8,3 +8,4 @@ export { ScoreHero } from "./score-hero";
 export { ScoreTokenPanel } from "./score-token-button";
 export { TokenHeader } from "./token-header";
 export { TokenTrades } from "./token-trades";
+export { TradeMenu } from "./trade-menu";

@@ -83,9 +83,12 @@ export function TokenHeader({
                 {formatSignedPct(change24h, 1)} <span className="text-muted-foreground">24h</span>
               </p>
             )}
-            {action}
+            {/* Beside the price from sm up; on a phone the Buy/Sell/Block row squeezed the
+                title column until the address broke over two lines, so it gets its own row. */}
+            {action ? <div className="hidden sm:block">{action}</div> : null}
           </div>
         </div>
+        {action ? <div className="mt-3 sm:hidden [&>div]:justify-start">{action}</div> : null}
 
         <dl className="tnum mt-4 grid grid-cols-2 gap-x-5 gap-y-2.5 font-mono text-xs sm:grid-cols-5">
           <Fact label="Market cap" value={formatCompactUsd(facts?.marketCapUsd ?? null)} />
