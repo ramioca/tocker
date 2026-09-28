@@ -225,6 +225,13 @@
   position: absolute;
   inset: 0;
   z-index: 1;
+  transition: opacity 600ms var(--lq-ease-out);
+}
+/* The WebGPU canvas stays transparent until its first frame (`data-shader="on"`),
+   then fades in over the ground instead of hard-cutting. Scoped to "loading" so the
+   WebGL rendition, which shares this wrapper and never reports "on", is untouched. */
+.iso-hero[data-shader="loading"] .iso-shaderwrap {
+  opacity: 0;
 }
 .iso-scrim {
   position: absolute;
@@ -260,6 +267,19 @@
   transform: translateX(-50%);
   border-radius: 50%;
   background: radial-gradient(closest-side, rgba(113, 85, 217, 0.22), rgba(113, 85, 217, 0.06) 45%, transparent 70%);
+}
+/* Hidden until the gate knows no shader is coming ("off"), or while one is on its
+   way ("unknown" = before hydration, "loading" = WebGPU chunk in flight). Under a
+   drawing canvas it is covered anyway. */
+.iso-static-markwrap {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  transition: opacity 400ms var(--lq-ease-out);
+}
+.iso-hero[data-shader="unknown"] .iso-static-markwrap,
+.iso-hero[data-shader="loading"] .iso-static-markwrap {
+  opacity: 0;
 }
 .iso-static-mark {
   position: relative;
@@ -1415,6 +1435,10 @@
   .iso-scrollcue {
     transform: none;
     opacity: 1;
+  }
+  .iso-shaderwrap,
+  .iso-static-markwrap {
+    transition: none;
   }
   .nav,
   .nav-link,

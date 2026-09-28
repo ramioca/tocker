@@ -29,6 +29,20 @@ const IsotopeWebGL = dynamic(() => import("./webgl/isotope-webgl").then((m) => m
   ssr: false,
 });
 
+/**
+ * Start fetching the WebGPU shader chunk (~3 MB of runtime) the moment this module runs
+ * in the browser, rather than after hydration, when `useShaderGate` first says
+ * "loading" and `dynamic()` would begin the download. Same module, so `dynamic()` gets
+ * the cached promise. Skipped wherever the gate will say "off" or "webgl", so a
+ * visitor who never sees the shader never pays for it.
+ */
+if (typeof window !== "undefined" && "gpu" in navigator) {
+  const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
+  const quiet = window.matchMedia("(prefers-reduced-motion: reduce)").matches || nav.connection?.saveData;
+  const forceWebgl = /[?&]forcewebgl(?:[=&]|$)/.test(window.location.search);
+  if (!quiet && !forceWebgl) void import("./isotope-shader").catch(() => {});
+}
+
 export function IsotopeHero() {
   const [textVisible, setTextVisible] = useState(false);
   const shader = useShaderGate();
@@ -60,14 +74,18 @@ export function IsotopeHero() {
       {/* Static art: beneath every canvas; on a phone without a renderer it is the hero. */}
       <div className="iso-static" aria-hidden>
         <div className="iso-static-glow" />
-        <Image
-          src={mark}
-          alt=""
-          priority
-          sizes="(min-width: 640px) 420px, 64vw"
-          className="iso-static-mark reveal"
-          style={{ "--reveal-delay": "0.05s" } as CSSProperties}
-        />
+        {/* The mark is the hero only where no renderer will draw: while the shader is
+            still coming it would sit under the headline and then be cut away. */}
+        <div className="iso-static-markwrap">
+          <Image
+            src={mark}
+            alt=""
+            priority
+            sizes="(min-width: 640px) 420px, 64vw"
+            className="iso-static-mark reveal"
+            style={{ "--reveal-delay": "0.05s" } as CSSProperties}
+          />
+        </div>
       </div>
 
       <div className="iso-copy">
