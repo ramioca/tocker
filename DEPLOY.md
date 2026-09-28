@@ -299,6 +299,13 @@ Basescan) and a pause button.
 
 ## 3. Deploy
 
+The Vercel project is connected to `ramioca/tocker` (Settings → Git): **every push to
+`main` deploys to production**, and every other branch gets a preview deployment. There
+is nothing to run. To ship without a code change, use **Create Deployment** on the
+project's Deployments page and pick `main`.
+
+The manual path still works from a linked checkout, for a deploy Git cannot make:
+
 ```bash
 vercel login
 vercel link
