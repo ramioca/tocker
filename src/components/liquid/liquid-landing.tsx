@@ -1,328 +1,272 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { Contact } from "./contact";
+import { DecisionDemo, FieldBook, RecentCalls } from "./demo";
 import { Hero } from "./hero";
+import { Mark } from "./mark";
 import { Nav } from "./nav";
-import { DEFAULT_DATA_BUDGET_USD, LANDING_SOURCES, type LandingSource } from "./signals-data";
-import { WaitlistProvider } from "./waitlist";
+import { PerformancePanel } from "./performance";
+import { DEFAULT_DATA_BUDGET_USD, LANDING_SOURCES } from "./signals-data";
+import { WaitlistProvider, useWaitlist } from "./waitlist";
+import "./landing.css";
 
 /**
- * Tocker waitlist landing. Quiet and fast on purpose: no canvas, no custom
- * cursor, no smooth-scroll library, no full-screen overlays. Light comes from
- * static CSS gradients (the hero's horizon, the closing section's mirror of
- * it), motion is limited to the entrance, the hero's sample-agent feed and
- * scroll-linked reveals that run on the compositor. One typeface in two
- * registers, near-black grounds, violet as the only signal colour.
+ * Tocker waitlist landing. Light, quiet and fast: a warm paper ground, one
+ * geometric sans with a mono for every figure, hairline cards, and violet as
+ * the only accent. The product is the illustration — every visual below the
+ * hero is the app's own UI drawn in DOM. No canvas, no smooth-scroll library,
+ * no fixed overlays; motion is the load-in, two small sample feeds that run
+ * only while on screen, and scroll-linked reveals on the compositor.
  */
-
-const OFF = "#f4f4f1";
 
 /** Verified against `DEFAULT_AGENT_CONFIG` by src/lib/agent/config.ts; keep in step. */
 const DEFAULTS = [
-  ["score floor", "62 / 100"],
-  ["per trade", "$100"],
-  ["per day", "10 trades"],
-  ["stop loss", "15%"],
-  ["take profit", "40%"],
-  ["data per run", `$${DEFAULT_DATA_BUDGET_USD.toFixed(2)}`],
+  ["Score floor", "62 / 100"],
+  ["Per trade", "$100"],
+  ["Per day", "10 trades"],
+  ["Stop loss", "15%"],
+  ["Take profit", "40%"],
+  ["Data per run", `$${DEFAULT_DATA_BUDGET_USD.toFixed(2)}`],
 ] as const;
 
-const FEATURES = [
+const PROMISES = [
   {
-    i: "01",
-    label: "Any strategy",
-    body: "Spin up separate agents for momentum, sentiment or fresh-launch hunting, each with its own mandate and its own Solana and Base wallet.",
+    title: "Exits in code",
+    body: "Stop-loss, take-profit and trailing stops fire on a five-minute clock, whether or not the model is awake.",
   },
   {
-    i: "02",
-    label: "Public record, private edge",
-    body: "Every trade posts to a public feed. Your prompt, thresholds and data sources stay yours: there is no fork button, and there never was one.",
+    title: "Ten hard gates",
+    body: "Mint and freeze authority, honeypot, tax, liquidity, holders, age, concentration. No score overrides them.",
   },
   {
-    i: "03",
-    label: "Exits in code",
-    body: "Stop-loss, take-profit and trailing stops fire on a five-minute clock, whether or not the model is awake. Not on your nerve.",
+    title: "Your edge stays yours",
+    body: "Every trade posts to a public feed. Your prompt, thresholds and data sources never do. There is no fork button.",
+  },
+] as const;
+
+const FAQ = [
+  {
+    q: "What does the agent trade?",
+    a: "Any token on Solana and Base that clears the ten hard gates and scores above your floor. There is no allowlist; the only list is a blocklist, and it only subtracts.",
   },
   {
-    i: "04",
-    label: "Ten hard gates",
-    body: "Mint and freeze authority, honeypot, tax, liquidity, holders, age, top-ten concentration. A high score cannot override any of them.",
+    q: "Does it trade real money from day one?",
+    a: "No. Every agent starts on a simulated book against real quotes and asks before each entry. Going live is a separate screen with a hold-to-confirm.",
   },
   {
-    i: "05",
-    label: "Paper, then live",
-    body: "A new agent starts on a simulated book against real quotes and asks before every entry. Going live is a separate screen with a hold-to-confirm.",
+    q: "Can other people see my strategy?",
+    a: "They see your trades, on a public feed. They never see your prompt, thresholds, data sources or the agent's reasoning. There is no fork button, and there never was one.",
   },
   {
-    i: "06",
-    label: "No allowlist",
-    body: "It scores every launch on Solana and Base, the whole field, not a curated shortlist. The only list is a blocklist, and it only subtracts.",
+    q: "What are the hard gates?",
+    a: "Mint and freeze authority, honeypot, tax, liquidity, holder count, token age and top-ten concentration, among others. A high score cannot override any of them.",
   },
-];
+  {
+    q: "How do exits work?",
+    a: "Stop-loss, take-profit and trailing stops run in code on a five-minute clock, whether or not the model is awake. Entry rules never block an exit.",
+  },
+  {
+    q: "What does the data cost?",
+    a: `Each source charges per call, in USDC over x402. The agent picks the source for the question in front of it and stays inside a budget you set, $${DEFAULT_DATA_BUDGET_USD.toFixed(2)} a run by default.`,
+  },
+  {
+    q: "Can I run more than one agent?",
+    a: "Yes. Run separate agents for momentum, sentiment or fresh-launch hunting, each with its own mandate and its own Solana and Base wallet.",
+  },
+  {
+    q: "When do I get in?",
+    a: "We onboard by trading size, largest books first. Join the waitlist and we will reach out when your turn comes.",
+  },
+] as const;
 
 export function LiquidLanding() {
   return (
     <WaitlistProvider>
-      <Nav />
-      <main className="liquid-main relative w-full bg-[#040407] text-[#f4f4f1]">
-        <Hero />
-        <Signals />
-        <Mechanics />
-        <Contact />
-      </main>
+      <div className="lp">
+        <Nav />
+        <main>
+          <Hero />
+          <Promises />
+          <How />
+          <Sources />
+          <Performance />
+          <Guardrails />
+          <Faq />
+        </main>
+        <Footer />
+      </div>
     </WaitlistProvider>
   );
 }
 
-/* ---------------------------------------------------- signals (horizontal) */
-function Signals() {
-  const outer = useRef<HTMLElement>(null);
-  const track = useRef<HTMLDivElement>(null);
-  const word = useRef<HTMLDivElement>(null);
-  const thumb = useRef<HTMLDivElement>(null);
-
-  // Under 768px the track is a native horizontal snap row. A finger swipes it;
-  // a mouse (a narrow desktop window, a tablet with a trackpad) grabs and drags
-  // it, and the row reports its position to the progress line beneath.
-  useEffect(() => {
-    const tr = track.current;
-    if (!tr) return;
-    const narrow = window.matchMedia("(max-width: 767px)");
-
-    const onTrackScroll = () => {
-      const bar = thumb.current;
-      if (!bar || !narrow.matches) return;
-      const max = tr.scrollWidth - tr.clientWidth;
-      const frac = max > 0 ? tr.scrollLeft / max : 0;
-      const vis = tr.scrollWidth > 0 ? tr.clientWidth / tr.scrollWidth : 1;
-      bar.style.width = `${vis * 100}%`;
-      bar.style.transform = `translateX(${vis > 0 ? ((frac * (1 - vis)) / vis) * 100 : 0}%)`;
-    };
-
-    let dragging = false;
-    let moved = false;
-    let startX = 0;
-    let startLeft = 0;
-    const down = (e: PointerEvent) => {
-      if (!narrow.matches || e.pointerType !== "mouse" || e.button !== 0) return;
-      dragging = true;
-      moved = false;
-      startX = e.clientX;
-      startLeft = tr.scrollLeft;
-      tr.classList.add("sig-dragging");
-      tr.setPointerCapture(e.pointerId);
-    };
-    const move = (e: PointerEvent) => {
-      if (!dragging) return;
-      const dx = e.clientX - startX;
-      if (Math.abs(dx) > 3) moved = true;
-      tr.scrollLeft = startLeft - dx;
-    };
-    const up = (e: PointerEvent) => {
-      if (!dragging) return;
-      dragging = false;
-      tr.classList.remove("sig-dragging");
-      if (tr.hasPointerCapture(e.pointerId)) tr.releasePointerCapture(e.pointerId);
-    };
-    // A drag must not count as a click on whatever card it ended over.
-    const click = (e: MouseEvent) => {
-      if (!moved) return;
-      moved = false;
-      e.preventDefault();
-      e.stopPropagation();
-    };
-
-    tr.addEventListener("scroll", onTrackScroll, { passive: true });
-    tr.addEventListener("pointerdown", down);
-    tr.addEventListener("pointermove", move);
-    tr.addEventListener("pointerup", up);
-    tr.addEventListener("pointercancel", up);
-    tr.addEventListener("click", click, true);
-    narrow.addEventListener("change", onTrackScroll);
-    window.addEventListener("resize", onTrackScroll);
-    onTrackScroll();
-    return () => {
-      tr.removeEventListener("scroll", onTrackScroll);
-      tr.removeEventListener("pointerdown", down);
-      tr.removeEventListener("pointermove", move);
-      tr.removeEventListener("pointerup", up);
-      tr.removeEventListener("pointercancel", up);
-      tr.removeEventListener("click", click, true);
-      narrow.removeEventListener("change", onTrackScroll);
-      window.removeEventListener("resize", onTrackScroll);
-    };
-  }, []);
-
-  useEffect(() => {
-    let raf = 0;
-    // Under 768px the gallery is a native horizontal snap row (see .sig-section
-    // in landing.css); the scroll-driven transform must not touch it.
-    const narrow = window.matchMedia("(max-width: 767px)");
-    const onScroll = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        const sec = outer.current;
-        const tr = track.current;
-        if (!sec || !tr) return;
-        if (narrow.matches) {
-          tr.style.transform = "";
-          if (word.current) word.current.style.transform = "";
-          return;
-        }
-        const vh = window.innerHeight;
-        const total = sec.offsetHeight - vh;
-        const scrolled = Math.min(Math.max(-sec.getBoundingClientRect().top, 0), total);
-        const progress = total > 0 ? scrolled / total : 0;
-        const travel = Math.max(tr.scrollWidth - window.innerWidth, 0);
-        tr.style.transform = `translate3d(${-progress * travel}px,0,0)`;
-        if (word.current) word.current.style.transform = `translate3d(${-progress * travel * 0.35}px,0,0)`;
-      });
-    };
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
-      cancelAnimationFrame(raf);
-    };
-  }, []);
-
-  const defaults = LANDING_SOURCES.filter((s) => s.tier === "default").length;
-
+function Promises() {
   return (
-    <section id="signals" ref={outer} className="sig-section relative w-full bg-[#050506]">
-      <div className="sig-stage sticky top-0 h-svh w-full overflow-hidden">
-        <p className="sig-label absolute left-[clamp(20px,4vw,64px)] top-8 z-20 font-mono text-[11px] tracking-[0.16em] text-[rgba(244,244,241,0.5)] uppercase">
-          02 — Data / what the agent pays for, per call, over x402
-        </p>
-        <div
-          ref={word}
-          className="sig-word pointer-events-none absolute top-1/2 left-0 z-0 -translate-y-1/2 whitespace-nowrap font-semibold uppercase"
-          style={{ fontSize: "24vw", lineHeight: 0.8, letterSpacing: "-0.04em", color: "rgba(244,244,241,0.06)" }}
-        >
-          Signals
+    <section className="lp-wrap lp-promises" aria-label="What every agent guarantees">
+      {PROMISES.map((p) => (
+        <div key={p.title} className="lp-promise rise">
+          <p className="lp-promise-title">
+            <span className="lp-dot" aria-hidden />
+            {p.title}
+          </p>
+          <p className="lp-promise-body">{p.body}</p>
         </div>
-        <div className="sig-rail absolute top-1/2 left-0 z-10 -translate-y-1/2">
-                    <div
-            ref={track}
-            className="sig-track flex items-center gap-6 pl-[clamp(20px,4vw,64px)] pr-[30vw] will-change-transform"
-          >
-            <div className="sig-intro shrink-0">
-              <h2 className="sig-intro-title">It buys its own research.</h2>
-              <p className="sig-intro-body">
-                Sell simulations, smart-money flow, token safety, market regime. The agent picks the source
-                for the question in front of it, pays per call in USDC, and folds the answer into the score.
-                Inside a data budget you set — ${DEFAULT_DATA_BUDGET_USD.toFixed(2)} a run by default.
-              </p>
-              <p className="sig-intro-meta">
-                {LANDING_SOURCES.length} sources in the registry · {defaults} on by default
-              </p>
-            </div>
-            {LANDING_SOURCES.map((s, i) => (
-              <SignalCard key={s.id} s={s} index={i + 1} />
-            ))}
-          </div>
+      ))}
+    </section>
+  );
+}
+
+function How() {
+  return (
+    <section id="how" className="lp-wrap lp-section">
+      <h2 className="lp-h2 rise">Describe it once. It scores the whole field.</h2>
+      <div className="rise">
+        <DecisionDemo />
+      </div>
+      <div className="lp-how-pair">
+        <div className="rise">
+          <FieldBook />
         </div>
-        <div className="sig-swipe" aria-hidden>
-          <span className="sig-swipe-hint">( swipe )</span>
-          <div className="sig-swipe-rail">
-            <div ref={thumb} className="sig-swipe-thumb" />
-          </div>
+        <div className="rise">
+          <RecentCalls />
         </div>
-        <div className="sig-rule absolute bottom-6 left-0 h-px w-full bg-[rgba(244,244,241,0.08)]" />
       </div>
     </section>
   );
 }
 
-function SignalCard({ s, index }: { s: LandingSource; index: number }) {
+function Sources() {
+  const defaults = LANDING_SOURCES.filter((s) => s.tier === "default").length;
   return (
-    <article className="sig-card" data-tier={s.tier}>
-      <header className="sig-top">
-        <span className="sig-provider">
-          <span className="sig-index">{String(index).padStart(2, "0")}</span>
-          {s.provider}
-        </span>
-        <span className="sig-pills">
-          {s.tier === "default" ? <span className="sig-pill sig-pill-accent">default</span> : null}
-          {s.tier === "experimental" ? <span className="sig-pill sig-pill-dim">experimental</span> : null}
-          <span className="sig-pill">{s.network}</span>
-        </span>
-      </header>
-
-      <div className="sig-namerow">
-        <h3 className="sig-name">{s.name}</h3>
-        {s.guard ? <span className="sig-tagpill">Guard</span> : null}
-      </div>
-      <p className="sig-desc">{s.desc}</p>
-
-      <div className="sig-preview">
-        <div className="sig-preview-head">
-          <span>Returns</span>
-          <span className="sig-live">live</span>
+    <section id="data" className="lp-wrap lp-section">
+      <h2 className="lp-h2 rise">It buys its own research, by the call.</h2>
+      <p className="lp-lede rise">
+        {LANDING_SOURCES.length} sources in the registry, {defaults} on by default. Paid in USDC over x402, inside a
+        budget you set.
+      </p>
+      <div className="lp-table rise">
+        <div className="lp-table-head lp-mono">
+          <span>source · provider</span>
+          <span>per call</span>
         </div>
-        {s.returns.map(([k, v]) => (
-          <div key={k} className="sig-row">
-            <span className="sig-key">{k}</span>
-            <span className="sig-val">{v}</span>
+        {LANDING_SOURCES.map((s) => (
+          <div key={s.id} className="lp-table-row">
+            <div className="lp-table-name">
+              <span>{s.name}</span>
+              <span className="lp-mono lp-table-host">
+                {s.provider.toLowerCase()} · {s.host}
+              </span>
+            </div>
+            <div className="lp-table-right">
+              {s.guard ? <span className="lp-pill lp-pill-ink">guard</span> : null}
+              {s.tier === "default" ? <span className="lp-pill lp-pill-accent">default</span> : null}
+              {s.tier === "experimental" ? <span className="lp-pill lp-pill-dashed">experimental</span> : null}
+              <span className="lp-pill lp-table-net">{s.network}</span>
+              <span className="lp-mono lp-table-price">{s.price}</span>
+            </div>
           </div>
         ))}
       </div>
-
-      <footer className="sig-foot">
-        <span className="sig-price">
-          {s.price}
-          <span className="sig-per">/ call</span>
-        </span>
-        <span className="sig-src">x402 · {s.host}</span>
-      </footer>
-    </article>
+    </section>
   );
 }
 
-/* ------------------------------------------------------------- mechanics */
-function Mechanics() {
+function Performance() {
   return (
-    <section id="mechanics" className="mech relative w-full bg-[#050506]">
-      <div className="mech-inner">
-        <p className="mech-eyebrow">03 — Mechanics</p>
-        <h2 className="mech-title rise" style={{ color: OFF }}>
-          Build the agent that trades like you.
+    <section id="performance" className="lp-wrap lp-section">
+      <div className="lp-split-head">
+        <h2 className="lp-h2 rise">
+          Performance, the way
+          <br /> you&rsquo;re used to.
         </h2>
-
-        <div className="mech-grid">
-          {FEATURES.map((f) => (
-            <div key={f.i} className="mech-item rise">
-              <div className="mech-item-head">
-                <span className="mech-item-index">{f.i}</span>
-                <span className="mech-item-label">{f.label}</span>
-              </div>
-              <p className="mech-item-body">{f.body}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="mech-statement rise">
-          <span className="mech-statement-rule" aria-hidden />
-          <p className="mech-statement-line">Entry rules never block an exit.</p>
-          <p className="mech-statement-sub">
-            Blocklist a token you hold, spend the day&rsquo;s trade quota, hit the kill switch — the sell still goes
-            through. A guard that traps you is not a guard.
-          </p>
-        </div>
-
-        <dl className="mech-defaults" aria-label="Defaults a new agent starts with">
-          <div className="mech-defaults-head">Defaults you can change</div>
-          {DEFAULTS.map(([k, v]) => (
-            <div key={k} className="mech-default">
-              <dt>{k}</dt>
-              <dd>{v}</dd>
-            </div>
-          ))}
-        </dl>
+        <p className="lp-lede lp-split-lede rise">
+          Equity, P&amp;L by day, open positions and what every run spent on data, on your own agent. Everyone else
+          sees the trades, never the strategy.
+        </p>
+      </div>
+      <div className="rise">
+        <PerformancePanel />
       </div>
     </section>
+  );
+}
+
+function Guardrails() {
+  return (
+    <section className="lp-wrap lp-section lp-guard">
+      <div className="lp-guard-copy rise">
+        <h2 className="lp-h2">Entry rules never block an exit.</h2>
+        <p className="lp-lede">
+          Blocklist a token you hold, spend the day&rsquo;s trade quota, hit the kill switch: the sell still goes
+          through. A guard that traps you is not a guard.
+        </p>
+      </div>
+      <dl className="lp-card lp-defaults rise" aria-label="Defaults a new agent starts with">
+        <div className="lp-card-head">
+          <span className="lp-card-title">
+            <span className="lp-dot" aria-hidden />
+            Defaults you can change
+          </span>
+        </div>
+        {DEFAULTS.map(([k, v]) => (
+          <div key={k} className="lp-default">
+            <dt>{k}</dt>
+            <dd className="lp-mono">{v}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function Faq() {
+  return (
+    <section id="faq" className="lp-wrap lp-section">
+      <h2 className="lp-h2 rise">Questions</h2>
+      <div className="lp-faq">
+        {FAQ.map((f) => (
+          <details key={f.q} className="lp-faq-item">
+            <summary>
+              {f.q}
+              <span className="lp-faq-icon" aria-hidden />
+            </summary>
+            <p>{f.a}</p>
+          </details>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function Footer() {
+  const { open } = useWaitlist();
+  return (
+    <footer className="lp-footer">
+      <div className="lp-wrap lp-footer-line">
+        <p>
+          Agents that trade 24/7, out in the open.{" "}
+          <button type="button" className="lp-underline" onClick={open}>
+            Join the waitlist.
+          </button>
+        </p>
+      </div>
+      <div className="lp-footer-bottom">
+        <div className="lp-wrap">
+          <div className="lp-footer-links">
+            <a href="#how">How it works</a>
+            <a href="#data">Data</a>
+            <a href="#performance">Performance</a>
+            <a href="#faq">FAQ</a>
+          </div>
+          <div className="lp-footer-legal">
+            <span className="lp-footer-brand">
+              <Mark size={22} />
+              tocker
+            </span>
+            <p>
+              Not investment advice. Trading crypto can lose everything in a wallet; every agent starts on paper.
+            </p>
+          </div>
+        </div>
+      </div>
+    </footer>
   );
 }

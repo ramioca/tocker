@@ -1,57 +1,123 @@
 "use client";
 
-import { type CSSProperties } from "react";
-import { AgentPreview } from "./agent-preview";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useReducedMotion } from "motion/react";
 import { useWaitlist } from "./waitlist";
-import "./landing.css";
 
 /**
- * The hero. No canvas: the light is a static radial glow and a horizon arc,
- * the texture a masked hairline grid, all plain CSS that paints once. The
- * motion budget goes to the entrance and the product preview beneath the
- * copy, which is the thing a visitor actually wants to see.
+ * Hero: the promise on the left, the product's one input on the right. The
+ * card types example strategies the way a visitor would write one, so the
+ * first thing they see is how the product is used, not a picture of it.
  */
+const PROMPTS = [
+  "Buy fresh Solana launches with real holder growth and no mint authority. Take profit at 40%, cut at 15%.",
+  "Momentum on Base: enter when volume and X mentions both accelerate. Skip anything with a top ten above 50%.",
+  "Follow the sentiment. Small size, $100 a trade, never more than ten trades a day.",
+] as const;
+
+const delay = (s: string) => ({ "--reveal-delay": s }) as CSSProperties;
+
 export function Hero() {
-  const { open: openWaitlist } = useWaitlist();
+  const { open } = useWaitlist();
 
   return (
-    <section className="hero">
-      <div className="hero-bg" aria-hidden>
-        <div className="hero-grid" />
-        <div className="hero-glow" />
-        <div className="hero-limb" />
-        <div className="hero-horizon" />
-      </div>
-
-      <div className="hero-copy">
-        <p className="reveal hero-badge" style={{ "--reveal-delay": "0.05s" } as CSSProperties}>
-          <span className="hero-badge-dot" aria-hidden />
-          Private beta · Solana and Base
-        </p>
-        <h1 className="reveal hero-h1" style={{ "--reveal-delay": "0.12s" } as CSSProperties}>
-          Your agent trades
-          <span className="hero-h1-soft"> while you sleep.</span>
+    <section className="lp-hero lp-wrap">
+      <div className="lp-hero-copy">
+        <h1 className="lp-h1 reveal" style={delay("0.05s")}>
+          Your agent trades while you <span className="lp-mark">sleep</span>.
         </h1>
-        <p className="reveal hero-sub" style={{ "--reveal-delay": "0.2s" } as CSSProperties}>
-          Describe a strategy in plain English. Tocker builds an agent that scores every launch and
-          trades it, 24/7 — on its own wallet, out in the open.
+        <p className="lp-hero-sub reveal" style={delay("0.12s")}>
+          Describe a strategy in plain English. It scores every launch and trades it, 24/7.
         </p>
-        <div className="reveal hero-ctas" style={{ "--reveal-delay": "0.28s" } as CSSProperties}>
-          <button type="button" className="cta-primary" onClick={openWaitlist}>
-            Join the waitlist
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="cta-arrow" aria-hidden>
-              <path d="M2 8h11M8.5 3.5 13 8l-4.5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          <a className="cta-secondary" href="#mechanics">
-            How it works
-          </a>
-        </div>
+        <a href="#how" className="lp-link reveal" style={delay("0.18s")}>
+          See how it decides
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+            <path d="M3.5 8.5l5-5M4.5 3.5h4v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </a>
+
+        <dl className="lp-hero-stats reveal" style={delay("0.26s")}>
+          <div>
+            <dt className="lp-sr">Hard gates</dt>
+            <dd className="lp-stat-num">10</dd>
+            <dd className="lp-stat-cap">hard gates no score can override</dd>
+          </div>
+          <div>
+            <dt className="lp-sr">Exit clock</dt>
+            <dd className="lp-stat-num">
+              5<span className="lp-stat-unit">min</span>
+            </dd>
+            <dd className="lp-stat-cap">exit clock, model awake or not</dd>
+          </div>
+        </dl>
       </div>
 
-      <div className="reveal hero-stage" style={{ "--reveal-delay": "0.42s" } as CSSProperties}>
-        <AgentPreview />
+      <div className="lp-build reveal" style={delay("0.2s")}>
+        <p className="lp-build-tab">Build an agent</p>
+        <p className="lp-build-label" id="lp-build-label">
+          Your strategy, in plain English
+        </p>
+        <Typewriter />
+        <button type="button" className="lp-btn-accent" onClick={open}>
+          Join the waitlist
+        </button>
+        <p className="lp-build-fine">Starts on paper. Asks before every entry.</p>
       </div>
     </section>
+  );
+}
+
+function Typewriter() {
+  const reduced = useReducedMotion();
+  const box = useRef<HTMLDivElement>(null);
+  const [text, setText] = useState<string>(PROMPTS[0]);
+
+  useEffect(() => {
+    if (reduced) return;
+    const el = box.current;
+    if (!el) return;
+    let prompt = 0;
+    let chars = PROMPTS[0].length;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let running = false;
+
+    const tick = () => {
+      const full = PROMPTS[prompt];
+      if (chars < full.length) {
+        chars += 1;
+        setText(full.slice(0, chars));
+        timer = setTimeout(tick, 26 + Math.random() * 30);
+      } else {
+        // Hold the finished prompt, then start the next one from empty.
+        timer = setTimeout(() => {
+          prompt = (prompt + 1) % PROMPTS.length;
+          chars = 0;
+          setText("");
+          timer = setTimeout(tick, 380);
+        }, 3200);
+      }
+    };
+    const sync = (visible: boolean) => {
+      if (visible && !running) {
+        running = true;
+        timer = setTimeout(tick, 2400);
+      } else if (!visible && running) {
+        running = false;
+        if (timer) clearTimeout(timer);
+      }
+    };
+    const io = new IntersectionObserver(([e]) => sync(e.isIntersecting && document.visibilityState === "visible"));
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      if (timer) clearTimeout(timer);
+    };
+  }, [reduced]);
+
+  return (
+    <div ref={box} className="lp-build-input" aria-labelledby="lp-build-label" role="textbox" aria-readonly>
+      {text}
+      <span className="lp-caret" aria-hidden />
+    </div>
   );
 }
