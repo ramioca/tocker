@@ -417,157 +417,6 @@
   }
 }
 
-/* ============================ hero ============================ */
-.lp-hero {
-  display: grid;
-  gap: 48px;
-  padding-top: clamp(40px, 9vh, 104px);
-  padding-bottom: 56px;
-}
-@media (min-width: 1024px) {
-  .lp-hero {
-    grid-template-columns: minmax(0, 1fr) 460px;
-    align-items: start;
-    gap: 64px;
-  }
-}
-.lp-h1 {
-  font-size: clamp(3rem, 7vw, 6rem);
-  line-height: 0.98;
-  font-weight: 650;
-  letter-spacing: -0.05em;
-  text-wrap: balance;
-}
-/* The highlighter swipe. A slightly tilted block behind one word. */
-.lp-mark {
-  position: relative;
-  z-index: 0;
-  color: var(--bg);
-  white-space: nowrap;
-}
-.lp-mark::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: 0.1em -0.1em -0.06em -0.12em;
-  border-radius: 0.08em;
-  background: var(--violet);
-  transform: rotate(-1.2deg);
-  transform-origin: left;
-  animation: lp-swipe 0.7s var(--ease-out) 0.55s both;
-}
-@keyframes lp-swipe {
-  from {
-    transform: rotate(-1.2deg) scaleX(0);
-  }
-  to {
-    transform: rotate(-1.2deg) scaleX(1);
-  }
-}
-.lp-hero-sub {
-  margin-top: 28px;
-  max-width: 34rem;
-  font-size: clamp(17px, 1.6vw, 20px);
-  line-height: 1.5;
-  color: var(--fg-2);
-  text-wrap: pretty;
-}
-.lp-hero .lp-link {
-  margin-top: 28px;
-}
-.lp-hero-stats {
-  display: flex;
-  gap: 28px clamp(32px, 6vw, 56px);
-  margin-top: 56px;
-}
-.lp-stat-num {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: clamp(2.2rem, 3.6vw, 2.75rem);
-  line-height: 1;
-  letter-spacing: -0.03em;
-  font-variant-numeric: tabular-nums;
-}
-.lp-stat-unit {
-  margin-left: 10px;
-  font-size: 0.5em;
-  color: var(--fg-2);
-}
-.lp-stat-cap {
-  margin-top: 10px;
-  font-size: 15px;
-  color: var(--fg-2);
-}
-
-.lp-build {
-  padding: 32px;
-  border-radius: 26px;
-  border: 1px solid var(--line);
-  background: var(--card);
-  box-shadow:
-    0 1px 0 rgba(244, 244, 241, 0.06) inset,
-    0 2px 4px rgba(0, 0, 0, 0.2),
-    0 30px 60px -30px rgba(0, 0, 0, 0.75);
-}
-.lp-build-tab {
-  position: relative;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--line);
-  font-size: 19px;
-  font-weight: 500;
-  letter-spacing: -0.015em;
-}
-.lp-build-tab::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  bottom: -2px;
-  width: 112px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--violet);
-}
-.lp-build-label {
-  margin-top: 26px;
-  font-size: 15px;
-  color: var(--fg-2);
-}
-.lp-build-input {
-  margin-top: 12px;
-  min-height: 132px;
-  padding: 18px 20px;
-  border-radius: 16px;
-  border: 1px solid var(--line);
-  background: rgba(4, 4, 7, 0.6);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
-  font-size: 17px;
-  line-height: 1.5;
-  letter-spacing: -0.01em;
-  color: var(--fg);
-}
-.lp-caret {
-  display: inline-block;
-  width: 2px;
-  height: 1.1em;
-  margin-left: 2px;
-  vertical-align: -0.18em;
-  background: var(--violet);
-  animation: lp-blink 1.1s steps(1) infinite;
-}
-@keyframes lp-blink {
-  50% {
-    opacity: 0;
-  }
-}
-.lp-build .lp-btn-accent {
-  margin-top: 24px;
-}
-.lp-build-fine {
-  margin-top: 14px;
-  text-align: center;
-  font-size: 13px;
-  color: var(--fg-3);
-}
-
 /* ============================ promises ============================ */
 .lp-promises {
   padding-bottom: 32px;
@@ -1325,6 +1174,7 @@
   }
   .lp-mark::before,
   .lp-caret,
+  .lp-float-live::before,
   .lp-demo-live::before {
     animation: none;
   }
@@ -1358,43 +1208,6 @@
   display: block;
   height: 26px;
   width: auto;
-}
-
-/* The dimensional Ticker Knot above the build card, in its own violet light. */
-.lp-hero-art {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.lp-hero-art::before {
-  content: "";
-  position: absolute;
-  top: -40px;
-  left: 50%;
-  width: 520px;
-  height: 420px;
-  transform: translateX(-50%);
-  background: radial-gradient(closest-side, rgba(113, 85, 217, 0.34), transparent);
-  pointer-events: none;
-}
-.lp-knot {
-  position: relative;
-  width: clamp(180px, 17vw, 236px);
-  height: auto;
-  margin-top: -64px;
-  margin-bottom: 4px;
-  filter: drop-shadow(0 28px 40px rgba(0, 0, 0, 0.6));
-}
-.lp-hero-art .lp-build {
-  position: relative;
-  width: 100%;
-  background: var(--card);
-}
-@media (max-width: 1023px) {
-  .lp-knot {
-    margin-top: 0;
-  }
 }
 
 /* ============================ Spectrum on the landing ============================ */
@@ -1433,12 +1246,10 @@
 }
 /* NumberTicker rolls digits in their own inline boxes, which have no text
    baseline: line units up by their bottoms instead. */
-.lp-stat-num,
 .lp-demo-big {
   display: flex;
   align-items: flex-end;
 }
-.lp-stat-unit,
 .lp-demo-of {
   margin-bottom: 0.14em;
 }
@@ -1512,4 +1323,384 @@
 .lp-pos-pnl {
   min-width: 72px;
   text-align: right;
+}
+
+/* ============================ hero ============================ */
+.lp-hero {
+  position: relative;
+  padding-top: clamp(28px, 6vh, 64px);
+}
+.lp-hero-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.lp-hero-head .lp-island-dock {
+  justify-content: center;
+  margin-bottom: 20px;
+}
+.lp-h1 {
+  font-size: clamp(2.9rem, 7.4vw, 6.6rem);
+  line-height: 0.96;
+  font-weight: 650;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+/* The highlighter swipe: Night type on a violet block, drawn on after load. */
+.lp-mark {
+  position: relative;
+  z-index: 0;
+  color: var(--bg);
+  white-space: nowrap;
+}
+.lp-mark::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0.1em -0.1em -0.04em -0.1em;
+  border-radius: 0.08em;
+  background: var(--violet);
+  transform: rotate(-1.2deg);
+  transform-origin: left;
+  animation: lp-swipe 0.7s var(--ease-out) 0.6s both;
+}
+@keyframes lp-swipe {
+  from {
+    transform: rotate(-1.2deg) scaleX(0);
+  }
+  to {
+    transform: rotate(-1.2deg) scaleX(1);
+  }
+}
+.lp-hero-sub {
+  margin-top: 28px;
+  max-width: 38rem;
+  font-size: clamp(16.5px, 1.5vw, 19px);
+  line-height: 1.55;
+  color: var(--fg-2);
+  text-wrap: balance;
+}
+.lp-hero-ctas {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 36px;
+}
+.lp-btn-hero {
+  width: auto;
+  height: 52px;
+  padding-inline: 26px;
+  border-radius: 999px;
+  font-size: 15.5px;
+}
+.lp-btn-arrow {
+  transition: transform 200ms var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp-btn-hero:hover .lp-btn-arrow {
+    transform: translateX(3px);
+  }
+}
+
+/* The stage: the Ticker Knot between the two halves of the product. */
+.lp-stage {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  margin-top: clamp(32px, 6vh, 64px);
+  height: 440px;
+}
+.lp-stage-glow {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  width: min(900px, 120vw);
+  height: 480px;
+  transform: translateX(-50%);
+  background:
+    radial-gradient(closest-side, rgba(113, 85, 217, 0.4), rgba(113, 85, 217, 0.1) 55%, transparent),
+    radial-gradient(36% 10% at 50% 80%, rgba(167, 139, 250, 0.2), transparent);
+  pointer-events: none;
+}
+.lp-stage-knot {
+  position: relative;
+  width: clamp(240px, 26vw, 360px);
+  height: auto;
+  align-self: flex-start;
+  filter: drop-shadow(0 40px 48px rgba(0, 0, 0, 0.65));
+}
+.lp-float {
+  position: absolute;
+  width: 340px;
+  padding: 20px 22px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(31, 28, 39, 0.94), rgba(15, 14, 19, 0.96));
+  box-shadow:
+    0 1px 0 rgba(244, 244, 241, 0.07) inset,
+    0 30px 60px -24px rgba(0, 0, 0, 0.85),
+    0 0 0 1px rgba(0, 0, 0, 0.4);
+  text-align: left;
+}
+.lp-float-left {
+  left: max(24px, calc(50% - 560px));
+  top: 64px;
+  transform: rotate(-2.5deg);
+}
+.lp-float-right {
+  right: max(24px, calc(50% - 560px));
+  top: 150px;
+  width: 300px;
+  transform: rotate(2deg);
+}
+/* `.reveal` animates transform to none; keep the tilt once it lands. */
+.lp-float-left.reveal {
+  animation-name: lp-in-left;
+}
+.lp-float-right.reveal {
+  animation-name: lp-in-right;
+}
+@keyframes lp-in-left {
+  from {
+    opacity: 0;
+    transform: translateY(18px) rotate(-2.5deg);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(-2.5deg);
+  }
+}
+@keyframes lp-in-right {
+  from {
+    opacity: 0;
+    transform: translateY(18px) rotate(2deg);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(2deg);
+  }
+}
+.lp-float-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+.lp-float-head .lp-pill {
+  height: 22px;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: none;
+}
+.lp-float-prompt {
+  margin-top: 14px;
+  min-height: 4.5em;
+  font-size: 15.5px;
+  line-height: 1.5;
+  letter-spacing: -0.008em;
+  color: var(--fg);
+}
+.lp-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  margin-left: 2px;
+  vertical-align: -0.18em;
+  background: var(--violet);
+  animation: lp-blink 1.1s steps(1) infinite;
+}
+@keyframes lp-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.lp-float-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.lp-float-chips .lp-pill {
+  height: 24px;
+  font-size: 11px;
+}
+.lp-float-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--violet);
+}
+.lp-float-live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: lp-pulse 2.2s ease-in-out infinite;
+}
+.lp-float-token {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+.lp-float-glyph {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 12px;
+  font-weight: 600;
+}
+.lp-float-name {
+  font-size: 16px;
+  font-weight: 500;
+}
+.lp-float-chain {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--fg-3);
+}
+.lp-float-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+.lp-float-score {
+  display: flex;
+  align-items: flex-end;
+  font-size: 44px;
+  line-height: 1;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+}
+.lp-float-of {
+  margin: 0 0 0.16em 4px;
+  font-size: 14px;
+  letter-spacing: 0;
+  color: var(--fg-3);
+}
+.lp-float-verdict {
+  margin-bottom: 4px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--violet);
+  color: var(--bg);
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.lp-float-verdict-no {
+  background: var(--raised-hi);
+  color: var(--fg-2);
+}
+.lp-float-gate {
+  margin-top: 14px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  background: var(--violet-tint);
+  font-size: 13px;
+}
+.lp-float-gate-no {
+  border-color: var(--line);
+  background: rgba(244, 244, 241, 0.04);
+  color: var(--fg-2);
+}
+
+/* Facts: a hairline strip that closes the hero. */
+.lp-facts {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 8px;
+  margin-bottom: clamp(40px, 6vh, 64px);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+@media (min-width: 900px) {
+  .lp-facts {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.lp-fact {
+  padding: 26px 24px 28px;
+}
+.lp-fact + .lp-fact {
+  border-left: 1px solid var(--line);
+}
+@media (max-width: 899px) {
+  .lp-fact:nth-child(3) {
+    border-left: none;
+  }
+  .lp-fact:nth-child(n + 3) {
+    border-top: 1px solid var(--line);
+  }
+}
+.lp-fact-num {
+  display: flex;
+  align-items: flex-end;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: clamp(2rem, 3vw, 2.6rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+.lp-fact-unit {
+  margin: 0 0 0.14em 8px;
+  font-size: 0.45em;
+  color: var(--fg-2);
+}
+.lp-fact-cap {
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--fg-2);
+}
+
+/* Narrow screens: the stage stacks, knot first, cards flat. */
+@media (max-width: 1023px) {
+  .lp-stage {
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    height: auto;
+  }
+  .lp-stage-knot {
+    align-self: center;
+    width: 220px;
+  }
+  .lp-float,
+  .lp-float-left,
+  .lp-float-right {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    max-width: 420px;
+    transform: none;
+  }
+  .lp-float-left.reveal,
+  .lp-float-right.reveal {
+    animation-name: lp-in;
+  }
+  .lp-stage {
+    padding-bottom: 32px;
+  }
+}
+/* Two set lines on wide screens; free, balanced wrapping on phones. */
+@media (min-width: 640px) {
+  .lp-h1-line {
+    display: block;
+  }
 }
