@@ -1,24 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { ReactLenis } from "lenis/react";
-import { CursorTrailContact } from "./cursor-trail-contact";
-import { IsotopeHero } from "./isotope-hero";
+import { useEffect, useRef } from "react";
+import { Contact } from "./contact";
+import { Hero } from "./hero";
 import { Nav } from "./nav";
-import { ShaderDebug } from "./shader-debug";
 import { DEFAULT_DATA_BUDGET_USD, LANDING_SOURCES, type LandingSource } from "./signals-data";
 import { WaitlistProvider } from "./waitlist";
 
 /**
- * Tocker waitlist landing. The hero and contact sections are Paper-Shaders /
- * WebGPU pieces (Isotope Hero + Cursor-Trail Contact) with WebGL2 renditions
- * where WebGPU is absent; the middle two sections (the data-source gallery,
- * the mechanics grid) are DOM. One typeface in two registers, near-black
- * grounds, violet as the only signal colour, Lenis smooth scroll, a lagging
- * custom cursor on fine pointers, and a universal film grain.
- *
- * The hero and contact copy are server-rendered; only their `<Shader>`
- * subtrees are client-only chunks (see use-shader-gate.ts).
+ * Tocker waitlist landing. Quiet and fast on purpose: no canvas, no custom
+ * cursor, no smooth-scroll library, no full-screen overlays. Light comes from
+ * static CSS gradients (the hero's horizon, the closing section's mirror of
+ * it), motion is limited to the entrance, the hero's sample-agent feed and
+ * scroll-linked reveals that run on the compositor. One typeface in two
+ * registers, near-black grounds, violet as the only signal colour.
  */
 
 const OFF = "#f4f4f1";
@@ -68,20 +63,15 @@ const FEATURES = [
 
 export function LiquidLanding() {
   return (
-    <ReactLenis root options={{ lerp: 0.085, duration: 1.1 }}>
-      <WaitlistProvider>
-        <Cursor />
-        <Nav />
-        <main className="liquid-main relative w-full bg-[#040407] text-[#f4f4f1]">
-          <IsotopeHero />
-          <Signals />
-          <Mechanics />
-          <CursorTrailContact />
-          <Grain />
-          <ShaderDebug />
-        </main>
-      </WaitlistProvider>
-    </ReactLenis>
+    <WaitlistProvider>
+      <Nav />
+      <main className="liquid-main relative w-full bg-[#040407] text-[#f4f4f1]">
+        <Hero />
+        <Signals />
+        <Mechanics />
+        <Contact />
+      </main>
+    </WaitlistProvider>
   );
 }
 
@@ -167,7 +157,7 @@ function Signals() {
   useEffect(() => {
     let raf = 0;
     // Under 768px the gallery is a native horizontal snap row (see .sig-section
-    // in isotope.css); the scroll-driven transform must not touch it.
+    // in landing.css); the scroll-driven transform must not touch it.
     const narrow = window.matchMedia("(max-width: 767px)");
     const onScroll = () => {
       cancelAnimationFrame(raf);
@@ -215,10 +205,8 @@ function Signals() {
           Signals
         </div>
         <div className="sig-rail absolute top-1/2 left-0 z-10 -translate-y-1/2">
-          {/* data-lenis-prevent: the smooth-scroll root must not swallow wheel/touch on the row. */}
-          <div
+                    <div
             ref={track}
-            data-lenis-prevent
             className="sig-track flex items-center gap-6 pl-[clamp(20px,4vw,64px)] pr-[30vw] will-change-transform"
           >
             <div className="sig-intro shrink-0">
@@ -300,13 +288,13 @@ function Mechanics() {
     <section id="mechanics" className="mech relative w-full bg-[#050506]">
       <div className="mech-inner">
         <p className="mech-eyebrow">03 — Mechanics</p>
-        <h2 className="mech-title" style={{ color: OFF }}>
+        <h2 className="mech-title rise" style={{ color: OFF }}>
           Build the agent that trades like you.
         </h2>
 
         <div className="mech-grid">
           {FEATURES.map((f) => (
-            <div key={f.i} className="mech-item">
+            <div key={f.i} className="mech-item rise">
               <div className="mech-item-head">
                 <span className="mech-item-index">{f.i}</span>
                 <span className="mech-item-label">{f.label}</span>
@@ -316,7 +304,7 @@ function Mechanics() {
           ))}
         </div>
 
-        <div className="mech-statement">
+        <div className="mech-statement rise">
           <span className="mech-statement-rule" aria-hidden />
           <p className="mech-statement-line">Entry rules never block an exit.</p>
           <p className="mech-statement-sub">
@@ -336,66 +324,5 @@ function Mechanics() {
         </dl>
       </div>
     </section>
-  );
-}
-
-/* ---------------------------------------------------------------- cursor */
-function Cursor() {
-  const ring = useRef<HTMLDivElement>(null);
-  const dot = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
-    let x = 0,
-      y = 0,
-      tx = 0,
-      ty = 0,
-      raf = 0;
-    let shown = false;
-    const move = (e: PointerEvent) => {
-      tx = e.clientX;
-      ty = e.clientY;
-      if (!shown) {
-        shown = true;
-        setVisible(true);
-      }
-    };
-    const loop = () => {
-      x += (tx - x) * 0.18;
-      y += (ty - y) * 0.18;
-      if (ring.current) ring.current.style.transform = `translate(${x}px,${y}px) translate(-50%,-50%)`;
-      if (dot.current) dot.current.style.transform = `translate(${tx}px,${ty}px) translate(-50%,-50%)`;
-      raf = requestAnimationFrame(loop);
-    };
-    window.addEventListener("pointermove", move, { passive: true });
-    loop();
-    return () => {
-      window.removeEventListener("pointermove", move);
-      cancelAnimationFrame(raf);
-    };
-  }, []);
-
-  return (
-    <div aria-hidden className="cursor pointer-events-none fixed inset-0 z-[100]" style={{ opacity: visible ? 1 : 0 }}>
-      <div ref={ring} className="cursor-ring fixed left-0 top-0 rounded-full" />
-      <div ref={dot} className="cursor-dot fixed left-0 top-0 rounded-full" />
-    </div>
-  );
-}
-
-/* ----------------------------------------------------------------- grain */
-function Grain() {
-  return (
-    <div
-      aria-hidden
-      className="pointer-events-none fixed inset-0 z-[90]"
-      style={{
-        opacity: 0.04,
-        backgroundImage:
-          "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E\")",
-        backgroundSize: "160px 160px",
-      }}
-    />
   );
 }
