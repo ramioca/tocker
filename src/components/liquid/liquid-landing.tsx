@@ -2,7 +2,6 @@
 
 import { DecisionDemo, FieldBook, RecentCalls } from "./demo";
 import { Hero } from "./hero";
-import { Mark } from "./mark";
 import { Nav } from "./nav";
 import { PerformancePanel } from "./performance";
 import { DEFAULT_DATA_BUDGET_USD, LANDING_SOURCES } from "./signals-data";
@@ -10,9 +9,10 @@ import { WaitlistProvider, useWaitlist } from "./waitlist";
 import "./landing.css";
 
 /**
- * Tocker waitlist landing. Light, quiet and fast: a warm paper ground, one
- * geometric sans with a mono for every figure, hairline cards, and violet as
- * the only accent. The product is the illustration — every visual below the
+ * Tocker waitlist landing, in the brand kit's own terms (public/brand/tocker):
+ * Night ground, Ink surfaces, Paper type, Violet as the one signal, Geist with
+ * Geist Mono for every figure, the dimensional Ticker Knot as hero art and the
+ * vector lockup as the wordmark. Green and red appear only on P&L. The product is the illustration — every visual below the
  * hero is the app's own UI drawn in DOM. No canvas, no smooth-scroll library,
  * no fixed overlays; motion is the load-in, two small sample feeds that run
  * only while on screen, and scroll-linked reveals on the compositor.
@@ -117,6 +117,7 @@ function Promises() {
 function How() {
   return (
     <section id="how" className="lp-wrap lp-section">
+      <p className="lp-eyebrow">01 — Observe · decide · trade</p>
       <h2 className="lp-h2 rise">Describe it once. It scores the whole field.</h2>
       <div className="rise">
         <DecisionDemo />
@@ -137,6 +138,7 @@ function Sources() {
   const defaults = LANDING_SOURCES.filter((s) => s.tier === "default").length;
   return (
     <section id="data" className="lp-wrap lp-section">
+      <p className="lp-eyebrow">02 — Data</p>
       <h2 className="lp-h2 rise">It buys its own research, by the call.</h2>
       <p className="lp-lede rise">
         {LANDING_SOURCES.length} sources in the registry, {defaults} on by default. Paid in USDC over x402, inside a
@@ -173,6 +175,7 @@ function Performance() {
   return (
     <section id="performance" className="lp-wrap lp-section">
       <div className="lp-split-head">
+        <p className="lp-eyebrow">03 — Performance</p>
         <h2 className="lp-h2 rise">
           Performance, the way
           <br /> you&rsquo;re used to.
@@ -193,6 +196,7 @@ function Guardrails() {
   return (
     <section className="lp-wrap lp-section lp-guard">
       <div className="lp-guard-copy rise">
+        <p className="lp-eyebrow">04 — Guardrails</p>
         <h2 className="lp-h2">Entry rules never block an exit.</h2>
         <p className="lp-lede">
           Blocklist a token you hold, spend the day&rsquo;s trade quota, hit the kill switch: the sell still goes
@@ -220,6 +224,7 @@ function Guardrails() {
 function Faq() {
   return (
     <section id="faq" className="lp-wrap lp-section">
+      <p className="lp-eyebrow">05 — Questions</p>
       <h2 className="lp-h2 rise">Questions</h2>
       <div className="lp-faq">
         {FAQ.map((f) => (
@@ -257,10 +262,8 @@ function Footer() {
             <a href="#faq">FAQ</a>
           </div>
           <div className="lp-footer-legal">
-            <span className="lp-footer-brand">
-              <Mark size={22} />
-              tocker
-            </span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/tocker/vector/tocker-lockup-light.svg" alt="Tocker" width={127} height={30} className="lp-footer-brand" />
             <p>
               Not investment advice. Trading crypto can lose everything in a wallet; every agent starts on paper.
             </p>
