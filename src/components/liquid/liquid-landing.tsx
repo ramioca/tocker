@@ -1,6 +1,9 @@
 "use client";
 
+import { BentoCard } from "@/components/spectrumui/bento-card";
+import { BentoGrid } from "@/components/spectrumui/bento-grid";
 import { FAQTabsCard, type FaqTab } from "@/components/spectrumui/faq-tabs-card";
+import { Gauge, ShieldCheck, EyeOff } from "lucide-react";
 import { DecisionDemo, RecentCalls, RunSteps } from "./demo";
 import { Hero } from "./hero";
 import { Nav } from "./nav";
@@ -31,14 +34,17 @@ const DEFAULTS = [
 
 const PROMISES = [
   {
+    icon: <Gauge className="size-[18px]" />,
     title: "Exits in code",
     body: "Stop-loss, take-profit and trailing stops fire on a five-minute clock, whether or not the model is awake.",
   },
   {
+    icon: <ShieldCheck className="size-[18px]" />,
     title: "Ten hard gates",
     body: "Mint and freeze authority, honeypot, tax, liquidity, holders, age, concentration. No score overrides them.",
   },
   {
+    icon: <EyeOff className="size-[18px]" />,
     title: "Your edge stays yours",
     body: "Every trade posts to a public feed. Your prompt, thresholds and data sources never do. There is no fork button.",
   },
@@ -93,15 +99,12 @@ export function LiquidLanding() {
 function Promises() {
   return (
     <section className="lp-wrap lp-promises" aria-label="What every agent guarantees">
-      {PROMISES.map((p) => (
-        <div key={p.title} className="lp-promise rise">
-          <p className="lp-promise-title">
-            <span className="lp-dot" aria-hidden />
-            {p.title}
-          </p>
-          <p className="lp-promise-body">{p.body}</p>
-        </div>
-      ))}
+      {/* Spectrum's bento: a spotlight follows the pointer and a beam rides the border on hover. */}
+      <BentoGrid className="lp-bento lg:grid-cols-3 md:grid-cols-3 gap-4 max-w-none">
+        {PROMISES.map((p) => (
+          <BentoCard key={p.title} icon={p.icon} title={p.title} description={p.body} className="lp-bento-card" />
+        ))}
+      </BentoGrid>
     </section>
   );
 }

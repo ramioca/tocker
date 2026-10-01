@@ -2,6 +2,7 @@
 
 import { formatUsd } from "@/components/common/format";
 import { PortfolioChart, type PortfolioPoint } from "@/components/spectrumui/charts/portfolio-chart";
+import { Sparkline } from "@/components/spectrumui/charts/sparkline-chart";
 import { StatCards, type StatCardData } from "@/components/spectrumui/charts/stat-cards";
 import { DEFAULT_DATA_BUDGET_USD } from "./signals-data";
 
@@ -65,12 +66,30 @@ const CARDS: StatCardData[] = [
   },
 ];
 
+/**
+ * Price since entry, deterministic. Rescaled into 1–10 because the sparkline's
+ * y axis starts at zero: raw prices near $100 would draw as a flat line. The
+ * drift sets the direction, so each line's colour matches its P&L.
+ */
+function path(seed: number, drift: number) {
+  let x = seed;
+  let v = 0;
+  const walk = Array.from({ length: 36 }, () => {
+    x = (x * 16807) % 2147483647;
+    v += (x / 2147483647 - 0.5) * 1.2 + drift;
+    return v;
+  });
+  const lo = Math.min(...walk);
+  const hi = Math.max(...walk);
+  return walk.map((w, i) => ({ i, value: 1 + (9 * (w - lo)) / (hi - lo || 1) }));
+}
+
 const POSITIONS = [
-  { token: "MOTH", chain: "SOL", pnl: "+$38.20", pct: 38, up: true, held: "3h" },
-  { token: "RUNE", chain: "BASE", pnl: "+$21.75", pct: 22, up: true, held: "52m" },
-  { token: "VANTA", chain: "BASE", pnl: "+$6.10", pct: 6, up: true, held: "18m" },
-  { token: "OKRA", chain: "SOL", pnl: "−$11.40", pct: 11, up: false, held: "1h" },
-] as const;
+  { token: "MOTH", chain: "SOL", pnl: "+$38.20", up: true, held: "3h", series: path(11, 0.35) },
+  { token: "RUNE", chain: "BASE", pnl: "+$21.75", up: true, held: "52m", series: path(23, 0.25) },
+  { token: "VANTA", chain: "BASE", pnl: "+$6.10", up: true, held: "18m", series: path(5, 0.15) },
+  { token: "OKRA", chain: "SOL", pnl: "−$11.40", up: false, held: "1h", series: path(41, -0.25) },
+];
 
 export function PerformancePanel() {
   return (
@@ -114,16 +133,13 @@ export function PerformancePanel() {
         </div>
         {POSITIONS.map((p) => (
           <div key={p.token} className="lp-pos" aria-hidden>
-            <div className="lp-pos-top">
-              <span>
-                {p.token} <span className="lp-mono lp-pos-chain">{p.chain}</span>
-              </span>
-              <span className={`lp-mono ${p.up ? "lp-up" : "lp-down"}`}>{p.pnl}</span>
-              <span className="lp-mono lp-pos-held">{p.held}</span>
-            </div>
-            <span className="lp-pos-track">
-              <span className={p.up ? "lp-pos-fill" : "lp-pos-fill lp-pos-fill-neg"} style={{ transform: `scaleX(${p.pct / 40})` }} />
+            <span className="lp-pos-name">
+              {p.token} <span className="lp-mono lp-pos-chain">{p.chain}</span>
             </span>
+            {/* Line, not `filled`: the registry draws its Area inside a LineChart, which Recharts never renders. */}
+            <Sparkline data={p.series} framed={false} glowing className="lp-pos-spark" />
+            <span className={`lp-mono lp-pos-pnl ${p.up ? "lp-up" : "lp-down"}`}>{p.pnl}</span>
+            <span className="lp-mono lp-pos-held">{p.held}</span>
           </div>
         ))}
       </div>
