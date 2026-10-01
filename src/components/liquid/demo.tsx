@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AgentSteps } from "@/components/spectrumui/blocks/ai-assistants/agent-steps";
+import type { ToolCall } from "@/components/spectrumui/blocks/ai-assistants/types";
+import { NumberTicker } from "@/components/spectrumui/number-ticker";
+import { TextStates } from "@/components/spectrumui/text-states";
 
 /**
  * "How it decides": one sample strategy, the decision it reaches on a launch,
@@ -90,80 +94,128 @@ export function DecisionDemo() {
           <span className="lp-demo-live">scoring launches</span>
         </div>
 
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={i}
-            initial={{ opacity: 0, y: 6, filter: "blur(2px)" }}
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            exit={{ opacity: 0, y: -4, filter: "blur(2px)" }}
-            transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}
-            className="lp-demo-body"
-          >
-            <div className="lp-demo-token">
-              <span className="lp-demo-glyph">{c.token[0]}</span>
-              <span className="lp-demo-name">{c.token}</span>
-              <span className="lp-mono lp-demo-chain">{c.chain}</span>
+        {/* Spectrum's text-states and number-ticker swap each field in place. */}
+        <div className="lp-demo-body">
+          <div className="lp-demo-token">
+            <span className="lp-demo-glyph">
+              <TextStates text={c.token[0]} />
+            </span>
+            <span className="lp-demo-name">
+              <TextStates text={c.token} />
+            </span>
+            <span className="lp-mono lp-demo-chain">
+              <TextStates text={c.chain} />
+            </span>
+          </div>
+          <div className="lp-demo-cols">
+            <div>
+              <p className="lp-k">Score</p>
+              <p className="lp-demo-big">
+                <NumberTicker value={c.score} pad={2} duration={0.7} startOnView={false} />
+                <span className="lp-demo-of">/100</span>
+              </p>
             </div>
-            <div className="lp-demo-cols">
-              <div>
-                <p className="lp-k">Score</p>
-                <p className="lp-demo-big">
-                  {c.score}
-                  <span className="lp-demo-of">/100</span>
-                </p>
-              </div>
-              <span className="lp-demo-arrow">→</span>
-              <div>
-                <p className="lp-k">{c.verdict === "buy" ? "Buy" : "Skip"}</p>
-                <p className={`lp-demo-big ${c.verdict === "buy" ? "lp-accent-ink" : "lp-muted-ink"}`}>{c.amount}</p>
-              </div>
+            <span className="lp-demo-arrow">→</span>
+            <div>
+              <p className="lp-k">
+                <TextStates text={c.verdict === "buy" ? "Buy" : "Skip"} />
+              </p>
+              <p className={`lp-demo-big ${c.verdict === "buy" ? "lp-accent-ink" : "lp-muted-ink"}`}>
+                <TextStates text={c.amount} duration={180} translateY={8} />
+              </p>
             </div>
-            <div className={`lp-demo-bar ${c.gatesOk ? "" : "lp-demo-bar-no"}`}>
-              <span>{c.gates}</span>
-              <span className="lp-mono">stop 15% · take 40%</span>
-            </div>
-          </motion.div>
-        </AnimatePresence>
+          </div>
+          <div className={`lp-demo-bar ${c.gatesOk ? "" : "lp-demo-bar-no"}`}>
+            <TextStates text={c.gates} />
+            <span className="lp-mono">stop 15% · take 40%</span>
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-const FIELD = [
-  { band: "90 +", count: 14, note: "" },
-  { band: "80 – 89", count: 52, note: "" },
-  { band: "70 – 79", count: 131, note: "" },
-  { band: "62 – 69", count: 208, note: "floor" },
-  { band: "below 62", count: 879, note: "skipped" },
-] as const;
-const FIELD_MAX = Math.max(...FIELD.map((f) => f.count));
-const FIELD_TOTAL = FIELD.reduce((a, f) => a + f.count, 0);
+// One sample run, in the run loop's own tool names (src/lib/agent). Owners see
+// their real runs like this; nobody else ever sees a transcript.
+const RUN: ToolCall[] = [
+  {
+    id: "discover",
+    name: "discover_tokens",
+    args: { chains: ["solana", "base"], since: "5m" },
+    result: "38 new launches · 6 clear the prefilter",
+    status: "success",
+    startedAt: 0,
+    completedAt: 1400,
+  },
+  {
+    id: "data",
+    name: "query_data_source",
+    parallel: true,
+    status: "success",
+    startedAt: 1400,
+    completedAt: 3300,
+    children: [
+      {
+        id: "safety",
+        name: "deepnets-token-safety",
+        args: { token: "MOTH", paid: "$0.01" },
+        result: "risk low · mint revoked · top ten 31%",
+        status: "success",
+        startedAt: 1400,
+        completedAt: 3300,
+      },
+      {
+        id: "x",
+        name: "x-search",
+        args: { query: "$MOTH", paid: "$0.006" },
+        result: "20 posts · sentiment +0.42",
+        status: "success",
+        startedAt: 1400,
+        completedAt: 2600,
+      },
+    ],
+  },
+  {
+    id: "score",
+    name: "score_token",
+    args: { token: "MOTH" },
+    result: "81 / 100 · floor 62 · 10 of 10 hard gates passed",
+    status: "success",
+    startedAt: 3300,
+    completedAt: 4100,
+  },
+  {
+    id: "trade",
+    name: "place_trade",
+    args: { side: "buy", size: "$100.00", mode: "paper" },
+    result: "filled · stop 15% · take 40%",
+    status: "success",
+    startedAt: 4100,
+    completedAt: 4900,
+  },
+  {
+    id: "note",
+    name: "post_note",
+    args: { to: "public feed" },
+    result: "Bought MOTH: holder growth, clean mint, sentiment turning.",
+    status: "success",
+    startedAt: 4900,
+    completedAt: 5200,
+  },
+];
 
-export function FieldBook() {
+export function RunSteps() {
   return (
-    <div className="lp-card lp-book" role="img" aria-label="Sample: today's launches by score band">
+    <div className="lp-card lp-run" role="img" aria-label="Sample: one agent run, step by step, from discovering launches to placing a paper trade">
       <div className="lp-card-head" aria-hidden>
         <span className="lp-card-title">
           <span className="lp-dot" />
-          Today&rsquo;s field
+          One run, step by step
         </span>
-        <span className="lp-mono lp-card-meta">{FIELD_TOTAL.toLocaleString("en-US")} launches scored</span>
+        <span className="lp-mono lp-card-meta">every 5 min · sample</span>
       </div>
-      <div className="lp-book-cols lp-mono" aria-hidden>
-        <span>score</span>
-        <span>launches</span>
-      </div>
-      <div aria-hidden>
-        {FIELD.map((f) => (
-          <div key={f.band} className="lp-book-row lp-mono" data-note={f.note || undefined}>
-            <span className="lp-book-depth" style={{ transform: `scaleX(${f.count / FIELD_MAX})` }} />
-            <span className="lp-book-band">
-              {f.band}
-              {f.note ? <em>{f.note}</em> : null}
-            </span>
-            <span>{f.count.toLocaleString("en-US")}</span>
-          </div>
-        ))}
+      <div className="lp-run-body" aria-hidden>
+        <AgentSteps steps={RUN} className="max-w-none" />
       </div>
     </div>
   );

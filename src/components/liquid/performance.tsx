@@ -1,17 +1,69 @@
+"use client";
+
+import { formatUsd } from "@/components/common/format";
+import { PortfolioChart, type PortfolioPoint } from "@/components/spectrumui/charts/portfolio-chart";
+import { StatCards, type StatCardData } from "@/components/spectrumui/charts/stat-cards";
 import { DEFAULT_DATA_BUDGET_USD } from "./signals-data";
 
 /**
- * The owner's view of a sample agent: headline numbers, P&L by day and open
- * positions. A picture of the product in DOM, labelled as a sample; nothing
- * in it is live. (Other visitors would see only the public trade feed: the
- * strategy itself never leaves the owner's screen.)
+ * The owner's view of a sample agent, drawn with the same Spectrum pieces the
+ * app's agent page uses (StatCards, PortfolioChart), on made-up data and
+ * labelled as a sample. Nothing in it is live. Other visitors would see only
+ * the public trade feed: the strategy never leaves the owner's screen.
  */
 
-// Thirty days of hand-shaped daily P&L, in dollars.
-const DAYS = [
-  42, 18, 61, -22, 9, 88, 34, 51, 70, -35, 12, 47, 66, 79, -14, 5, 58, 73, 92, -28, 40, 31, -9, 84, 22, 46, 63, -18, 55, 38,
+const DAY = 86_400_000;
+const END = Date.UTC(2026, 8, 30);
+const START_USD = 10_000;
+
+/** Ninety days of a hand-tuned, deterministic paper book that ends near $12.5K. */
+const EQUITY: PortfolioPoint[] = (() => {
+  let seed = 7;
+  const rand = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  const out: PortfolioPoint[] = [];
+  let value = START_USD;
+  for (let i = 0; i < 90; i += 1) {
+    value *= 1 + (rand() - 0.43) * 0.024;
+    out.push({ t: END - (89 - i) * DAY, value: Math.round(value * 100) / 100, basis: START_USD });
+  }
+  return out;
+})();
+const LAST = EQUITY[EQUITY.length - 1].value;
+
+const CARDS: StatCardData[] = [
+  {
+    label: "Equity",
+    value: LAST,
+    previous: START_USD,
+    series: EQUITY.map((p) => p.value),
+    format: (v) => formatUsd(v),
+    goodWhen: "up",
+    deltaLabel: "vs start",
+  },
+  {
+    label: "Win rate",
+    value: 61,
+    progress: 0.61,
+    format: (v) => `${v.toFixed(0)}%`,
+    goodWhen: "up",
+  },
+  {
+    label: "Trades",
+    value: 214,
+    format: (v) => v.toFixed(0),
+    caption: "4 open now",
+  },
+  {
+    label: "Data per run",
+    value: 0.84,
+    format: (v) => formatUsd(v),
+    goodWhen: "down",
+    caption: `budget ${formatUsd(DEFAULT_DATA_BUDGET_USD)}`,
+  },
 ];
-const DAY_MAX = Math.max(...DAYS.map(Math.abs));
 
 const POSITIONS = [
   { token: "MOTH", chain: "SOL", pnl: "+$38.20", pct: 38, up: true, held: "3h" },
@@ -22,51 +74,51 @@ const POSITIONS = [
 
 export function PerformancePanel() {
   return (
-    <div className="lp-app" role="img" aria-label="Sample agent dashboard: equity, trades, win rate, data spend, daily P&L and open positions">
+    <div className="lp-app" aria-label="Sample agent dashboard" role="group">
       <div className="lp-app-bar" aria-hidden>
         <span className="lp-app-url">
           <span className="lp-app-dot" />
           tocker.xyz/agents/fresh-launch-hunter
         </span>
-        <span className="lp-mono lp-app-chip">paper · So1a····7x9k</span>
+        <span className="lp-mono lp-app-chip">sample · paper</span>
       </div>
 
-      <div className="lp-app-stats" aria-hidden>
-        <Stat k="Equity" v="$12,480.22" />
-        <Stat k="Trades" v="214" />
-        <Stat k="Win rate" v="61%" />
-        <Stat k="Data per run" v="$0.84" sub={`budget $${DEFAULT_DATA_BUDGET_USD.toFixed(2)}`} accent />
+      <div className="lp-app-stats-spectrum">
+        {/* The same overrides the app's agent page uses: the sparkline takes what the
+            value leaves instead of a fixed width, and captions may wrap on phones. */}
+        <StatCards
+          cards={CARDS}
+          columns={4}
+          className="max-sm:[&_p.whitespace-nowrap]:!h-auto max-sm:[&_p.whitespace-nowrap]:!whitespace-normal max-sm:[&_p.whitespace-nowrap]:!leading-snug [&_.cursor-crosshair]:!w-auto [&_.cursor-crosshair]:!min-w-16 [&_.cursor-crosshair]:!flex-1"
+        />
       </div>
 
-      <div className="lp-app-card" aria-hidden>
-        <div className="lp-app-card-head">
-          <span>P&amp;L by day</span>
-          <span className="lp-mono lp-card-meta">sample agent</span>
-        </div>
-        <div className="lp-bars">
-          {DAYS.map((d, i) => (
-            <span key={i} className="lp-bar-slot">
-              <span
-                className={d >= 0 ? "lp-bar" : "lp-bar lp-bar-neg"}
-                // Baseline at 30% from the bottom: gains rise above it, losses hang below.
-                style={{ height: `${(Math.abs(d) / DAY_MAX) * 70}%` }}
-              />
-            </span>
-          ))}
-        </div>
+      <div className="lp-app-chart">
+        <PortfolioChart
+          data={EQUITY}
+          label="Equity · sample agent"
+          ranges={[
+            { label: "7D", bars: 7 },
+            { label: "30D", bars: 30 },
+            { label: "90D", bars: null },
+          ]}
+          defaultRange="90D"
+          height={300}
+          showDrawdown
+        />
       </div>
 
-      <div className="lp-app-card" aria-hidden>
-        <div className="lp-app-card-head">
+      <div className="lp-app-card" aria-label="Open positions, sample" role="img">
+        <div className="lp-app-card-head" aria-hidden>
           <span>Open positions</span>
         </div>
         {POSITIONS.map((p) => (
-          <div key={p.token} className="lp-pos">
+          <div key={p.token} className="lp-pos" aria-hidden>
             <div className="lp-pos-top">
               <span>
                 {p.token} <span className="lp-mono lp-pos-chain">{p.chain}</span>
               </span>
-              <span className={`lp-mono ${p.up ? "" : "lp-down"}`}>{p.pnl}</span>
+              <span className={`lp-mono ${p.up ? "lp-up" : "lp-down"}`}>{p.pnl}</span>
               <span className="lp-mono lp-pos-held">{p.held}</span>
             </div>
             <span className="lp-pos-track">
@@ -75,16 +127,6 @@ export function PerformancePanel() {
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-function Stat({ k, v, sub, accent }: { k: string; v: string; sub?: string; accent?: boolean }) {
-  return (
-    <div className={accent ? "lp-app-stat lp-app-stat-accent" : "lp-app-stat"}>
-      <span className="lp-app-stat-k">{k}</span>
-      <span className="lp-mono lp-app-stat-v">{v}</span>
-      {sub ? <span className="lp-mono lp-app-stat-sub">{sub}</span> : null}
     </div>
   );
 }

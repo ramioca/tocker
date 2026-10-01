@@ -29,6 +29,23 @@
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --shadow: 0 1px 0 rgba(244, 244, 241, 0.05) inset, 0 24px 48px -28px rgba(0, 0, 0, 0.9);
 
+  /* The app's theme variables, pointed at the same palette, so the Spectrum
+     components on this page (stat cards, portfolio chart, agent steps, FAQ)
+     render in brand colours. */
+  --background: var(--bg);
+  --foreground: var(--fg);
+  --border: var(--line);
+  --input: var(--line);
+  --muted: var(--raised);
+  --muted-foreground: rgba(244, 244, 241, 0.55);
+  --popover: var(--raised);
+  --popover-foreground: var(--fg);
+  --primary: var(--violet);
+  --primary-foreground: var(--bg);
+  --ring: var(--violet);
+  --positive: var(--pos);
+  --negative: var(--neg);
+
   font-family: var(--font-geist-sans), "Geist", ui-sans-serif, system-ui, sans-serif;
   color: var(--fg);
   -webkit-font-smoothing: antialiased;
@@ -793,55 +810,6 @@
   }
 }
 
-/* The field, drawn like an order book: depth bars behind the rows. */
-.lp-book-cols,
-.lp-book-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 0 24px;
-}
-.lp-book-cols {
-  padding-top: 16px;
-  padding-bottom: 6px;
-  font-size: 12.5px;
-  color: var(--fg-3);
-}
-.lp-book-row {
-  position: relative;
-  align-items: center;
-  height: 50px;
-  font-size: 15.5px;
-}
-.lp-book-row > span:not(.lp-book-depth) {
-  position: relative;
-}
-.lp-book-depth {
-  position: absolute;
-  inset: 3px 0;
-  transform-origin: right;
-  background: var(--violet-tint);
-}
-.lp-book-row[data-note="skipped"] {
-  color: var(--fg-3);
-}
-.lp-book-row[data-note="skipped"] .lp-book-depth {
-  background: rgba(244, 244, 241, 0.05);
-}
-.lp-book-band {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 10px;
-  color: var(--violet);
-}
-.lp-book-row[data-note="skipped"] .lp-book-band {
-  color: var(--fg-3);
-}
-.lp-book-band em {
-  font-style: normal;
-  font-size: 11.5px;
-  color: var(--fg-3);
-}
-
 .lp-calls-rows {
   position: relative;
   height: calc(5 * 66px);
@@ -1002,44 +970,15 @@
     display: none;
   }
 }
-.lp-app-stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+.lp-app-stats-spectrum {
   margin-top: 18px;
 }
-@media (min-width: 900px) {
-  .lp-app-stats {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-.lp-app-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-  min-height: 116px;
-  padding: clamp(14px, 1.6vw, 20px) clamp(14px, 1.8vw, 22px);
-  border-radius: 16px;
+.lp-app-chart {
+  margin-top: 18px;
+  overflow: hidden;
+  border-radius: 18px;
   border: 1px solid var(--line);
-  background: var(--raised);
-}
-.lp-app-stat-accent {
-  border-color: rgba(167, 139, 250, 0.5);
-  background: var(--violet-tint);
-}
-.lp-app-stat-k {
-  font-size: 14px;
-  color: var(--fg-2);
-}
-.lp-app-stat-v {
-  font-size: clamp(1.3rem, 2.4vw, 2rem);
-  line-height: 1;
-  letter-spacing: -0.02em;
-}
-.lp-app-stat-sub {
-  font-size: 13px;
-  color: var(--fg-2);
+  background: var(--card);
 }
 .lp-app-card {
   margin-top: 18px;
@@ -1054,42 +993,6 @@
   align-items: baseline;
   font-size: 16.5px;
   font-weight: 500;
-}
-.lp-bars {
-  display: flex;
-  gap: clamp(3px, 0.6vw, 8px);
-  height: 190px;
-  margin-top: 22px;
-}
-.lp-bar-slot {
-  position: relative;
-  flex: 1;
-}
-/* Baseline at 30% from the bottom. */
-.lp-bar-slot::after {
-  content: "";
-  position: absolute;
-  left: -4px;
-  right: -4px;
-  bottom: 30%;
-  height: 1px;
-  background: var(--line);
-}
-.lp-bar {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 30%;
-  border-radius: 3px 3px 1px 1px;
-  background: var(--pos);
-  opacity: 0.85;
-}
-.lp-bar-neg {
-  bottom: auto;
-  top: 70%;
-  border-radius: 1px 1px 3px 3px;
-  background: var(--neg);
-  opacity: 0.85;
 }
 .lp-pos {
   padding: 16px 0 14px;
@@ -1163,77 +1066,6 @@
 }
 .lp-default dd {
   font-size: 16.5px;
-}
-
-/* ============================ FAQ ============================ */
-.lp-faq {
-  display: grid;
-  gap: 12px 40px;
-  align-items: start;
-  margin-top: 40px;
-}
-@media (min-width: 900px) {
-  .lp-faq {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-.lp-faq-item {
-  border-radius: 16px;
-  border: 1px solid var(--line);
-  background: var(--card);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  transition: border-color 150ms ease-out;
-}
-.lp-faq-item[open] {
-  border-color: rgba(244, 244, 241, 0.2);
-}
-.lp-faq-item summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 22px 26px;
-  font-size: 17.5px;
-  font-weight: 500;
-  letter-spacing: -0.012em;
-  cursor: pointer;
-  list-style: none;
-}
-.lp-faq-item summary::-webkit-details-marker {
-  display: none;
-}
-.lp-faq-icon {
-  position: relative;
-  flex-shrink: 0;
-  width: 12px;
-  height: 12px;
-}
-.lp-faq-icon::before,
-.lp-faq-icon::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 1.5px;
-  margin-top: -0.75px;
-  border-radius: 1px;
-  background: var(--fg-2);
-  transition: transform 200ms var(--ease-out);
-}
-.lp-faq-icon::after {
-  transform: rotate(90deg);
-}
-.lp-faq-item[open] .lp-faq-icon::after {
-  transform: rotate(0deg);
-}
-.lp-faq-item p {
-  padding: 0 26px 24px;
-  margin-top: -6px;
-  font-size: 15.5px;
-  line-height: 1.6;
-  color: var(--fg-2);
-  text-wrap: pretty;
 }
 
 /* ============================ footer ============================ */
@@ -1629,4 +1461,50 @@
   .lp-knot {
     margin-top: 0;
   }
+}
+
+/* ============================ Spectrum on the landing ============================ */
+.lp-run-body {
+  padding: 22px 24px 24px;
+}
+.lp-up {
+  color: var(--pos);
+}
+.lp-faq-split {
+  display: grid;
+  gap: 40px;
+}
+@media (min-width: 1024px) {
+  .lp-faq-split {
+    grid-template-columns: 1fr minmax(0, 560px);
+    align-items: start;
+    gap: 72px;
+  }
+}
+/* FAQTabsCard ships in Inter on neutral-950; on this page it wears the brand. */
+.lp .lp-faq-card {
+  font-family: inherit;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--line);
+}
+.lp .lp-faq-card button > span[class*="max-w-"] {
+  max-width: none;
+  font-size: 15px;
+}
+.lp .lp-faq-card p {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--fg-2);
+}
+/* NumberTicker rolls digits in their own inline boxes, which have no text
+   baseline: line units up by their bottoms instead. */
+.lp-stat-num,
+.lp-demo-big {
+  display: flex;
+  align-items: flex-end;
+}
+.lp-stat-unit,
+.lp-demo-of {
+  margin-bottom: 0.14em;
 }
