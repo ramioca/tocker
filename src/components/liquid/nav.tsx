@@ -23,7 +23,7 @@ export function Nav() {
   const { open } = useWaitlist();
 
   return (
-    <header className={`nav reveal${scrolled ? " nav-scrolled" : ""}`} style={{ "--reveal-delay": "0.55s" } as CSSProperties}>
+    <header className={`nav reveal${scrolled ? " nav-scrolled" : ""}`} style={{ "--reveal-delay": "0.2s" } as CSSProperties}>
       <div className="nav-inner">
         <Link href="/" className="nav-brand" aria-label="Tocker home">
           <Mark size={22} />
