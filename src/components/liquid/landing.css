@@ -570,38 +570,8 @@
 
 /* ============================ promises ============================ */
 .lp-promises {
-  display: grid;
-  gap: 16px;
   padding-bottom: 32px;
 }
-@media (min-width: 900px) {
-  .lp-promises {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-.lp-promise {
-  padding: 22px 24px 24px;
-  border-radius: 18px;
-  border: 1px solid var(--line);
-  background: var(--card);
-  box-shadow: var(--shadow);
-}
-.lp-promise-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 17px;
-  font-weight: 500;
-  letter-spacing: -0.015em;
-}
-.lp-promise-body {
-  margin-top: 10px;
-  font-size: 15px;
-  line-height: 1.6;
-  color: var(--fg-2);
-  text-wrap: pretty;
-}
-
 /* ============================ sections ============================ */
 .lp-section {
   padding-top: clamp(88px, 12vh, 136px);
@@ -1003,42 +973,6 @@
 .lp-pos:first-of-type {
   margin-top: 6px;
 }
-.lp-pos-top {
-  display: grid;
-  grid-template-columns: 1fr auto 56px;
-  align-items: baseline;
-  gap: 16px;
-  font-size: 16px;
-}
-.lp-pos-chain,
-.lp-pos-held {
-  font-size: 12.5px;
-  color: var(--fg-3);
-  text-align: right;
-}
-.lp-pos-chain {
-  margin-left: 6px;
-}
-.lp-pos-track {
-  display: block;
-  position: relative;
-  height: 4px;
-  margin-top: 12px;
-  margin-right: 72px;
-  border-radius: 4px;
-  background: var(--line-soft);
-  overflow: hidden;
-}
-.lp-pos-fill {
-  position: absolute;
-  inset: 0;
-  transform-origin: left;
-  background: var(--pos);
-}
-.lp-pos-fill-neg {
-  background: var(--neg);
-}
-
 /* ============================ guardrails ============================ */
 .lp-guard {
   display: grid;
@@ -1507,4 +1441,75 @@
 .lp-stat-unit,
 .lp-demo-of {
   margin-bottom: 0.14em;
+}
+
+/* Live run island above the headline: a fixed-height dock, so the island can
+   spring open downward without moving the headline. */
+.lp-island-dock {
+  display: flex;
+  align-items: flex-start;
+  height: 64px;
+  margin-bottom: 12px;
+}
+.lp-island-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pos);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--pos) 25%, transparent);
+}
+
+/* Spectrum bento cards in the brand's surfaces. */
+.lp .lp-bento-card {
+  background: var(--card);
+  border-color: var(--line);
+  min-height: 0;
+}
+.lp .lp-bento-card h3 {
+  color: var(--fg);
+  font-size: 17px;
+  letter-spacing: -0.015em;
+}
+.lp .lp-bento-card p {
+  margin-top: 8px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--fg-2);
+}
+.lp .lp-bento-card [class*="rounded-xl"] {
+  background: var(--violet-tint);
+  color: var(--violet);
+}
+.lp .lp-bento-card > div:last-child > div:first-child {
+  display: none;
+}
+.lp .lp-bento-card > div:last-child > div:last-child {
+  margin-top: 0;
+}
+
+/* Open positions: name, Spectrum sparkline since entry, P&L, time held. */
+.lp-pos {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(80px, 2fr) auto 44px;
+  align-items: center;
+  gap: 16px;
+  font-size: 16px;
+}
+.lp-pos-spark {
+  height: 36px;
+}
+.lp-pos-chain,
+.lp-pos-held {
+  font-size: 12.5px;
+  color: var(--fg-3);
+}
+.lp-pos-chain {
+  margin-left: 6px;
+}
+.lp-pos-held {
+  text-align: right;
+}
+.lp-pos-pnl {
+  min-width: 72px;
+  text-align: right;
 }

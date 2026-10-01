@@ -6,6 +6,7 @@ import { useInView } from "motion/react";
 import { BorderBeam } from "@/components/spectrumui/border-beam";
 import { NumberTicker } from "@/components/spectrumui/number-ticker";
 import { useTypewriter } from "@/components/spectrumui/use-typewriter";
+import { LiveIsland } from "./live-island";
 import knot from "../../../public/brand/tocker/master/tocker-mark-3d-transparent.png";
 import { useWaitlist } from "./waitlist";
 
@@ -28,6 +29,9 @@ export function Hero() {
   return (
     <section className="lp-hero lp-wrap">
       <div className="lp-hero-copy">
+        <div className="reveal" style={delay("0s")}>
+          <LiveIsland />
+        </div>
         <h1 className="lp-h1 reveal" style={delay("0.05s")}>
           Your agent trades while you <span className="lp-mark">sleep</span>.
         </h1>
