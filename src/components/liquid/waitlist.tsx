@@ -12,7 +12,7 @@ import {
 } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { EASE_OUT, SPRING_PANEL } from "@/components/spectrumui/ease";
-import "./isotope.css";
+import "./landing.css";
 
 /**
  * Waitlist modal for the Tocker landing. A short qualifier: email and
