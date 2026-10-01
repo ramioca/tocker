@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { Mark } from "./mark";
 import { useWaitlist } from "./waitlist";
 
 /**
@@ -30,9 +29,10 @@ export function Nav() {
 
       <header className="lp-nav">
         <div className="lp-nav-left">
-          <Link href="/" className="lp-brand" aria-label="Tocker home">
-            <Mark size={28} />
-            <span>tocker</span>
+          <Link href="/" className="lp-brand">
+            {/* The kit's vector lockup for dark grounds; paths, so it needs no font. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/tocker/vector/tocker-lockup-light.svg" alt="Tocker" width={127} height={30} />
           </Link>
           <span className="lp-nav-rule" aria-hidden />
           <nav aria-label="Main" className="lp-nav-links">

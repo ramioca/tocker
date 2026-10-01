@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import Image from "next/image";
 import { useReducedMotion } from "motion/react";
+import knot from "../../../public/brand/tocker/master/tocker-mark-3d-transparent.png";
 import { useWaitlist } from "./waitlist";
 
 /**
@@ -52,16 +54,20 @@ export function Hero() {
         </dl>
       </div>
 
-      <div className="lp-build reveal" style={delay("0.2s")}>
-        <p className="lp-build-tab">Build an agent</p>
-        <p className="lp-build-label" id="lp-build-label">
-          Your strategy, in plain English
-        </p>
-        <Typewriter />
-        <button type="button" className="lp-btn-accent" onClick={open}>
-          Join the waitlist
-        </button>
-        <p className="lp-build-fine">Starts on paper. Asks before every entry.</p>
+      <div className="lp-hero-art">
+        {/* The dimensional Ticker Knot: the kit's hero art for launch pages. */}
+        <Image src={knot} alt="" priority sizes="(min-width: 1024px) 300px, 220px" className="lp-knot reveal" style={delay("0.1s")} />
+        <div className="lp-build reveal" style={delay("0.2s")}>
+          <p className="lp-build-tab">Build an agent</p>
+          <p className="lp-build-label" id="lp-build-label">
+            Your strategy, in plain English
+          </p>
+          <Typewriter />
+          <button type="button" className="lp-btn-accent" onClick={open}>
+            Join the waitlist
+          </button>
+          <p className="lp-build-fine">Starts on paper. Asks before every entry.</p>
+        </div>
       </div>
     </section>
   );

@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { DM_Mono, DM_Sans } from "next/font/google";
 import { LiquidLanding } from "@/components/liquid/liquid-landing";
 
 const TITLE = "Tocker — social agentic crypto trading, 24/7";
@@ -15,15 +14,6 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION },
 };
 
-// The landing's own voice: a geometric sans for reading, a mono for every number.
-// Loaded here, not in the root layout, so the app shell does not pay for them.
-const sans = DM_Sans({ subsets: ["latin"], variable: "--font-lp-sans", display: "swap" });
-const mono = DM_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-lp-mono", display: "swap" });
-
 export default function LandingPage() {
-  return (
-    <div className={`${sans.variable} ${mono.variable} contents`}>
-      <LiquidLanding />
-    </div>
-  );
+  return <LiquidLanding />;
 }
