@@ -1,6 +1,7 @@
 "use client";
 
-import { DecisionDemo, FieldBook, RecentCalls } from "./demo";
+import { FAQTabsCard, type FaqTab } from "@/components/spectrumui/faq-tabs-card";
+import { DecisionDemo, RecentCalls, RunSteps } from "./demo";
 import { Hero } from "./hero";
 import { Nav } from "./nav";
 import { PerformancePanel } from "./performance";
@@ -43,40 +44,31 @@ const PROMISES = [
   },
 ] as const;
 
-const FAQ = [
+const FAQ_TABS: FaqTab[] = [
   {
-    q: "What does the agent trade?",
-    a: "Any token on Solana and Base that clears the ten hard gates and scores above your floor. There is no allowlist; the only list is a blocklist, and it only subtracts.",
+    label: "Trading",
+    faqs: [
+      { question: "What does the agent trade?", answer: "Any token on Solana and Base that clears the ten hard gates and scores above your floor. There is no allowlist; the only list is a blocklist, and it only subtracts." },
+      { question: "How do exits work?", answer: "Stop-loss, take-profit and trailing stops run in code on a five-minute clock, whether or not the model is awake. Entry rules never block an exit." },
+      { question: "What does the data cost?", answer: `Each source charges per call, in USDC over x402. The agent picks the source for the question in front of it and stays inside a budget you set, $${DEFAULT_DATA_BUDGET_USD.toFixed(2)} a run by default.` },
+      { question: "Can I run more than one agent?", answer: "Yes. Run separate agents for momentum, sentiment or fresh-launch hunting, each with its own mandate and its own Solana and Base wallet." },
+    ],
   },
   {
-    q: "Does it trade real money from day one?",
-    a: "No. Every agent starts on a simulated book against real quotes and asks before each entry. Going live is a separate screen with a hold-to-confirm.",
+    label: "Safety",
+    faqs: [
+      { question: "Does it trade real money from day one?", answer: "No. Every agent starts on a simulated book against real quotes and asks before each entry. Going live is a separate screen with a hold-to-confirm." },
+      { question: "What are the hard gates?", answer: "Mint and freeze authority, honeypot, tax, liquidity, holder count, token age and top-ten concentration, among others. A high score cannot override any of them." },
+      { question: "Can other people see my strategy?", answer: "They see your trades, on a public feed. They never see your prompt, thresholds, data sources or the agent's reasoning. There is no fork button, and there never was one." },
+    ],
   },
   {
-    q: "Can other people see my strategy?",
-    a: "They see your trades, on a public feed. They never see your prompt, thresholds, data sources or the agent's reasoning. There is no fork button, and there never was one.",
+    label: "Access",
+    faqs: [
+      { question: "When do I get in?", answer: "We onboard by trading size, largest books first. Join the waitlist and we will reach out when your turn comes." },
+    ],
   },
-  {
-    q: "What are the hard gates?",
-    a: "Mint and freeze authority, honeypot, tax, liquidity, holder count, token age and top-ten concentration, among others. A high score cannot override any of them.",
-  },
-  {
-    q: "How do exits work?",
-    a: "Stop-loss, take-profit and trailing stops run in code on a five-minute clock, whether or not the model is awake. Entry rules never block an exit.",
-  },
-  {
-    q: "What does the data cost?",
-    a: `Each source charges per call, in USDC over x402. The agent picks the source for the question in front of it and stays inside a budget you set, $${DEFAULT_DATA_BUDGET_USD.toFixed(2)} a run by default.`,
-  },
-  {
-    q: "Can I run more than one agent?",
-    a: "Yes. Run separate agents for momentum, sentiment or fresh-launch hunting, each with its own mandate and its own Solana and Base wallet.",
-  },
-  {
-    q: "When do I get in?",
-    a: "We onboard by trading size, largest books first. Join the waitlist and we will reach out when your turn comes.",
-  },
-] as const;
+];
 
 export function LiquidLanding() {
   return (
@@ -124,7 +116,7 @@ function How() {
       </div>
       <div className="lp-how-pair">
         <div className="rise">
-          <FieldBook />
+          <RunSteps />
         </div>
         <div className="rise">
           <RecentCalls />
@@ -222,20 +214,16 @@ function Guardrails() {
 }
 
 function Faq() {
+  const { open } = useWaitlist();
   return (
-    <section id="faq" className="lp-wrap lp-section">
-      <p className="lp-eyebrow">05 — Questions</p>
-      <h2 className="lp-h2 rise">Questions</h2>
-      <div className="lp-faq">
-        {FAQ.map((f) => (
-          <details key={f.q} className="lp-faq-item">
-            <summary>
-              {f.q}
-              <span className="lp-faq-icon" aria-hidden />
-            </summary>
-            <p>{f.a}</p>
-          </details>
-        ))}
+    <section id="faq" className="lp-wrap lp-section lp-faq-split">
+      <div className="rise">
+        <p className="lp-eyebrow">05 — Questions</p>
+        <h2 className="lp-h2">Questions, answered.</h2>
+        <p className="lp-lede">The short version of how an agent trades, what it costs and who sees what.</p>
+      </div>
+      <div className="rise">
+        <FAQTabsCard tabs={FAQ_TABS} footerLabel="Join the waitlist" onFooterClick={open} className="lp-faq-card" />
       </div>
     </section>
   );

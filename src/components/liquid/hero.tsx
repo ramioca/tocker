@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useRef, type CSSProperties } from "react";
 import Image from "next/image";
-import { useReducedMotion } from "motion/react";
+import { useInView } from "motion/react";
+import { BorderBeam } from "@/components/spectrumui/border-beam";
+import { NumberTicker } from "@/components/spectrumui/number-ticker";
+import { useTypewriter } from "@/components/spectrumui/use-typewriter";
 import knot from "../../../public/brand/tocker/master/tocker-mark-3d-transparent.png";
 import { useWaitlist } from "./waitlist";
 
@@ -41,13 +44,16 @@ export function Hero() {
         <dl className="lp-hero-stats reveal" style={delay("0.26s")}>
           <div>
             <dt className="lp-sr">Hard gates</dt>
-            <dd className="lp-stat-num">10</dd>
+            <dd className="lp-stat-num">
+              <NumberTicker value={10} duration={1.1} />
+            </dd>
             <dd className="lp-stat-cap">hard gates no score can override</dd>
           </div>
           <div>
             <dt className="lp-sr">Exit clock</dt>
             <dd className="lp-stat-num">
-              5<span className="lp-stat-unit">min</span>
+              <NumberTicker value={5} duration={1.1} />
+              <span className="lp-stat-unit">min</span>
             </dd>
             <dd className="lp-stat-cap">exit clock, model awake or not</dd>
           </div>
@@ -58,6 +64,7 @@ export function Hero() {
         {/* The dimensional Ticker Knot: the kit's hero art for launch pages. */}
         <Image src={knot} alt="" priority sizes="(min-width: 1024px) 300px, 220px" className="lp-knot reveal" style={delay("0.1s")} />
         <div className="lp-build reveal" style={delay("0.2s")}>
+          <BorderBeam duration={9} borderWidth={1} colorFrom="rgba(167, 139, 250, 0)" colorTo="rgba(167, 139, 250, 0.9)" isHovered />
           <p className="lp-build-tab">Build an agent</p>
           <p className="lp-build-label" id="lp-build-label">
             Your strategy, in plain English
@@ -74,54 +81,20 @@ export function Hero() {
 }
 
 function Typewriter() {
-  const reduced = useReducedMotion();
-  const box = useRef<HTMLDivElement>(null);
-  const [text, setText] = useState<string>(PROMPTS[0]);
-
-  useEffect(() => {
-    if (reduced) return;
-    const el = box.current;
-    if (!el) return;
-    let prompt = 0;
-    let chars = PROMPTS[0].length;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let running = false;
-
-    const tick = () => {
-      const full = PROMPTS[prompt];
-      if (chars < full.length) {
-        chars += 1;
-        setText(full.slice(0, chars));
-        timer = setTimeout(tick, 26 + Math.random() * 30);
-      } else {
-        // Hold the finished prompt, then start the next one from empty.
-        timer = setTimeout(() => {
-          prompt = (prompt + 1) % PROMPTS.length;
-          chars = 0;
-          setText("");
-          timer = setTimeout(tick, 380);
-        }, 3200);
-      }
-    };
-    const sync = (visible: boolean) => {
-      if (visible && !running) {
-        running = true;
-        timer = setTimeout(tick, 2400);
-      } else if (!visible && running) {
-        running = false;
-        if (timer) clearTimeout(timer);
-      }
-    };
-    const io = new IntersectionObserver(([e]) => sync(e.isIntersecting && document.visibilityState === "visible"));
-    io.observe(el);
-    return () => {
-      io.disconnect();
-      if (timer) clearTimeout(timer);
-    };
-  }, [reduced]);
+  const ref = useRef<HTMLDivElement>(null);
+  // Types only while the card is on screen; reduced motion shows the first prompt whole.
+  const onScreen = useInView(ref, { amount: 0.4 });
+  const { text } = useTypewriter([...PROMPTS], {
+    typeMs: 34,
+    deleteMs: 12,
+    holdMs: 3200,
+    gapMs: 380,
+    startDelayMs: 900,
+    enabled: onScreen,
+  });
 
   return (
-    <div ref={box} className="lp-build-input" aria-labelledby="lp-build-label" role="textbox" aria-readonly>
+    <div ref={ref} className="lp-build-input" aria-labelledby="lp-build-label" role="textbox" aria-readonly>
       {text}
       <span className="lp-caret" aria-hidden />
     </div>
