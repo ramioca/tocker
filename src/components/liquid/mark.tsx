@@ -5,7 +5,9 @@ import { useId } from "react";
 /**
  * The flat Ticker Knot from the brand kit (`public/brand/tocker/vector/
  * tocker-mark-color.svg`), inlined so it paints with the page and can sit in
- * the nav at 22px, where the kit says the flat vector is the right one.
+ * the nav at small sizes, where the kit says the flat vector is the right one.
+ * The kit's colourway is for dark grounds; on the landing's paper the stem is
+ * ink and the loop keeps the violet. Same paths, same gradient geometry.
  * Gradient ids are made unique so two marks on one page do not collide.
  */
 export function Mark({ size = 22, className }: { size?: number; className?: string }) {
@@ -16,15 +18,15 @@ export function Mark({ size = 22, className }: { size?: number; className?: stri
     <svg width={size} height={size} viewBox="0 0 256 256" aria-hidden focusable="false" className={className}>
       <defs>
         <linearGradient id={stem} x1="60" y1="36" x2="171" y2="223" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#F9F7F2" />
-          <stop offset="0.58" stopColor="#EDE9E3" />
-          <stop offset="1" stopColor="#A78BFA" />
+          <stop offset="0" stopColor="#3A3546" />
+          <stop offset="0.58" stopColor="#1C1B21" />
+          <stop offset="1" stopColor="#5B3FD1" />
         </linearGradient>
         <linearGradient id={loop} x1="18" y1="97" x2="217" y2="98" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#F4F4F1" />
-          <stop offset="0.43" stopColor="#DED5F8" />
-          <stop offset="0.72" stopColor="#A78BFA" />
-          <stop offset="1" stopColor="#7155D9" />
+          <stop offset="0" stopColor="#C4B5FD" />
+          <stop offset="0.43" stopColor="#A78BFA" />
+          <stop offset="0.72" stopColor="#7C5CF0" />
+          <stop offset="1" stopColor="#5B3FD1" />
         </linearGradient>
       </defs>
       <path
