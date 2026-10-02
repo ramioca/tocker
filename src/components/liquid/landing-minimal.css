@@ -266,3 +266,14 @@
 .lp .lpf-side-sell {
   color: var(--fg-2);
 }
+
+/* Phones: name, sparkline, P&L. The time held doesn't fit and was clipped. */
+@media (max-width: 479px) {
+  .lp .lp-pos {
+    grid-template-columns: auto minmax(48px, 1fr) auto;
+    gap: 12px;
+  }
+  .lp .lp-pos-held {
+    display: none;
+  }
+}
