@@ -55,7 +55,7 @@ const CARDS: StatCardData[] = [
     label: "Trades",
     value: 163,
     format: (v) => v.toFixed(0),
-    caption: "4 open now",
+    caption: "3 open now",
   },
   {
     label: "Data per run",
@@ -85,10 +85,9 @@ function path(seed: number, drift: number) {
 }
 
 const POSITIONS = [
-  { token: "MOTH", chain: "SOL", pnl: "+$27.90", up: true, held: "3h", series: path(11, 0.35) },
-  { token: "RUNE", chain: "BASE", pnl: "+$21.75", up: true, held: "52m", series: path(23, 0.25) },
-  { token: "VANTA", chain: "BASE", pnl: "+$6.10", up: true, held: "18m", series: path(5, 0.15) },
-  { token: "OKRA", chain: "SOL", pnl: "−$11.40", up: false, held: "1h", series: path(41, -0.25) },
+  { token: "TIBBIR", chain: "BASE", pnl: "+$27.90", up: true, held: "3h", series: path(11, 0.35) },
+  { token: "SUPER INU", chain: "SOL", pnl: "+$21.75", up: true, held: "52m", series: path(23, 0.25) },
+  { token: "SOL", chain: "SOL", pnl: "−$11.40", up: false, held: "1h", series: path(41, -0.25) },
 ];
 
 export function PerformancePanel() {
