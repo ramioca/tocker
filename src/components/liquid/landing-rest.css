@@ -1,0 +1,575 @@
+/* ============================================================================
+ * Landing, the rest of the page (Builder 4): promises bento tint, data-sources
+ * terminal, performance panel, guardrails + go-live demo, footer, waitlist.
+ *
+ * Imported after landing.css; every rule is scoped (.lp … / .wl-overlay …) so
+ * it wins without !important. These rules are unlayered, so they also beat the
+ * Tailwind utilities inside Spectrum components. Tokens come from landing.css
+ * (Builder 1); each has a fallback in case the palette is not loaded yet.
+ * Motion: transform/opacity/colour only; nothing here loops.
+ * ========================================================================== */
+
+.lp,
+.wl-overlay {
+  --rest-neon: var(--neon, linear-gradient(90deg, #3fd2ff, #3d6bff 38%, #8b6cff 62%, #ff3dcb));
+  --rest-cyan: var(--neon-cyan, #3fd2ff);
+  --rest-blue: var(--neon-blue, #3d6bff);
+  --rest-violet: var(--neon-violet, #8b6cff);
+  --rest-magenta: var(--neon-magenta, #ff3dcb);
+}
+
+/* ---------------------------- promises bento ---------------------------- */
+.lp .lp-bento-card [class*="rounded-xl"] {
+  background:
+    linear-gradient(var(--raised, #15131c), var(--raised, #15131c)) padding-box,
+    linear-gradient(135deg, rgba(63, 210, 255, 0.55), rgba(139, 108, 255, 0.4), rgba(255, 61, 203, 0.55)) border-box;
+  border: 1px solid transparent;
+  color: var(--rest-cyan);
+  box-shadow: 0 0 18px -6px rgba(63, 210, 255, 0.45);
+}
+.lp .lp-bento-card:nth-child(2) [class*="rounded-xl"] {
+  color: var(--rest-violet);
+  box-shadow: 0 0 18px -6px rgba(139, 108, 255, 0.5);
+}
+.lp .lp-bento-card:nth-child(3) [class*="rounded-xl"] {
+  color: var(--rest-magenta);
+  box-shadow: 0 0 18px -6px rgba(255, 61, 203, 0.45);
+}
+
+/* ---------------------------- data sources: terminal ---------------------------- */
+.lp .lp-term {
+  position: relative;
+  border-radius: 18px;
+  background: #08070c;
+}
+.lp .lp-term::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: var(--rest-neon);
+  opacity: 0.7;
+}
+.lp .lp-term-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 20px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(244, 244, 241, 0.02);
+  font-size: 12.5px;
+  color: var(--fg-3);
+}
+.lp .lp-term-lights {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.lp .lp-term-lights i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(244, 244, 241, 0.14);
+}
+.lp .lp-term-cmd {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-2);
+}
+.lp .lp-term-prompt {
+  color: var(--rest-cyan);
+}
+.lp .lp-term-meta {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.lp .lp-term-head,
+.lp .lp-term-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 84px 96px;
+  align-items: center;
+  gap: 8px 20px;
+  padding-inline: 24px;
+}
+.lp .lp-term-head {
+  padding-block: 12px;
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.lp .lp-term-col-paid {
+  text-align: left;
+}
+.lp .lp-term-col-price {
+  text-align: right;
+}
+.lp .lp-term-row {
+  padding-block: 15px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp .lp-term-row:hover {
+    background: rgba(63, 210, 255, 0.035);
+  }
+}
+.lp .lp-term-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 16px;
+}
+.lp .lp-term .lp-table-host {
+  font-size: 12.5px;
+}
+.lp .lp-term-tag {
+  height: 20px;
+  padding-inline: 7px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+.lp .lp-term-default {
+  border-color: rgba(139, 124, 255, 0.4);
+  background: var(--violet-tint, rgba(139, 124, 255, 0.12));
+  color: var(--violet, #8b7cff);
+}
+.lp .lp-term-guard {
+  border-color: rgba(63, 210, 255, 0.35);
+  background: rgba(63, 210, 255, 0.08);
+  color: var(--rest-cyan);
+}
+.lp .lp-term .lp-table-price {
+  min-width: 0;
+  font-size: 16px;
+  color: var(--fg);
+}
+
+/* Tiny chain badge: Base in blue, Solana in the cyan-to-magenta sweep. */
+.lp .lp-chain {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--fg-2);
+}
+.lp .lp-chain-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--rest-blue);
+}
+.lp .lp-chain[data-chain="solana"] .lp-chain-dot {
+  background: linear-gradient(135deg, var(--rest-cyan), var(--rest-violet) 55%, var(--rest-magenta));
+}
+@media (max-width: 639px) {
+  .lp .lp-term-bar {
+    padding-inline: 16px;
+  }
+  .lp .lp-term-meta {
+    display: none;
+  }
+  .lp .lp-term-head,
+  .lp .lp-term-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-inline: 16px;
+  }
+  .lp .lp-term-col-paid {
+    display: none;
+  }
+  /* The badge moves under the name on phones; the price keeps its column. */
+  .lp .lp-term-row {
+    grid-template-areas:
+      "name price"
+      "paid price";
+  }
+  .lp .lp-term-row > .lp-table-name {
+    grid-area: name;
+  }
+  .lp .lp-term-row > .lp-term-paid {
+    grid-area: paid;
+  }
+  .lp .lp-term-row > .lp-table-price {
+    grid-area: price;
+    align-self: start;
+  }
+}
+
+/* ---------------------------- performance panel ---------------------------- */
+.lp .lp-app {
+  position: relative;
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(21, 19, 28, 0.7), rgba(12, 11, 17, 0.6));
+}
+.lp .lp-app::before {
+  content: "";
+  position: absolute;
+  inset: 0 28px auto;
+  height: 1px;
+  background: var(--rest-neon);
+  opacity: 0.75;
+}
+.lp .lp-app-url {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 13.5px;
+  color: var(--fg-2);
+}
+.lp .lp-app-dot {
+  background: var(--rest-cyan);
+  box-shadow: 0 0 0 3px rgba(63, 210, 255, 0.18);
+}
+.lp .lp-app-chip {
+  border-color: rgba(139, 124, 255, 0.35);
+  background: var(--violet-tint, rgba(139, 124, 255, 0.12));
+  color: var(--violet, #8b7cff);
+  font-size: 12px;
+}
+.lp .lp-app-chart {
+  border-radius: 16px;
+  background: var(--card);
+}
+.lp .lp-app-card {
+  border-radius: 16px;
+  background: var(--card);
+}
+.lp .lp-app-card-head {
+  font-size: 15px;
+}
+.lp .lp-pos-name {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.lp .lp-pos-chain {
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  font-size: 10.5px;
+}
+@media (max-width: 639px) {
+  .lp .lp-pos {
+    grid-template-columns: minmax(0, 1fr) minmax(56px, 1fr) auto;
+    gap: 12px;
+  }
+  .lp .lp-pos-held {
+    display: none;
+  }
+}
+
+/* ---------------------------- guardrails ---------------------------- */
+.lp .lp-guard {
+  align-items: start;
+}
+.lp .lp-guard-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+.lp .lp-defaults {
+  position: relative;
+}
+.lp .lp-defaults::before,
+.lp .lp-golive::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: var(--rest-neon);
+  opacity: 0.6;
+}
+.lp .lp-defaults .lp-card-title .lp-dot {
+  background: var(--violet, #8b7cff);
+}
+.lp .lp-default dd {
+  color: var(--fg);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp .lp-default {
+    transition: background-color 150ms ease-out;
+  }
+  .lp .lp-default:hover {
+    background: rgba(244, 244, 241, 0.025);
+  }
+}
+@media (min-width: 1024px) {
+  .lp .lp-defaults {
+    margin-top: 44px;
+  }
+}
+
+.lp .lp-golive {
+  position: relative;
+}
+@media (min-width: 1024px) {
+  .lp .lp-golive {
+    max-width: 560px;
+  }
+}
+.lp .lp-golive .lp-card-title .lp-dot {
+  background: var(--fg-3);
+  transition: background-color 200ms ease-out;
+}
+.lp .lp-golive[data-live="true"] .lp-card-title .lp-dot {
+  background: var(--rest-cyan);
+}
+.lp .lp-golive-body {
+  display: grid;
+  gap: 18px;
+  padding: 22px 24px 24px;
+}
+.lp .lp-golive-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--fg-3);
+}
+.lp .lp-golive-mode {
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  transition:
+    color 200ms ease-out,
+    border-color 200ms ease-out,
+    background-color 200ms ease-out;
+}
+.lp .lp-golive-mode[data-on="true"] {
+  border-color: rgba(244, 244, 241, 0.28);
+  color: var(--fg);
+}
+.lp .lp-golive-mode-live[data-on="true"] {
+  border-color: transparent;
+  background: var(--violet, #8b7cff);
+  color: var(--bg, #050507);
+}
+.lp .lp-golive-arrow {
+  color: var(--fg-3);
+}
+.lp .lp-golive-note {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--fg-2);
+  text-wrap: pretty;
+}
+
+/* Spectrum HoldToConfirm, re-dressed: neon edge idle, neon fill once live. */
+.lp .lp-golive-btn {
+  justify-self: start;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--raised, #15131c), var(--raised, #15131c)) padding-box,
+    var(--rest-neon) border-box;
+  color: var(--fg);
+  font-weight: 550;
+}
+.lp .lp-golive-btn > span:first-child {
+  color: var(--rest-cyan);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp .lp-golive-btn:hover {
+    background:
+      linear-gradient(var(--raised-hi, #1d1a27), var(--raised-hi, #1d1a27)) padding-box,
+      var(--rest-neon) border-box;
+  }
+}
+.lp .lp-golive-btn:focus-visible {
+  outline: 2px solid var(--rest-cyan);
+  outline-offset: 3px;
+}
+.lp .lp-golive-btn.lp-golive-btn-live,
+.lp .lp-golive-btn.lp-golive-btn-live:hover {
+  background: var(--rest-neon);
+  color: var(--bg, #050507);
+}
+.lp .lp-golive-btn.lp-golive-btn-live > span:first-child {
+  color: var(--bg, #050507);
+}
+
+/* ---------------------------- footer ---------------------------- */
+.lp .lp-neon-underline {
+  text-decoration: none;
+  background-image: var(--rest-neon);
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  background-size: 100% 2px;
+  padding-bottom: 4px;
+  transition: background-size 220ms var(--ease-out, ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp .lp-neon-underline:hover {
+    background-size: 100% 3px;
+  }
+}
+.lp .lp-footer-lockup {
+  color: var(--fg);
+}
+
+/* ---------------------------- waitlist modal ---------------------------- */
+.wl-overlay .wl-panel {
+  background: var(--card, #0c0b11);
+  border-color: rgba(244, 244, 241, 0.12);
+  box-shadow:
+    0 1px 0 rgba(244, 244, 241, 0.06) inset,
+    0 0 0 1px rgba(139, 108, 255, 0.06),
+    0 40px 90px -30px rgba(0, 0, 0, 0.9),
+    0 0 80px -40px rgba(61, 107, 255, 0.5);
+}
+.wl-overlay .wl-panel::before {
+  content: "";
+  position: sticky;
+  display: block;
+  top: -30px;
+  height: 1px;
+  margin: -30px -30px 29px;
+  background: var(--rest-neon);
+  opacity: 0.85;
+}
+.wl-overlay .wl-error {
+  color: var(--fg-2);
+}
+.wl-overlay .wl-eyebrow {
+  color: var(--rest-cyan);
+}
+.wl-overlay .wl-input:focus {
+  border-color: rgba(63, 210, 255, 0.55);
+  box-shadow: 0 0 0 3px rgba(63, 210, 255, 0.14);
+}
+.wl-overlay .wl-chip-on {
+  border-color: transparent;
+  background:
+    linear-gradient(rgba(12, 11, 17, 0.55), rgba(12, 11, 17, 0.55)) padding-box,
+    var(--rest-neon) border-box;
+  border: 1px solid transparent;
+  color: var(--fg);
+  box-shadow: 0 0 16px -6px rgba(139, 108, 255, 0.6);
+}
+.wl-overlay .wl-chip-on svg {
+  color: var(--rest-cyan);
+}
+.wl-overlay .wl-check {
+  background: var(--rest-neon);
+  color: var(--bg, #050507);
+}
+.wl-overlay .wl-done .wl-submit {
+  background: var(--rest-neon);
+  color: var(--bg, #050507);
+}
+
+/* Spectrum MorphButton as the submit: full width, neon fill, near-black text. */
+.wl-overlay .wl-morph {
+  width: 100%;
+  height: 52px;
+  margin-top: 4px;
+  border-radius: 14px !important; /* the component pins 999px inline */
+  background: var(--rest-neon);
+  color: var(--bg, #050507);
+  font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 12px 30px -14px rgba(139, 108, 255, 0.7);
+}
+@media (hover: hover) and (pointer: fine) {
+  .wl-overlay .wl-morph-idle:hover {
+    background: var(--rest-neon);
+    filter: brightness(1.08);
+  }
+}
+.wl-overlay .wl-morph:focus-visible {
+  outline: 2px solid var(--rest-cyan);
+  outline-offset: 3px;
+}
+.wl-overlay .wl-morph:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.wl-overlay .wl-morph-loading {
+  background: var(--rest-neon);
+  filter: saturate(0.7);
+}
+.wl-overlay .wl-morph-success {
+  background: var(--violet, #8b7cff);
+  color: var(--bg, #050507);
+}
+.wl-overlay .wl-morph-error {
+  background: var(--raised-hi, #1d1a27);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px rgba(244, 244, 241, 0.16);
+}
+
+/* ============================ review fixes ============================ */
+/* The equity chart sat flush against its border. */
+.lp .lp-app-chart {
+  padding: 16px 14px 12px;
+}
+@media (min-width: 640px) {
+  .lp .lp-app-chart {
+    padding: 20px 20px 14px;
+  }
+}
+
+/* FAQ: Spectrum's default footer button was the one CTA that wasn't neon. */
+.lp .lp-faq-card {
+  box-shadow: none;
+}
+.lp .lp-faq-card > button:last-child {
+  height: 44px;
+  border: 0;
+  background: var(--neon);
+  color: var(--bg);
+  font-weight: 600;
+}
+@media (min-width: 1024px) {
+  .lp-faq-split > :first-child {
+    position: sticky;
+    top: 120px;
+    align-self: start;
+  }
+}
+
+/* The page closes on the mark and a real call to action. */
+.lp-footer-close {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding-block: clamp(72px, 12vh, 128px);
+  text-align: center;
+}
+.lp-footer-close .lp-h2 {
+  max-width: 18ch;
+  margin-top: 6px;
+}
+.lp-footer-close .lp-lede {
+  margin-top: 0;
+}
+.lp-footer-close .lp-btn-hero {
+  margin-top: 10px;
+}
+.lp-footer-links {
+  justify-content: flex-start;
+  gap: 12px 32px;
+}
+
+/* Waitlist: an incomplete form reads as not ready, but stays focusable. */
+.wl-overlay .wl-morph-incomplete {
+  opacity: 0.55;
+}
+.wl-overlay .wl-done .wl-title:focus {
+  outline: none;
+}
+
+/* Win-rate meter: a visible track and a neon fill (win rate is not P&L, so not
+   green). StatCards maps its series/track variables from these theme ones. */
+.lp .lp-app-stats-spectrum {
+  --chart-2: var(--neon-violet);
+  --muted: rgba(244, 244, 241, 0.12);
+}

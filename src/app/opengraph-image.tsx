@@ -3,8 +3,9 @@ import { join } from "node:path";
 import { ImageResponse } from "next/og";
 
 /**
- * The share card: the flat Ticker Knot on Night, the headline, the wordmark,
- * and one mono line. Generated at build time and cached.
+ * The share card: the neon T on black, the headline, the wordmark, one mono
+ * line, and the mark again large on the right as the card's art. Generated at
+ * build time and cached.
  *
  * Fonts: the renderer needs at least one embedded face. Geist 500/600 are
  * fetched from Google Fonts at build (an old user agent gets a WOFF/TTF the
@@ -55,36 +56,20 @@ export default async function Image() {
           flexDirection: "column",
           justifyContent: "space-between",
           padding: "64px 72px",
-          background: "radial-gradient(110% 80% at 72% 30%, #0d0b26 0%, #06051a 40%, #040407 78%)",
+          background:
+            "radial-gradient(60% 70% at 80% 45%, rgba(61,107,255,0.22) 0%, rgba(255,61,203,0.08) 45%, #050507 75%)",
+          position: "relative",
           color: "#f4f4f1",
           fontFamily: fonts.length > 0 ? "Geist" : "sans-serif",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <svg width="40" height="40" viewBox="0 0 256 256">
-            <defs>
-              <linearGradient id="s" x1="60" y1="36" x2="171" y2="223" gradientUnits="userSpaceOnUse">
-                <stop offset="0" stopColor="#F9F7F2" />
-                <stop offset="0.58" stopColor="#EDE9E3" />
-                <stop offset="1" stopColor="#A78BFA" />
-              </linearGradient>
-              <linearGradient id="l" x1="18" y1="97" x2="217" y2="98" gradientUnits="userSpaceOnUse">
-                <stop offset="0" stopColor="#F4F4F1" />
-                <stop offset="0.43" stopColor="#DED5F8" />
-                <stop offset="0.72" stopColor="#A78BFA" />
-                <stop offset="1" stopColor="#7155D9" />
-              </linearGradient>
-            </defs>
-            <path
-              d="M108 16C94 16 83 27 83 41V160C83 195 101 222 130 236C145 243 163 234 167 218C170 205 163 193 151 188C139 183 133 173 133 159V42C133 27 122 16 108 16Z"
-              fill="url(#s)"
-            />
-            <path
-              d="M34 75C21 75 13 86 16 99C17 105 21 110 27 114L54 129C75 141 96 142 118 131L152 113C163 107 174 107 187 113C198 118 211 113 216 102C221 90 215 77 204 72C177 59 151 60 126 73L94 91C83 97 73 97 62 91L44 79C41 76 38 75 34 75Z"
-              fill="url(#l)"
-            />
-          </svg>
+          <NeonT width={44} stroke={60} />
           <div style={{ fontSize: 30, fontWeight: 600, letterSpacing: -1 }}>tocker</div>
+        </div>
+
+        <div style={{ position: "absolute", right: 64, top: 120, display: "flex" }}>
+          <NeonT width={380} stroke={14} />
         </div>
 
         <div style={{ display: "flex", flexDirection: "column" }}>
@@ -112,5 +97,33 @@ export default async function Image() {
       </div>
     ),
     { ...size, fonts },
+  );
+}
+
+/**
+ * The new mark (public/brand/tocker/v2/tocker-mark-neon.svg) in the subset of
+ * SVG the OG renderer draws: a dark glass fill and a cyan-to-magenta edge. No
+ * filters, so no glow; at share-card sizes the gradient edge carries it.
+ */
+function NeonT({ width, stroke }: { width: number; stroke: number }) {
+  return (
+    <svg width={width} height={Math.round((width * 970) / 1180)} viewBox="40 170 1180 970">
+      <defs>
+        <linearGradient id="edge" x1="80" y1="200" x2="1180" y2="1100" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#3FD2FF" />
+          <stop offset="0.32" stopColor="#2F5BFF" />
+          <stop offset="0.55" stopColor="#FF2BD6" />
+          <stop offset="0.78" stopColor="#3F7BFF" />
+          <stop offset="1" stopColor="#FF3DB4" />
+        </linearGradient>
+      </defs>
+      <path
+        d="M76 204 H556 L563 386 L716 236 Q752 204 842 204 H1180 L1030 381 H802 Q727 381 727 458 V1110 L495 938 V381 H229 Z"
+        fill="#0e0c16"
+        stroke="url(#edge)"
+        strokeWidth={stroke}
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

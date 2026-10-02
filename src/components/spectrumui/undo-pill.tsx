@@ -6,10 +6,10 @@ import {
   AnimatePresence,
   motion,
   useMotionValue,
-  useReducedMotion,
   type Variants,
 } from "motion/react"
 import { cn } from "@/lib/utils"
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -68,7 +68,7 @@ export function UndoPill({
   undoLabel = "Undo",
   className,
 }: UndoPillProps) {
-  const shouldReduceMotion = useReducedMotion()
+  const shouldReduceMotion = useHydratedReducedMotion()
   const [secondsLeft, setSecondsLeft] = useState(() => Math.ceil(duration))
   const [exitReason, setExitReason] = useState<ExitReason>("expire")
   // Mirrors the hover/focus pause into render so the ring can hint the pause

@@ -1,7 +1,7 @@
 "use client";
 // beui.dev/components/blocks/dynamic-island
 
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import {
   createContext,
   useContext,
@@ -14,6 +14,7 @@ import {
 } from "react";
 import { EASE_OUT } from "@/components/spectrumui/ease";
 import { cn } from "@/lib/utils";
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 type IslandContextValue = {
   view: string | null;
@@ -89,7 +90,7 @@ function Slot({
   children: ReactNode;
   className?: string;
 }) {
-  const reduce = useReducedMotion();
+  const reduce = useHydratedReducedMotion();
   return (
     <motion.div
       key={keyId}
@@ -145,7 +146,7 @@ export function DynamicIsland({
   children,
   className,
 }: DynamicIslandProps) {
-  const reduce = useReducedMotion();
+  const reduce = useHydratedReducedMotion();
   const expanded = view !== null;
   const [sizerRef, size] = useContentSize();
   const contextValue = useMemo(() => ({ view }), [view]);

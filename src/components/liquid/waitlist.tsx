@@ -12,7 +12,9 @@ import {
 } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { EASE_OUT, SPRING_PANEL } from "@/components/spectrumui/ease";
+import { MorphButton, type MorphButtonState } from "@/components/spectrumui/morph-button";
 import "./landing.css";
+import "./landing-rest.css";
 
 /**
  * Waitlist modal for the Tocker landing. A short qualifier: email and
@@ -22,8 +24,15 @@ import "./landing.css";
  *
  * Posts `{ email, volume, chains, style }` to /api/waitlist — do not change
  * the shape. Conditionally rendered: when closed, nothing is in the DOM to tab
- * into.
+ * into. The submit is Spectrum's MorphButton, driven as a controlled state
+ * machine: idle -> loading -> success (held briefly, then the thank-you view)
+ * or error (shakes, then back to idle with the message kept).
  */
+
+/** How long the button's success state shows before the thank-you view. */
+const SUCCESS_HOLD_MS = 900;
+/** How long the button's error state shows before it accepts another try. */
+const ERROR_HOLD_MS = 1600;
 
 type WaitlistCtx = { open: () => void };
 const Ctx = createContext<WaitlistCtx>({ open: () => {} });
@@ -67,7 +76,22 @@ function WaitlistModal({ onClose }: { onClose: () => void }) {
   const [volume, setVolume] = useState<string | null>(null);
   const [chains, setChains] = useState<string[]>([]);
   const [style, setStyle] = useState<string | null>(null);
-  const [status, setStatus] = useState<"idle" | "sending" | "done" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "done" | "error">("idle");
+  const [failed, setFailed] = useState(false);
+  const phaseTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (phaseTimer.current !== null) window.clearTimeout(phaseTimer.current);
+    },
+    [],
+  );
+  const after = (ms: number, next: typeof status) => {
+    if (phaseTimer.current !== null) window.clearTimeout(phaseTimer.current);
+    phaseTimer.current = window.setTimeout(() => {
+      phaseTimer.current = null;
+      setStatus(next);
+    }, ms);
+  };
 
   // Lock the page, focus the first field, trap Tab, close on Escape.
   useEffect(() => {
@@ -108,14 +132,29 @@ function WaitlistModal({ onClose }: { onClose: () => void }) {
   }, [onClose]);
 
   const emailValid = EMAIL_RE.test(email.trim());
-  const canSubmit = emailValid && volume !== null && status !== "sending";
+  const canSubmit = emailValid && volume !== null && status === "idle";
+  const [missing, setMissing] = useState(false);
+  // The thank-you view replaces the focused button; move focus to its heading.
+  const doneRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (status === "done") doneRef.current?.focus();
+  }, [status]);
+  const buttonState: MorphButtonState =
+    status === "sending" ? "loading" : status === "sent" ? "success" : status === "error" ? "error" : "idle";
 
   const toggleChain = (c: string) =>
     setChains((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!canSubmit) return;
+  const submit = async (e?: FormEvent) => {
+    e?.preventDefault();
+    if (!canSubmit) {
+      // The button stays focusable (a disabled one vanishes from the tab order),
+      // so an early press says what is missing instead of doing nothing.
+      if (status === "idle") setMissing(true);
+      return;
+    }
+    setMissing(false);
+    setFailed(false);
     setStatus("sending");
     try {
       const res = await fetch("/api/waitlist", {
@@ -124,9 +163,12 @@ function WaitlistModal({ onClose }: { onClose: () => void }) {
         body: JSON.stringify({ email: email.trim(), volume, chains, style }),
       });
       if (!res.ok) throw new Error("bad status");
-      setStatus("done");
+      setStatus("sent");
+      after(reduced ? 300 : SUCCESS_HOLD_MS, "done");
     } catch {
+      setFailed(true);
       setStatus("error");
+      after(ERROR_HOLD_MS, "idle");
     }
   };
 
@@ -169,12 +211,12 @@ function WaitlistModal({ onClose }: { onClose: () => void }) {
                 <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </motion.span>
-            <h2 id="wl-title" className="wl-title">
+            <h2 id="wl-title" className="wl-title" ref={doneRef} tabIndex={-1}>
               You&rsquo;re in the queue
             </h2>
             <p className="wl-sub">
-              We work down the list by size. When your turn comes you get early access and a read of your
-              strategy before you fund anything.
+              We work down the list by size. When your turn comes you get early access, and your first agent
+              runs on paper before you fund anything.
             </p>
             <button type="button" className="wl-submit" onClick={onClose}>
               Done
@@ -217,15 +259,30 @@ function WaitlistModal({ onClose }: { onClose: () => void }) {
               <ChipGroup label="Where you trade" options={CHAINS} selected={chains} onToggle={toggleChain} />
               <ChipGroup label="Mostly" options={STYLES} selected={style ? [style] : []} onToggle={setStyle} />
 
-              {status === "error" ? (
+              {missing && !canSubmit && status === "idle" ? (
+                <p className="wl-error" role="alert">
+                  Add your email and pick a monthly volume to join.
+                </p>
+              ) : null}
+              {failed ? (
                 <p className="wl-error" role="alert">
                   Couldn&rsquo;t reach the waitlist. Try again in a moment.
                 </p>
               ) : null}
 
-              <button type="submit" className="wl-submit" disabled={!canSubmit}>
-                {status === "sending" ? "Sending…" : "Join the waitlist"}
-              </button>
+              {/* Enter in the email field still submits: a form with one text input submits implicitly. */}
+              <MorphButton
+                state={buttonState}
+                onClick={() => void submit()}
+                aria-disabled={status === "idle" && !canSubmit}
+                loadingLabel="Sending…"
+                successLabel="You're on the list"
+                errorLabel="Couldn't send"
+                size="lg"
+                className={`wl-morph wl-morph-${buttonState}${canSubmit || status !== "idle" ? "" : " wl-morph-incomplete"}`}
+              >
+                Join the waitlist
+              </MorphButton>
               <p className="wl-fine">
                 Solana and Base at launch. Tell us the rest anyway — it decides what we build next.
               </p>

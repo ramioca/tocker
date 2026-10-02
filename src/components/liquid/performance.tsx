@@ -17,9 +17,9 @@ const DAY = 86_400_000;
 const END = Date.UTC(2026, 8, 30);
 const START_USD = 10_000;
 
-/** Ninety days of a hand-tuned, deterministic paper book that ends near $12.5K. */
+/** Ninety days of a deterministic paper book: about +10% with an 11% drawdown, a plausible sample. */
 const EQUITY: PortfolioPoint[] = (() => {
-  let seed = 7;
+  let seed = 31;
   const rand = () => {
     seed = (seed * 16807) % 2147483647;
     return seed / 2147483647;
@@ -27,7 +27,7 @@ const EQUITY: PortfolioPoint[] = (() => {
   const out: PortfolioPoint[] = [];
   let value = START_USD;
   for (let i = 0; i < 90; i += 1) {
-    value *= 1 + (rand() - 0.43) * 0.024;
+    value *= 1 + (rand() - 0.47) * 0.07;
     out.push({ t: END - (89 - i) * DAY, value: Math.round(value * 100) / 100, basis: START_USD });
   }
   return out;
@@ -46,20 +46,20 @@ const CARDS: StatCardData[] = [
   },
   {
     label: "Win rate",
-    value: 61,
-    progress: 0.61,
+    value: 57,
+    progress: 0.57,
     format: (v) => `${v.toFixed(0)}%`,
     goodWhen: "up",
   },
   {
     label: "Trades",
-    value: 214,
+    value: 163,
     format: (v) => v.toFixed(0),
     caption: "4 open now",
   },
   {
     label: "Data per run",
-    value: 0.84,
+    value: 0.31,
     format: (v) => formatUsd(v),
     goodWhen: "down",
     caption: `budget ${formatUsd(DEFAULT_DATA_BUDGET_USD)}`,
@@ -85,7 +85,7 @@ function path(seed: number, drift: number) {
 }
 
 const POSITIONS = [
-  { token: "MOTH", chain: "SOL", pnl: "+$38.20", up: true, held: "3h", series: path(11, 0.35) },
+  { token: "MOTH", chain: "SOL", pnl: "+$27.90", up: true, held: "3h", series: path(11, 0.35) },
   { token: "RUNE", chain: "BASE", pnl: "+$21.75", up: true, held: "52m", series: path(23, 0.25) },
   { token: "VANTA", chain: "BASE", pnl: "+$6.10", up: true, held: "18m", series: path(5, 0.15) },
   { token: "OKRA", chain: "SOL", pnl: "−$11.40", up: false, held: "1h", series: path(41, -0.25) },

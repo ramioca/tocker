@@ -6,11 +6,11 @@ import {
   animate,
   motion,
   useMotionValue,
-  useReducedMotion,
   useTransform,
 } from "framer-motion"
 import { Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -97,7 +97,7 @@ export function HoldToConfirmButton({
   ariaLabel,
   className,
 }: HoldToConfirmButtonProps) {
-  const shouldReduceMotion = useReducedMotion()
+  const shouldReduceMotion = useHydratedReducedMotion()
   const [holding, setHolding] = useState(false)
   const [confirmed, setConfirmed] = useState(false)
 

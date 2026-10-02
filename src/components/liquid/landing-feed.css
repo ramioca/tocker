@@ -1,0 +1,417 @@
+/* ============================================================================
+ * Landing: "Out in the open" public feed (feed.tsx).
+ * Ink cards on the night ground, neon only as signal (side chips, live dot,
+ * follow pill), green/red only on realised P&L. Hover is gated to fine
+ * pointers, transitions name their properties, reduced motion is still.
+ * ========================================================================== */
+
+.lp-feed {
+  --lpf-radius: 20px;
+}
+
+.lpf-grid {
+  display: grid;
+  gap: 16px;
+}
+@media (min-width: 960px) {
+  .lpf-grid {
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+  }
+}
+.lpf-col {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.lpf-aside {
+  gap: 16px;
+}
+@media (min-width: 960px) {
+  .lpf-aside {
+    padding-top: 34px; /* aligns with the first post, under the feed label */
+    position: sticky;
+    top: 24px;
+    align-self: start;
+  }
+}
+
+/* -------- feed label -------- */
+.lpf-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.lpf-label-note {
+  margin-left: auto;
+  letter-spacing: 0.06em;
+  color: var(--fg-3);
+}
+.lpf-live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--neon-cyan, #3fd2ff);
+  box-shadow: 0 0 0 3px rgba(63, 210, 255, 0.16), 0 0 12px rgba(63, 210, 255, 0.6);
+}
+
+/* -------- posts -------- */
+.lpf-posts {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lp-card.lpf-post,
+.lp-card.lpf-agent,
+.lp-card.lpf-heat {
+  border-radius: var(--lpf-radius);
+  overflow: visible; /* share fan and avatar tooltips may leave the card */
+}
+.lpf-post {
+  padding: 16px 18px 10px;
+  transition: border-color 180ms var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lpf-post:hover {
+    border-color: rgba(244, 244, 241, 0.16);
+  }
+}
+
+.lpf-post-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.lpf-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 7px;
+  min-width: 0;
+  font-size: 14px;
+}
+.lpf-name {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.lpf-handle {
+  font-size: 13px;
+  color: var(--fg-3);
+}
+.lpf-sep {
+  color: var(--fg-3);
+  opacity: 0.6;
+}
+.lpf-mode {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding-inline: 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--line);
+  color: var(--fg-2);
+}
+.lpf-mode-live {
+  border-color: rgba(139, 124, 255, 0.4);
+  background: var(--violet-tint, rgba(139, 124, 255, 0.12));
+  color: var(--violet, #8b7cff);
+}
+
+.lpf-trade {
+  margin-top: 12px;
+  margin-left: 48px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line-soft);
+  background: var(--raised);
+}
+.lpf-trade-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lpf-side {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding-inline: 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.lpf-side-buy {
+  background: rgba(63, 210, 255, 0.12);
+  color: var(--neon-cyan, #3fd2ff);
+}
+.lpf-side-sell {
+  background: rgba(255, 61, 203, 0.12);
+  color: var(--neon-magenta, #ff3dcb);
+}
+.lpf-token {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.lpf-symbol {
+  font-size: 14px;
+  font-weight: 600;
+}
+.lpf-chain {
+  margin-left: auto;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding-inline: 7px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  font-size: 10.5px;
+  color: var(--fg-2);
+}
+.lpf-trade-nums {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 0;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.lpf-trade-nums > * + *::before {
+  content: "·";
+  margin-inline: 8px;
+  color: var(--fg-3);
+}
+.lpf-strong {
+  color: var(--fg);
+  font-weight: 500;
+}
+.lpf-dim {
+  color: var(--fg-2);
+}
+.lpf-pos {
+  color: var(--pos);
+}
+.lpf-neg {
+  color: var(--neg);
+}
+.lpf-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--fg-3);
+}
+.lpf-score {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 18px;
+  padding-inline: 5px;
+  border-radius: 5px;
+  background: var(--violet-tint, rgba(139, 124, 255, 0.12));
+  color: var(--violet, #8b7cff);
+  font-weight: 600;
+}
+.lpf-exit {
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+}
+
+.lpf-note {
+  margin: 10px 0 0 48px;
+  padding-left: 12px;
+  border-left: 2px solid rgba(139, 124, 255, 0.45);
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(244, 244, 241, 0.82);
+  text-wrap: pretty;
+}
+
+.lpf-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 10px 0 0 48px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+}
+/* Spectrum's buttons ship neutral chrome; sit them flush on the ink card. */
+.lpf-actions .lpf-like {
+  border-color: transparent;
+  background: transparent;
+  padding-inline: 8px;
+}
+.lpf-actions .lpf-share > button {
+  border-color: transparent;
+  background: transparent;
+}
+.lpf-actions .lpf-share [role="menu"] > button {
+  background: var(--raised-hi);
+  border-color: var(--line);
+}
+.lpf-reply {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding-inline: 8px;
+  font-size: 12px;
+  color: var(--fg-3);
+}
+
+/* -------- agent spotlight -------- */
+.lpf-agent {
+  padding: 20px;
+}
+.lpf-agent-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.lpf-agent-id {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.lpf-agent-name {
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.lpf-agent-id .lpf-handle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* The follow pill: solid neon-violet with near-black type, outline once followed. */
+.lpf-agent .lpf-follow[aria-pressed="false"] {
+  background: var(--violet, #8b7cff);
+  color: var(--bg, #050507);
+  border-color: transparent;
+}
+.lpf-agent .lpf-follow[aria-pressed="true"] {
+  background: var(--raised);
+  border-color: var(--line);
+  color: var(--fg);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lpf-agent .lpf-follow[aria-pressed="false"]:hover {
+    background: #9d90ff;
+  }
+}
+
+.lpf-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 18px 0 0;
+  border-radius: 14px;
+  border: 1px solid var(--line-soft);
+  background: var(--raised);
+}
+.lpf-stats > div {
+  padding: 10px 12px;
+}
+.lpf-stats > div + div {
+  border-left: 1px solid var(--line-soft);
+}
+.lpf-stats dt {
+  font-size: 11.5px;
+  color: var(--fg-3);
+}
+.lpf-stats dd {
+  margin: 2px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.lpf-followers {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--fg-2);
+}
+.lpf-stack button {
+  color: rgba(255, 255, 255, 0.92) !important;
+  --tw-ring-color: var(--card) !important;
+}
+.lpf-stack > div:nth-child(1) button { background: linear-gradient(135deg, #3fd2ff, #3d6bff); }
+.lpf-stack > div:nth-child(2) button { background: linear-gradient(135deg, #3d6bff, #8b6cff); }
+.lpf-stack > div:nth-child(3) button { background: linear-gradient(135deg, #8b6cff, #ff3dcb); }
+.lpf-stack > div:nth-child(4) button { background: linear-gradient(135deg, #ff3dcb, #8b6cff); }
+.lpf-stack button,
+.lpf-stack > div:last-child > span {
+  font-weight: 600;
+}
+
+.lpf-private {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px dashed rgba(139, 124, 255, 0.35);
+  background: var(--violet-tint, rgba(139, 124, 255, 0.12));
+  color: var(--violet, #8b7cff);
+}
+.lpf-private p {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-2);
+}
+.lpf-sample {
+  margin-top: 12px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+/* -------- launches heatmap -------- */
+.lpf-heat {
+  padding: 18px 18px 16px;
+}
+.lpf-heat svg text {
+  fill: rgba(255, 255, 255, 0.95);
+}
+
+/* The heatmap colours a price move, which is not P&L: neon, not green/red. */
+.lp .lpf-heat {
+  --positive: var(--neon-cyan, #3fd2ff);
+  --negative: var(--neon-magenta, #ff3dcb);
+}
+
+/* Phones: the trade, note and actions run full width. After the base margins
+   in source order, so no !important is needed. */
+@media (max-width: 479px) {
+  .lpf-trade,
+  .lpf-note,
+  .lpf-actions {
+    margin-left: 0;
+  }
+}

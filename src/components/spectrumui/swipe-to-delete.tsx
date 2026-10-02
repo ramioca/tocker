@@ -6,13 +6,13 @@ import {
   useAnimationControls,
   useMotionValue,
   useMotionValueEvent,
-  useReducedMotion,
   useTransform,
 } from "motion/react";
 import type { PanInfo } from "motion/react";
 import { Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ReactNode } from 'react';
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -84,7 +84,7 @@ export function SwipeToDelete({
   disabled = false,
   className,
 }: SwipeToDeleteProps) {
-  const shouldReduceMotion = useReducedMotion();
+  const shouldReduceMotion = useHydratedReducedMotion();
   const canHover = useCanHover();
   const outerRef = useRef<HTMLDivElement>(null);
   const committedRef = useRef(false);

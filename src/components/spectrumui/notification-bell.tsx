@@ -1,8 +1,9 @@
 "use client"
 
 import React, { useEffect, useRef, useState } from "react"
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
+import { AnimatePresence, motion } from "framer-motion"
 import { cn } from "@/lib/utils"
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -72,7 +73,7 @@ export function NotificationBell({
   size = "md",
   className,
 }: NotificationBellProps) {
-  const shouldReduceMotion = useReducedMotion()
+  const shouldReduceMotion = useHydratedReducedMotion()
   const prevCountRef = useRef(count)
   // Monotonically increasing swing trigger — re-keying the bell restarts the
   // swing cleanly on every increase instead of queueing animations

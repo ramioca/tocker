@@ -1,23 +1,23 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
-import Image from "next/image";
-import { useInView, useReducedMotion } from "motion/react";
+import { usePageVisible, useSafeReducedMotion } from "./motion";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useInView } from "motion/react";
 import { BorderBeam } from "@/components/spectrumui/border-beam";
 import { NumberTicker } from "@/components/spectrumui/number-ticker";
 import { TextStates } from "@/components/spectrumui/text-states";
 import { useTypewriter } from "@/components/spectrumui/use-typewriter";
-import knot from "../../../public/brand/tocker/master/tocker-mark-3d-transparent.png";
+import { BrandHeroMark } from "./brand";
 import { LiveIsland } from "./live-island";
 import { LANDING_SOURCES } from "./signals-data";
 import { useWaitlist } from "./waitlist";
 
 /**
  * Hero, centred: the live run island docked at the top like a notch, a
- * two-line promise, two calls to action, then a stage. The dimensional Ticker
- * Knot (the kit's hero art) stands in the middle of it, between the two halves
- * of the product: the strategy someone types, and the decision their agent
- * reaches. A hairline strip of facts closes the section.
+ * two-line promise, two calls to action, then a stage. The neon T stands in
+ * the middle of it on a painted glow (radial gradients, no blur), between the
+ * two halves of the product: the strategy someone types, and the decision
+ * their agent reaches. A hairline strip of facts closes the section.
  *
  * Everything that moves pauses off screen; reduced motion gets still frames.
  */
@@ -52,8 +52,8 @@ export function Hero() {
           </span>
         </h1>
         <p className="lp-hero-sub reveal" style={delay("0.14s")}>
-          Describe a strategy in plain English. Tocker scores every launch on Solana and Base and trades it, 24/7,
-          on its own wallet.
+          Describe a strategy in plain English. Your agent scores every new token on Solana and Base, trades the
+          few that clear your bar, and runs 24/7 on its own wallet.
         </p>
         <div className="lp-hero-ctas reveal" style={delay("0.22s")}>
           <button type="button" className="lp-btn-accent lp-btn-hero" onClick={open}>
@@ -68,19 +68,10 @@ export function Hero() {
         </div>
       </div>
 
-      <div className="lp-stage lp-wrap" aria-hidden>
-        <div className="lp-stage-glow" />
-        <Image
-          src={knot}
-          alt=""
-          priority
-          sizes="(min-width: 1024px) 360px, 240px"
-          className="lp-stage-knot reveal"
-          style={delay("0.3s")}
-        />
+      <Stage>
         <StrategyCard />
         <DecisionCard />
-      </div>
+      </Stage>
 
       <dl className="lp-facts lp-wrap reveal" style={delay("0.5s")}>
         <Fact value={10} label="hard gates no score overrides" />
@@ -89,6 +80,27 @@ export function Hero() {
         <Fact value={2} label="chains: Solana and Base" />
       </dl>
     </section>
+  );
+}
+
+/** Neon beams for the floating cards: blue on one, magenta on the other. */
+const BEAM_MAGENTA = { from: "rgba(139, 108, 255, 0)", to: "rgba(255, 61, 203, 0.85)" };
+
+function Stage({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const onScreen = useInView(ref, { amount: 0.1 });
+  return (
+    <div ref={ref} className="lp-stage lp-wrap" aria-hidden data-running={onScreen ? "" : undefined}>
+      <div className="lp-stage-glow" />
+      <div className="lp-stage-art reveal" style={delay("0.3s")}>
+        <div className="lp-stage-halo" />
+        <div className="lp-stage-float">
+          <BrandHeroMark width={360} className="lp-stage-mark" />
+        </div>
+        <div className="lp-stage-floor" />
+      </div>
+      {children}
+    </div>
   );
 }
 
@@ -110,20 +122,21 @@ function Fact({ value, unit, label }: { value: number; unit?: string; label: str
 function StrategyCard() {
   const ref = useRef<HTMLDivElement>(null);
   const onScreen = useInView(ref, { amount: 0.3 });
+  const visible = usePageVisible();
   const { text } = useTypewriter([...PROMPTS], {
     typeMs: 32,
     deleteMs: 10,
     holdMs: 3600,
     gapMs: 360,
     startDelayMs: 900,
-    enabled: onScreen,
+    enabled: onScreen && visible,
   });
 
   return (
     <div ref={ref} className="lp-float lp-float-left reveal" style={delay("0.38s")}>
       <div className="lp-float-head">
         <span>Strategy</span>
-        <span className="lp-pill">paper</span>
+        <span className="lp-pill">sample · paper</span>
       </div>
       <p className="lp-float-prompt">
         {text}
@@ -139,24 +152,27 @@ function StrategyCard() {
 }
 
 function DecisionCard() {
-  const reduced = Boolean(useReducedMotion());
+  const reduced = useSafeReducedMotion();
+  const visible = usePageVisible();
   const ref = useRef<HTMLDivElement>(null);
   const onScreen = useInView(ref, { amount: 0.3 });
   const [i, setI] = useState(0);
 
   useEffect(() => {
-    if (!onScreen || reduced) return;
+    if (!onScreen || !visible || reduced) return;
     const t = setInterval(() => setI((n) => (n + 1) % DECISIONS.length), 3600);
     return () => clearInterval(t);
-  }, [onScreen, reduced]);
+  }, [onScreen, visible, reduced]);
 
   const d = DECISIONS[i];
   return (
     <div ref={ref} className="lp-float lp-float-right reveal" style={delay("0.46s")}>
-      <BorderBeam duration={10} borderWidth={1} colorFrom="rgba(167, 139, 250, 0)" colorTo="rgba(167, 139, 250, 0.85)" isHovered />
+      {onScreen && !reduced ? (
+        <BorderBeam duration={10} borderWidth={1} colorFrom={BEAM_MAGENTA.from} colorTo={BEAM_MAGENTA.to} isHovered />
+      ) : null}
       <div className="lp-float-head">
         <span>Decision</span>
-        <span className="lp-float-live">live</span>
+        <span className="lp-float-live">sample run</span>
       </div>
       <div className="lp-float-token">
         <span className="lp-float-glyph">
