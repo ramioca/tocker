@@ -28,10 +28,12 @@ const PROMPTS = [
   "Follow the sentiment. $100 a trade, never more than ten trades a day.",
 ] as const;
 
+// Real tokens, made-up scores. A skip never names a gate as failing: that would be a
+// factual claim about a real token, so the only skip reason is the sample floor.
 const DECISIONS = [
-  { token: "MOTH", chain: "Solana", score: 81, verdict: "Buy $100.00", gate: "10 of 10 gates passed", ok: true },
-  { token: "GLYPH", chain: "Base", score: 74, verdict: "Skip", gate: "Mint authority is live", ok: false },
-  { token: "RUNE", chain: "Base", score: 77, verdict: "Buy $100.00", gate: "10 of 10 gates passed", ok: true },
+  { token: "TIBBIR", chain: "Base", score: 81, verdict: "Buy $100.00", gate: "10 of 10 gates passed", ok: true },
+  { token: "SUPER INU", chain: "Solana", score: 58, verdict: "Skip", gate: "Below your floor of 62", ok: false },
+  { token: "SOL", chain: "Solana", score: 77, verdict: "Buy $100.00", gate: "10 of 10 gates passed", ok: true },
 ] as const;
 
 const delay = (s: string) => ({ "--reveal-delay": s }) as CSSProperties;
