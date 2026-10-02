@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useInView, useReducedMotion } from "motion/react";
-import { BorderBeam } from "border-beam";
+import { useInView } from "motion/react";
+import { usePageVisible, useSafeReducedMotion } from "./motion";
+import { BorderBeam } from "@/components/spectrumui/border-beam";
 import { ThinkingOrb, type OrbState } from "thinking-orbs";
 import { Check } from "lucide-react";
 import { AgentAvatar } from "@/components/common/agent-avatar";
@@ -31,14 +32,18 @@ const IDLE_MS = 1800;
 
 type Frame = { view: "running"; step: number } | { view: "settled" } | { view: null };
 
+
 export function LiveIsland() {
-  const reduced = Boolean(useReducedMotion());
+  // The server cannot know the motion preference: hold it until hydration so
+  // the first client render matches the server's HTML.
+  const reduced = useSafeReducedMotion();
+  const visible = usePageVisible();
   const dock = useRef<HTMLDivElement>(null);
   const onScreen = useInView(dock, { amount: 0.1 });
   const [frame, setFrame] = useState<Frame>({ view: null });
 
   useEffect(() => {
-    if (!onScreen || reduced) return;
+    if (!onScreen || !visible || reduced) return;
     const timeline: { frame: Frame; ms: number }[] = [
       { frame: { view: null }, ms: IDLE_MS },
       ...STEPS.map((_, step) => ({ frame: { view: "running", step } as Frame, ms: STEP_MS })),
@@ -53,7 +58,7 @@ export function LiveIsland() {
     };
     next();
     return () => clearTimeout(timer);
-  }, [onScreen, reduced]);
+  }, [onScreen, visible, reduced]);
 
   const shown: Frame = reduced ? { view: "settled" } : frame;
   const step = shown.view === "running" ? STEPS[shown.step] : null;
@@ -62,14 +67,20 @@ export function LiveIsland() {
     <div ref={dock} className="lp-island-dock" aria-label="Sample: an agent run, as the owner sees it" role="img">
       {onScreen || reduced ? (
         <div aria-hidden>
-          <BorderBeam size="md" colorVariant="ocean" theme="dark" strength={0.7} active={shown.view === "running" && !reduced}>
+          {/* Spectrum's beam (one rotating conic layer), not the npm border-beam package,
+              whose blur/hue filters and 30fps custom-property loop were the page's
+              largest steady main-thread cost. Mounted only while a run is live. */}
+          <div className="relative inline-flex rounded-[32px]">
+            {shown.view === "running" && !reduced ? (
+              <BorderBeam duration={5} borderWidth={1} colorFrom="rgba(63, 210, 255, 0)" colorTo="rgba(63, 210, 255, 0.9)" isHovered className="z-10" />
+            ) : null}
             <DynamicIsland
               view={shown.view}
               className="border border-white/10 bg-black text-white"
               compact={
                 <span className="flex items-center gap-2 whitespace-nowrap">
                   <span className="lp-island-dot" />
-                  {AGENT} · next run in 5m
+                  {AGENT} · next run in 15m
                 </span>
               }
             >
@@ -91,13 +102,13 @@ export function LiveIsland() {
                   <Check className="size-4 shrink-0" />
                   <span className="flex flex-col leading-tight">
                     <span className="text-[13px] font-medium">Run finished</span>
-                    <span className="text-[11px] opacity-70">Bought MOTH · score 81 · paper</span>
+                    <span className="text-[11px] opacity-70">Wants to buy MOTH · score 81 · paper</span>
                   </span>
-                  <span className="rounded-full bg-white/10 px-2 py-0.5 font-mono text-[11px] tabular-nums">1 trade</span>
+                  <span className="rounded-full bg-white/10 px-2 py-0.5 font-mono text-[11px] tabular-nums">1 to approve</span>
                 </span>
               </DynamicIslandView>
             </DynamicIsland>
-          </BorderBeam>
+          </div>
         </div>
       ) : null}
     </div>

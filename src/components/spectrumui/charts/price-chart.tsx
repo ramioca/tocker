@@ -175,9 +175,12 @@ export function PriceChart({
                 <RevealMask id={maskId} introStartedAt={introStartedAt} reduce={reduce} />
               </defs>
               <CartesianGrid {...chartGrid} />
-              <XAxis {...chartXAxis} dataKey="time" tickFormatter={() => ''} height={8} />
+              {/* interval={0}: Recharts then skips measuring every tick label in the DOM.
+                  Without it, mounting this chart cost ~2s of forced style recalcs. */}
+              <XAxis {...chartXAxis} dataKey="time" tickFormatter={() => ''} height={8} interval={0} />
               <YAxis
                 {...chartYAxis}
+                interval={0}
                 domain={([min, max]: readonly [number, number]) => {
                   const pad = (max - min) * 0.18 || Math.abs(max) * 0.02 || 1;
                   return [min - pad, max + pad] as [number, number];

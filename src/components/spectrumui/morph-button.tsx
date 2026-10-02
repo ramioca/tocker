@@ -1,8 +1,9 @@
 "use client"
 
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
+import { AnimatePresence, motion } from "framer-motion"
 import { cn } from "@/lib/utils"
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -181,7 +182,7 @@ export function MorphButton({
   ariaLabel,
   className,
 }: MorphButtonProps) {
-  const shouldReduceMotion = useReducedMotion()
+  const shouldReduceMotion = useHydratedReducedMotion()
   const [internalState, setInternalState] = useState<MorphButtonState>("idle")
   const mountedRef = useRef(true)
 

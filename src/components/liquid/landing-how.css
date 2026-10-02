@@ -1,0 +1,522 @@
+/* ============================================================================
+ * "How it decides" (src/components/liquid/demo.tsx).
+ *
+ * The neon palette from the mark: cyan -> blue -> violet -> magenta as a thin
+ * gradient for edges and highlights, solid violet as the signal, green/red only
+ * for P&L. Every rule is scoped under .lp so it beats landing.css, and every
+ * token has a fallback in case the palette is not defined yet. Motion here is
+ * transform/opacity only; the one loop (the live dot) pauses off screen.
+ * ========================================================================== */
+
+.lp {
+  --how-neon: var(
+    --neon,
+    linear-gradient(90deg, #3fd2ff, #3d6bff 38%, #8b6cff 62%, #ff3dcb)
+  );
+  --how-cyan: var(--neon-cyan, #3fd2ff);
+  --how-blue: var(--neon-blue, #3d6bff);
+  --how-violet: var(--neon-violet, #8b6cff);
+  --how-magenta: var(--neon-magenta, #ff3dcb);
+  --how-signal: var(--violet, #8b7cff);
+}
+
+/* ---------------------------- layout ---------------------------- */
+.lp .lp-how-row {
+  display: grid;
+  gap: 20px;
+  margin-top: 20px;
+}
+.lp .lp-how-row > * {
+  min-width: 0;
+}
+.lp .lp-how-row .lp-card-head {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.lp .lp-how-row .lp-card-title {
+  white-space: nowrap;
+}
+@media (min-width: 960px) {
+  .lp .lp-how-row {
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .lp .lp-how-row > .rise,
+  .lp .lp-how-row > .rise > .lp-card {
+    height: 100%;
+  }
+}
+
+/* Cards in this section get a neon hairline along the top edge. */
+.lp .lp-how-demo,
+.lp .lp-run,
+.lp .lp-calls,
+.lp .lp-how-price,
+.lp .lp-how-approve {
+  position: relative;
+}
+.lp .lp-how-demo::before,
+.lp .lp-run::before,
+.lp .lp-calls::before,
+.lp .lp-how-price::before,
+.lp .lp-how-approve::before {
+  content: "";
+  position: absolute;
+  inset: 0 24px auto;
+  height: 1px;
+  background: var(--how-neon);
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 1;
+}
+.lp .lp-how-demo::before {
+  inset-inline: 40px;
+  opacity: 0.8;
+}
+.lp .lp-run .lp-card-title .lp-dot,
+.lp .lp-calls .lp-card-title .lp-dot,
+.lp .lp-how-price .lp-card-title .lp-dot,
+.lp .lp-how-approve .lp-card-title .lp-dot {
+  background: var(--how-neon);
+  box-shadow: 0 0 10px rgba(63, 210, 255, 0.45);
+}
+
+/* ---------------------------- decision panel ---------------------------- */
+.lp .lp-how-demo {
+  background:
+    radial-gradient(
+      120% 90% at 0% 0%,
+      rgba(61, 107, 255, 0.2),
+      transparent 55%
+    ),
+    radial-gradient(
+      90% 80% at 100% 100%,
+      rgba(255, 61, 203, 0.08),
+      transparent 60%
+    ),
+    var(--card, #0c0b11);
+  box-shadow:
+    0 1px 0 rgba(244, 244, 241, 0.06) inset,
+    0 40px 80px -48px rgba(61, 107, 255, 0.5);
+}
+.lp .lp-how-demo .lp-demo-right {
+  background: rgba(5, 5, 7, 0.45);
+}
+.lp .lp-how-demo .lp-demo-meta {
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+.lp .lp-how-demo .lp-demo-key {
+  color: var(--fg, #f4f4f1);
+}
+.lp .lp-how-wallet {
+  font-size: 15px;
+  color: var(--how-cyan);
+}
+.lp .lp-how-demo .lp-demo-live {
+  color: var(--how-cyan);
+}
+.lp .lp-how-demo .lp-demo-live::before {
+  background: var(--how-cyan);
+  box-shadow: 0 0 8px var(--how-cyan);
+}
+.lp .lp-how-demo[data-live="false"] .lp-demo-live::before {
+  animation-play-state: paused;
+}
+.lp .lp-how-sample {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--fg-3, rgba(244, 244, 241, 0.52));
+}
+.lp .lp-how-glyph {
+  background: var(--how-neon);
+  color: var(--bg, #050507);
+}
+/* The gradient sits on TextStates' own span: it paints in its own layer
+   (will-change), so a clipped background on the parent never shows through. */
+.lp .lp-how-buy .t-text-swap {
+  background: var(--how-neon);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.lp .lp-how-meters {
+  display: grid;
+  gap: 16px;
+  margin-top: 26px;
+}
+@media (min-width: 640px) {
+  .lp .lp-how-meters {
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+}
+.lp .lp-how-meter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 9px;
+}
+.lp .lp-how-meter-val {
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-2, rgba(244, 244, 241, 0.66));
+}
+.lp .lp-how-track {
+  position: relative;
+  height: 6px;
+  border-radius: 99px;
+  background: rgba(244, 244, 241, 0.07);
+  overflow: visible;
+}
+.lp .lp-how-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--how-neon);
+  transform-origin: left center;
+  transition:
+    transform 520ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    opacity 200ms ease;
+}
+.lp .lp-how-fill[data-ok="false"] {
+  opacity: 0.35;
+}
+.lp .lp-how-floor {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--fg, #f4f4f1);
+}
+.lp .lp-how-gates {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 4px;
+}
+.lp .lp-how-gates > span {
+  height: 6px;
+  border-radius: 2px;
+  background: rgba(244, 244, 241, 0.08);
+  position: relative;
+  overflow: hidden;
+}
+.lp .lp-how-gates > span::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--how-cyan);
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+.lp .lp-how-gates > span[data-on="true"]::after {
+  opacity: 0.9;
+}
+.lp .lp-how-gates > span[data-on="false"] {
+  background: rgba(255, 61, 203, 0.18);
+  box-shadow: 0 0 0 1px rgba(255, 61, 203, 0.45) inset;
+}
+
+.lp .lp-how-bar {
+  margin-top: 22px;
+  border-color: rgba(63, 210, 255, 0.35);
+  background: linear-gradient(
+    90deg,
+    rgba(63, 210, 255, 0.1),
+    rgba(139, 108, 255, 0.1)
+  );
+}
+.lp .lp-how-bar.lp-demo-bar-no {
+  border-color: var(--line, rgba(244, 244, 241, 0.1));
+  background: rgba(244, 244, 241, 0.04);
+}
+
+/* ---------------------------- run steps ---------------------------- */
+/* AgentSteps marks success in emerald; on the landing green means P&L only. */
+.lp .lp-run [class*="bg-emerald-500/15"] {
+  background: rgba(63, 210, 255, 0.14);
+  color: var(--how-cyan);
+}
+.lp .lp-run [class*="bg-emerald-500/80"] {
+  background: var(--how-cyan);
+}
+.lp .lp-run [class*="sky-"] {
+  color: var(--how-violet);
+}
+
+/* ---------------------------- recent calls ---------------------------- */
+.lp .lp-calls .lp-call {
+  background: var(--card, #0c0b11);
+}
+.lp .lp-calls .lp-call-token {
+  font-variant-numeric: tabular-nums;
+}
+.lp .lp-call-action[data-action="buy"] {
+  background: var(--how-neon);
+  color: var(--bg, #050507);
+  font-weight: 600;
+}
+.lp .lp-call-action[data-action="sell"] {
+  border-color: rgba(139, 108, 255, 0.6);
+  color: var(--how-violet);
+}
+.lp .lp-call-detail {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------- price card ---------------------------- */
+.lp .lp-how-price {
+  display: flex;
+  flex-direction: column;
+}
+.lp .lp-how-price-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px 24px 24px;
+}
+/* Recolour Spectrum's chart: the price line in cyan, the entry level in violet. */
+.lp .lp-how-chart {
+  --positive: var(--how-cyan);
+  --negative: var(--how-magenta);
+  --chart-2: var(--how-violet);
+  flex: none;
+  height: 260px;
+  color: rgba(244, 244, 241, 0.52);
+}
+.lp .lp-how-chart .text-neutral-950,
+.lp .lp-how-chart .dark\:text-white {
+  color: var(--fg, #f4f4f1);
+}
+.lp .lp-how-levels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line-soft, rgba(244, 244, 241, 0.06));
+  background: var(--line-soft, rgba(244, 244, 241, 0.06));
+}
+@media (min-width: 560px) {
+  .lp .lp-how-levels {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.lp .lp-how-levels > div {
+  padding: 12px 14px;
+  background: var(--raised, #15131c);
+}
+.lp .lp-how-levels dt {
+  font-size: 12px;
+  color: var(--fg-3, rgba(244, 244, 241, 0.52));
+}
+.lp .lp-how-levels dd {
+  margin-top: 4px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.lp .lp-how-entry {
+  color: var(--how-violet);
+}
+
+/* ---------------------------- approval ---------------------------- */
+.lp .lp-how-approve {
+  display: flex;
+  flex-direction: column;
+}
+.lp .lp-how-approve-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px 24px 24px;
+}
+.lp .lp-how-approve-lede {
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--fg-2, rgba(244, 244, 241, 0.66));
+  text-wrap: pretty;
+}
+/* No min-height here: the beam outlines the stage, so the stage must be exactly
+   the card's size or the beam draws a second border below it. */
+.lp .lp-how-approve-stage {
+  position: relative;
+  display: grid;
+  border-radius: 16px;
+}
+.lp .lp-how-approve-stage > div {
+  display: grid;
+}
+.lp .lp-how-approval {
+  height: 100%;
+  border-radius: 16px;
+}
+.lp .lp-how-approve-stage > * {
+  min-width: 0;
+}
+.lp .lp-how-approval {
+  font-family: inherit;
+  border-color: var(--line, rgba(244, 244, 241, 0.1));
+  background: var(--raised, #15131c);
+  box-shadow: none;
+}
+.lp .lp-how-approval h3 {
+  font-size: 15px;
+  color: var(--fg, #f4f4f1);
+}
+.lp .lp-how-approval p {
+  color: var(--fg-2, rgba(244, 244, 241, 0.66));
+  font-variant-numeric: tabular-nums;
+}
+.lp .lp-how-approval p.font-mono {
+  color: var(--fg-3, rgba(244, 244, 241, 0.52));
+}
+.lp .lp-how-approval button {
+  height: 34px;
+  padding-inline: 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--fg-2, rgba(244, 244, 241, 0.66));
+}
+.lp .lp-how-approval button:last-child {
+  background: var(--how-neon);
+  color: var(--bg, #050507);
+  font-weight: 600;
+}
+.lp .lp-how-approval button:focus-visible {
+  outline: 2px solid var(--how-cyan);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+.lp .lp-how-result {
+  min-height: 188px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 22px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--line, rgba(244, 244, 241, 0.1));
+  background: var(--raised, #15131c);
+  text-align: center;
+}
+.lp .lp-how-result-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  font-size: 15px;
+  font-weight: 700;
+  background: var(--how-neon);
+  color: var(--bg, #050507);
+}
+.lp .lp-how-result[data-outcome="rejected"] .lp-how-result-icon {
+  background: rgba(244, 244, 241, 0.08);
+  color: var(--fg-2, rgba(244, 244, 241, 0.66));
+}
+.lp .lp-how-result-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.lp .lp-how-result-note {
+  font-size: 13px;
+  color: var(--fg-3, rgba(244, 244, 241, 0.52));
+}
+.lp .lp-how-replay {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--how-cyan);
+  transition:
+    background-color 150ms ease,
+    transform 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+.lp .lp-how-replay:active {
+  transform: scale(0.97);
+}
+.lp .lp-how-replay:focus-visible {
+  outline: 2px solid var(--how-cyan);
+  outline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp .lp-how-replay:hover {
+    background: rgba(63, 210, 255, 0.08);
+  }
+}
+
+.lp .lp-how-approve-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft, rgba(244, 244, 241, 0.06));
+}
+.lp .lp-how-approve-foot > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lp .lp-how-foot-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp .lp-how-fill,
+  .lp .lp-how-gates > span::after {
+    transition: none;
+  }
+}
+
+/* ---------------------------- card footers ---------------------------- */
+.lp .lp-run,
+.lp .lp-calls {
+  display: flex;
+  flex-direction: column;
+}
+.lp .lp-how-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  margin-top: auto;
+  padding: 16px 24px;
+  border-top: 1px solid var(--line-soft, rgba(244, 244, 241, 0.06));
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg-3, rgba(244, 244, 241, 0.52));
+  font-variant-numeric: tabular-nums;
+}
+.lp .lp-how-foot-hi {
+  color: var(--how-cyan);
+}
+.lp .lp-calls .lp-calls-rows {
+  flex: none;
+}
+.lp .lp-run .lp-run-body {
+  min-width: 0;
+  overflow: hidden;
+}
+@media (max-width: 559px) {
+  .lp .lp-how-row .lp-card-head,
+  .lp .lp-run .lp-run-body,
+  .lp .lp-how-price-body,
+  .lp .lp-how-approve-body,
+  .lp .lp-calls .lp-call,
+  .lp .lp-how-foot {
+    padding-inline: 18px;
+  }
+}

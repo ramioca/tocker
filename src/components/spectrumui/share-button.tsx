@@ -4,11 +4,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react"
 import {
   AnimatePresence,
   motion,
-  useReducedMotion,
   type Transition,
 } from "framer-motion"
 import { Check, Link, X } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -102,7 +102,7 @@ export function ShareButton({
   closeOnSelect = true,
   className,
 }: ShareButtonProps) {
-  const shouldReduceMotion = useReducedMotion()
+  const shouldReduceMotion = useHydratedReducedMotion()
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)

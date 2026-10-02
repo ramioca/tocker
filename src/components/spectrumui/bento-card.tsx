@@ -128,7 +128,6 @@ export function BentoCard({
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       whileHover="hover"
-      whileTap={{ scale: 0.98 }}
       transition={SPRING_TACTILE}
       style={{
         ...(tilt && { rotateX, rotateY }),

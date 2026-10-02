@@ -1,10 +1,11 @@
 "use client";
 // beui.dev/components/motion/number
 
-import { animate, motion, useInView, useReducedMotion } from "motion/react";
+import { animate, motion, useInView } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EASE_OUT } from "@/components/spectrumui/ease";
 import { cn } from "@/lib/utils";
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 export interface NumberTickerProps {
   value: number;
@@ -132,7 +133,7 @@ function Digit({
   blur: boolean;
   className?: string;
 }) {
-  const reduce = useReducedMotion();
+  const reduce = useHydratedReducedMotion();
   const columnRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {

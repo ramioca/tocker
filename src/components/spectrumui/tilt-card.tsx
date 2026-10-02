@@ -12,11 +12,11 @@ import {
   motion,
   useMotionTemplate,
   useMotionValue,
-  useReducedMotion,
   useSpring,
   useTransform,
 } from "motion/react"
 import { cn } from "@/lib/utils"
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -83,7 +83,7 @@ export function TiltCard({
   containerClassName,
   className,
 }: TiltCardProps) {
-  const shouldReduceMotion = useReducedMotion()
+  const shouldReduceMotion = useHydratedReducedMotion()
   const [hovered, setHovered] = useState(false)
 
   // Smoothed normalized pointer position; animated toward each pointer sample
@@ -200,7 +200,7 @@ export function TiltCardItem({
   depth = 0,
   className,
 }: TiltCardItemProps) {
-  const shouldReduceMotion = useReducedMotion()
+  const shouldReduceMotion = useHydratedReducedMotion()
   const { hovered } = useContext(TiltCardContext)
   const lifted = hovered && !shouldReduceMotion
 

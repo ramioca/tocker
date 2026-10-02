@@ -122,13 +122,14 @@ export function FAQTabsCard({
       )}
     >
       {/* Tabs */}
-      <div className="flex h-9 items-center rounded-full bg-neutral-100 p-1 dark:bg-neutral-900">
+      <div role="group" aria-label="Question topics" className="flex h-9 items-center rounded-full bg-neutral-100 p-1 dark:bg-neutral-900">
         {tabs.map((tab, index) => {
           const active = index === safeActiveTab;
           return (
             <button
               key={tab.label}
               type="button"
+              aria-pressed={active}
               onClick={() => {
                 setActiveTab(index);
                 setOpenIndex(defaultOpenIndex);

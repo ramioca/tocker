@@ -1,11 +1,12 @@
 'use client';
 
 import * as React from 'react';
-import { motion, useReducedMotion } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { Rectangle } from 'recharts';
 import type { TooltipProps } from 'recharts';
 import { CartesianGrid, XAxis, YAxis } from 'recharts';
 import { cn } from '@/lib/utils';
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 export const MONTHLY_TRAFFIC = [
   { month: 'Jan', desktop: 186, mobile: 80 },
@@ -243,7 +244,7 @@ export function useChartId(prefix = 'chart') {
 }
 
 export function useChartMotion() {
-  const reduce = Boolean(useReducedMotion());
+  const reduce = Boolean(useHydratedReducedMotion());
   return {
     reduce,
     isAnimationActive: !reduce,
@@ -352,7 +353,7 @@ export function ChartTooltipContent({
   payload?: ChartTooltipPayloadItem[];
   label?: string | number;
 }) {
-  const reduce = Boolean(useReducedMotion());
+  const reduce = Boolean(useHydratedReducedMotion());
 
   if (!active || !payload?.length) {
     return <span className="invisible block h-10 w-28" aria-hidden />;
@@ -396,6 +397,9 @@ export const axisTick = {
 
 export const chartGrid = {
   vertical: false,
+  // No vertical lines are drawn, so skip generating them: the default generator
+  // measures every x tick label in the DOM, forcing a style recalc per label.
+  verticalCoordinatesGenerator: () => [],
   stroke: 'currentColor',
   strokeOpacity: 0.14,
   strokeDasharray: '3 3',
@@ -486,7 +490,7 @@ export function RevealMask({
 }
 
 export function AnimatedDashedStroke() {
-  const reduce = Boolean(useReducedMotion());
+  const reduce = Boolean(useHydratedReducedMotion());
   if (reduce) return null;
 
   return (
@@ -833,7 +837,7 @@ export function areaFillUrl(id: string, variant: AreaFillVariant, color: string)
 const SHIMMER_HEIGHTS = [42, 68, 51, 79, 46, 88, 57, 73, 39, 84, 62, 71];
 
 export function ChartLoadingBars({ count = 12 }: { count?: number }) {
-  const reduce = Boolean(useReducedMotion());
+  const reduce = Boolean(useHydratedReducedMotion());
 
   return (
     <div className="relative h-full overflow-hidden">

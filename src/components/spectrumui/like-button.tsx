@@ -4,10 +4,10 @@ import React, { useCallback, useRef, useState } from "react"
 import {
   AnimatePresence,
   motion,
-  useReducedMotion,
   type Transition,
 } from "framer-motion"
 import { cn } from "@/lib/utils"
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -101,7 +101,7 @@ export function LikeButton({
   label = "Like",
   className,
 }: LikeButtonProps) {
-  const shouldReduceMotion = useReducedMotion()
+  const shouldReduceMotion = useHydratedReducedMotion()
   const [internalLiked, setInternalLiked] = useState(defaultLiked)
   // Monotonic id per burst; null while idle so unmount/cleanup can't race a re-click
   const [burst, setBurst] = useState<number | null>(null)

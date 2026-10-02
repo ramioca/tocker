@@ -3,9 +3,10 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { useTheme } from "next-themes"
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
+import { motion, AnimatePresence } from "framer-motion"
 import { Search, Home, Code, HelpCircle, Laptop, Sun, Moon, Copy, ExternalLink, CornerDownLeft } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -48,7 +49,7 @@ const SPRING_ENTRANCE = {
 export function CommandPalette({ isOpen, onClose, commands, placeholder = "Type a command or search...", footerLabel = "Spectrum Palette", className }: CommandPaletteProps) {
   const router = useRouter()
   const { theme: _theme, setTheme } = useTheme()
-  const shouldReduceMotion = useReducedMotion()
+  const shouldReduceMotion = useHydratedReducedMotion()
   const [query, setQuery] = useState("")
   const [activeIndex, setActiveIndex] = useState(0)
   const [isCopied, setIsCopied] = useState(false)

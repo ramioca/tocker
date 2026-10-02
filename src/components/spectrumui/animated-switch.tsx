@@ -1,8 +1,9 @@
 "use client"
 
 import React, { useCallback, useRef, useState } from "react"
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
+import { AnimatePresence, motion } from "framer-motion"
 import { cn } from "@/lib/utils"
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -90,7 +91,7 @@ export function AnimatedSwitch({
   label = "Toggle",
   className,
 }: AnimatedSwitchProps) {
-  const shouldReduceMotion = useReducedMotion()
+  const shouldReduceMotion = useHydratedReducedMotion()
   const [internalChecked, setInternalChecked] = useState(defaultChecked)
   const [pressed, setPressed] = useState(false)
   // Knob x while dragging (inner-track coordinates); null when not dragging

@@ -1,9 +1,10 @@
 "use client"
 
 import React, { useCallback, useEffect, useRef, useState } from "react"
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
+import { AnimatePresence, motion } from "framer-motion"
 import { Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useHydratedReducedMotion } from "@/components/spectrumui/use-hydrated-reduced-motion"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -90,7 +91,7 @@ export function FollowButton({
   disabled = false,
   className,
 }: FollowButtonProps) {
-  const shouldReduceMotion = useReducedMotion()
+  const shouldReduceMotion = useHydratedReducedMotion()
   const [internalFollowing, setInternalFollowing] = useState(defaultFollowing)
   const [intent, setIntent] = useState(false)
   const [dipping, setDipping] = useState(false)
