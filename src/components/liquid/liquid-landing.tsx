@@ -7,7 +7,8 @@ import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { Gauge, ShieldCheck, EyeOff, Zap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { BrandLockup, BrandMark } from "./brand";
-import { ApprovalDemo, DecisionDemo, PriceCard, RecentCalls, RunSteps } from "./demo";
+import { DecisionDemo } from "./demo";
+import { AgentConsole } from "./console";
 import { PublicFeed } from "./feed";
 import { Hero } from "./hero";
 import { Nav } from "./nav";
@@ -16,6 +17,7 @@ import { DEFAULT_DATA_BUDGET_USD, LANDING_SOURCES, type LandingSource } from "./
 import { WaitlistProvider, useWaitlist } from "./waitlist";
 import "./landing.css";
 import "./landing-rest.css";
+import "./landing-minimal.css";
 
 /**
  * Tocker waitlist landing, brand v2: near-black ground, the neon "T" mark
@@ -136,22 +138,9 @@ function How() {
       <div className="rise">
         <DecisionDemo />
       </div>
-      {/* The story in order: the run, the ask, then what happened after you approved. */}
-      <div className="lp-how-row">
-        <div className="rise">
-          <RunSteps />
-        </div>
-        <div className="rise">
-          <ApprovalDemo />
-        </div>
-      </div>
-      <div className="lp-how-row">
-        <div className="rise">
-          <PriceCard />
-        </div>
-        <div className="rise">
-          <RecentCalls />
-        </div>
+      {/* The owner's view of one run, built from Spectrum's AI Assistant blocks. */}
+      <div className="rise">
+        <AgentConsole />
       </div>
     </section>
   );

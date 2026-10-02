@@ -1,14 +1,12 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useState } from "react";
 import { EyeOff, Link2, MessageCircle } from "lucide-react";
 import { AgentAvatar } from "@/components/common/agent-avatar";
 import { AvatarStack, type AvatarItem } from "@/components/spectrumui/avatar-stack";
 import { FollowButton } from "@/components/spectrumui/follow-button";
 import { LikeButton } from "@/components/spectrumui/like-button";
 import { ShareButton } from "@/components/spectrumui/share-button";
-import { MarketHeatmap } from "@/components/spectrumui/charts/market-heatmap";
-import type { TreemapInput } from "@/components/spectrumui/charts/chart-engine";
 import "./landing-feed.css";
 
 /**
@@ -113,34 +111,10 @@ const FOLLOWERS: AvatarItem[] = [
 ];
 
 /** Sample launches: area by 24h volume, colour by the last hour's move. */
-const LAUNCHES: TreemapInput[] = [
-  { label: "MOTH", name: "score 88", weight: 420, change: 5.8 },
-  { label: "RUNE", name: "score 81", weight: 260, change: 2.4 },
-  { label: "GLYPH", name: "gate fail", weight: 210, change: 3.9 },
-  { label: "KITE", name: "score 72", weight: 150, change: -1.6 },
-  { label: "VANTA", name: "score 48", weight: 120, change: -4.7 },
-  { label: "OKRA", name: "score 66", weight: 95, change: 0.9 },
-  { label: "PIXL", name: "score 64", weight: 80, change: -2.8 },
-  { label: "FERN", name: "score 63", weight: 70, change: 1.7 },
-  { label: "HALO", name: "score 62", weight: 72, change: -0.5 },
-];
 
 const NEON_PARTICLES = ["#3fd2ff", "#3d6bff", "#8b6cff", "#ff3dcb"];
 
-/** Phones get six tiles: with nine, the treemap folds the smallest into an "Other" sliver. */
-const narrowQuery = "(max-width: 639px)";
-function subscribeNarrow(cb: () => void) {
-  const mq = window.matchMedia(narrowQuery);
-  mq.addEventListener("change", cb);
-  return () => mq.removeEventListener("change", cb);
-}
-
 export function PublicFeed({ eyebrow = "02 — Feed" }: { eyebrow?: string }) {
-  const narrow = useSyncExternalStore(
-    subscribeNarrow,
-    () => window.matchMedia(narrowQuery).matches,
-    () => false,
-  );
   return (
     <section id="feed" className="lp-wrap lp-section lp-feed" aria-labelledby="lp-feed-title">
       <div className="lp-split-head">
@@ -172,15 +146,6 @@ export function PublicFeed({ eyebrow = "02 — Feed" }: { eyebrow?: string }) {
 
         <div className="lpf-col lpf-aside">
           <AgentSpotlight />
-          <div className="lp-card lpf-heat rise">
-            <MarketHeatmap
-              data={narrow ? LAUNCHES.slice(0, 6) : LAUNCHES}
-              height={narrow ? 232 : 216}
-              cap={6}
-              title="Today’s launches, scored"
-              subtitle="Sample · area by volume · 1h move"
-            />
-          </div>
         </div>
       </div>
     </section>
