@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { headers } from "next/headers";
+import { Providers } from "@/components/providers";
 import { AppShell } from "@/components/shell/app-shell";
 import { EMPTY_COMMAND_INDEX } from "@/components/shell/command-index";
 import { OnboardingGate } from "@/components/onboarding/onboarding-gate";
@@ -7,6 +9,18 @@ import { withMock } from "@/lib/data";
 import { getKillSwitch, type KillSwitchState } from "@/lib/security/kill-switch";
 
 const TRADING_RUNS: KillSwitchState = { paused: false, pausedAt: null };
+
+/**
+ * Keyboard focus and anchor jumps must not land under the chrome: the sticky top bar
+ * (3.5rem) and, on phones, the fixed tab bar (the bar is md:hidden, so the bottom value
+ * is too). Rendered by this layout rather than written in globals.css so it exists
+ * exactly while the shell does — server-rendered, so from the first paint (a deep link's
+ * initial scroll included), and gone on a client navigation out to the landing page or
+ * sign-in. A sticky sub-nav or action bar adds to it from globals.css; those selectors
+ * carry an attribute, so they outrank this one in any order.
+ */
+const SHELL_SCROLL_PADDING =
+  "html{scroll-padding-top:4rem}@media (max-width:767px){html{scroll-padding-bottom:calc(4.25rem + env(safe-area-inset-bottom))}}";
 
 /**
  * The account-wide pause has to be visible from every page, not just the Security tab —
@@ -22,6 +36,10 @@ function killSwitchFor(userId: string | null): Promise<KillSwitchState> {
 }
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
+  // The per-request CSP nonce, set on the request headers by `src/proxy.ts`. Base UI's
+  // sliders, tabs and selects render their own inline <script>/<style> and need it;
+  // `CSPProvider` inside `Providers` hands it to them.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   const session = await viewerSession();
   const userId = session?.userId ?? null;
   // Everything below only decorates the chrome — a badge, the ⌘K index, which nav item
@@ -46,17 +64,22 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     killSwitchFor(userId),
   ]);
 
+  // The client providers (auth, the query cache, run status, tooltips) start here and at
+  // /login, not in the root layout, so the landing page ships none of their code.
   return (
-    <AppShell
-      unreadCount={unreadCount}
-      index={index}
-      ownedSlugs={mine.map((agent) => agent.slug)}
-      tradingPaused={killSwitch.paused}
-      pausedAt={killSwitch.pausedAt}
-    >
-      {children}
-      {/* First-run only, so the modal's code loads behind a gate rather than on every page. */}
-      <OnboardingGate ownedAgentCount={mine.length} />
-    </AppShell>
+    <Providers nonce={nonce}>
+      <style>{SHELL_SCROLL_PADDING}</style>
+      <AppShell
+        unreadCount={unreadCount}
+        index={index}
+        ownedSlugs={mine.map((agent) => agent.slug)}
+        tradingPaused={killSwitch.paused}
+        pausedAt={killSwitch.pausedAt}
+      >
+        {children}
+        {/* First-run only, so the modal's code loads behind a gate rather than on every page. */}
+        <OnboardingGate ownedAgentCount={mine.length} />
+      </AppShell>
+    </Providers>
   );
 }

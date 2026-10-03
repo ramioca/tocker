@@ -10,9 +10,9 @@ export const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
  * Where Privy's embedded-wallet UIs read the chain from.
  *
  * The confirmation modal behind `signTransaction` / `signAndSendTransaction` needs an
- * RPC for `solana:mainnet`; without one it throws while rendering, which is caught by
- * nothing below the root layout and replaces the whole document with the global error
- * page. The HTTP endpoint is Tocker's own `/api/solana/rpc`, a same-origin forwarder to
+ * RPC for `solana:mainnet`; without one it throws while rendering, which nothing below
+ * the provider catches, so the whole page is replaced by the root error screen. The
+ * HTTP endpoint is Tocker's own `/api/solana/rpc`, a same-origin forwarder to
  * `SOLANA_RPC_URL`, so the provider key never ships to the browser. Subscriptions have
  * no proxy (no websockets on serverless), so they go to the public cluster endpoint,
  * or to `NEXT_PUBLIC_SOLANA_WSS_URL` when one is set.

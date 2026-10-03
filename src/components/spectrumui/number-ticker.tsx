@@ -172,7 +172,9 @@ function Digit({
             ? { duration: 0 }
             : { duration, delay, ease: EASE_OUT }
         }
-        className="absolute inset-x-0 top-0 flex flex-col items-center will-change-[transform,filter]"
+        // No permanent will-change: it pinned a compositor layer per digit for the life of
+        // the page; the roll promotes its own layer while it runs.
+        className="absolute inset-x-0 top-0 flex flex-col items-center"
       >
         {DIGITS.map((n) => (
           <span

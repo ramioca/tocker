@@ -85,8 +85,8 @@ const usd = (v: number) => `$${v.toFixed(2)}`;
 
 export function PerformancePanel() {
   return (
-    <div className="lp-perf" role="group" aria-label="Sample book">
-      <div className="lp-perf-bar lp-mono">
+    <div className="lp-perf lp-frame" role="group" aria-label="Sample book">
+      <div className="lp-perf-bar lp-label">
         <span>Sample book · paper · 90 days</span>
         <span className="lp-perf-bar-stats">
           {TRADES} trades · {WIN_RATE}% won
@@ -106,12 +106,13 @@ export function PerformancePanel() {
             defaultRange="90D"
             height={260}
             showDrawdown={false}
+            tableMaxRows={15}
           />
         </div>
 
         <div className="lp-perf-side">
           <div className="lp-perf-pos">
-            <p className="lp-perf-label lp-mono">
+            <p className="lp-perf-label lp-label">
               Open positions <span className="lp-perf-count">{POSITIONS.length}</span>
             </p>
             {/* The rows are a picture of the list; the label carries every figure in it. */}
@@ -151,7 +152,7 @@ export function PerformancePanel() {
           </div>
 
           <div className="lp-perf-data">
-            <p className="lp-perf-label lp-mono">Data per run</p>
+            <p className="lp-perf-label lp-label">Data per run</p>
             <p className="lp-perf-data-value lp-mono">
               {usd(DATA_PER_RUN_USD)} <span>avg · {usd(DEFAULT_DATA_BUDGET_USD)} budget</span>
             </p>

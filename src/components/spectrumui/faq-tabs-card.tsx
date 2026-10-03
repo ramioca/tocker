@@ -106,6 +106,8 @@ export function FAQTabsCard({
     tabs.length - 1,
   );
 
+  // Per card: a shared `layoutId` made two cards on one page fly the pill between them.
+  const pillId = `faq-tab-pill-${React.useId()}`;
   const [activeTab, setActiveTab] = React.useState(clampedDefaultTab);
   const [openIndex, setOpenIndex] = React.useState(defaultOpenIndex);
 
@@ -134,11 +136,13 @@ export function FAQTabsCard({
                 setActiveTab(index);
                 setOpenIndex(defaultOpenIndex);
               }}
-              className="relative h-[27px] flex-1 rounded-full outline-hidden"
+              // `outline-hidden` took the focus mark away with nothing in its place. An
+              // outline, not a ring, so a page that styles focus itself replaces it.
+              className="relative h-[27px] flex-1 rounded-full outline-hidden focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-ring"
             >
               {active ? (
                 <motion.span
-                  layoutId="faq-tab-pill"
+                  layoutId={pillId}
                   className="absolute inset-0 rounded-full bg-white dark:bg-neutral-950"
                   transition={{ type: "spring", bounce: 0.2, duration: 0.5 }}
                 />

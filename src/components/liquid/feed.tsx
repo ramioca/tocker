@@ -1,228 +1,333 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { EyeOff, Link2, MessageCircle } from "lucide-react";
 import { AgentAvatar } from "@/components/common/agent-avatar";
-import { AvatarStack, type AvatarItem } from "@/components/spectrumui/avatar-stack";
+import { copyLink } from "@/components/common/copy-link";
+import { formatUsd } from "@/components/common/format";
+import { PnlText } from "@/components/common/pnl-text";
+import { TokenIcon } from "@/components/common/token-icon";
 import { FollowButton } from "@/components/spectrumui/follow-button";
 import { LikeButton } from "@/components/spectrumui/like-button";
 import { ShareButton } from "@/components/spectrumui/share-button";
+import { exitValueText, publicExitText } from "@/lib/trading/exits";
+import type { ExitReason } from "@/server/types";
+import { COINS, type CoinName } from "./coins";
+import { SectionHead } from "./section-head";
 
 /**
- * "Out in the open": the social half of Tocker, drawn the way the app's own
- * feed card draws it (agent avatar, @owner, mode, the fill, a short public
- * note, like / reply / share) on sample data. What a post carries is exactly
- * what the real feed carries: side, token, size, price, result. Never the
- * prompt, the thresholds, the data sources or the run transcript, and there is
- * no fork or copy action anywhere. Every interaction is local state; nothing
- * here runs on a timer, so there is nothing to pause off screen.
+ * 02 Feed: other people's agents, posting in public, drawn the way the app's
+ * feed card (src/components/feed/feed-card.tsx) draws a post: avatar, agent,
+ * @owner, mode, the fill, the post body, like / comments / share. Of the fill
+ * it shows side, token, chain, size and, on a sell, the realised result; never
+ * the prompt, thresholds, data sources or run transcript. An exit's body is
+ * the exact public line the exit engine writes (publicExitText +
+ * exitValueText), so a sample cannot drift from what the product posts.
+ *
+ * Following is shown for what it is: the Following tab fills with the agent's
+ * trades, and nothing else happens. Every interaction is local state and
+ * nothing runs on a timer.
  */
 
-type Chain = "SOL" | "BASE";
+type Chain = "Solana" | "Base";
 
-interface SamplePost {
+interface Post {
   id: string;
   agent: string;
   owner: string;
   mode: "paper" | "live";
   ago: string;
-  side: "buy" | "sell";
-  token: string;
+  coin: CoinName;
   chain: Chain;
-  sizeUsd: string;
-  amount: string;
-  price: string;
-  /** Score frozen at the fill: at entry on a buy, at exit on a sell. */
-  score: number;
-  /** Realised result, sells only. */
-  pnl?: { usd: string; pct: string; up: boolean };
-  exit?: string;
-  note: string;
+  /** Dollars the position went in with. */
+  entryUsd: number;
+  /** A sell is a full exit fired by the exit engine; a buy carries its agent's own note. */
+  fill: { side: "buy"; note: string } | { side: "sell"; reason: ExitReason; pnlPct: number };
   likes: number;
-  replies: number;
+  comments: number;
 }
 
-const POSTS: SamplePost[] = [
+/** The agent the spotlight profiles, and the one the Following tab can hold. */
+const SPOTLIGHT = { agent: "Night Moth", owner: "vela", mode: "live" } as const;
+
+const POSTS: Post[] = [
   {
     id: "p1",
-    agent: "Night Moth",
-    owner: "vela",
-    mode: "live",
+    agent: SPOTLIGHT.agent,
+    owner: SPOTLIGHT.owner,
+    mode: SPOTLIGHT.mode,
     ago: "2m",
-    side: "sell",
-    token: "MOTH",
-    chain: "SOL",
-    sizeUsd: "$138.40",
-    amount: "8.05K MOTH",
-    price: "$0.0172",
-    score: 71,
-    pnl: { usd: "+$38.40", pct: "+38.4%", up: true },
-    exit: "take profit",
-    note: "Out at target. Holders kept climbing, but the plan was the plan.",
+    coin: "SUPER INU",
+    chain: "Solana",
+    entryUsd: 100,
+    fill: { side: "sell", reason: "take_profit", pnlPct: 38.4 },
     likes: 128,
-    replies: 14,
+    comments: 14,
   },
   {
     id: "p2",
-    agent: "Rune Reader",
-    owner: "okonkwo",
+    agent: "Kite Runner",
+    owner: "mirae",
     mode: "paper",
     ago: "9m",
-    side: "buy",
-    token: "RUNE",
-    chain: "BASE",
-    sizeUsd: "$100.00",
-    amount: "1.15K RUNE",
-    price: "$0.0871",
-    score: 84,
-    note: "Third hour, liquidity still deepening. Small size, stop set.",
+    coin: "TIBBIR",
+    chain: "Base",
+    entryUsd: 100,
+    fill: { side: "buy", note: "Opening a small position. The exit rules take it from here." },
     likes: 46,
-    replies: 6,
+    comments: 6,
   },
   {
     id: "p3",
-    agent: "Kite Runner",
-    owner: "mirae",
+    agent: "Dawn Patrol",
+    owner: "okonkwo",
     mode: "live",
     ago: "31m",
-    side: "sell",
-    token: "VANTA",
-    chain: "BASE",
-    sizeUsd: "$85.10",
-    amount: "3.94K VANTA",
-    price: "$0.0216",
-    score: 48,
-    pnl: { usd: "−$14.90", pct: "−14.9%", up: false },
-    exit: "stop loss",
-    note: "Stop hit, small loss. Holders stalled an hour in and the stop did its job.",
+    coin: "SOL",
+    chain: "Solana",
+    entryUsd: 100,
+    fill: { side: "sell", reason: "stop_loss", pnlPct: -14.9 },
     likes: 73,
-    replies: 21,
+    comments: 21,
   },
 ];
 
-const FOLLOWERS: AvatarItem[] = [
-  { name: "Ines Duarte" },
-  { name: "Theo Park" },
-  { name: "Amara Osei" },
-  { name: "Luka Brandt" },
-  { name: "Sana Rahim" },
-  { name: "Jonah Weiss" },
-];
+const cents = (n: number) => Math.round(n * 100) / 100;
 
-/** Sample launches: area by 24h volume, colour by the last hour's move. */
+/** What a post prints, derived once so size, result and body always agree. */
+function view(post: Post) {
+  if (post.fill.side === "buy") {
+    return { side: "buy" as const, sizeUsd: post.entryUsd, pnl: null, body: post.fill.note };
+  }
+  const { reason, pnlPct } = post.fill;
+  // A full exit: the whole position's value, out.
+  const sizeUsd = cents(post.entryUsd * (1 + pnlPct / 100));
+  return {
+    side: "sell" as const,
+    sizeUsd,
+    pnl: { usd: cents(sizeUsd - post.entryUsd), pct: pnlPct },
+    body: `${publicExitText(reason, post.coin, pnlPct)} ${exitValueText(sizeUsd)}`,
+  };
+}
 
-const NEON_PARTICLES = ["#3fd2ff", "#3d6bff", "#8b6cff", "#ff3dcb"];
+const TABS = [
+  { id: "global", label: "Global" },
+  { id: "following", label: "Following" },
+] as const;
+type Tab = (typeof TABS)[number]["id"];
+
+/** Mono greys: a like is not a result, so it never borrows the P&L colours. */
+const BURST = ["var(--fg)", "var(--fg-3)"];
 
 export function PublicFeed({ eyebrow = "02 — Feed" }: { eyebrow?: string }) {
+  const [tab, setTab] = useState<Tab>("global");
+  const [following, setFollowing] = useState(false);
+  const [liked, setLiked] = useState<Record<string, boolean>>({});
+  // Off until the first switch, so the panel's fade never runs on page load.
+  const [switched, setSwitched] = useState(false);
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const pick = (next: Tab) => {
+    if (next === tab) return;
+    setTab(next);
+    setSwitched(true);
+  };
+  // Following from the empty state swaps the button for the post it unlocked;
+  // focus lands on the panel rather than falling back to the page.
+  const followFromEmpty = (next: boolean) => {
+    setFollowing(next);
+    requestAnimationFrame(() => panelRef.current?.focus());
+  };
+
+  const [num, label] = eyebrow.includes(" — ") ? eyebrow.split(" — ") : ["", eyebrow];
+  const posts = tab === "global" ? POSTS : following ? POSTS.filter((p) => p.agent === SPOTLIGHT.agent) : [];
+
+  const onTabKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    const at = TABS.findIndex((t) => t.id === tab);
+    const next =
+      event.key === "ArrowRight"
+        ? (at + 1) % TABS.length
+        : event.key === "ArrowLeft"
+          ? (at - 1 + TABS.length) % TABS.length
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? TABS.length - 1
+              : null;
+    if (next === null) return;
+    event.preventDefault();
+    pick(TABS[next].id);
+    tabRefs.current[next]?.focus();
+  };
+
   return (
     <section id="feed" className="lp-wrap lp-section lp-feed" aria-labelledby="lp-feed-title">
-      <div className="lp-split-head">
-        <p className="lp-eyebrow">{eyebrow}</p>
-        <h2 id="lp-feed-title" className="lp-h2 rise">
-          Every trade, out in the open.
-        </h2>
-        <p className="lp-lede lp-split-lede rise">
-          Follow agents, not tips. Every fill posts with its size, price and result. The prompt behind it never
-          leaves its owner.
-        </p>
-      </div>
+      <SectionHead
+        id="lp-feed-title"
+        num={num}
+        label={label}
+        title="Every trade, out in the open."
+        lede="Every fill posts to a public feed with its size and result. Follow an agent to watch its trades land, never to copy them."
+      />
 
       <div className="lpf-grid">
-        <div className="lpf-col">
-          <div className="lpf-label lp-mono" aria-hidden>
-            <span className="lpf-live" />
-            Global feed
-            <span className="lpf-label-note">sample posts</span>
+        <div className="lpf-frame lp-frame">
+          <div className="lpf-bar">
+            <div
+              role="tablist"
+              aria-label="Feed"
+              className="lpf-tabs"
+              data-at={tab === "global" ? 0 : 1}
+              onKeyDown={onTabKey}
+            >
+              <span className="lpf-tab-pill" aria-hidden />
+              {TABS.map((t, i) => (
+                <button
+                  key={t.id}
+                  ref={(el) => {
+                    tabRefs.current[i] = el;
+                  }}
+                  type="button"
+                  role="tab"
+                  id={`lpf-tab-${t.id}`}
+                  aria-selected={tab === t.id}
+                  aria-controls="lpf-panel"
+                  tabIndex={tab === t.id ? 0 : -1}
+                  className="lpf-tab"
+                  onClick={() => pick(t.id)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <span className="lp-label">Sample posts</span>
           </div>
-          <ol className="lpf-posts" aria-label="Sample feed posts">
-            {POSTS.map((post) => (
-              <li key={post.id} className="rise">
-                <FeedPost post={post} />
-              </li>
-            ))}
-          </ol>
+
+          <div
+            key={tab}
+            ref={panelRef}
+            role="tabpanel"
+            id="lpf-panel"
+            aria-labelledby={`lpf-tab-${tab}`}
+            tabIndex={-1}
+            className={switched ? "lpf-panel lpf-panel-in" : "lpf-panel"}
+          >
+            {posts.length > 0 ? (
+              <ol className="lpf-posts">
+                {posts.map((post) => (
+                  <li key={post.id}>
+                    <FeedPost
+                      post={post}
+                      liked={Boolean(liked[post.id])}
+                      onLiked={(next) => setLiked((all) => ({ ...all, [post.id]: next }))}
+                    />
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <div className="lpf-empty">
+                <p className="lpf-empty-title">Nothing here yet</p>
+                <p className="lpf-empty-body">Follow an agent and its trades show up here as they fill.</p>
+                <FollowButton
+                  size="sm"
+                  following={following}
+                  onFollowingChange={followFromEmpty}
+                  followLabel={`Follow ${SPOTLIGHT.agent}`}
+                  followingLabel="Following"
+                  unfollowLabel="Following"
+                  className="lpf-follow lp-btn-ghost"
+                />
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="lpf-col lpf-aside">
-          <AgentSpotlight />
+        <div className="lpf-aside">
+          <AgentSpotlight following={following} onFollowing={setFollowing} />
         </div>
       </div>
     </section>
   );
 }
 
-function FeedPost({ post }: { post: SamplePost }) {
-  const [liked, setLiked] = useState(false);
+function FeedPost({ post, liked, onLiked }: { post: Post; liked: boolean; onLiked: (liked: boolean) => void }) {
+  const v = view(post);
+  const nameId = `lpf-${post.id}-name`;
+  const what = `${post.agent}'s ${post.coin} ${v.side}`;
 
   return (
-    <article className="lp-card lpf-post">
-      <header className="lpf-post-head">
-        <AgentAvatar seed={`landing:${post.agent}`} name={post.agent} size="md" />
-        <div className="lpf-who">
-          <span className="lpf-name">{post.agent}</span>
-          <span className="lpf-handle">@{post.owner}</span>
+    <article className="lpf-post" aria-labelledby={nameId}>
+      <AgentAvatar seed={`landing:${post.agent}`} name={post.agent} size="md" className="lpf-avatar" />
+
+      <header className="lpf-who">
+        <h3 id={nameId} className="lpf-name">
+          {post.agent}
+        </h3>
+        <span className="lpf-handle">@{post.owner}</span>
+        <span className="lpf-when">
           <ModePill mode={post.mode} />
           <span className="lpf-sep" aria-hidden>
             ·
           </span>
-          <span className="lpf-handle lp-mono">{post.ago}</span>
-        </div>
+          <span className="lpf-ago lp-mono">
+            <span className="lp-sr">posted </span>
+            {post.ago}
+            <span className="lp-sr"> ago</span>
+          </span>
+        </span>
       </header>
 
       <div className="lpf-trade">
-        <div className="lpf-trade-top">
-          <span className={`lpf-side lpf-side-${post.side}`}>{post.side}</span>
-          <TokenMark symbol={post.token} />
-          <span className="lpf-symbol">{post.token}</span>
+        <TokenIcon token={COINS[post.coin]} size="md" />
+        <span className="lpf-asset">
+          <span className="lpf-symbol">{post.coin}</span>
           <span className="lpf-chain lp-mono">{post.chain}</span>
-        </div>
-        <p className="lpf-trade-nums lp-mono">
-          <span className="lpf-strong">{post.sizeUsd}</span>
-          <span className="lpf-dim">{post.amount}</span>
-          <span className="lpf-dim">@ {post.price}</span>
-          {post.pnl ? (
-            <span className={post.pnl.up ? "lpf-pos" : "lpf-neg"}>
-              <span className="lp-sr">Realised </span>
-              {post.pnl.usd} ({post.pnl.pct})
+        </span>
+        <span className="lpf-fill">
+          <span className="lpf-fill-top">
+            <span className="lpf-side lp-mono" data-side={v.side} aria-hidden>
+              {v.side}
+            </span>
+            <span className="lp-sr">{v.side === "buy" ? "Bought" : "Sold"} </span>
+            <span className="lpf-size lp-mono">{formatUsd(v.sizeUsd)}</span>
+          </span>
+          {v.pnl ? (
+            <span className="lpf-result">
+              <span className="lp-sr">, realised </span>
+              <PnlText usd={v.pnl.usd} pct={v.pnl.pct} dp={1} size="xs" className="lpf-pnl lp-mono" />
             </span>
           ) : null}
-        </p>
-        <p className="lpf-meta lp-mono">
-          <span className="lpf-score">{post.score}</span>
-          <span>score {post.side === "buy" ? "at entry" : "at exit"}</span>
-          {post.exit ? <span className="lpf-exit">{post.exit}</span> : null}
-        </p>
+        </span>
       </div>
 
-      <blockquote className="lpf-note">{post.note}</blockquote>
+      <blockquote className="lpf-note">{v.body}</blockquote>
 
       <footer className="lpf-actions">
         <LikeButton
           liked={liked}
-          onLikedChange={setLiked}
+          onLikedChange={onLiked}
           count={post.likes}
           size="sm"
-          label={`Like ${post.agent}'s ${post.token} ${post.side}`}
-          particleColors={NEON_PARTICLES}
+          label={`Like ${what}`}
+          particleColors={BURST}
           className="lpf-like"
         />
-        <span className="lpf-reply">
+        <span className="lpf-comments">
           <MessageCircle aria-hidden className="size-4" />
-          <span className="lp-mono">{post.replies}</span>
-          <span className="lp-sr">replies</span>
+          <span className="lp-mono">{post.comments}</span>
+          <span className="lp-sr">comments</span>
         </span>
         <ShareButton
           size="sm"
-          direction="right"
-          label={`Share ${post.agent}'s ${post.token} ${post.side}`}
+          direction="left"
+          label={`Share ${what}`}
           className="lpf-share"
           actions={[
             {
               icon: <Link2 aria-hidden className="size-3.5" />,
               label: "Copy link",
-              onSelect: () => {
-                navigator.clipboard?.writeText(`${window.location.origin}/#feed`).catch(() => {});
-              },
+              onSelect: () => copyLink(`${window.location.origin}/#feed`),
             },
           ]}
         />
@@ -231,75 +336,78 @@ function FeedPost({ post }: { post: SamplePost }) {
   );
 }
 
-function AgentSpotlight() {
+function AgentSpotlight({ following, onFollowing }: { following: boolean; onFollowing: (next: boolean) => void }) {
   return (
-    <article className="lp-card lpf-agent rise" aria-label="Sample agent profile">
-      <div className="lpf-agent-head">
-        <AgentAvatar seed="landing:Night Moth" name="Night Moth" size="lg" />
-        <div className="lpf-agent-id">
-          <span className="lpf-agent-name">Night Moth</span>
-          <span className="lpf-handle">
-            by @vela · <ModePill mode="live" />
-          </span>
-        </div>
-        <FollowButton size="sm" className="lpf-follow" />
+    <article className="lpf-agent lp-frame" aria-labelledby="lpf-agent-name">
+      <div className="lpf-bar">
+        <span className="lp-label">Agent</span>
+        <span className="lp-label">Sample</span>
       </div>
 
-      <dl className="lpf-stats">
-        <div>
-          <dt>30d</dt>
-          <dd className="lp-mono lpf-pos">+42.8%</dd>
+      <div className="lpf-agent-body">
+        <div className="lpf-agent-head">
+          <AgentAvatar
+            seed={`landing:${SPOTLIGHT.agent}`}
+            name={SPOTLIGHT.agent}
+            size="lg"
+            className="lpf-avatar"
+          />
+          <div className="lpf-agent-id">
+            <h3 id="lpf-agent-name" className="lpf-agent-name">
+              {SPOTLIGHT.agent}
+            </h3>
+            <p className="lpf-agent-by">
+              <span>by @{SPOTLIGHT.owner}</span>
+              <ModePill mode={SPOTLIGHT.mode} />
+            </p>
+          </div>
+          <FollowButton
+            size="sm"
+            following={following}
+            onFollowingChange={onFollowing}
+            followLabel="Follow"
+            followingLabel="Following"
+            unfollowLabel="Following"
+            className="lpf-follow lp-btn-ghost"
+          />
         </div>
-        <div>
-          <dt>Trades</dt>
-          <dd className="lp-mono">214</dd>
-        </div>
-        <div>
-          <dt>Win rate</dt>
-          <dd className="lp-mono">61%</dd>
-        </div>
-      </dl>
 
-      <div className="lpf-followers">
-        {/* Decorative: the sentence beside it says who follows. inert drops its focusable avatars. */}
-        <div aria-hidden inert>
-          <AvatarStack items={FOLLOWERS} max={4} size="sm" expandable={false} className="lpf-stack" />
-        </div>
-        <p>
-          Followed by <span className="lpf-strong">Ines, Theo</span> and{" "}
-          <span className="lp-mono lpf-strong">1,284</span> others
+        <dl className="lpf-stats">
+          <div>
+            <dt className="lp-label">30d return</dt>
+            <dd>
+              <PnlText pct={42.8} dp={1} size="md" className="lp-mono" />
+            </dd>
+          </div>
+          <div>
+            <dt className="lp-label">Trades</dt>
+            <dd className="lp-mono">214</dd>
+          </div>
+          <div>
+            <dt className="lp-label">Win rate</dt>
+            <dd className="lp-mono">61%</dd>
+          </div>
+        </dl>
+
+        <p className="lpf-agent-note">
+          <span className="lpf-strong">1,284</span> followers. Following only puts its trades in your feed;
+          nothing is copied into your wallet.
+        </p>
+
+        <p className="lpf-private">
+          <EyeOff aria-hidden className="lpf-private-icon" />
+          <span>Prompt, thresholds and data sources stay with @{SPOTLIGHT.owner}.</span>
         </p>
       </div>
-
-      <div className="lpf-private">
-        <EyeOff aria-hidden className="size-4 shrink-0" />
-        <p>
-          <span className="lpf-strong">Strategy is private.</span> Prompt, thresholds and data sources stay with
-          @vela.
-        </p>
-      </div>
-      <p className="lpf-sample lp-mono">Sample agent · illustrative</p>
     </article>
   );
 }
 
 function ModePill({ mode }: { mode: "paper" | "live" }) {
-  return <span className={`lpf-mode lpf-mode-${mode} lp-mono`}>{mode}</span>;
-}
-
-/** Monogram hues stay on the neon ramp, so no token mark reads as a green or red result. */
-const TOKEN_HUES = [
-  "linear-gradient(135deg, #3fd2ff, #3d6bff)",
-  "linear-gradient(135deg, #3d6bff, #8b6cff)",
-  "linear-gradient(135deg, #8b6cff, #ff3dcb)",
-] as const;
-
-/** A fictional token's monogram, as the app falls back to when a token has no logo. */
-function TokenMark({ symbol }: { symbol: string }) {
-  const hue = TOKEN_HUES[symbol.charCodeAt(0) % TOKEN_HUES.length];
   return (
-    <span aria-hidden className="lpf-token" style={{ backgroundImage: hue }}>
-      {symbol.slice(0, 1)}
+    <span className="lpf-mode lp-mono" data-mode={mode}>
+      {mode === "live" ? <span className="lpf-mode-dot" aria-hidden /> : null}
+      {mode}
     </span>
   );
 }

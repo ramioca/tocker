@@ -37,10 +37,10 @@ export function GoLiveDemo() {
   };
 
   return (
-    <div className="lp-golive" data-live={live}>
+    <div className="lp-golive lp-frame" data-live={live}>
       <div className="lp-golive-head">
-        <span className="lp-golive-title">Go live</span>
-        <span className="lp-mono lp-golive-meta">demo · nothing is sent</span>
+        <h3 className="lp-golive-title">Go live</h3>
+        <span className="lp-label lp-golive-meta">demo · nothing is sent</span>
       </div>
       <div className="lp-golive-body">
         {/* Static state text: the button's own status region announces the confirmation. */}
@@ -76,7 +76,7 @@ export function GoLiveDemo() {
           icon={<Zap className="size-4" aria-hidden />}
           ariaLabel="Demo: hold to go live. Press and hold for 2.2 seconds. Nothing is sent."
           onConfirm={confirm}
-          className="lp-golive-btn"
+          className="lp-golive-btn lp-btn-ghost lp-btn-lg"
         />
       </div>
       <p className="lp-golive-note">

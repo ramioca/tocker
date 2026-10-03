@@ -31,10 +31,6 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 0 28px 28px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 20px;
-  background: var(--card);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 .wl-panel:focus {
   outline: none;
@@ -50,7 +46,8 @@
   justify-content: space-between;
   gap: 12px;
   margin-inline: -28px;
-  padding: 18px 18px 6px 28px;
+  padding: 14px 14px 14px 28px;
+  border-bottom: 1px solid var(--line-soft);
   background: var(--card);
 }
 .wl-close {
@@ -60,7 +57,7 @@
   width: 40px;
   height: 40px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: transparent;
   color: var(--fg-2);
   transition:
@@ -77,16 +74,14 @@
 .wl-close:active {
   transform: scale(0.95);
 }
-.wl-overlay .wl-bar .wl-close:focus-visible {
-  border-radius: 999px;
-}
 
 .wl-eyebrow,
 .wl-label {
-  font-family: var(--font-geist-mono), "Geist Mono", ui-monospace, monospace;
-  font-size: 11.5px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
   font-weight: 500;
-  letter-spacing: 0.12em;
+  line-height: 16px;
+  letter-spacing: var(--ls-label);
   text-transform: uppercase;
   color: var(--fg-3);
 }
@@ -94,7 +89,7 @@
   margin: 0;
 }
 .wl-title {
-  margin: 10px 0 0;
+  margin: 24px 0 0;
   font-size: 28px;
   font-weight: 650;
   letter-spacing: -0.04em;
@@ -106,7 +101,7 @@
 .wl-sub {
   margin: 10px 0 0;
   max-width: 36ch;
-  font-size: 15px;
+  font-size: var(--fs-body);
   line-height: 1.5;
   color: var(--fg-2);
   text-wrap: pretty;
@@ -141,7 +136,7 @@
   height: 48px;
   padding: 0 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--r-inner);
   background: var(--bg);
   color: var(--fg);
   font: inherit;
@@ -176,10 +171,10 @@
   min-height: 38px;
   padding: 0 15px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: transparent;
   color: var(--fg-2);
-  font-size: 14px;
+  font-size: var(--fs-body-sm);
   line-height: 1;
   transition:
     border-color 150ms ease-out,
@@ -189,7 +184,7 @@
 }
 @media (hover: hover) and (pointer: fine) {
   .wl-chip:hover {
-    border-color: rgba(244, 244, 241, 0.24);
+    border-color: var(--line-hover);
     color: var(--fg);
   }
 }
@@ -198,60 +193,22 @@
 }
 .wl-overlay .wl-chip-on,
 .wl-overlay .wl-chip-on:hover {
-  border-color: #f4f4f1;
-  background: #f4f4f1;
-  color: #000;
-}
-.wl-overlay .wl-seg .wl-chip:focus-visible {
-  border-radius: 999px;
+  border-color: var(--fg);
+  background: var(--fg);
+  color: var(--bg);
 }
 
 .wl-error {
   margin: 0;
-  font-size: 13.5px;
+  font-size: var(--fs-small);
   line-height: 1.45;
   color: var(--fg-2);
 }
 
-/* Primary actions: the page's pill, off-white with black type. The submit is
+/* Primary actions are the page's primary pill (landing.css). The submit is
    Spectrum's MorphButton; its state classes come from waitlist.tsx. */
-.wl-overlay .wl-morph,
-.wl-overlay .wl-submit {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 48px;
-  border: 0;
-  border-radius: 999px;
-  background: #f4f4f1;
-  color: #000;
-  font-size: 15px;
-  font-weight: 550;
-  letter-spacing: -0.01em;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  transition:
-    background-color 150ms ease-out,
-    opacity 150ms ease-out,
-    transform 160ms var(--ease-out);
-}
 .wl-overlay .wl-morph {
   width: 100%;
-}
-@media (hover: hover) and (pointer: fine) {
-  .wl-overlay .wl-morph-idle:hover,
-  .wl-overlay .wl-submit:hover {
-    background: #fff;
-  }
-}
-.wl-overlay .wl-submit:active {
-  transform: scale(0.97);
-}
-.wl-overlay .wl-actions .wl-morph:focus-visible,
-.wl-overlay .wl-done .wl-submit:focus-visible {
-  outline: 2px solid var(--fg);
-  outline-offset: 3px;
-  border-radius: 999px;
-  box-shadow: none;
 }
 /* Incomplete: reads as not ready, but stays focusable and explains itself on press. */
 .wl-overlay .wl-morph-incomplete {
@@ -260,11 +217,11 @@
 .wl-overlay .wl-morph-error {
   background: var(--raised-hi);
   color: var(--fg);
-  box-shadow: inset 0 0 0 1px rgba(244, 244, 241, 0.16);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 .wl-fine {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-small);
   line-height: 1.5;
   color: var(--fg-3);
   text-wrap: pretty;
@@ -275,7 +232,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 4px 4px;
+  padding: 28px 4px 4px;
   text-align: center;
 }
 .wl-done .wl-title {
@@ -294,8 +251,8 @@
   width: 52px;
   height: 52px;
   border-radius: 50%;
-  background: #f4f4f1;
-  color: #000;
+  background: var(--fg);
+  color: var(--bg);
 }
 
 /* Phones: a bottom sheet. Full width, square bottom, a 44px close that stays
@@ -310,11 +267,11 @@
     max-height: 92dvh;
     padding: 0 20px calc(16px + env(safe-area-inset-bottom));
     border-width: 1px 0 0;
-    border-radius: 20px 20px 0 0;
+    border-radius: var(--r-frame) var(--r-frame) 0 0;
   }
   .wl-bar {
     margin-inline: -20px;
-    padding: 12px 10px 4px 20px;
+    padding: 10px 10px 10px 20px;
   }
   .wl-close {
     width: 44px;
@@ -338,12 +295,8 @@
 }
 
 @media (forced-colors: active) {
-  .wl-overlay .wl-morph,
-  .wl-overlay .wl-submit,
   .wl-overlay .wl-chip-on {
     border: 1px solid ButtonText;
-  }
-  .wl-overlay .wl-chip-on {
     outline: 2px solid Highlight;
   }
 }

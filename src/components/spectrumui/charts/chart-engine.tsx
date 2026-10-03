@@ -155,9 +155,26 @@ export const DATE_FULL = new Intl.DateTimeFormat('en-US', {
   timeZone: 'UTC',
 });
 
-export function formatAxisPrice(value: number) {
-  if (Math.abs(value) >= 10_000) return formatMoney(value, true);
-  return formatMoney(value, false);
+/**
+ * A value-axis label. `scale` is the largest tick on the same axis: once any tick reaches
+ * $1,000 every label is compact ("$9.5K", "$10K", "$10.5K"), so one axis never mixes
+ * "$9,500.00" with "$10K". Small axes keep cents ("$98.50"). Called without `scale`, a
+ * label is judged on its own value.
+ */
+export function formatAxisPrice(value: number, scale: number = value) {
+  return formatMoney(value, Math.abs(scale) >= 1_000);
+}
+
+/**
+ * Rows for a chart's screen-reader table: every index below `count`, or — when `max` is
+ * set and smaller — an even sample of at most `max` that always ends on the latest point.
+ * `stride` is the gap between kept rows (1 when nothing was dropped).
+ */
+export function sampleRows(count: number, max?: number): { stride: number; indices: number[] } {
+  const stride = max && max > 0 && count > max ? Math.ceil(count / max) : 1;
+  const indices: number[] = [];
+  for (let i = count - 1; i >= 0; i -= stride) indices.unshift(i);
+  return { stride, indices };
 }
 
 export function niceTicks(lo: number, hi: number, target = 5): number[] {
@@ -343,8 +360,17 @@ export const KEYFRAMES = `
 }
 `;
 
+/**
+ * React 19 hoists a `<style>` with `href` + `precedence` into <head> once, however many
+ * charts mount it — not one more stylesheet per chart in the body, each re-styling the
+ * page as it mounts and unmounts.
+ */
 export function Keyframes() {
-  return <style>{KEYFRAMES}</style>;
+  return (
+    <style href="spectrum-chart-keyframes" precedence="default">
+      {KEYFRAMES}
+    </style>
+  );
 }
 
 const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
@@ -415,11 +441,33 @@ export function RangeSelector({
 }) {
   const index = Math.max(0, ranges.findIndex((r) => r.label === value));
   const width = 100 / ranges.length;
+  const buttonsRef = React.useRef<(HTMLButtonElement | null)[]>([]);
+
+  // The tabs pattern: one tab stop for the whole row (the selected range), arrows move
+  // and select, Home/End jump to the ends.
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const last = ranges.length - 1;
+    const next =
+      event.key === 'ArrowRight' || event.key === 'ArrowDown'
+        ? (index + 1) % ranges.length
+        : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+          ? (index - 1 + ranges.length) % ranges.length
+          : event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+              ? last
+              : null;
+    if (next === null) return;
+    event.preventDefault();
+    onChange(ranges[next].label);
+    buttonsRef.current[next]?.focus();
+  };
 
   return (
     <div
       role="tablist"
       aria-label="Time range"
+      onKeyDown={onKeyDown}
       className="relative inline-flex items-center rounded-full bg-black/[0.045] p-0.5 dark:bg-white/[0.07]"
     >
       <span
@@ -431,14 +479,18 @@ export function RangeSelector({
           transition: reduce ? undefined : 'transform 380ms cubic-bezier(0.22, 1, 0.36, 1)',
         }}
       />
-      {ranges.map((range) => {
-        const active = range.label === value;
+      {ranges.map((range, i) => {
+        const active = i === index;
         return (
           <button
             key={range.label}
+            ref={(node) => {
+              buttonsRef.current[i] = node;
+            }}
             type="button"
             role="tab"
             aria-selected={active}
+            tabIndex={active ? 0 : -1}
             onClick={() => onChange(range.label)}
             className={cn(
               'relative z-10 rounded-full px-2.5 py-1 font-mono text-[11px] leading-none tracking-wide transition-colors duration-200',

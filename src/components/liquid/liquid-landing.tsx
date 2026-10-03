@@ -1,13 +1,14 @@
 import type { FaqTab } from "@/components/spectrumui/faq-tabs-card";
-import type { ReactNode } from "react";
 import { BrandHeroMark, BrandLockup } from "./brand";
 import { AgentConsole } from "./console";
+import { DEFAULT_ROWS } from "./defaults";
 import { FaqCard } from "./faq-card";
 import { PublicFeed } from "./feed";
 import { GoLiveDemo } from "./go-live";
 import { Hero } from "./hero";
 import { Nav } from "./nav";
 import { PerformancePanel } from "./performance";
+import { SectionHead } from "./section-head";
 import { DEFAULT_DATA_BUDGET_USD, LANDING_SOURCES, type LandingSource } from "./signals-data";
 import { WaitlistProvider } from "./waitlist";
 import { WaitlistButton } from "./waitlist-button";
@@ -31,22 +32,6 @@ import "./landing-waitlist.css";
  * Section order: Nav, Hero, 01 How, 02 Feed, 03 Data, 04 Performance,
  * 05 Guardrails, 06 Questions, closing call to action, Footer.
  */
-
-/** Verified against `DEFAULT_AGENT_CONFIG` (src/lib/agent/config.ts); keep in step. Read in pairs, row by row. */
-const DEFAULTS = [
-  ["Mode", "paper · asks first"],
-  ["Runs", "every 15 min"],
-  ["Chains", "Solana (Base opt-in)"],
-  ["Score floor", "62 / 100"],
-  ["Per trade", "$100"],
-  ["Per day", "10 trades"],
-  ["Stop loss", "15%"],
-  ["Take profit", "40%"],
-  ["Max slippage", "3%"],
-  ["Data per run", `$${DEFAULT_DATA_BUDGET_USD.toFixed(2)}`],
-  ["Min liquidity", "$15k"],
-  ["Min age", "30 min"],
-] as const;
 
 const BUDGET = `$${DEFAULT_DATA_BUDGET_USD.toFixed(2)}`;
 
@@ -142,25 +127,6 @@ export function LiquidLanding() {
   );
 }
 
-/**
- * One head for every numbered section: eyebrow across the top, the h2 on the
- * left and the lede on the right from 900px (stacked below), matching the
- * Feed's `.lp-split-head`.
- */
-function SectionHead({ id, num, label, title, lede }: { id: string; num: string; label: string; title: ReactNode; lede: ReactNode }) {
-  return (
-    <div className="lp-split-head">
-      <p className="lp-eyebrow">
-        {num} <span aria-hidden>—</span> {label}
-      </p>
-      <h2 id={id} className="lp-h2 rise">
-        {title}
-      </h2>
-      <p className="lp-lede lp-split-lede rise">{lede}</p>
-    </div>
-  );
-}
-
 function How() {
   return (
     <section id="how" className="lp-wrap lp-section" aria-labelledby="lp-how-title">
@@ -196,10 +162,10 @@ function Sources() {
         title="It buys its own research, by the call."
         lede={`${total} paid sources in the registry, ${defaults} on by default. Tocker pays each source per call in USDC over x402, up to the per-run budget you set (${BUDGET} by default).`}
       />
-      <div className="lp-src">
+      <div className="lp-src lp-frame">
         <div className="lp-src-table" role="table" aria-label={`Paid data sources, ${rows.length} of ${total}`}>
           <div role="rowgroup">
-            <div className="lp-src-row lp-src-head lp-mono" role="row">
+            <div className="lp-src-row lp-src-head lp-label" role="row">
               <span role="columnheader">Source</span>
               <span role="columnheader">Provider</span>
               <span role="columnheader">Kind</span>
@@ -230,7 +196,7 @@ function Sources() {
             ))}
           </div>
         </div>
-        <p className="lp-src-foot lp-mono">
+        <p className="lp-src-foot lp-label">
           <span>+ {total - rows.length} more in the registry</span>
           <span className="lp-src-legend">guard: feeds a hard gate</span>
         </p>
@@ -266,15 +232,15 @@ function Guardrails() {
       />
       <div className="lp-guard-grid">
         <GoLiveDemo />
-        <div className="lp-defaults">
+        <div className="lp-defaults lp-frame">
           <div className="lp-defaults-head">
             <h3 className="lp-defaults-title">Defaults you can change</h3>
-            <span className="lp-mono lp-defaults-meta">new agent</span>
+            <span className="lp-label lp-defaults-meta">new agent</span>
           </div>
           <dl aria-label="Defaults a new agent starts with">
-            {DEFAULTS.map(([k, v]) => (
+            {DEFAULT_ROWS.map(([k, v]) => (
               <div key={k} className="lp-default">
-                <dt className="lp-mono">{k}</dt>
+                <dt className="lp-label">{k}</dt>
                 <dd className="lp-mono">{v}</dd>
               </div>
             ))}

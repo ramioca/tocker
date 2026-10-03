@@ -39,6 +39,7 @@ import { safeAction } from "@/lib/safe-action";
 import { cn } from "@/lib/utils";
 import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { AgentDetail, DataSourceInfo, LlmKeyRow } from "@/server/types";
+import { stickyActionbarRef } from "@/hooks/root-flag";
 
 /** The four numbers that decide how much money can move. */
 function capsOf(config: AgentConfig) {
@@ -656,11 +657,13 @@ function SettingsForm({
         <ExitRulesFields value={config.risk} onChange={(risk) => setConfig((current) => ({ ...current, risk }))} />
       </section>
 
-      {/* `data-sticky-actionbar` opts the page into the scroll padding in globals.css, so a
-          control that takes focus scrolls clear of this bar instead of sitting under it. The
-          phone offset matches what that padding reserves: the tab bar, then this bar. */}
+      {/* `stickyActionbarRef` holds a flag on <html> that adds this bar to the scroll padding
+          in globals.css, so a control that takes focus scrolls clear of this bar instead of
+          sitting under it, and lifts the toasts above it on a phone. The phone offset matches
+          what that padding reserves: the tab bar, then this bar. */}
       <div
         data-sticky-actionbar
+        ref={stickyActionbarRef}
         className="sticky bottom-[calc(4rem+env(safe-area-inset-bottom)+0.5rem)] z-10 flex items-center gap-3 rounded-xl border border-border bg-background/90 px-3 py-2.5 backdrop-blur-md md:bottom-4"
       >
         <p className="text-xs text-muted-foreground">

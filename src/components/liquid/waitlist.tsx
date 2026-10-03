@@ -229,11 +229,11 @@ function WaitlistModal({ onClose }: { onClose: () => void }) {
         aria-modal="true"
         aria-labelledby="wl-title"
         tabIndex={-1}
-        className="wl-panel"
+        className="wl-panel lp-frame"
         {...panelMotion}
       >
         <div className="wl-bar">
-          {status === "done" ? <span /> : <p className="wl-eyebrow">Private beta</p>}
+          <p className="wl-eyebrow">Private beta</p>
           <button type="button" className="wl-close" onClick={onClose} aria-label="Close">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
               <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />

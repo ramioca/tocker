@@ -20,7 +20,7 @@ import {
   SAMPLE_TRADE_USD,
   clearsFloor,
 } from "./sample";
-import { useWaitlist } from "./waitlist";
+import { WaitlistButton } from "./waitlist-button";
 
 /**
  * Hero: an eyebrow, the two-line promise, one sentence on how, one action and
@@ -36,12 +36,10 @@ import { useWaitlist } from "./waitlist";
 const delay = (s: string) => ({ "--reveal-delay": s }) as CSSProperties;
 
 export function Hero() {
-  const { open } = useWaitlist();
-
   return (
     <section className="lp-hero" aria-labelledby="lp-hero-title">
       <div className="lp-hero-head lp-wrap">
-        <p className="lp-hero-eyebrow lp-mono reveal" style={delay("0s")}>
+        <p className="lp-hero-eyebrow lp-eyebrow reveal" style={delay("0s")}>
           <span className="lp-hero-dot" aria-hidden />
           Private beta · Solana and Base
         </p>
@@ -55,12 +53,7 @@ export function Hero() {
           Describe a strategy in plain English. It scores every token and trades the few that clear your bar.
         </p>
         <div className="lp-hero-ctas reveal" style={delay("0.22s")}>
-          <button type="button" className="lp-btn-accent lp-btn-hero" onClick={open}>
-            Join the waitlist
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden className="lp-btn-arrow">
-              <path d="M2 8h11M8.5 3.5 13 8l-4.5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+          <WaitlistButton />
           <a href="#how" className="lp-hero-link">
             See how it decides
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -125,7 +118,7 @@ function HeroRun() {
     <div className="lp-hr-stage lp-wrap reveal" style={delay("0.32s")}>
       <div
         ref={ref}
-        className="lp-hr"
+        className="lp-hr lp-frame"
         data-in={live ? "" : undefined}
         style={{ "--floor": SAMPLE_FLOOR } as CSSProperties}
         role="img"
@@ -147,7 +140,7 @@ function HeroRun() {
 
           <div className="lp-hr-strategy">
             <div className="lp-hr-strategy-top">
-              <span className="lp-hr-label lp-mono">Strategy</span>
+              <span className="lp-label">Strategy</span>
               <span className="lp-hr-private lp-mono">
                 <EyeOff size={13} strokeWidth={1.75} aria-hidden />
                 Only you can see this
@@ -157,8 +150,8 @@ function HeroRun() {
           </div>
 
           <div className="lp-hr-listhead">
-            <span className="lp-hr-label lp-mono">{SAMPLE_SCORED} tokens scored</span>
-            <span className="lp-hr-label lp-mono">Your floor {SAMPLE_FLOOR}</span>
+            <span className="lp-label">{SAMPLE_SCORED} tokens scored</span>
+            <span className="lp-label">Your floor {SAMPLE_FLOOR}</span>
           </div>
 
           <div className="lp-hr-rows">

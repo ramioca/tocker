@@ -11,45 +11,13 @@
  * ========================================================================== */
 
 /* ============================ shared ============================ */
+/* The frames are the shared .lp-frame and the labels the shared .lp-label;
+   these frames clip their hairline rows to the radius. */
 .lp .lp-src,
 .lp .lp-perf,
 .lp .lp-golive,
 .lp .lp-defaults {
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  background: var(--card);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
   overflow: hidden;
-}
-/* The card heads and every small label: mono caps, tracked, quiet. */
-.lp .lp-src-head,
-.lp .lp-src-foot,
-.lp .lp-perf-bar,
-.lp .lp-perf-label,
-.lp .lp-golive-meta,
-.lp .lp-defaults-meta,
-.lp .lp-default dt {
-  font-size: 11.5px;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--fg-3);
-}
-/* The primary pill outside the hero: the hero's exact size, so every
-   "Join the waitlist" on the page is one button. */
-.lp .lp-close .lp-btn-hero,
-.lp .lp-faq-card > button:last-child {
-  height: 48px;
-  padding-inline: 22px;
-  border-radius: 999px;
-  font-size: 15px;
-  font-weight: 550;
-  letter-spacing: -0.01em;
-}
-.lp .lp-close .lp-btn-hero:focus-visible,
-.lp .lp-faq-card > button:last-child:focus-visible,
-.lp .lp-golive .lp-golive-btn:focus-visible {
-  border-radius: 999px;
 }
 
 /* ============================ 03 data sources ============================ */
@@ -62,7 +30,7 @@
 }
 .lp .lp-src-head {
   padding-block: 13px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-soft);
 }
 .lp .lp-src-row + .lp-src-row {
   border-top: 1px solid var(--line-soft);
@@ -72,7 +40,7 @@
     transition: background-color 150ms ease-out;
   }
   .lp .lp-src-row:not(.lp-src-head):hover {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--tint);
   }
 }
 .lp .lp-src-name {
@@ -81,7 +49,7 @@
   align-items: center;
   gap: 4px 10px;
   min-width: 0;
-  font-size: 15.5px;
+  font-size: var(--fs-body);
   line-height: 22px;
   letter-spacing: -0.01em;
   color: var(--fg);
@@ -92,25 +60,25 @@
   height: 20px;
   padding-inline: 8px;
   border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 11px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-label);
   letter-spacing: 0.04em;
   color: var(--fg-3);
 }
 .lp .lp-src-provider {
   min-width: 0;
-  font-size: 14.5px;
+  font-size: var(--fs-body-sm);
   color: var(--fg-2);
 }
 .lp .lp-src-kind {
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   color: var(--fg-3);
 }
 .lp .lp-src-num {
   text-align: right;
 }
 .lp .lp-src-price {
-  font-size: 15px;
+  font-size: var(--fs-body);
   line-height: 22px;
   color: var(--fg);
 }
@@ -121,7 +89,7 @@
   gap: 6px 24px;
   margin: 0;
   padding: 14px 24px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--line-soft);
 }
 .lp .lp-src-legend {
   letter-spacing: 0.06em;
@@ -142,22 +110,22 @@
   }
   .lp .lp-src-name {
     grid-area: name;
-    font-size: 15px;
+    font-size: var(--fs-body);
   }
   .lp .lp-src-price {
     grid-area: price;
     align-self: start;
     padding-left: 12px;
-    font-size: 14px;
+    font-size: var(--fs-body-sm);
   }
   .lp .lp-src-provider {
     grid-area: prov;
-    font-size: 13px;
+    font-size: var(--fs-small);
     color: var(--fg-3);
   }
   .lp .lp-src-kind {
     grid-area: kind;
-    font-size: 12px;
+    font-size: var(--fs-meta);
     line-height: 19px;
   }
   .lp .lp-src-kind::before {
@@ -175,9 +143,6 @@
     clip: rect(0 0 0 0);
     white-space: nowrap;
   }
-  .lp .lp-src-head + .lp-src-row {
-    border-top: 0;
-  }
   .lp .lp-src-foot {
     padding: 13px 16px;
   }
@@ -190,7 +155,7 @@
   justify-content: space-between;
   gap: 4px 24px;
   padding: 14px 24px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-soft);
 }
 .lp .lp-perf-bar-stats {
   color: var(--fg-2);
@@ -206,7 +171,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--line-soft);
 }
 @media (min-width: 1024px) {
   .lp .lp-perf-grid {
@@ -214,7 +179,19 @@
   }
   .lp .lp-perf-side {
     border-top: 0;
-    border-left: 1px solid var(--line);
+    border-left: 1px solid var(--line-soft);
+  }
+}
+/* Tablets: positions and the data meter share the row under the chart. */
+@media (min-width: 640px) and (max-width: 1023px) {
+  .lp .lp-perf-side {
+    flex-direction: row;
+  }
+  .lp .lp-perf-data {
+    flex: 0 0 260px;
+    padding-top: 22px;
+    border-top: 0;
+    border-left: 1px solid var(--line-soft);
   }
 }
 .lp .lp-perf-pos {
@@ -256,14 +233,14 @@
 }
 .lp .lp-pos-name {
   overflow: hidden;
-  font-size: 15px;
+  font-size: var(--fs-body);
   font-weight: 500;
   letter-spacing: -0.01em;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 .lp .lp-pos-sub {
-  font-size: 12px;
+  font-size: var(--fs-meta);
   color: var(--fg-3);
   white-space: nowrap;
 }
@@ -274,12 +251,12 @@
   overflow: visible;
 }
 .lp .lp-pos-pnl {
-  font-size: 14.5px;
+  font-size: var(--fs-body-sm);
   text-align: right;
 }
 .lp .lp-perf-data {
   padding: 18px 24px 22px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--line-soft);
 }
 .lp .lp-perf-data-value {
   margin-top: 10px;
@@ -288,14 +265,14 @@
 }
 .lp .lp-perf-data-value span {
   margin-left: 6px;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   color: var(--fg-3);
 }
 .lp .lp-perf-meter {
   height: 4px;
   margin-top: 12px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  border-radius: var(--r-pill);
+  background: var(--track);
   overflow: hidden;
 }
 .lp .lp-perf-meter > span {
@@ -307,7 +284,8 @@
 
 /* Spectrum's PortfolioChart, quieted for this frame. Its axis and meta text
    inherit the root colour (neutral-500 at 4.2:1); --fg-3 reads at 5:1. */
-.lp .lp-perf-chart > div {
+.lp .lp-perf-chart > div,
+.lp .lp-perf-chart .dark\:text-neutral-500 {
   color: var(--fg-3);
 }
 /* Range tabs: 19px tall in the vendored control; give them a real target. */
@@ -342,7 +320,17 @@
     width: 56px;
   }
   .lp .lp-pos-pnl {
-    font-size: 14px;
+    font-size: var(--fs-body-sm);
+  }
+}
+
+/* The narrowest phones drop the sparkline so the token name keeps its room. */
+@media (max-width: 359px) {
+  .lp .lp-pos {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+  .lp .lp-pos-spark {
+    display: none;
   }
 }
 
@@ -355,8 +343,8 @@
    defaults under the lede. */
 @media (min-width: 900px) {
   .lp .lp-guard-grid {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 34rem);
-    column-gap: 48px;
+    grid-template-columns: var(--split-cols);
+    column-gap: var(--split-gap);
   }
 }
 .lp .lp-golive-head,
@@ -366,11 +354,11 @@
   justify-content: space-between;
   gap: 12px;
   padding: 17px 24px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-soft);
 }
 .lp .lp-golive-title,
 .lp .lp-defaults-title {
-  font-size: 15.5px;
+  font-size: var(--fs-body);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--fg);
@@ -390,20 +378,20 @@
   flex: 1;
   flex-direction: column;
   align-items: flex-start;
-  gap: 22px;
-  padding: 26px 24px 24px;
+  gap: 24px;
+  padding: 28px 24px 24px;
 }
 .lp .lp-golive-state {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   letter-spacing: 0.04em;
 }
 .lp .lp-golive-mode {
   padding: 4px 11px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   color: var(--fg-3);
   transition:
     color 200ms ease-out,
@@ -411,20 +399,20 @@
     background-color 200ms ease-out;
 }
 .lp .lp-golive-mode[data-on="true"] {
-  border-color: rgba(255, 255, 255, 0.28);
+  border-color: var(--line-hover);
   color: var(--fg);
 }
 .lp .lp-golive[data-live="true"] .lp-golive-mode[data-on="true"] {
   border-color: transparent;
   background: var(--fg);
-  color: #000;
+  color: var(--bg);
 }
 .lp .lp-golive-arrow {
   color: var(--fg-3);
 }
 .lp .lp-golive-checks {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -433,43 +421,28 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 14px;
+  font-size: var(--fs-body-sm);
   color: var(--fg-2);
 }
 .lp .lp-golive-checks svg {
   flex-shrink: 0;
   color: var(--fg);
 }
-/* Spectrum's HoldToConfirm, re-dressed: a quiet pill that turns solid once live. */
+/* Spectrum's HoldToConfirm as the page's ghost pill (large), anchored to the
+   foot of the card; it turns solid once live. */
 .lp .lp-golive-btn {
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: var(--raised);
-  color: var(--fg);
-  font-size: 15px;
-  font-weight: 550;
-  letter-spacing: -0.01em;
-}
-@media (hover: hover) and (pointer: fine) {
-  .lp .lp-golive-btn:hover {
-    border-color: rgba(255, 255, 255, 0.26);
-    background: var(--raised-hi);
-  }
-}
-.lp .lp-golive .lp-golive-btn:focus-visible {
-  outline: 2px solid var(--fg);
-  outline-offset: 3px;
-  box-shadow: none;
+  margin-top: auto;
 }
 .lp .lp-golive[data-live="true"] .lp-golive-btn {
   border-color: transparent;
   background: var(--fg);
-  color: #000;
+  color: var(--bg);
 }
 .lp .lp-golive-note {
   margin: 0;
   padding: 16px 24px 18px;
-  border-top: 1px solid var(--line);
-  font-size: 14px;
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--fs-body-sm);
   line-height: 1.6;
   color: var(--fg-2);
   text-wrap: pretty;
@@ -483,9 +456,9 @@
 .lp .lp-default {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
-  padding: 13px 24px 14px;
+  padding: 12px 24px 13px;
 }
 .lp .lp-default:nth-child(n + 3) {
   border-top: 1px solid var(--line-soft);
@@ -493,11 +466,10 @@
 .lp .lp-default:nth-child(odd) {
   border-right: 1px solid var(--line-soft);
 }
-.lp .lp-default dt {
-  font-size: 11px;
-}
 .lp .lp-default dd {
-  font-size: 15px;
+  text-wrap: balance;
+  font-size: var(--fs-body-sm);
+  line-height: 20px;
   color: var(--fg);
 }
 @media (max-width: 639px) {
@@ -509,9 +481,6 @@
   }
   .lp .lp-default {
     padding: 12px 16px 13px;
-  }
-  .lp .lp-default dd {
-    font-size: 14px;
   }
 }
 @media (max-width: 379px) {
@@ -540,28 +509,25 @@
 .lp .lp-faq-card > [role="group"] > button {
   height: 34px;
 }
-.lp .lp-faq-card > [role="group"] > button:focus-visible {
-  border-radius: 999px;
-}
 .lp .lp-faq-card > [role="group"] > button > span:first-child[class*="absolute"] {
   background: var(--raised-hi);
   box-shadow: inset 0 0 0 1px var(--line);
 }
 .lp .lp-faq-card > [role="group"] > button > span:last-child {
-  font-size: 14px;
+  font-size: var(--fs-body-sm);
 }
 /* The questions (vendored markup: faq-tabs-card.tsx renders the accordion as the second child). */
 .lp .lp-faq-card > div:nth-child(2) {
   margin-top: 12px;
   border-color: var(--line);
-  border-radius: 20px;
+  border-radius: var(--r-frame);
   background: var(--card);
 }
 .lp .lp-faq-card > div:nth-child(2) > div + div {
   border-color: var(--line-soft);
 }
 .lp .lp-faq-card > div:nth-child(2) > div[class*="bg-neutral"] {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--tint);
 }
 .lp .lp-faq-card button[aria-expanded] {
   min-height: 60px;
@@ -574,7 +540,7 @@
 }
 .lp .lp-faq-card button[aria-expanded] > span:first-child {
   max-width: none;
-  font-size: 15px;
+  font-size: var(--fs-body);
   line-height: 22px;
   font-weight: 500;
 }
@@ -585,24 +551,16 @@
 .lp .lp-faq-card p {
   max-width: 60ch;
   padding: 0 22px 22px;
-  font-size: 14.5px;
+  font-size: var(--fs-body-sm);
   line-height: 1.6;
   color: var(--fg-2);
   text-wrap: pretty;
 }
-/* Its footer is the page's primary pill (sizes in the shared block above). */
+/* Its footer is the page's primary pill (landing.css), with the arrow drawn by
+   a mask. Under 900px the closing call to action follows right after, so the
+   footer steps aside there. */
 .lp .lp-faq-card > button:last-child {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  width: auto;
-  margin-top: 24px;
-  align-self: flex-start;
-  border: 0;
-  background: #f4f4f1;
-  color: #000;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  transition: background-color 150ms ease-out;
+  display: none;
 }
 .lp .lp-faq-card > button:last-child::after {
   content: "";
@@ -616,9 +574,6 @@
   transition: transform 200ms var(--ease-out);
 }
 @media (hover: hover) and (pointer: fine) {
-  .lp .lp-faq-card > button:last-child:hover {
-    background: #fff;
-  }
   .lp .lp-faq-card > button:last-child:hover::after {
     transform: translateX(3px);
   }
@@ -627,9 +582,9 @@
 @media (min-width: 900px) {
   .lp .lp-faq-card {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 34rem);
+    grid-template-columns: var(--split-cols);
     grid-template-rows: auto 1fr;
-    column-gap: 48px;
+    column-gap: var(--split-gap);
     align-items: start;
   }
   .lp .lp-faq-card > [role="group"] {
@@ -654,7 +609,7 @@
     text-align: left;
   }
   .lp .lp-faq-card > [role="group"] > button > span:last-child {
-    font-size: 15px;
+    font-size: var(--fs-body);
   }
   .lp .lp-faq-card > div:nth-child(2) {
     grid-column: 2;
@@ -662,6 +617,7 @@
     margin-top: 0;
   }
   .lp .lp-faq-card > button:last-child {
+    display: inline-flex;
     grid-column: 1;
     grid-row: 2;
     justify-self: start;
@@ -674,15 +630,11 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-block: clamp(128px, 18vh, 184px) clamp(104px, 14vh, 148px);
+  padding-block: calc(var(--section-space) + 32px) var(--section-space);
   text-align: center;
 }
 /* The mark on a painted glow: the hero's two brand lights, smaller. No blur,
    no animation; it paints once. */
-.lp .lp-close {
-  --close-glow-blue: rgba(61, 107, 255, 0.2);
-  --close-glow-magenta: rgba(255, 61, 203, 0.1);
-}
 .lp .lp-close-art {
   position: relative;
   isolation: isolate;
@@ -699,8 +651,8 @@
   height: 420px;
   transform: translate(-50%, -50%);
   background:
-    radial-gradient(32% 38% at 43% 47%, var(--close-glow-blue), transparent 70%),
-    radial-gradient(28% 34% at 59% 55%, var(--close-glow-magenta), transparent 70%);
+    radial-gradient(32% 38% at 43% 47%, var(--glow-blue), transparent 70%),
+    radial-gradient(28% 34% at 59% 55%, var(--glow-magenta), transparent 70%);
   pointer-events: none;
 }
 .lp .lp-close-mark {
@@ -713,8 +665,8 @@
   margin-inline: auto;
 }
 .lp .lp-close-lede {
-  margin-inline: auto;
   max-width: 40rem;
+  margin: 18px auto 0;
 }
 .lp .lp-close-cta {
   margin-top: 32px;
@@ -750,7 +702,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px 28px;
-  font-size: 14px;
+  font-size: var(--fs-body-sm);
   color: var(--fg-2);
 }
 .lp .lp-footer-links a {
@@ -774,13 +726,13 @@
 }
 .lp .lp-footer-legal p {
   max-width: 46rem;
-  font-size: 13px;
+  font-size: var(--fs-small);
   line-height: 1.6;
   color: var(--fg-3);
   text-wrap: pretty;
 }
 .lp .lp-footer-legal .lp-footer-copy {
-  font-size: 12px;
+  font-size: var(--fs-meta);
   letter-spacing: 0.04em;
   white-space: nowrap;
 }
@@ -799,24 +751,8 @@
   }
 }
 
-/* Phones: the primary pill goes wide, as it does in the hero. */
-@media (max-width: 639px) {
-  .lp .lp-close .lp-btn-hero,
-  .lp .lp-faq-card > button:last-child {
-    width: 100%;
-    max-width: 360px;
-    height: 52px;
-    justify-content: center;
-  }
-}
-
 /* ============================ forced colours ============================ */
 @media (forced-colors: active) {
-  .lp .lp-close .lp-btn-hero,
-  .lp .lp-faq-card > button:last-child,
-  .lp .lp-golive-btn {
-    border: 1px solid ButtonText;
-  }
   .lp .lp-faq-card [aria-pressed="true"],
   .lp .lp-golive-mode[data-on="true"] {
     outline: 2px solid Highlight;

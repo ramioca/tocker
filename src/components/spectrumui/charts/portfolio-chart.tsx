@@ -25,6 +25,7 @@ import {
   monotonePath,
   mulberry32,
   niceTicks,
+  sampleRows,
   useElementWidth,
   useHoverIndexKeys,
   usePrefersReducedMotion,
@@ -78,6 +79,12 @@ export interface PortfolioChartProps {
   height?: number;
   status?: ChartStatus;
   onRetry?: () => void;
+  /**
+   * Cap on the screen-reader table's rows. Longer views are sampled evenly (the latest
+   * point always kept), so a 90-day view reads as ~15 rows rather than 90 — and is not
+   * 450 hidden nodes on a marketing page. Omit for every point.
+   */
+  tableMaxRows?: number;
 }
 
 export function PortfolioChart({
@@ -90,6 +97,7 @@ export function PortfolioChart({
   height = 400,
   status = 'ready',
   onRetry,
+  tableMaxRows,
 }: PortfolioChartProps) {
   const reduce = usePrefersReducedMotion();
   const [wrapRef, width] = useElementWidth<HTMLDivElement>();
@@ -172,6 +180,8 @@ export function PortfolioChart({
   }, [showDrawdown, drawdowns, cx, ddY, ddTop, n]);
 
   const valueTicks = React.useMemo(() => niceTicks(dLo, dHi, 4), [dLo, dHi]);
+  // One label format per axis (see formatAxisPrice).
+  const axisScale = React.useMemo(() => Math.max(0, ...valueTicks.map(Math.abs)), [valueTicks]);
   const timeTicks = React.useMemo(() => {
     if (!n) return [];
     const want = Math.max(2, Math.min(6, Math.floor(plotW / 96)));
@@ -209,6 +219,11 @@ export function PortfolioChart({
     const x = ((clientX - box.left) / box.width) * w;
     setHoverIndex(Math.max(0, Math.min(n - 1, Math.floor((x - x0) / step))));
   };
+
+  const { stride: tableStride, indices: tableRows } = React.useMemo(
+    () => sampleRows(n, tableMaxRows),
+    [n, tableMaxRows],
+  );
 
   const uid = React.useId().replace(/:/g, '');
   const ready = width > 0;
@@ -252,15 +267,20 @@ export function PortfolioChart({
                 {formatMoney(active?.basis ?? 0, true)}
               </span>
             </span>
-            <span className="text-neutral-500 dark:text-neutral-400">
-              Drawdown{' '}
-              <span style={{ color: activeDd < -0.05 ? DOWN : undefined }} className="text-neutral-950 dark:text-white">
-                {activeDd.toFixed(2)}%
-              </span>
-            </span>
-            <span className="text-neutral-500 dark:text-neutral-400">
-              Max DD <span className="text-neutral-950 dark:text-white">{maxDrawdown.toFixed(2)}%</span>
-            </span>
+            {/* Drawdown figures belong with the drawdown pane. */}
+            {showDrawdown ? (
+              <>
+                <span className="text-neutral-500 dark:text-neutral-400">
+                  Drawdown{' '}
+                  <span style={{ color: activeDd < -0.05 ? DOWN : undefined }} className="text-neutral-950 dark:text-white">
+                    {activeDd.toFixed(2)}%
+                  </span>
+                </span>
+                <span className="text-neutral-500 dark:text-neutral-400">
+                  Max DD <span className="text-neutral-950 dark:text-white">{maxDrawdown.toFixed(2)}%</span>
+                </span>
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -341,7 +361,7 @@ export function PortfolioChart({
                     fill="currentColor"
                     className="tabular-nums"
                   >
-                    {formatAxisPrice(tick)}
+                    {formatAxisPrice(tick, axisScale)}
                   </text>
                 );
               })}
@@ -491,9 +511,9 @@ export function PortfolioChart({
       </div>
       </ChartState>
       <ChartDataTable
-        caption={`${label} — value, cost basis and drawdown by date`}
+        caption={`${label} — value, cost basis and drawdown by date${tableStride > 1 ? `, one row in ${tableStride}` : ''}`}
         columns={['Date', 'Value', 'Basis', 'Drawdown %']}
-        rows={view.map((p, i) => [DATE_SHORT.format(p.t), formatMoney(p.value), formatMoney(p.basis), drawdowns[i].toFixed(2)])}
+        rows={tableRows.map((i) => [DATE_SHORT.format(view[i].t), formatMoney(view[i].value), formatMoney(view[i].basis), drawdowns[i].toFixed(2)])}
       />
     </div>
   );

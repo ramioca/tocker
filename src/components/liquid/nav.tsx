@@ -36,7 +36,7 @@ export function Nav() {
             </a>
           ))}
         </nav>
-        <button type="button" className="lp-nav-cta" aria-label="Join the waitlist" onClick={open}>
+        <button type="button" className="lp-nav-cta lp-btn-ghost" aria-label="Join the waitlist" onClick={open}>
           <span className="lp-nav-cta-lg" aria-hidden>
             Join the waitlist
           </span>

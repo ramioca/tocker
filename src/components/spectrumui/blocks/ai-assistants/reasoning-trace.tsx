@@ -21,6 +21,13 @@ export interface ReasoningTraceProps {
   className?: string;
 }
 
+/**
+ * Seconds since `active` last turned on, in tenths; frozen when it turns off.
+ *
+ * Read off the wall clock rather than counted in ticks: a background tab throttles
+ * timers to once a second, which made a counted clock fall behind. While the tab is
+ * hidden it does not tick at all, and catches up on the first tick back.
+ */
 function useThinkingClock(active: boolean) {
   const [ds, setDs] = useState(0);
   const wasActive = useRef(active);
@@ -28,10 +35,55 @@ function useThinkingClock(active: boolean) {
     if (active && !wasActive.current) setDs(0);
     wasActive.current = active;
     if (!active) return;
-    const t = setInterval(() => setDs((d) => d + 1), 100);
-    return () => clearInterval(t);
+    const start = performance.now();
+    let timer: number | undefined;
+    const sync = () => {
+      window.clearInterval(timer);
+      timer = undefined;
+      if (document.visibilityState !== "visible") return;
+      timer = window.setInterval(() => setDs(Math.floor((performance.now() - start) / 100)), 100);
+    };
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", sync);
+    };
   }, [active]);
   return ds / 10;
+}
+
+/**
+ * "Thinking 3.4s" / "Thought for 5.2s". Its own component so the 10Hz clock re-renders
+ * these two spans and nothing else — not the trace's steps. It stays mounted across the
+ * switch, so a trace without `durationMs` still reports what it counted.
+ */
+function TraceLabel({ thinking, durationMs }: { thinking: boolean; durationMs?: number }) {
+  const elapsed = useThinkingClock(thinking);
+  const seconds = thinking
+    ? elapsed.toFixed(1)
+    : ((durationMs ?? elapsed * 1000) / 1000).toFixed(1);
+
+  if (!thinking) return <span className="font-medium">Thought for {seconds}s</span>;
+  // The highlight is an explicit colour: currentColor is transparent on clipped text.
+  return (
+    <>
+      <span
+        className="bg-clip-text font-medium text-transparent motion-reduce:!animate-none motion-reduce:!text-current"
+        style={{
+          backgroundImage:
+            "linear-gradient(90deg, #a3a3a3 35%, var(--foreground, #fafafa) 50%, #a3a3a3 65%)",
+          backgroundSize: "200% 100%",
+          animation: "su-shimmer-text 1.4s linear infinite",
+        }}
+      >
+        Thinking
+      </span>
+      <span className="font-mono text-[12px] tabular-nums text-neutral-400 dark:text-neutral-500">
+        {seconds}s
+      </span>
+    </>
+  );
 }
 
 export function ReasoningTrace({
@@ -44,15 +96,13 @@ export function ReasoningTrace({
 }: ReasoningTraceProps) {
   const [open, setOpen] = useState(defaultOpen);
   const thinking = status === "thinking";
-  const elapsed = useThinkingClock(thinking);
-
-  const seconds = thinking
-    ? elapsed.toFixed(1)
-    : ((durationMs ?? elapsed * 1000) / 1000).toFixed(1);
 
   return (
     <div className={cn("w-full max-w-[440px] text-[13px]", className)}>
-      <style dangerouslySetInnerHTML={{ __html: KEYFRAMES }} />
+      {/* Hoisted into <head> once by React (href + precedence), not one sheet per trace. */}
+      <style href="su-reasoning-trace" precedence="default">
+        {KEYFRAMES}
+      </style>
 
       <button
         type="button"
@@ -64,26 +114,7 @@ export function ReasoningTrace({
           aria-hidden
           className={cn("size-3.5", thinking && "motion-safe:animate-pulse")}
         />
-        {thinking ? (
-          <span
-            className="bg-clip-text font-medium text-transparent motion-reduce:!animate-none motion-reduce:!text-current"
-            style={{
-              backgroundImage:
-                "linear-gradient(90deg, #a3a3a3 35%, currentColor 50%, #a3a3a3 65%)",
-              backgroundSize: "200% 100%",
-              animation: "su-shimmer-text 1.4s linear infinite",
-            }}
-          >
-            Thinking
-          </span>
-        ) : (
-          <span className="font-medium">Thought for {seconds}s</span>
-        )}
-        {thinking && (
-          <span className="font-mono text-[12px] tabular-nums text-neutral-400 dark:text-neutral-500">
-            {seconds}s
-          </span>
-        )}
+        <TraceLabel thinking={thinking} durationMs={durationMs} />
         <ChevronDown
           aria-hidden
           className={cn(
