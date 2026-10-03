@@ -150,7 +150,6 @@ function scoreStep(s: {
   };
 }
 
-const proposed = `Sent for your approval · paper · expires in ${SAMPLE_PROPOSAL_TTL_MIN} min.`;
 const RADAR_READS = [
   { id: LAUNCH_RADARS.solana, n: 1 },
   { id: LAUNCH_RADARS.base, n: 1 },
@@ -224,26 +223,12 @@ const STEPS: Step[] = [
     done: 5,
     reads: [],
     call: {
-      id: "trade-tibbir",
-      name: "place_trade",
-      args: { token: "TIBBIR", side: "buy", amountUsd: SAMPLE_TRADE_USD },
-      result: proposed,
+      id: "trade",
+      name: `place_trade ×${SAMPLE_BUYS.length}`,
+      args: { tokens: SAMPLE_BUYS.map((r) => r.coin), side: "buy", amountUsd: SAMPLE_TRADE_USD },
+      result: `${countWord(SAMPLE_BUYS.length).replace(/^./, (c) => c.toUpperCase())} buys sent for your approval · paper · each expires in ${SAMPLE_PROPOSAL_TTL_MIN} min.`,
       status: "success",
       startedAt: 7400,
-      completedAt: 7800,
-    },
-  },
-  {
-    start: 4,
-    done: 5,
-    reads: [],
-    call: {
-      id: "trade-sol",
-      name: "place_trade",
-      args: { token: "SOL", side: "buy", amountUsd: SAMPLE_TRADE_USD },
-      result: proposed,
-      status: "success",
-      startedAt: 7800,
       completedAt: 8200,
     },
   },
