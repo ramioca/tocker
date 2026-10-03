@@ -124,7 +124,9 @@ export function HeroRun() {
             ))}
           </div>
 
-          <p className="lp-hr-more lp-mono">+ {SAMPLE_OTHER_SCORES.length} more scored below your floor</p>
+          <p className="lp-hr-more lp-mono">
+            + {SAMPLE_OTHER_SCORES.length} more <span className="lp-hr-roomy">scored </span>below your floor
+          </p>
 
           <div className="lp-hr-foot lp-mono">
             <span>Paper · {SAMPLE_BUYS.length} buys waiting for your OK</span>

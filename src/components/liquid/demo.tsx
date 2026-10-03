@@ -22,7 +22,18 @@ export function ApprovalDemo() {
   const [ask, setAsk] = useState(true);
   const outcome = !ask ? "auto" : decision;
   const result = outcome ? RESULT[outcome] : null;
-  const waiting = !ask ? "none waiting" : decision ? "1 waiting · SOL" : "2 waiting · TIBBIR first";
+  // Which one waits, unless a phone needs the room.
+  const waiting = !ask ? (
+    "none waiting"
+  ) : decision ? (
+    <>
+      1 waiting<span className="lp-cx-wide"> · SOL</span>
+    </>
+  ) : (
+    <>
+      2 waiting<span className="lp-cx-wide"> · TIBBIR first</span>
+    </>
+  );
 
   // The pressed button is hidden when the card turns over; move focus to
   // whatever replaces it so keyboard users keep their place.

@@ -332,6 +332,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 16px 20px 6px;
+  white-space: nowrap;
 }
 
 /* Rows: logo | name over chain | score bar | score | verdict. */
@@ -529,8 +530,12 @@
   }
 }
 @media (max-width: 359px) {
-  .lp-hr-who > .lp-hr-meta {
+  .lp-hr-who > .lp-hr-meta,
+  .lp-hr-roomy {
     display: none;
+  }
+  .lp-hr-listhead .lp-label {
+    letter-spacing: 0.06em;
   }
 }
 

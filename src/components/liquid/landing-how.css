@@ -664,7 +664,9 @@
   }
 }
 
-@media (max-width: 359px) {
+/* Small phones: the receipt's names and prices a step smaller, so the
+   longest source name fits whole. */
+@media (max-width: 389px) {
   .lp-cx-receipt {
     padding-right: 12px;
     column-gap: 8px;
@@ -678,6 +680,12 @@
   }
   .lp-cx-prices > li {
     gap: 8px;
+  }
+}
+/* The narrowest: the counts go; the name and the price stay whole. */
+@media (max-width: 359px) {
+  .lp-cx-for {
+    display: none;
   }
 }
 
