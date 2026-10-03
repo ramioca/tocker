@@ -4,6 +4,8 @@ import { formatUsd } from "@/components/common/format";
 import { PortfolioChart, type PortfolioPoint } from "@/components/spectrumui/charts/portfolio-chart";
 import { Sparkline } from "@/components/spectrumui/charts/sparkline-chart";
 import { StatCards, type StatCardData } from "@/components/spectrumui/charts/stat-cards";
+import { TokenIcon } from "@/components/common/token-icon";
+import { COINS, type CoinName } from "./coins";
 import { DEFAULT_DATA_BUDGET_USD } from "./signals-data";
 
 /**
@@ -84,7 +86,7 @@ function path(seed: number, drift: number) {
   return walk.map((w, i) => ({ i, value: 1 + (9 * (w - lo)) / (hi - lo || 1) }));
 }
 
-const POSITIONS = [
+const POSITIONS: { token: CoinName; chain: string; pnl: string; up: boolean; held: string; series: ReturnType<typeof path> }[] = [
   { token: "TIBBIR", chain: "BASE", pnl: "+$27.90", up: true, held: "3h", series: path(11, 0.35) },
   { token: "SUPER INU", chain: "SOL", pnl: "+$21.75", up: true, held: "52m", series: path(23, 0.25) },
   { token: "SOL", chain: "SOL", pnl: "−$11.40", up: false, held: "1h", series: path(41, -0.25) },
@@ -133,6 +135,7 @@ export function PerformancePanel() {
         {POSITIONS.map((p) => (
           <div key={p.token} className="lp-pos" aria-hidden>
             <span className="lp-pos-name">
+              <TokenIcon token={COINS[p.token]} size="sm" className="lp-pos-logo" />
               {p.token} <span className="lp-mono lp-pos-chain">{p.chain}</span>
             </span>
             {/* Line, not `filled`: the registry draws its Area inside a LineChart, which Recharts never renders. */}
