@@ -111,12 +111,15 @@
 .lp .lp-cx-trk .dark\:bg-white\/\[0\.1\] {
   background-color: var(--line);
 }
-/* Phones: Spectrum's minimal tracker, a bar and the current stage. */
+/* Phones: Spectrum's minimal tracker, a bar and the current stage. The stage
+   name keeps the width of the longest one ("You approve", 11 characters), so
+   the bar never moves while the replay changes the name. */
 .lp .lp-cx-trk-min > div {
   gap: 14px;
 }
 .lp .lp-cx-trk-min > div > span:nth-child(2) {
   order: -1;
+  min-width: calc(11 * (1ch + var(--ls-label)));
   font-family: var(--font-mono);
   font-size: var(--fs-label);
   letter-spacing: var(--ls-label);
