@@ -277,3 +277,17 @@
     display: none;
   }
 }
+
+/* Token logos next to real coin names. */
+.lp .lp-pos-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.lp .lp-pos-logo,
+.lp .lp-float-logo {
+  width: 26px;
+  height: 26px;
+  background-color: var(--raised);
+}

@@ -8,6 +8,8 @@ import { NumberTicker } from "@/components/spectrumui/number-ticker";
 import { TextStates } from "@/components/spectrumui/text-states";
 import { useTypewriter } from "@/components/spectrumui/use-typewriter";
 import { BrandHeroMark } from "./brand";
+import { TokenIcon } from "@/components/common/token-icon";
+import { COINS } from "./coins";
 import { LiveIsland } from "./live-island";
 import { LANDING_SOURCES } from "./signals-data";
 import { useWaitlist } from "./waitlist";
@@ -177,9 +179,8 @@ function DecisionCard() {
         <span className="lp-float-live">sample run</span>
       </div>
       <div className="lp-float-token">
-        <span className="lp-float-glyph">
-          <TextStates text={d.token[0]} />
-        </span>
+        {/* Keyed so the new logo swaps in with the name rather than flashing the old one. */}
+        <TokenIcon key={d.token} token={COINS[d.token]} size="sm" className="lp-float-logo" />
         <TextStates text={d.token} className="lp-float-name" />
         <span className="lp-mono lp-float-chain">
           <TextStates text={d.chain} />
