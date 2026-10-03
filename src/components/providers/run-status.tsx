@@ -149,7 +149,7 @@ export function RunStatusProvider({ children }: { children: ReactNode }) {
 
   const clearRun = useCallback(() => setWatched(null), []);
 
-  // Signed-out visitors (the landing page) never poll.
+  // Signed-out visitors never poll.
   const { session } = useSession();
   const queryClient = useQueryClient();
   const proposalsQuery = useQuery({

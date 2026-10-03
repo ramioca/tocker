@@ -51,6 +51,7 @@ import {
 } from "@/components/ui/dialog";
 import type { AgentConfig } from "@/db/schema";
 import type { Chain, DataSourceInfo, LlmKeyRow } from "@/server/types";
+import { stickyActionbarRef } from "@/hooks/root-flag";
 
 /**
  * One page, not seven gates. Only three things are truly required — a name, a
@@ -620,6 +621,9 @@ export function AgentBuilder({
           decision is always in reach, above the mobile tab bar on phones. */}
       <div
         data-sticky-actionbar
+        // Holds the flag on <html> that adds this bar to the scroll padding (globals.css) and
+        // lifts the toasts above it on a phone.
+        ref={stickyActionbarRef}
         // overflow-x-clip: the chrome ring's glow canvas is wider than the button and,
         // at the right edge of a phone, pushed the whole page 28px sideways.
         // py-2 on a phone: with the text on one line the 48px button sets the height, and

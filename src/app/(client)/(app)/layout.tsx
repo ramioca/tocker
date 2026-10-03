@@ -9,6 +9,18 @@ import { getKillSwitch, type KillSwitchState } from "@/lib/security/kill-switch"
 const TRADING_RUNS: KillSwitchState = { paused: false, pausedAt: null };
 
 /**
+ * Keyboard focus and anchor jumps must not land under the chrome: the sticky top bar
+ * (3.5rem) and, on phones, the fixed tab bar (the bar is md:hidden, so the bottom value
+ * is too). Rendered by this layout rather than written in globals.css so it exists
+ * exactly while the shell does — server-rendered, so from the first paint (a deep link's
+ * initial scroll included), and gone on a client navigation out to the landing page or
+ * sign-in. A sticky sub-nav or action bar adds to it from globals.css; those selectors
+ * carry an attribute, so they outrank this one in any order.
+ */
+const SHELL_SCROLL_PADDING =
+  "html{scroll-padding-top:4rem}@media (max-width:767px){html{scroll-padding-bottom:calc(4.25rem + env(safe-area-inset-bottom))}}";
+
+/**
  * The account-wide pause has to be visible from every page, not just the Security tab —
  * a user who pauses and forgets would otherwise see agents that look active and never
  * trade. It is a banner, so a failed read hides it rather than taking the app down.
@@ -46,17 +58,23 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     killSwitchFor(userId),
   ]);
 
+  // The client providers (auth, the query cache, run status, tooltips) come from the
+  // parent `src/app/(client)/layout.tsx`, which /login shares, so signing in and moving
+  // into the app keeps one Privy instance and one query cache.
   return (
-    <AppShell
-      unreadCount={unreadCount}
-      index={index}
-      ownedSlugs={mine.map((agent) => agent.slug)}
-      tradingPaused={killSwitch.paused}
-      pausedAt={killSwitch.pausedAt}
-    >
-      {children}
-      {/* First-run only, so the modal's code loads behind a gate rather than on every page. */}
-      <OnboardingGate ownedAgentCount={mine.length} />
-    </AppShell>
+    <>
+      <style>{SHELL_SCROLL_PADDING}</style>
+      <AppShell
+        unreadCount={unreadCount}
+        index={index}
+        ownedSlugs={mine.map((agent) => agent.slug)}
+        tradingPaused={killSwitch.paused}
+        pausedAt={killSwitch.pausedAt}
+      >
+        {children}
+        {/* First-run only, so the modal's code loads behind a gate rather than on every page. */}
+        <OnboardingGate ownedAgentCount={mine.length} />
+      </AppShell>
+    </>
   );
 }

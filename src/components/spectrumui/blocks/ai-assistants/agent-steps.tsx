@@ -33,7 +33,11 @@ function duration(step: ToolCall) {
 export function AgentSteps({ steps, variant = 'Default', className }: AgentStepsProps) {
   return (
     <ol className={cn('w-full max-w-[480px] text-[13px]', className)}>
-      <style dangerouslySetInnerHTML={{ __html: KEYFRAMES }} />
+      {/* Hoisted into <head> once by React (href + precedence) — also keeps the <ol>'s
+          children to <li>s. */}
+      <style href="su-agent-steps" precedence="default">
+        {KEYFRAMES}
+      </style>
       {steps.map((step, index) => (
         <StepRow
           key={step.id}
@@ -73,45 +77,22 @@ function StepRow({ step, last, compact }: { step: ToolCall; last: boolean; compa
       </div>
 
       <div className={cn('min-w-0 flex-1', last ? 'pb-0' : compact ? 'pb-2.5' : 'pb-4')}>
-        <button
-          type="button"
-          onClick={expandable ? () => setOpen((o) => !o) : undefined}
-          aria-expanded={expandable ? open : undefined}
-          className={cn(
-            'flex w-full items-center gap-2 text-left',
-            expandable &&
-              'rounded transition-transform duration-150 active:scale-[0.995] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-neutral-400',
-          )}
-        >
-          <span className="font-mono text-[12px] font-medium text-neutral-800 dark:text-neutral-200">
-            {step.name}
-          </span>
-          {step.status === 'running' && (
-            <span className="font-mono text-[10.5px] uppercase tracking-wide text-sky-600 dark:text-sky-400">
-              running
-            </span>
-          )}
-          {step.status === 'pending' && (
-            <span className="font-mono text-[10.5px] uppercase tracking-wide text-neutral-400 dark:text-neutral-600">
-              queued
-            </span>
-          )}
-          <span className="ml-auto flex shrink-0 items-center gap-1.5">
-            {elapsed && (
-              <span className="font-mono text-[10.5px] tabular-nums text-neutral-400 dark:text-neutral-600">
-                {elapsed}
-              </span>
-            )}
-            {expandable && (
-              <ChevronDown
-                className={cn(
-                  'size-3 text-neutral-400 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]',
-                  open && 'rotate-180',
-                )}
-              />
-            )}
-          </span>
-        </button>
+        {/* A row with nothing to open is not a control: a button there was a tab stop
+            that did nothing. */}
+        {expandable ? (
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            className="flex w-full items-center gap-2 rounded text-left transition-transform duration-150 active:scale-[0.995] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-neutral-400"
+          >
+            <StepHead step={step} elapsed={elapsed} expandable open={open} />
+          </button>
+        ) : (
+          <div className="flex w-full items-center gap-2 text-left">
+            <StepHead step={step} elapsed={elapsed} expandable={false} open={false} />
+          </div>
+        )}
 
         {!compact && step.args && (
           <p className="mt-1 truncate font-mono text-[11px] text-neutral-400 dark:text-neutral-600">
@@ -124,7 +105,9 @@ function StepRow({ step, last, compact }: { step: ToolCall; last: boolean; compa
             className="grid transition-[grid-template-rows] duration-[240ms] ease-[cubic-bezier(0.32,0.72,0,1)]"
             style={{ gridTemplateRows: open ? '1fr' : '0fr' }}
           >
-            <div className="overflow-hidden">
+            {/* Closed, the result is collapsed to nothing; inert keeps it out of
+                the accessibility tree too, matching aria-expanded. */}
+            <div className="overflow-hidden" inert={!open || undefined}>
               {step.result && (
                 <p className="mt-2 rounded-lg bg-black/[0.03] px-2.5 py-2 text-[12px] leading-[1.6] text-neutral-600 dark:bg-white/[0.04] dark:text-neutral-400">
                   {step.result}
@@ -162,6 +145,51 @@ function StepRow({ step, last, compact }: { step: ToolCall; last: boolean; compa
         )}
       </div>
     </li>
+  );
+}
+
+function StepHead({
+  step,
+  elapsed,
+  expandable,
+  open,
+}: {
+  step: ToolCall;
+  elapsed: string | null;
+  expandable: boolean;
+  open: boolean;
+}) {
+  return (
+    <>
+      <span className="font-mono text-[12px] font-medium text-neutral-800 dark:text-neutral-200">
+        {step.name}
+      </span>
+      {step.status === 'running' && (
+        <span className="font-mono text-[10.5px] uppercase tracking-wide text-sky-600 dark:text-sky-400">
+          running
+        </span>
+      )}
+      {step.status === 'pending' && (
+        <span className="font-mono text-[10.5px] uppercase tracking-wide text-neutral-400 dark:text-neutral-600">
+          queued
+        </span>
+      )}
+      <span className="ml-auto flex shrink-0 items-center gap-1.5">
+        {elapsed && (
+          <span className="font-mono text-[10.5px] tabular-nums text-neutral-400 dark:text-neutral-600">
+            {elapsed}
+          </span>
+        )}
+        {expandable && (
+          <ChevronDown
+            className={cn(
+              'size-3 text-neutral-400 transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]',
+              open && 'rotate-180',
+            )}
+          />
+        )}
+      </span>
+    </>
   );
 }
 

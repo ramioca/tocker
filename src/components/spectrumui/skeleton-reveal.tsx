@@ -59,7 +59,10 @@ export function SkeletonReveal({
 
   return (
     <>
-      <style>{CSS}</style>
+      {/* Hoisted into <head> once by React (href + precedence), not one sheet per instance. */}
+      <style href="t-skel" precedence="default">
+        {CSS}
+      </style>
       <div
         ref={ref}
         className={cn('t-skel', !loading && 'is-revealed', className)}

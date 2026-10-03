@@ -28,16 +28,21 @@ export function BrandMark({ size = 28, className, alt = "" }: { size?: number; c
   );
 }
 
-export function BrandHeroMark({ width = 360, className }: { width?: number; className?: string }) {
+/**
+ * The large mark, as art. It sits below the fold (the footer close), so it loads
+ * lazily and never competes with the hero for bandwidth.
+ */
+export function BrandHeroMark({ width = 360, className, alt = "" }: { width?: number; className?: string; alt?: string }) {
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- vector hero art, loaded eagerly
+    // eslint-disable-next-line @next/next/no-img-element -- vector art; next/image adds nothing here
     <img
       src={LG_SRC}
-      alt=""
+      alt={alt}
       width={width}
       height={Math.round(width / LG_RATIO)}
       className={className}
-      fetchPriority="high"
+      loading="lazy"
+      decoding="async"
       draggable={false}
     />
   );

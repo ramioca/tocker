@@ -18,6 +18,7 @@ import { FeedSkeleton } from "./feed-skeleton";
 import { fetchFeedPage, type FeedPage } from "./feed-actions";
 import { useSaveLike, type LikeState } from "./use-save-like";
 import type { FeedItem } from "@/server/types";
+import { stickySubnavRef } from "@/hooks/root-flag";
 
 type Scope = "global" | "following";
 
@@ -156,7 +157,12 @@ export function FeedList({
     <div className="px-4 sm:px-5">
       {/* The only blurred surface in the feed viewport: the cards underneath are
           `.glass`, which carries the same tint with no backdrop-filter. */}
-      <div data-sticky-subnav className="glass-bar sticky top-14 z-20 -mx-4 border-b border-b-[var(--glass-hairline)] px-4 py-2 sm:-mx-5 sm:px-5">
+      <div
+        data-sticky-subnav
+        // Holds the flag on <html> that adds this bar to the scroll padding (globals.css),
+        // so a focused card scrolls clear of it.
+        ref={stickySubnavRef}
+        className="glass-bar sticky top-14 z-20 -mx-4 border-b border-b-[var(--glass-hairline)] px-4 py-2 sm:-mx-5 sm:px-5">
         <Tabs value={scope} onValueChange={(value) => selectScope(value as Scope)}>
           <TabsList variant="line" className="h-8">
             <TabsTrigger value="global" className="px-3">

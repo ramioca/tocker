@@ -1,288 +1,410 @@
 /* ============================================================================
- * Landing: "Out in the open" public feed (feed.tsx).
- * Ink cards on the night ground, neon only as signal (side chips, live dot,
- * follow pill), green/red only on realised P&L. Hover is gated to fine
- * pointers, transitions name their properties, reduced motion is still.
+ * Landing 02 — Feed (feed.tsx).
+ * Two near-black frames on the black ground: the feed (Global / Following
+ * tabs, posts split by hairlines) and the agent it can follow. Monochrome
+ * throughout; the only colour is green/red on a realised result. Radii: 20 on
+ * frames, 12 on inner blocks, 999 on pills. Hover is gated to fine pointers,
+ * transitions name their properties, reduced motion is still.
  * ========================================================================== */
 
-.lp-feed {
-  --lpf-radius: 20px;
-}
-
+/* One column, never wider than the content box: the bar's tabs and label
+   would otherwise size an auto track past the edge on the narrowest phones. */
 .lpf-grid {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 @media (min-width: 960px) {
   .lpf-grid {
-    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
     gap: 20px;
     align-items: start;
   }
-}
-.lpf-col {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-}
-.lpf-aside {
-  gap: 16px;
-}
-@media (min-width: 960px) {
+  /* The profile rides along beside a feed that is taller than it is. */
   .lpf-aside {
-    padding-top: 34px; /* aligns with the first post, under the feed label */
     position: sticky;
     top: 24px;
-    align-self: start;
+  }
+}
+/* Wide: the page's split columns, so the profile sits under the lede. */
+@media (min-width: 1100px) {
+  .lpf-grid {
+    grid-template-columns: var(--split-cols);
+    column-gap: var(--split-gap);
   }
 }
 
-/* -------- feed label -------- */
-.lpf-label {
+/* -------- frames (the shared .lp-frame) and their header bars -------- */
+.lpf-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 22px;
-  font-size: 11.5px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--fg-2);
+  justify-content: space-between;
+  gap: 12px;
+  height: 52px;
+  padding-inline: 10px 18px;
+  border-bottom: 1px solid var(--line-soft);
 }
-.lpf-label-note {
-  margin-left: auto;
-  letter-spacing: 0.06em;
+.lpf-agent .lpf-bar {
+  padding-inline: 20px;
+}
+.lpf-bar .lp-label {
+  white-space: nowrap;
+}
+
+/* -------- tabs: two equal cells and one sliding pill -------- */
+.lpf-tabs {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 3px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-soft);
+  background: var(--tint);
+}
+.lpf-tab-pill {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--raised-hi);
+  transition: transform 220ms var(--ease-out);
+}
+.lpf-tabs[data-at="1"] .lpf-tab-pill {
+  transform: translateX(100%);
+}
+.lp .lpf-tab {
+  position: relative;
+  height: 32px;
+  padding-inline: 14px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: none;
+  font-size: var(--fs-small);
+  font-weight: 500;
   color: var(--fg-3);
+  transition: color 150ms ease-out;
 }
-.lpf-live {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--neon-cyan, #3fd2ff);
-  box-shadow: 0 0 0 3px rgba(63, 210, 255, 0.16), 0 0 12px rgba(63, 210, 255, 0.6);
+.lp .lpf-tab[aria-selected="true"] {
+  color: var(--fg);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp .lpf-tab[aria-selected="false"]:hover {
+    color: var(--fg-2);
+  }
+}
+.lp .lpf-tab:focus-visible {
+  outline-offset: 1px;
+}
+
+.lpf-panel:focus {
+  outline: none;
+}
+/* Following from the empty tab moves focus here; a keyboard user still sees
+   where it went (a pointer click never matches :focus-visible). */
+.lp .lpf-panel:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: -2px;
+  border-radius: 0 0 var(--r-frame) var(--r-frame);
+}
+.lpf-panel-in {
+  animation: lpf-swap 200ms var(--ease-out) both;
+}
+@keyframes lpf-swap {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 
 /* -------- posts -------- */
 .lpf-posts {
-  display: grid;
-  gap: 12px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.lp-card.lpf-post,
-.lp-card.lpf-agent,
-.lp-card.lpf-heat {
-  border-radius: var(--lpf-radius);
-  overflow: visible; /* share fan and avatar tooltips may leave the card */
+.lpf-posts > li + li {
+  border-top: 1px solid var(--line-soft);
 }
 .lpf-post {
-  padding: 16px 18px 10px;
-  transition: border-color 180ms var(--ease-out);
-}
-@media (hover: hover) and (pointer: fine) {
-  .lpf-post:hover {
-    border-color: rgba(244, 244, 241, 0.16);
-  }
-}
-
-.lpf-post-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  column-gap: 12px;
+  padding: 20px 20px 12px;
 }
 .lpf-who {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 7px;
+  gap: 2px 8px;
   min-width: 0;
-  font-size: 14px;
 }
-.lpf-name {
+.lp .lpf-name {
+  margin: 0;
+  font-size: var(--fs-body-sm);
   font-weight: 600;
+  line-height: 1.3;
   letter-spacing: -0.01em;
+  color: var(--fg);
 }
 .lpf-handle {
-  font-size: 13px;
+  font-size: var(--fs-small);
   color: var(--fg-3);
+}
+/* Mode, dot and time travel together, so a wrap never strands one of them. */
+.lpf-when {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
 }
 .lpf-sep {
   color: var(--fg-3);
-  opacity: 0.6;
 }
+.lpf-ago {
+  font-size: var(--fs-meta);
+  color: var(--fg-3);
+}
+/* The page's small mono tag (20px, 8px in, a hairline); trade states are
+   caps at 0.1em. */
 .lpf-mode {
   display: inline-flex;
   align-items: center;
-  height: 18px;
-  padding-inline: 6px;
-  border-radius: 5px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  gap: 5px;
+  height: 20px;
+  padding-inline: 8px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--line);
-  color: var(--fg-2);
+  font-size: var(--fs-label);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-3);
 }
-.lpf-mode-live {
-  border-color: rgba(139, 124, 255, 0.4);
-  background: var(--violet-tint, rgba(139, 124, 255, 0.12));
-  color: var(--violet, #8b7cff);
+.lpf-mode[data-mode="live"] {
+  border-color: var(--line-strong);
+  color: var(--fg);
+}
+.lpf-mode-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
+/* The fill: token on the left, side and size on the right, the result under. */
+.lpf-trade,
+.lpf-note,
+.lpf-actions {
+  grid-column: 2;
+}
 .lpf-trade {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
   margin-top: 12px;
-  margin-left: 48px;
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: 12px 14px;
+  border-radius: var(--r-inner);
   border: 1px solid var(--line-soft);
   background: var(--raised);
 }
-.lpf-trade-top {
-  display: flex;
+.lpf-asset {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.lpf-symbol {
+  overflow: hidden;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lpf-chain {
+  font-size: var(--fs-meta);
+  color: var(--fg-3);
+}
+.lpf-fill {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+.lpf-fill-top {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 .lpf-side {
   display: inline-flex;
   align-items: center;
   height: 20px;
-  padding-inline: 6px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.lpf-side-buy {
-  background: rgba(63, 210, 255, 0.12);
-  color: var(--neon-cyan, #3fd2ff);
-}
-.lpf-side-sell {
-  background: rgba(255, 61, 203, 0.12);
-  color: var(--neon-magenta, #ff3dcb);
-}
-.lpf-token {
-  display: inline-grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  font-size: 10px;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.92);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
-}
-.lpf-symbol {
-  font-size: 14px;
-  font-weight: 600;
-}
-.lpf-chain {
-  margin-left: auto;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  padding-inline: 7px;
-  border-radius: 6px;
+  padding-inline: 8px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--line);
-  font-size: 10.5px;
-  color: var(--fg-2);
-}
-.lpf-trade-nums {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 0;
-  margin-top: 8px;
-  font-size: 13px;
-}
-.lpf-trade-nums > * + *::before {
-  content: "·";
-  margin-inline: 8px;
-  color: var(--fg-3);
-}
-.lpf-strong {
-  color: var(--fg);
+  font-size: var(--fs-label);
   font-weight: 500;
-}
-.lpf-dim {
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--fg-2);
 }
-.lpf-pos {
-  color: var(--pos);
+.lpf-side[data-side="buy"] {
+  border-color: transparent;
+  background: var(--track);
+  color: var(--fg);
 }
-.lpf-neg {
-  color: var(--neg);
+.lpf-size {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--fg);
 }
-.lpf-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  font-size: 11px;
-  color: var(--fg-3);
+.lpf-result {
+  line-height: 1;
 }
-.lpf-score {
-  display: inline-grid;
-  place-items: center;
-  min-width: 26px;
-  height: 18px;
-  padding-inline: 5px;
-  border-radius: 5px;
-  background: var(--violet-tint, rgba(139, 124, 255, 0.12));
-  color: var(--violet, #8b7cff);
-  font-weight: 600;
-}
-.lpf-exit {
-  padding: 1px 6px;
-  border-radius: 5px;
-  border: 1px solid var(--line);
+.lp .lpf-pnl {
+  font-size: var(--fs-small);
+  white-space: nowrap;
 }
 
 .lpf-note {
-  margin: 10px 0 0 48px;
+  margin: 12px 0 0;
   padding-left: 12px;
-  border-left: 2px solid rgba(139, 124, 255, 0.45);
-  font-size: 14px;
+  border-left: 2px solid var(--line-strong);
+  font-size: var(--fs-body-sm);
   line-height: 1.5;
   color: rgba(244, 244, 241, 0.82);
   text-wrap: pretty;
 }
 
+/* -------- like / comments / share, flush on the frame -------- */
 .lpf-actions {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin: 10px 0 0 48px;
+  margin-top: 12px;
   padding-top: 8px;
   border-top: 1px solid var(--line-soft);
 }
-/* Spectrum's buttons ship neutral chrome; sit them flush on the ink card. */
-.lpf-actions .lpf-like {
-  border-color: transparent;
-  background: transparent;
+.lp .lpf-like {
+  height: 36px;
+  margin-left: -8px;
   padding-inline: 8px;
-}
-.lpf-actions .lpf-share > button {
   border-color: transparent;
   background: transparent;
+  color: var(--fg-3);
+  font-family: var(--font-geist-mono), "Geist Mono", ui-monospace, monospace;
+  font-size: var(--fs-small);
+  font-weight: 400;
 }
-.lpf-actions .lpf-share [role="menu"] > button {
-  background: var(--raised-hi);
-  border-color: var(--line);
+.lp .lpf-like[aria-pressed="true"] {
+  border-color: transparent;
+  background: transparent;
+  color: var(--fg);
 }
-.lpf-reply {
+/* The filled heart and its burst ring: off-white, not rose. */
+.lp .lpf-like svg[fill="currentColor"] {
+  color: var(--fg);
+}
+.lp .lpf-like .border-rose-400 {
+  border-color: rgba(244, 244, 241, 0.5);
+}
+.lpf-comments {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
+  height: 36px;
   padding-inline: 8px;
-  font-size: 12px;
+  font-size: var(--fs-small);
   color: var(--fg-3);
+}
+.lp .lpf-share {
+  margin-left: auto;
+  margin-right: -6px;
+}
+.lp .lpf-share > button {
+  width: 36px;
+  height: 36px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--fg-3);
+}
+.lp .lpf-share [role="menu"] button {
+  border-color: var(--line);
+  background: var(--raised-hi);
+  color: var(--fg);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp .lpf-like:hover,
+  .lp .lpf-share > button:hover {
+    border-color: transparent;
+    background: var(--tint);
+    color: var(--fg);
+  }
+}
+
+/* Touch: tabs, like and share keep their size with a 44px target. */
+@media (pointer: coarse) {
+  .lp .lpf-share > button {
+    position: relative;
+  }
+  .lp .lpf-tab::after,
+  .lp .lpf-like::after,
+  .lp .lpf-share > button::after {
+    content: "";
+    position: absolute;
+    inset: -4px 0;
+  }
+  .lp .lpf-tab::after {
+    inset: -6px 0;
+  }
+}
+
+/* -------- Following, before anyone is followed -------- */
+.lpf-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 64px 24px;
+  text-align: center;
+}
+.lpf-empty-title {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.lpf-empty-body {
+  max-width: 32ch;
+  font-size: var(--fs-body-sm);
+  line-height: 1.5;
+  color: var(--fg-2);
+}
+.lpf-empty .lpf-follow {
+  margin-top: 10px;
+}
+
+/* -------- follow: the page's ghost pill; followed reads as a quiet fill,
+   never Spectrum's rose unfollow tint -------- */
+.lp .lpf-follow {
+  flex-shrink: 0;
+}
+.lp .lpf-follow[aria-pressed="true"] {
+  border-color: var(--line);
+  background: var(--tint);
+  color: var(--fg-2);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp .lpf-follow[aria-pressed="true"]:hover {
+    border-color: var(--line-strong);
+    color: var(--fg);
+  }
 }
 
 /* -------- agent spotlight -------- */
-.lpf-agent {
+.lpf-agent-body {
   padding: 20px;
 }
 .lpf-agent-head {
@@ -292,126 +414,180 @@
 }
 .lpf-agent-id {
   display: grid;
-  gap: 3px;
-  min-width: 0;
   flex: 1;
+  gap: 4px;
+  min-width: 0;
 }
-.lpf-agent-name {
+.lp .lpf-agent-name {
+  margin: 0;
+  overflow: hidden;
   font-size: 18px;
-  font-weight: 650;
+  font-weight: 600;
+  line-height: 1.2;
   letter-spacing: -0.02em;
-}
-.lpf-agent-id .lpf-handle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-/* The follow pill: solid neon-violet with near-black type, outline once followed. */
-.lpf-agent .lpf-follow[aria-pressed="false"] {
-  background: var(--violet, #8b7cff);
-  color: var(--bg, #050507);
-  border-color: transparent;
-}
-.lpf-agent .lpf-follow[aria-pressed="true"] {
-  background: var(--raised);
-  border-color: var(--line);
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--fg);
 }
-@media (hover: hover) and (pointer: fine) {
-  .lpf-agent .lpf-follow[aria-pressed="false"]:hover {
-    background: #9d90ff;
-  }
+.lpf-agent-by {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: var(--fs-small);
+  color: var(--fg-3);
 }
-
 .lpf-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 18px 0 0;
-  border-radius: 14px;
+  margin: 20px 0 0;
+  border-radius: var(--r-inner);
   border: 1px solid var(--line-soft);
   background: var(--raised);
 }
 .lpf-stats > div {
-  padding: 10px 12px;
+  min-width: 0;
+  padding: 12px 14px;
 }
 .lpf-stats > div + div {
   border-left: 1px solid var(--line-soft);
 }
 .lpf-stats dt {
-  font-size: 11.5px;
-  color: var(--fg-3);
+  white-space: nowrap;
 }
 .lpf-stats dd {
-  margin: 2px 0 0;
-  font-size: 17px;
-  font-weight: 600;
+  margin: 6px 0 0;
+  font-size: 18px;
+  font-weight: 500;
   letter-spacing: -0.01em;
+  color: var(--fg);
 }
-
-.lpf-followers {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.lp .lpf-stats dd > span {
+  font-size: inherit;
+}
+.lpf-agent-note {
   margin-top: 16px;
-  font-size: 13px;
+  font-size: var(--fs-body-sm);
+  line-height: 1.55;
   color: var(--fg-2);
+  text-wrap: pretty;
 }
-.lpf-stack button {
-  color: rgba(255, 255, 255, 0.92) !important;
-  --tw-ring-color: var(--card) !important;
+.lpf-strong {
+  color: var(--fg);
 }
-.lpf-stack > div:nth-child(1) button { background: linear-gradient(135deg, #3fd2ff, #3d6bff); }
-.lpf-stack > div:nth-child(2) button { background: linear-gradient(135deg, #3d6bff, #8b6cff); }
-.lpf-stack > div:nth-child(3) button { background: linear-gradient(135deg, #8b6cff, #ff3dcb); }
-.lpf-stack > div:nth-child(4) button { background: linear-gradient(135deg, #ff3dcb, #8b6cff); }
-.lpf-stack button,
-.lpf-stack > div:last-child > span {
-  font-weight: 600;
-}
-
 .lpf-private {
   display: flex;
   gap: 10px;
   margin-top: 16px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px dashed rgba(139, 124, 255, 0.35);
-  background: var(--violet-tint, rgba(139, 124, 255, 0.12));
-  color: var(--violet, #8b7cff);
-}
-.lpf-private p {
-  font-size: 13px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--fs-small);
   line-height: 1.5;
-  color: var(--fg-2);
-}
-.lpf-sample {
-  margin-top: 12px;
-  font-size: 10.5px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--fg-3);
 }
-
-/* -------- launches heatmap -------- */
-.lpf-heat {
-  padding: 18px 18px 16px;
-}
-.lpf-heat svg text {
-  fill: rgba(255, 255, 255, 0.95);
+.lpf-private-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 
-/* The heatmap colours a price move, which is not P&L: neon, not green/red. */
-.lp .lpf-heat {
-  --positive: var(--neon-cyan, #3fd2ff);
-  --negative: var(--neon-magenta, #ff3dcb);
-}
-
-/* Phones: the trade, note and actions run full width. After the base margins
-   in source order, so no !important is needed. */
+/* -------- phones: the post body runs full width -------- */
 @media (max-width: 479px) {
+  .lpf-post {
+    padding: 16px 16px 10px;
+  }
   .lpf-trade,
   .lpf-note,
   .lpf-actions {
-    margin-left: 0;
+    grid-column: 1 / -1;
+  }
+  .lpf-trade {
+    padding-inline: 12px;
+  }
+  .lpf-agent-body {
+    padding: 16px;
+  }
+  .lpf-agent .lpf-bar {
+    padding-inline: 16px;
+  }
+  .lpf-stats > div {
+    padding: 12px;
+  }
+}
+
+/* Narrow phones: the side sheds its pill so the token name keeps its width. */
+@media (max-width: 374px) {
+  .lpf-trade {
+    column-gap: 10px;
+  }
+  .lpf-trade > :first-child {
+    width: 28px;
+    height: 28px;
+  }
+  .lpf-fill-top {
+    gap: 8px;
+  }
+  .lpf-side,
+  .lpf-side[data-side="buy"] {
+    height: auto;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+  .lpf-side[data-side="sell"] {
+    color: var(--fg-3);
+  }
+  /* The profile's follow pill takes its own full-width row under the name. */
+  .lpf-agent-head {
+    flex-wrap: wrap;
+  }
+  .lp .lpf-agent-head .lpf-follow {
+    width: 100%;
+    margin-top: 4px;
+  }
+  .lpf-stats {
+    grid-template-columns: 1.25fr 1fr 1fr;
+  }
+  .lpf-stats dt {
+    letter-spacing: 0.08em;
+  }
+}
+
+/* Under 360px: the bar tightens so the tabs and "Sample posts" both fit
+   whole, and a fill's side, size and result move under the token. */
+@media (max-width: 359px) {
+  .lp .lpf-tab {
+    padding-inline: 10px;
+  }
+  .lpf-bar {
+    padding-inline: 8px 14px;
+  }
+  .lpf-bar .lp-label {
+    letter-spacing: 0.08em;
+  }
+  .lpf-trade {
+    grid-template-columns: 28px minmax(0, 1fr);
+    row-gap: 10px;
+  }
+  .lpf-fill {
+    display: flex;
+    grid-column: 1 / -1;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 10px;
+    border-top: 1px solid var(--line-soft);
+  }
+  .lpf-stats > div {
+    padding-inline: 10px;
+  }
+  .lpf-stats dt {
+    letter-spacing: 0.04em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lpf-panel-in {
+    animation: none;
   }
 }

@@ -1,203 +1,48 @@
-"use client";
-
-import { usePageVisible, useSafeReducedMotion } from "./motion";
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { useInView } from "motion/react";
-import { BorderBeam } from "@/components/spectrumui/border-beam";
-import { NumberTicker } from "@/components/spectrumui/number-ticker";
-import { TextStates } from "@/components/spectrumui/text-states";
-import { useTypewriter } from "@/components/spectrumui/use-typewriter";
-import { BrandHeroMark } from "./brand";
-import { TokenIcon } from "@/components/common/token-icon";
-import { COINS } from "./coins";
-import { LiveIsland } from "./live-island";
-import { LANDING_SOURCES } from "./signals-data";
-import { useWaitlist } from "./waitlist";
+import type { CSSProperties } from "react";
+import { HeroRun } from "./hero-run";
+import { WaitlistButton } from "./waitlist-button";
 
 /**
- * Hero, centred: the live run island docked at the top like a notch, a
- * two-line promise, two calls to action, then a stage. The neon T stands in
- * the middle of it on a painted glow (radial gradients, no blur), between the
- * two halves of the product: the strategy someone types, and the decision
- * their agent reaches. A hairline strip of facts closes the section.
+ * Hero: an eyebrow, the two-line promise, one sentence on how, one action and
+ * one quiet link. Under them sits a single flat card, the sample agent's
+ * latest run as its owner sees it (hero-run.tsx, the one client part).
  *
- * Everything that moves pauses off screen; reduced motion gets still frames.
+ * The type rises in on load, in a short stagger. The headline only slides: it
+ * is the largest text on the screen, and an element painted at opacity 0 is
+ * not counted as painted, so a fade would hold back the first meaningful paint.
  */
-
-const PROMPTS = [
-  "Buy fresh Solana launches with real holder growth and no mint authority. Take profit at 40%, cut at 15%.",
-  "Momentum on Base: enter when volume and X mentions both accelerate. Skip a top ten above 50%.",
-  "Follow the sentiment. $100 a trade, never more than ten trades a day.",
-] as const;
-
-// Real tokens, made-up scores. A skip never names a gate as failing: that would be a
-// factual claim about a real token, so the only skip reason is the sample floor.
-const DECISIONS = [
-  { token: "TIBBIR", chain: "Base", score: 81, verdict: "Buy $100.00", gate: "10 of 10 gates passed", ok: true },
-  { token: "SUPER INU", chain: "Solana", score: 58, verdict: "Skip", gate: "Below your floor of 62", ok: false },
-  { token: "SOL", chain: "Solana", score: 77, verdict: "Buy $100.00", gate: "10 of 10 gates passed", ok: true },
-] as const;
 
 const delay = (s: string) => ({ "--reveal-delay": s }) as CSSProperties;
 
 export function Hero() {
-  const { open } = useWaitlist();
-
   return (
-    <section className="lp-hero">
+    <section className="lp-hero" aria-labelledby="lp-hero-title">
       <div className="lp-hero-head lp-wrap">
-        <div className="reveal" style={delay("0s")}>
-          <LiveIsland />
-        </div>
-        <h1 className="lp-h1 reveal" style={delay("0.06s")}>
+        <p className="lp-hero-eyebrow lp-eyebrow reveal" style={delay("0s")}>
+          <span className="lp-hero-dot" aria-hidden />
+          Private beta · Solana and Base
+        </p>
+        <h1 id="lp-hero-title" className="lp-h1 reveal" style={delay("0.06s")}>
           <span className="lp-h1-line">Your agent trades</span>{" "}
           <span className="lp-h1-line">
             while you <span className="lp-mark">sleep</span>.
           </span>
         </h1>
         <p className="lp-hero-sub reveal" style={delay("0.14s")}>
-          Describe a strategy in plain English. Your agent scores every new token on Solana and Base, trades the
-          few that clear your bar, and runs 24/7 on its own wallet.
+          Describe a strategy in plain English. Your agent screens new tokens and trades the few that clear your bar.
         </p>
         <div className="lp-hero-ctas reveal" style={delay("0.22s")}>
-          <button type="button" className="lp-btn-accent lp-btn-hero" onClick={open}>
-            Join the waitlist
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden className="lp-btn-arrow">
-              <path d="M2 8h11M8.5 3.5 13 8l-4.5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          <a href="#how" className="lp-btn-ghost lp-btn-hero">
+          <WaitlistButton />
+          <a href="#how" className="lp-hero-link">
             See how it decides
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+              <path d="M8 2.5v11M3.5 9 8 13.5 12.5 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </a>
         </div>
       </div>
 
-      <Stage>
-        <StrategyCard />
-        <DecisionCard />
-      </Stage>
-
-      <dl className="lp-facts lp-wrap reveal" style={delay("0.5s")}>
-        <Fact value={10} label="hard gates no score overrides" />
-        <Fact value={5} unit="min" label="exit clock, model awake or not" />
-        <Fact value={LANDING_SOURCES.length} label="paid data sources, by the call" />
-        <Fact value={2} label="chains: Solana and Base" />
-      </dl>
+      <HeroRun />
     </section>
-  );
-}
-
-/** Neon beams for the floating cards: blue on one, magenta on the other. */
-const BEAM_MAGENTA = { from: "rgba(139, 108, 255, 0)", to: "rgba(255, 61, 203, 0.85)" };
-
-function Stage({ children }: { children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const onScreen = useInView(ref, { amount: 0.1 });
-  return (
-    <div ref={ref} className="lp-stage lp-wrap" aria-hidden data-running={onScreen ? "" : undefined}>
-      <div className="lp-stage-glow" />
-      <div className="lp-stage-art reveal" style={delay("0.3s")}>
-        <div className="lp-stage-halo" />
-        <div className="lp-stage-float">
-          <BrandHeroMark width={360} className="lp-stage-mark" />
-        </div>
-        <div className="lp-stage-floor" />
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Fact({ value, unit, label }: { value: number; unit?: string; label: string }) {
-  return (
-    <div className="lp-fact">
-      <dt className="lp-sr">{label}</dt>
-      <dd className="lp-fact-num">
-        <NumberTicker value={value} duration={1.1} />
-        {unit ? <span className="lp-fact-unit">{unit}</span> : null}
-      </dd>
-      <dd className="lp-fact-cap" aria-hidden>
-        {label}
-      </dd>
-    </div>
-  );
-}
-
-function StrategyCard() {
-  const ref = useRef<HTMLDivElement>(null);
-  const onScreen = useInView(ref, { amount: 0.3 });
-  const visible = usePageVisible();
-  const { text } = useTypewriter([...PROMPTS], {
-    typeMs: 32,
-    deleteMs: 10,
-    holdMs: 3600,
-    gapMs: 360,
-    startDelayMs: 900,
-    enabled: onScreen && visible,
-  });
-
-  return (
-    <div ref={ref} className="lp-float lp-float-left reveal" style={delay("0.38s")}>
-      <div className="lp-float-head">
-        <span>Strategy</span>
-        <span className="lp-pill">sample · paper</span>
-      </div>
-      <p className="lp-float-prompt">
-        {text}
-        <span className="lp-caret" />
-      </p>
-      <div className="lp-float-chips">
-        <span className="lp-pill">Solana · Base</span>
-        <span className="lp-pill">$100 / trade</span>
-        <span className="lp-pill">stop 15%</span>
-      </div>
-    </div>
-  );
-}
-
-function DecisionCard() {
-  const reduced = useSafeReducedMotion();
-  const visible = usePageVisible();
-  const ref = useRef<HTMLDivElement>(null);
-  const onScreen = useInView(ref, { amount: 0.3 });
-  const [i, setI] = useState(0);
-
-  useEffect(() => {
-    if (!onScreen || !visible || reduced) return;
-    const t = setInterval(() => setI((n) => (n + 1) % DECISIONS.length), 3600);
-    return () => clearInterval(t);
-  }, [onScreen, visible, reduced]);
-
-  const d = DECISIONS[i];
-  return (
-    <div ref={ref} className="lp-float lp-float-right reveal" style={delay("0.46s")}>
-      {onScreen && !reduced ? (
-        <BorderBeam duration={10} borderWidth={1} colorFrom={BEAM_MAGENTA.from} colorTo={BEAM_MAGENTA.to} isHovered />
-      ) : null}
-      <div className="lp-float-head">
-        <span>Decision</span>
-        <span className="lp-float-live">sample run</span>
-      </div>
-      <div className="lp-float-token">
-        {/* Keyed so the new logo swaps in with the name rather than flashing the old one. */}
-        <TokenIcon key={d.token} token={COINS[d.token]} size="sm" className="lp-float-logo" />
-        <TextStates text={d.token} className="lp-float-name" />
-        <span className="lp-mono lp-float-chain">
-          <TextStates text={d.chain} />
-        </span>
-      </div>
-      <div className="lp-float-row">
-        <span className="lp-float-score">
-          <NumberTicker value={d.score} pad={2} duration={0.7} startOnView={false} />
-          <span className="lp-float-of">/100</span>
-        </span>
-        <span className={d.ok ? "lp-float-verdict" : "lp-float-verdict lp-float-verdict-no"}>
-          <TextStates text={d.verdict} />
-        </span>
-      </div>
-      <p className={d.ok ? "lp-float-gate" : "lp-float-gate lp-float-gate-no"}>
-        <TextStates text={d.gate} />
-      </p>
-    </div>
   );
 }

@@ -7,6 +7,16 @@ const KEYFRAMES = `
 @keyframes su-pop { 0% { opacity: 0; transform: scale(0.85) } 100% { opacity: 1; transform: none } }
 `;
 
+/**
+ * A fill drawn at full width and slid in from the left inside its clipped track: the
+ * move is a transform, so stepping a stage costs a composite, not a layout every frame
+ * as a `width` transition did, and a rounded bar keeps its round end.
+ */
+function fillTransform(fraction: number) {
+  const clamped = Math.min(1, Math.max(0, fraction));
+  return `translateX(${(clamped - 1) * 100}%)`;
+}
+
 export interface TrackerStage {
   id: string;
   label: string;
@@ -40,8 +50,8 @@ export function StatusTracker({
       <div className={cn('flex w-full max-w-[360px] items-center gap-2.5', className)}>
         <span aria-hidden className="h-1 flex-1 overflow-hidden rounded-full bg-black/[0.07] dark:bg-white/[0.09]">
           <span
-            className="block h-full rounded-full bg-neutral-900 transition-[width] duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] dark:bg-neutral-100"
-            style={{ width: `${overall * 100}%` }}
+            className="block h-full w-full rounded-full bg-neutral-900 transition-transform duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] dark:bg-neutral-100"
+            style={{ transform: fillTransform(overall) }}
           />
         </span>
         <span className="shrink-0 text-[12px] text-neutral-500 dark:text-neutral-400">{label}</span>
@@ -54,7 +64,10 @@ export function StatusTracker({
 
   return (
     <div className={cn('w-full max-w-[440px]', className)}>
-      <style dangerouslySetInnerHTML={{ __html: KEYFRAMES }} />
+      {/* Hoisted into <head> once by React (href + precedence), not one sheet per tracker. */}
+      <style href="su-status-tracker" precedence="default">
+        {KEYFRAMES}
+      </style>
       <ol className="flex items-center">
         {stages.map((stage, index) => {
           const completed = index < activeIndex || done;
@@ -64,8 +77,8 @@ export function StatusTracker({
               {index > 0 && (
                 <span aria-hidden className="mx-1.5 h-px flex-1 overflow-hidden bg-black/[0.08] dark:bg-white/[0.1]">
                   <span
-                    className="block h-full bg-neutral-900 transition-[width] duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] dark:bg-neutral-100"
-                    style={{ width: completed ? '100%' : active ? `${progress * 100}%` : '0%' }}
+                    className="block h-full w-full bg-neutral-900 transition-transform duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] dark:bg-neutral-100"
+                    style={{ transform: fillTransform(completed ? 1 : active ? progress : 0) }}
                   />
                 </span>
               )}

@@ -101,15 +101,18 @@ const STATE_CLASSES: Record<MorphButtonState, string> = {
 
 function SpinnerIcon({ size }: { size: number }) {
   const circumference = 2 * Math.PI * SPINNER_RADIUS
+  // A CSS spin, not motion's `rotate`: that one is driven from JS and wrote an inline
+  // transform every frame for as long as the button was loading. This runs on the
+  // compositor with no main-thread work.
   return (
-    <motion.svg
+    <svg
       viewBox="0 0 24 24"
       width={size}
       height={size}
       fill="none"
       aria-hidden="true"
-      animate={{ rotate: 360 }}
-      transition={{ duration: SPIN_DURATION, ease: "linear", repeat: Infinity }}
+      className="animate-spin"
+      style={{ animationDuration: `${SPIN_DURATION}s` }}
     >
       <circle
         cx="12"
@@ -120,7 +123,7 @@ function SpinnerIcon({ size }: { size: number }) {
         strokeLinecap="round"
         strokeDasharray={`${circumference * SPINNER_ARC} ${circumference}`}
       />
-    </motion.svg>
+    </svg>
   )
 }
 

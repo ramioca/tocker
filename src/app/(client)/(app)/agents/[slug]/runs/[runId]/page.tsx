@@ -2,7 +2,7 @@ import { cache } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { canonicalSlug } from "@/app/(app)/agents/[slug]/canonical-slug";
+import { canonicalSlug } from "@/app/(client)/(app)/agents/[slug]/canonical-slug";
 import { ArrowLeft, Lock } from "lucide-react";
 import { RunSteps } from "@/components/agents/run-steps";
 import { AgentAvatar } from "@/components/common/agent-avatar";

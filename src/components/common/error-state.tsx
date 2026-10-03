@@ -9,7 +9,7 @@ const PRESS =
   "inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97] focus-ring";
 
 /**
- * The body of a route error boundary, shared by `app/error.tsx` and `app/(app)/error.tsx`.
+ * The body of a route error boundary, shared by `app/error.tsx` and `app/(client)/(app)/error.tsx`.
  *
  * `fullScreen` is for the root boundary only: it replaces the whole document, so it
  * centres itself in the viewport. Inside the app shell the header and tab bar are still

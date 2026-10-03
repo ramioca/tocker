@@ -97,6 +97,7 @@ export function useTypewriter(
           setText(phrase.slice(0, i));
           await sleep(deleteMs);
         }
+        if (cancelled) return;
         setPhase("waiting");
         await sleep(gapMs);
         index++;

@@ -47,7 +47,11 @@ export function ApprovalCard({
         className,
       )}
     >
-      <style dangerouslySetInnerHTML={{ __html: KEYFRAMES }} />
+      {/* Hoisted into <head> once by React (href + precedence): no stylesheet added and
+          removed with every card, which re-styled the whole page each time. */}
+      <style href="su-approval-card" precedence="default">
+        {KEYFRAMES}
+      </style>
 
       {decision ? (
         <div className="flex flex-col items-center py-4 text-center motion-safe:animate-[su-msg-in_240ms_cubic-bezier(0.23,1,0.32,1)_both]">

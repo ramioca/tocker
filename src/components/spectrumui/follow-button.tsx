@@ -25,6 +25,12 @@ export interface FollowButtonProps {
   size?: "sm" | "md" | "lg"
   /** Disables pointer and keyboard interaction */
   disabled?: boolean
+  /**
+   * A fixed accessible name, e.g. "Follow Night Moth". With it, the name stays
+   * put and `aria-pressed` alone says whether it is followed; without it, the
+   * name is the visible label, as before.
+   */
+  ariaLabel?: string
   className?: string
 }
 
@@ -89,6 +95,7 @@ export function FollowButton({
   unfollowLabel = "Unfollow",
   size = "md",
   disabled = false,
+  ariaLabel,
   className,
 }: FollowButtonProps) {
   const shouldReduceMotion = useHydratedReducedMotion()
@@ -169,7 +176,7 @@ export function FollowButton({
       onBlur={handleBlur}
       disabled={disabled}
       aria-pressed={following}
-      aria-label={following ? unfollowLabel : followLabel}
+      aria-label={ariaLabel ?? (following ? unfollowLabel : followLabel)}
       layout={animateLayout}
       style={{ borderRadius: 9999 }}
       animate={{ scale: dipping ? DIP_SCALE : 1 }}

@@ -16,9 +16,11 @@ export interface TextStatesProps {
   className?: string;
 }
 
-// transitions.dev · text-states-swap · defaults match the live tuning
+// transitions.dev · text-states-swap · defaults match the live tuning. No permanent
+// will-change: the 150ms swaps promote a layer while they run, and a pinned one per
+// instance held GPU memory for the life of the page.
 const CSS = `
-.t-text-swap{display:inline-block;transform:translateY(0);filter:blur(0);opacity:1;transition:transform var(--text-swap-dur) var(--text-swap-ease),filter var(--text-swap-dur) var(--text-swap-ease),opacity var(--text-swap-dur) var(--text-swap-ease);will-change:transform,filter,opacity}
+.t-text-swap{display:inline-block;transform:translateY(0);filter:blur(0);opacity:1;transition:transform var(--text-swap-dur) var(--text-swap-ease),filter var(--text-swap-dur) var(--text-swap-ease),opacity var(--text-swap-dur) var(--text-swap-ease)}
 .t-text-swap.is-exit{transform:translateY(calc(var(--text-swap-translate-y) * -1));filter:blur(var(--text-swap-blur));opacity:0}
 .t-text-swap.is-enter-start{transform:translateY(var(--text-swap-translate-y));filter:blur(var(--text-swap-blur));opacity:0;transition:none}
 @media (prefers-reduced-motion: reduce){.t-text-swap{transition:none !important}}
@@ -56,7 +58,10 @@ export function TextStates({
 
   return (
     <>
-      <style>{CSS}</style>
+      {/* Hoisted into <head> once by React (href + precedence), not one sheet per instance. */}
+      <style href="t-text-swap" precedence="default">
+        {CSS}
+      </style>
       <span
         ref={ref}
         className={cn('t-text-swap', className)}

@@ -528,28 +528,27 @@
   outline-offset: 2px;
 }
 
-/* Keyboard focus must not land under the chrome: the sticky top bar (3.5rem) and, on
-   phones, the fixed tab bar. Scoped to the app shell (#main) so the landing page's own
-   scrolling is untouched; the tab bar is md:hidden, so the bottom value is too. */
-html:has(#main) {
-  scroll-padding-top: 4rem;
-}
+/* Keyboard focus must not land under the chrome. The base padding — the sticky top bar
+   (3.5rem) and, on phones, the fixed tab bar — is a <style> the app layout renders
+   (src/app/(client)/(app)/layout.tsx), so it exists exactly while the shell does, from the first
+   paint, and the landing page never gets it. A sticky sub-nav or action bar adds to it:
+   the components that render one hold a flag on <html> while mounted
+   (src/hooks/root-flag.ts), and they only ever render inside the shell.
 
-html:has(#main [data-sticky-subnav]) {
+   Never `html:has(…)` here: a :has() on the root is re-matched on every DOM insert in
+   the document, and with the preflight reset that was a full-document style recalc on
+   each one (about 25-40ms on the landing page). These selectors only match on a flip. */
+html[data-sticky-subnav] {
   scroll-padding-top: calc(4rem + 2.75rem);
 }
 
 /* A sticky action bar at the bottom (the agent builder's) covers another ~4.5rem. */
-html:has(#main [data-sticky-actionbar]) {
+html[data-sticky-actionbar] {
   scroll-padding-bottom: 4.75rem;
 }
 
 @media (max-width: 767px) {
-  html:has(#main) {
-    scroll-padding-bottom: calc(4.25rem + env(safe-area-inset-bottom));
-  }
-
-  html:has(#main [data-sticky-actionbar]) {
+  html[data-sticky-actionbar] {
     scroll-padding-bottom: calc(4.25rem + 4.75rem + env(safe-area-inset-bottom));
   }
 }

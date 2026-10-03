@@ -5,6 +5,7 @@ import { motion, useMotionValue, useSpring, useTransform, type Transition } from
 import React, { ReactNode, useRef, useState } from "react"
 import { Spotlight } from "./spotlight"
 import { BorderBeam } from "./border-beam"
+import { useHydratedReducedMotion } from "./use-hydrated-reduced-motion"
 
 const SPRING_TACTILE: Transition = {
   type: "spring",
@@ -63,6 +64,7 @@ export function BentoCard({
 }: BentoCardProps) {
   const ref = useRef<HTMLDivElement>(null)
   const [isHovered, setIsHovered] = useState(false)
+  const reduceMotion = useHydratedReducedMotion()
 
   const spotlightX = useMotionValue(0)
   const spotlightY = useMotionValue(0)
@@ -130,8 +132,8 @@ export function BentoCard({
       whileHover="hover"
       transition={SPRING_TACTILE}
       style={{
-        ...(tilt && { rotateX, rotateY }),
-        transformStyle: "preserve-3d",
+        // A 3D context only when there is a tilt to render in it.
+        ...(tilt && { rotateX, rotateY, transformStyle: "preserve-3d" as const }),
       }}
       className={cn(
         "group relative flex flex-col justify-between overflow-hidden rounded-2xl",
@@ -153,8 +155,10 @@ export function BentoCard({
         />
       )}
 
-      {/* Border Beam */}
-      {borderAnim && <BorderBeam isHovered={isHovered} />}
+      {/* Border Beam — mounted only under the pointer, and never with reduced motion. Left
+          mounted, its endless JS rotation ran (and re-styled the card) on every frame of the
+          page's life, at any scroll position, with the motion preference ignored. */}
+      {borderAnim && isHovered && !reduceMotion && <BorderBeam isHovered />}
 
       {/* Background Effect */}
       {background && (

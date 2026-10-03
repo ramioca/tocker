@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { ChevronDown } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { useHydratedReducedMotion } from "./use-hydrated-reduced-motion";
 
 export interface FaqItem {
   question: string;
@@ -22,6 +23,7 @@ export interface FAQTabsCardProps {
   defaultTab?: number;
   /** Index of the FAQ expanded initially (-1 for none). */
   defaultOpenIndex?: number;
+  /** A call to action under the questions. Leave it out for no footer. */
   footerLabel?: string;
   onFooterClick?: () => void;
   className?: string;
@@ -94,10 +96,15 @@ export function FAQTabsCard({
   tabs: tabsProp = DEFAULT_TABS,
   defaultTab = 0,
   defaultOpenIndex = 0,
-  footerLabel = "Contact Support",
+  footerLabel,
   onFooterClick,
   className,
 }: FAQTabsCardProps) {
+  // Under reduced motion every change lands at once: the pill, the panel swap, the
+  // chevron, the answer's height and the footer's press. Hydration-safe (false on
+  // the server and the first client pass).
+  const reduce = Boolean(useHydratedReducedMotion());
+  const still = { duration: 0 } as const;
   // Explicit `tabs={[]}` bypasses the default param — fall back so we never
   // read `.faqs` off undefined.
   const tabs = tabsProp.length > 0 ? tabsProp : DEFAULT_TABS;
@@ -106,6 +113,8 @@ export function FAQTabsCard({
     tabs.length - 1,
   );
 
+  // Per card: a shared `layoutId` made two cards on one page fly the pill between them.
+  const pillId = `faq-tab-pill-${React.useId()}`;
   const [activeTab, setActiveTab] = React.useState(clampedDefaultTab);
   const [openIndex, setOpenIndex] = React.useState(defaultOpenIndex);
 
@@ -134,13 +143,15 @@ export function FAQTabsCard({
                 setActiveTab(index);
                 setOpenIndex(defaultOpenIndex);
               }}
-              className="relative h-[27px] flex-1 rounded-full outline-hidden"
+              // `outline-hidden` took the focus mark away with nothing in its place. An
+              // outline, not a ring, so a page that styles focus itself replaces it.
+              className="relative h-[27px] flex-1 rounded-full outline-hidden focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-solid focus-visible:outline-ring"
             >
               {active ? (
                 <motion.span
-                  layoutId="faq-tab-pill"
+                  layoutId={pillId}
                   className="absolute inset-0 rounded-full bg-white dark:bg-neutral-950"
-                  transition={{ type: "spring", bounce: 0.2, duration: 0.5 }}
+                  transition={reduce ? still : { type: "spring", bounce: 0.2, duration: 0.5 }}
                 />
               ) : null}
               <span
@@ -162,10 +173,10 @@ export function FAQTabsCard({
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={safeActiveTab}
-          initial={{ opacity: 0, y: 6 }}
+          initial={reduce ? false : { opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -6 }}
-          transition={{ duration: 0.18, ease: "easeOut" }}
+          exit={reduce ? { opacity: 0, transition: still } : { opacity: 0, y: -6 }}
+          transition={reduce ? still : { duration: 0.18, ease: "easeOut" }}
           className="mt-2 flex-1 overflow-hidden rounded-[18px] border border-border"
         >
           {currentTab.faqs.map((faq, index) => {
@@ -190,7 +201,7 @@ export function FAQTabsCard({
                   </span>
                   <motion.span
                     animate={{ rotate: open ? 180 : 0 }}
-                    transition={{ duration: 0.25, ease: "easeOut" }}
+                    transition={reduce ? still : { duration: 0.25, ease: "easeOut" }}
                     className="flex shrink-0"
                   >
                     <ChevronDown className="h-4 w-4 text-foreground" />
@@ -203,7 +214,7 @@ export function FAQTabsCard({
                       initial={{ height: 0, opacity: 0 }}
                       animate={{ height: "auto", opacity: 1 }}
                       exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+                      transition={reduce ? still : { duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
                       className="overflow-hidden"
                     >
                       <p className="px-4 pb-[19px] text-sm leading-5 text-foreground">
@@ -218,17 +229,19 @@ export function FAQTabsCard({
         </motion.div>
       </AnimatePresence>
 
-      {/* Footer */}
-      <motion.button
-        type="button"
-        onClick={onFooterClick}
-        whileHover={{ scale: 1.015 }}
-        whileTap={{ scale: 0.97 }}
-        transition={{ type: "spring", bounce: 0.4, duration: 0.35 }}
-        className="mt-[25px] flex h-[34px] w-full shrink-0 items-center justify-center rounded-[26px] border border-border bg-white text-sm font-medium leading-5 text-foreground transition-colors hover:bg-neutral-50 dark:bg-neutral-950 dark:hover:bg-neutral-900"
-      >
-        {footerLabel}
-      </motion.button>
+      {/* Footer: only when there is a call to action. */}
+      {footerLabel ? (
+        <motion.button
+          type="button"
+          onClick={onFooterClick}
+          whileHover={reduce ? undefined : { scale: 1.015 }}
+          whileTap={reduce ? undefined : { scale: 0.97 }}
+          transition={{ type: "spring", bounce: 0.4, duration: 0.35 }}
+          className="mt-[25px] flex h-[34px] w-full shrink-0 items-center justify-center rounded-[26px] border border-border bg-white text-sm font-medium leading-5 text-foreground transition-colors hover:bg-neutral-50 dark:bg-neutral-950 dark:hover:bg-neutral-900"
+        >
+          {footerLabel}
+        </motion.button>
+      ) : null}
     </div>
   );
 }

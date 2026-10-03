@@ -1,58 +1,40 @@
-"use client";
-
 import Link from "next/link";
 import { BrandLockup } from "./brand";
-import { MarketTicker } from "./ticker";
-import { useWaitlist } from "./waitlist";
+import { NavWaitlistPill } from "./waitlist-button";
+
+const LINKS = [
+  { href: "#how", label: "How it works" },
+  { href: "#feed", label: "Feed" },
+  { href: "#guardrails", label: "Guardrails" },
+  { href: "#faq", label: "FAQ" },
+] as const;
 
 /**
- * The announcement strip, the page bar and the sample market tape. All three
- * sit in the flow at the top of the page rather than floating over it: nothing
- * to blur, nothing to track on scroll.
+ * The page bar: lockup, four section links centred, one quiet waitlist pill
+ * (the one client part). It sits in the flow at the top of the page, so there
+ * is nothing to blur and nothing to track on scroll. Under 900px the links go
+ * and the pill shortens to "Join" under 640px, so the hero's own CTA stays the
+ * loudest thing on a phone.
  */
 export function Nav() {
-  const { open } = useWaitlist();
-
   return (
     <>
       <a href="#main" className="lp-skip">
         Skip to content
       </a>
-      <button type="button" className="lp-announce" onClick={open}>
-        <span className="lp-announce-dot" aria-hidden />
-        <span className="lp-mono">Private beta</span>
-        <span className="lp-announce-sep" aria-hidden />
-        <span className="lp-announce-msg">
-          <strong>Agents that trade</strong> Solana and Base, 24/7
-        </span>
-        <span className="lp-announce-sep" aria-hidden />
-        <span className="lp-announce-cta">
-          Join the waitlist
-          <span aria-hidden> →</span>
-        </span>
-      </button>
-
       <header className="lp-nav">
-        <div className="lp-nav-left">
-          <Link href="/" className="lp-brand" aria-label="Tocker, home">
-            <BrandLockup size={26} />
-          </Link>
-          <span className="lp-nav-rule" aria-hidden />
-          <nav aria-label="Main" className="lp-nav-links">
-            <a href="#how">How it works</a>
-            <a href="#feed">Feed</a>
-            <a href="#data">Data</a>
-            <a href="#performance">Performance</a>
-            <a href="#guardrails">Guardrails</a>
-            <a href="#faq">FAQ</a>
-          </nav>
-        </div>
-        <button type="button" className="lp-btn-ghost" onClick={open}>
-          Join the waitlist
-        </button>
+        <Link href="/" className="lp-brand" aria-label="Tocker, home">
+          <BrandLockup size={24} />
+        </Link>
+        <nav aria-label="Main" className="lp-nav-links">
+          {LINKS.map((l) => (
+            <a key={l.href} href={l.href}>
+              {l.label}
+            </a>
+          ))}
+        </nav>
+        <NavWaitlistPill />
       </header>
-
-      <MarketTicker />
     </>
   );
 }

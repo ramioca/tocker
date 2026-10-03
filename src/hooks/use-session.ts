@@ -15,8 +15,8 @@ export interface UseSession {
   /**
    * Opens Privy's login modal. Once Privy has authenticated and the user's wallets
    * are synced, server-rendered pages are refreshed and the browser is sent to
-   * `redirectTo` — by default `/home` when signing in from the landing page, and
-   * the current page everywhere else, which then re-renders signed in.
+   * `redirectTo` when one is given; otherwise it stays on the current page, which
+   * then re-renders signed in.
    *
    * Sign-in proper is `/login`, which is headless. This modal is what is left of
    * Privy's own UI: the external-wallet connector behind "Use a crypto wallet
@@ -30,14 +30,13 @@ export interface UseSession {
    * them completes, the effect below still syncs the wallets, refreshes the
    * server-rendered tree and sends the browser to `target`.
    *
-   * Omit `target` for the default: `/home` from the landing page, and stay put
-   * everywhere else.
+   * Omit `target` to stay on the current page.
    */
   prepareRedirect: (target?: string) => void;
   logout: () => Promise<void>;
 }
 
-/** Where a sign-in from the landing page goes: the app, with onboarding waiting there. */
+/** Where /login sends a visitor who arrived without `?next=`: the app, with onboarding waiting there. */
 export const POST_LOGIN_HOME = "/home";
 
 export const SESSION_QUERY_KEY = ["session"] as const;
@@ -154,12 +153,9 @@ function usePrivySession(): UseSession {
     router.refresh();
   }, [privy, queryClient, router]);
 
-  const prepareRedirect = useCallback(
-    (target?: string) => {
-      pendingRedirect.current = target ?? (pathname === "/" ? POST_LOGIN_HOME : null);
-    },
-    [pathname],
-  );
+  const prepareRedirect = useCallback((target?: string) => {
+    pendingRedirect.current = target ?? null;
+  }, []);
 
   const login = useCallback(
     (options?: { redirectTo?: string }) => {

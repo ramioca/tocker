@@ -1,0 +1,579 @@
+/* ============================================================================
+ * Landing: the nav and the hero (nav.tsx, hero.tsx). Tokens, shared atoms,
+ * the skip link and the brand lockup live in landing.css.
+ *
+ * The first screen is type and one product moment: an eyebrow, the headline
+ * with one word in the brand gradient, a sentence, one action, and a flat run
+ * card with a painted glow behind it (radial gradients, no blur). Colour
+ * appears where it means something: the cyan dot, "sleep", the bars of the
+ * tokens that clear the floor and their buy dots.
+ * ========================================================================== */
+
+/* ================================== nav ================================== */
+.lp-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 1232px;
+  height: 64px;
+  margin-inline: auto;
+  padding-inline: 24px;
+}
+@media (min-width: 768px) {
+  .lp-nav {
+    padding-inline: 40px;
+  }
+}
+/* Links truly centred: two equal outer columns, whatever the lockup and the
+   pill measure. */
+@media (min-width: 900px) {
+  .lp-nav {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    height: 72px;
+  }
+}
+.lp-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  min-height: 40px;
+}
+.lp-nav-links {
+  display: none;
+  gap: 32px;
+  font-size: var(--fs-body-sm);
+  letter-spacing: -0.005em;
+  color: var(--fg-3);
+}
+@media (min-width: 900px) {
+  .lp-nav-links {
+    display: flex;
+  }
+}
+.lp-nav-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  transition: color 150ms ease-out;
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp-nav-links a:hover {
+    color: var(--fg);
+  }
+}
+
+/* The quiet waitlist pill: the page's ghost pill, so the hero's off-white
+   pill stays the one loud action on the screen. */
+.lp-nav-cta {
+  justify-self: end;
+}
+.lp-nav-cta-sm {
+  display: none;
+}
+@media (max-width: 639px) {
+  .lp-nav-cta {
+    padding-inline: 16px;
+  }
+  .lp-nav-cta-lg {
+    display: none;
+  }
+  .lp-nav-cta-sm {
+    display: inline;
+  }
+}
+
+/* ================================== hero ================================== */
+.lp-hero {
+  position: relative;
+  /* The card's glow is wider than a phone; clip it sideways, not downward. */
+  overflow-x: clip;
+  padding-top: clamp(40px, 9vh, 96px);
+}
+.lp-hero-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.lp-hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.lp-hero-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand-cyan);
+  box-shadow: 0 0 0 3px var(--brand-cyan-ring);
+}
+.lp-h1 {
+  margin-top: 26px;
+  font-size: clamp(3.25rem, 6.9vw, 6.25rem);
+  line-height: 0.95;
+  font-weight: 600;
+  letter-spacing: -0.055em;
+  color: var(--fg);
+  text-wrap: balance;
+}
+/* The headline only slides in: painted at opacity 0 it would not count as
+   painted, and it is the largest text on the screen. */
+.lp-h1.reveal {
+  opacity: 1;
+  animation-name: lp-in-y;
+}
+@keyframes lp-in-y {
+  to {
+    transform: none;
+  }
+}
+/* Two set lines from 640px; free, balanced wrapping on phones. */
+@media (min-width: 640px) {
+  .lp-h1-line {
+    display: block;
+  }
+}
+/* The one coloured word: the brand gradient clipped to the type. The padding
+   (given back by the margin) keeps the "p" inside the painted box despite the
+   tight tracking. */
+.lp-mark {
+  padding-right: 0.06em;
+  margin-right: -0.06em;
+  background: var(--brand-neon);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  white-space: nowrap;
+}
+.lp-hero-sub {
+  margin-top: 26px;
+  max-width: 34rem;
+  font-size: clamp(16.5px, 1.35vw, 19px);
+  line-height: 1.55;
+  letter-spacing: -0.005em;
+  color: var(--fg-2);
+  text-wrap: balance;
+}
+.lp-hero-ctas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px 28px;
+  margin-top: 38px;
+}
+/* The secondary action is a jump down the page, so it reads as a link. */
+.lp-hero-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  font-size: var(--fs-body);
+  letter-spacing: -0.005em;
+  color: var(--fg-2);
+  transition: color 150ms ease-out;
+}
+.lp-hero-link svg {
+  opacity: 0.7;
+  transition:
+    transform 200ms var(--ease-out),
+    opacity 150ms ease-out;
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp-hero-link:hover {
+    color: var(--fg);
+  }
+  .lp-hero-link:hover svg {
+    opacity: 1;
+    transform: translateY(2px);
+  }
+}
+@media (max-width: 639px) {
+  .lp-h1 {
+    margin-top: 20px;
+  }
+  .lp-hero-sub {
+    margin-top: 22px;
+  }
+  .lp-hero-ctas {
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    margin-top: 32px;
+  }
+}
+/* The narrowest phones: three lines of headline, and the eyebrow on one. */
+@media (max-width: 359px) {
+  .lp .lp-h1 {
+    font-size: 46px;
+  }
+  .lp .lp-hero-eyebrow {
+    gap: 8px;
+    letter-spacing: 0.08em;
+  }
+}
+
+/* ============================ the run card ============================ */
+.lp-hr-stage {
+  position: relative;
+  margin-top: clamp(56px, 8vh, 80px);
+}
+/* A painted glow rising behind the card's top edge. */
+.lp-hr-stage::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -80px;
+  width: min(980px, 140vw);
+  height: 440px;
+  transform: translateX(-50%);
+  background:
+    radial-gradient(36% 46% at 40% 34%, var(--glow-blue), transparent 70%),
+    radial-gradient(32% 42% at 62% 40%, var(--glow-magenta), transparent 70%);
+  pointer-events: none;
+}
+/* The page's one raised frame: it floats on the glow. */
+.lp-hr {
+  position: relative;
+  max-width: 640px;
+  margin-inline: auto;
+  overflow: hidden;
+  text-align: left;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 48px 96px -40px #000;
+}
+
+.lp-hr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 56px;
+  padding-inline: 20px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.lp-hr-who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.lp-hr-agent {
+  font-size: var(--fs-body-sm);
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+/* The page's small mono tag: 20px, 8px in, a hairline, lowercase at 0.04em. */
+.lp-hr-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: 20px;
+  margin-left: -2px;
+  padding-inline: 8px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  font-size: var(--fs-label);
+  letter-spacing: 0.04em;
+  color: var(--fg-2);
+}
+.lp-hr-meta {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-meta);
+  color: var(--fg-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lp-hr-head > .lp-hr-meta {
+  flex-shrink: 0;
+}
+
+.lp-hr-strategy {
+  padding: 18px 20px 20px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.lp-hr-strategy-top {
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.lp-hr-private {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-meta);
+  line-height: 16px;
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+.lp-hr-private svg {
+  flex-shrink: 0;
+}
+.lp-hr-prompt {
+  margin-top: 10px;
+  font-size: 16px;
+  line-height: 1.5;
+  letter-spacing: -0.008em;
+  color: var(--fg);
+  text-wrap: pretty;
+}
+
+.lp-hr-listhead {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 6px;
+  white-space: nowrap;
+}
+
+/* Rows: logo | name over chain | score bar | score | verdict. */
+.lp-hr-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 128px) minmax(0, 1fr) 28px 84px;
+  align-items: center;
+  gap: 16px;
+  height: 60px;
+  padding-inline: 20px;
+}
+.lp-hr-row + .lp-hr-row {
+  border-top: 1px solid var(--line-soft);
+}
+.lp .lp-hr-logo {
+  width: 28px;
+  height: 28px;
+  font-size: 10px;
+  background-color: var(--raised);
+}
+.lp-hr-name {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.lp-hr-name b {
+  overflow: hidden;
+  font-size: var(--fs-body);
+  font-weight: 550;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lp-hr-name span {
+  font-size: var(--fs-meta);
+  line-height: 1.2;
+  color: var(--fg-3);
+}
+
+/* The bar maps the whole 0–100 axis: a passing fill shows the part of the
+   brand gradient its score reaches (81 ends near magenta, 77 at violet). The
+   tick marks the floor. */
+.lp-hr-bar {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--track);
+}
+.lp-hr-bar::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--floor, 62) * 1%);
+  top: -4px;
+  width: 1px;
+  height: 12px;
+  background: var(--fg-2);
+}
+.lp-hr-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--s) * 1%);
+  border-radius: 2px;
+  background: rgba(244, 244, 241, 0.3);
+  transform-origin: left;
+  transition: transform 700ms var(--ease-out) calc(var(--i) * 90ms);
+}
+.lp-hr-row[data-pass] .lp-hr-fill {
+  background: var(--brand-neon);
+  background-size: calc(100% * 100 / var(--s)) 100%;
+}
+
+.lp-hr-score {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+.lp-hr-row:not([data-pass]) .lp-hr-score {
+  color: var(--fg-3);
+}
+/* The counting digits (a flex item, so the columns centre like the text
+   beside them) run only in the intro; the still number is the default. */
+.lp-hr-num-tick {
+  display: none;
+}
+
+/* Verdicts are status tags, not buttons: no fill, no border, no hover. */
+.lp-hr-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: start;
+  font-size: var(--fs-small);
+  font-weight: 550;
+  letter-spacing: -0.005em;
+  color: var(--fg);
+  white-space: nowrap;
+  transition: opacity 240ms ease-out calc(480ms + var(--i) * 90ms);
+}
+.lp-hr-vdot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand-neon);
+}
+.lp-hr-row:not([data-pass]) .lp-hr-verdict {
+  font-weight: 450;
+  color: var(--fg-3);
+}
+.lp-hr-row:not([data-pass]) .lp-hr-vdot {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--fg-3);
+}
+
+/* The rest of the run, lined up under the token names. */
+.lp-hr-more {
+  padding: 12px 20px 14px 64px;
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--fs-meta);
+  line-height: 16px;
+  color: var(--fg-3);
+}
+.lp-hr-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.015);
+  font-size: var(--fs-meta);
+  line-height: 16px;
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+
+/* Until the card reaches its full 640px, the header drops the cadence. */
+@media (max-width: 767px) {
+  .lp-hr-xwide {
+    display: none;
+  }
+}
+/* Phones: no bar column, verdicts flush right; the times go, "sample" stays. */
+@media (max-width: 559px) {
+  .lp-hr-head,
+  .lp-hr-strategy,
+  .lp-hr-listhead,
+  .lp-hr-foot {
+    padding-inline: 16px;
+  }
+  .lp-hr-who {
+    gap: 8px;
+  }
+  .lp-hr-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto auto;
+    gap: 12px;
+    padding-inline: 16px;
+  }
+  .lp-hr-bar,
+  .lp-hr-wide {
+    display: none;
+  }
+  .lp-hr-score {
+    margin-right: 4px;
+  }
+  .lp-hr-more {
+    padding-inline: 56px 16px;
+  }
+}
+/* Small phones: the header tightens so "sample" and "asks first" both fit
+   (under 360px only "sample" stays). */
+@media (max-width: 399px) {
+  .lp-hr-who {
+    gap: 6px;
+  }
+  .lp .lp-hr-avatar {
+    width: 24px;
+    height: 24px;
+    margin-right: 2px;
+  }
+  .lp-hr-agent {
+    font-size: 13.5px;
+  }
+  .lp-hr-chip {
+    margin-left: 0;
+    padding-inline: 6px;
+    letter-spacing: 0;
+  }
+  .lp-hr-who > .lp-hr-meta {
+    font-size: var(--fs-label);
+  }
+}
+@media (max-width: 359px) {
+  .lp-hr-who > .lp-hr-meta,
+  .lp-hr-roomy {
+    display: none;
+  }
+  .lp-hr-listhead .lp-label {
+    letter-spacing: 0.06em;
+  }
+}
+
+/* ============================ motion and modes ============================ */
+/* The intro's start state, only where it will run: with scripting on and
+   motion welcome. Without JavaScript (or in a browser that can't tell), and
+   under reduced motion, the card is its final frame from CSS alone, so the
+   markup never differs. Until the intro starts, the scores stay blank rather
+   than reading "00". */
+@media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
+  .lp-hr-fill {
+    transform: scaleX(0);
+  }
+  .lp-hr[data-in] .lp-hr-fill {
+    transform: none;
+  }
+  .lp-hr-verdict {
+    opacity: 0;
+  }
+  .lp-hr[data-in] .lp-hr-verdict {
+    opacity: 1;
+  }
+  .lp-hr-num-tick {
+    display: flex;
+  }
+  .lp-hr-num-still {
+    display: none;
+  }
+  .lp-hr:not([data-in]) .lp-hr-num-tick {
+    visibility: hidden;
+  }
+}
+/* Forced colours: bars keep their ink. */
+@media (forced-colors: active) {
+  .lp-hr-fill,
+  .lp-hr-vdot,
+  .lp-hr-bar::after {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+}

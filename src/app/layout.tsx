@@ -1,8 +1,8 @@
 import type { Metadata, Viewport } from "next";
-import { headers } from "next/headers";
+import { connection } from "next/server";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
-import { Providers } from "@/components/providers";
+import { AppToaster } from "@/components/providers/toaster";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -52,11 +52,11 @@ export const viewport: Viewport = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  // The per-request CSP nonce, set on the request headers by `src/proxy.ts`. Next
-  // stamps its own scripts with it automatically; Base UI's components (the sliders,
-  // among others) render their own inline `<script>` and `<style>` tags and need to
-  // be told, which is what `CSPProvider` inside `Providers` does with this.
-  const nonce = (await headers()).get("x-nonce") ?? undefined;
+  // Every page renders per request. The CSP (`src/proxy.ts`) is nonce-based, and Next
+  // stamps its scripts with the nonce only while rendering a request: a page prerendered
+  // at build time would ship scripts the browser refuses to run. Nothing else in this
+  // layout reads the request, and the landing page reads nothing at all, so say it here.
+  await connection();
 
   return (
     <html
@@ -65,7 +65,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
-        <Providers nonce={nonce}>{children}</Providers>
+        {/* No client providers here: the landing page uses none of them, and they were a
+            third of its script. The app and sign-in layouts mount them (see Providers). */}
+        {children}
+        <AppToaster />
         {/* Vercel Web Analytics: page views and visitors, first-party (/_vercel/insights),
             no cookies. The loader is a same-origin script, which the CSP already allows. */}
         <Analytics />
