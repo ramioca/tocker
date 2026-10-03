@@ -7,7 +7,6 @@ import { AvatarStack, type AvatarItem } from "@/components/spectrumui/avatar-sta
 import { FollowButton } from "@/components/spectrumui/follow-button";
 import { LikeButton } from "@/components/spectrumui/like-button";
 import { ShareButton } from "@/components/spectrumui/share-button";
-import "./landing-feed.css";
 
 /**
  * "Out in the open": the social half of Tocker, drawn the way the app's own

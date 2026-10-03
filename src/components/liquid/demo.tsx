@@ -16,7 +16,6 @@ import type { ToolCall } from "@/components/spectrumui/blocks/ai-assistants/type
 import { NumberTicker } from "@/components/spectrumui/number-ticker";
 import { TextStates } from "@/components/spectrumui/text-states";
 import { useSafeReducedMotion } from "./motion";
-import "./landing-how.css";
 
 /**
  * "How it decides": one sample strategy, the decision it reaches on a launch,

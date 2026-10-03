@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import { LiquidLanding } from "@/components/liquid/liquid-landing";
 
-const TITLE = "Tocker — social agentic crypto trading, 24/7";
+const TITLE = "Tocker — AI trading agents for Solana and Base";
 const DESCRIPTION =
-  "Build a crypto trading agent from a plain-English prompt. It scores every launch on Solana and Base and trades it 24/7, on its own wallet, out in the open. Join the waitlist.";
+  "Describe a strategy in plain English. Your agent screens new tokens on Solana and Base, trades the few that clear your bar, and asks before it buys. Private beta.";
 
 // `absolute` so the root layout's "%s · Tocker" template does not stutter on the one
 // page where the product name is already the whole title.

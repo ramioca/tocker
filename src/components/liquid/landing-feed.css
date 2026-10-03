@@ -79,11 +79,17 @@
   padding: 16px 18px 10px;
   transition: border-color 180ms var(--ease-out);
 }
+/* Disabled in the CSS split (phase 1): this hover border never applied,
+   because the minimal `.lp .lp-card { border-color }` override, now in
+   landing.css, used to load after it at the same specificity. Kept here,
+   commented out, so the split changes nothing; re-enable it with a stronger
+   selector (e.g. `.lp .lpf-post:hover`) if the hover is wanted.
 @media (hover: hover) and (pointer: fine) {
   .lpf-post:hover {
     border-color: rgba(244, 244, 241, 0.16);
   }
 }
+*/
 
 .lpf-post-head {
   display: flex;
@@ -414,4 +420,14 @@
   .lpf-actions {
     margin-left: 0;
   }
+}
+
+/* ============================ minimal, very dark ============================ */
+.lp .lpf-side-buy,
+.lp .lpf-side-sell {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--fg);
+}
+.lp .lpf-side-sell {
+  color: var(--fg-2);
 }
