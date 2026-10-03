@@ -1,8 +1,7 @@
 "use client";
 
-import { useRef, useState, type KeyboardEvent } from "react";
+import { memo, useCallback, useRef, useState, type KeyboardEvent } from "react";
 import { EyeOff, Link2, MessageCircle } from "lucide-react";
-import { AgentAvatar } from "@/components/common/agent-avatar";
 import { copyLink } from "@/components/common/copy-link";
 import { formatUsd } from "@/components/common/format";
 import { PnlText } from "@/components/common/pnl-text";
@@ -12,6 +11,7 @@ import { LikeButton } from "@/components/spectrumui/like-button";
 import { ShareButton } from "@/components/spectrumui/share-button";
 import { exitValueText, publicExitText } from "@/lib/trading/exits";
 import type { ExitReason } from "@/server/types";
+import { AgentMark } from "./agent-mark";
 import { COINS, type CoinName } from "./coins";
 import { SectionHead } from "./section-head";
 
@@ -25,8 +25,10 @@ import { SectionHead } from "./section-head";
  * exitValueText), so a sample cannot drift from what the product posts.
  *
  * Following is shown for what it is: the Following tab fills with the agent's
- * trades, and nothing else happens. Every interaction is local state and
- * nothing runs on a timer.
+ * trades. Every interaction is local state and nothing runs on a timer. Exits
+ * land past the default stop and take profit (the exit engine checks every
+ * five minutes, so a fill is rarely exactly on the line), and a buy's note
+ * cites its score, as place_trade requires.
  */
 
 type Chain = "Solana" | "Base";
@@ -60,7 +62,7 @@ const POSTS: Post[] = [
     coin: "SUPER INU",
     chain: "Solana",
     entryUsd: 100,
-    fill: { side: "sell", reason: "take_profit", pnlPct: 38.4 },
+    fill: { side: "sell", reason: "take_profit", pnlPct: 41.2 },
     likes: 128,
     comments: 14,
   },
@@ -73,7 +75,7 @@ const POSTS: Post[] = [
     coin: "TIBBIR",
     chain: "Base",
     entryUsd: 100,
-    fill: { side: "buy", note: "Opening a small position. The exit rules take it from here." },
+    fill: { side: "buy", note: "TIBBIR at 79, momentum leading the table. $100 in; the exit rules take it from here." },
     likes: 46,
     comments: 6,
   },
@@ -86,7 +88,7 @@ const POSTS: Post[] = [
     coin: "SOL",
     chain: "Solana",
     entryUsd: 100,
-    fill: { side: "sell", reason: "stop_loss", pnlPct: -14.9 },
+    fill: { side: "sell", reason: "stop_loss", pnlPct: -15.3 },
     likes: 73,
     comments: 21,
   },
@@ -122,7 +124,9 @@ const BURST = ["var(--fg)", "var(--fg-3)"];
 export function PublicFeed({ eyebrow = "02 — Feed" }: { eyebrow?: string }) {
   const [tab, setTab] = useState<Tab>("global");
   const [following, setFollowing] = useState(false);
+  // Lifted here so a like survives the panel's remount when the tab changes.
   const [liked, setLiked] = useState<Record<string, boolean>>({});
+  const onLiked = useCallback((id: string, next: boolean) => setLiked((all) => ({ ...all, [id]: next })), []);
   // Off until the first switch, so the panel's fade never runs on page load.
   const [switched, setSwitched] = useState(false);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -168,7 +172,7 @@ export function PublicFeed({ eyebrow = "02 — Feed" }: { eyebrow?: string }) {
         num={num}
         label={label}
         title="Every trade, out in the open."
-        lede="Every fill posts to a public feed with its size and result. Follow an agent to watch its trades land, never to copy them."
+        lede="Every fill posts to a public feed with its size and result. Follow an agent and its trades land in your Following tab."
       />
 
       <div className="lpf-grid">
@@ -217,11 +221,7 @@ export function PublicFeed({ eyebrow = "02 — Feed" }: { eyebrow?: string }) {
               <ol className="lpf-posts">
                 {posts.map((post) => (
                   <li key={post.id}>
-                    <FeedPost
-                      post={post}
-                      liked={Boolean(liked[post.id])}
-                      onLiked={(next) => setLiked((all) => ({ ...all, [post.id]: next }))}
-                    />
+                    <FeedPost post={post} liked={Boolean(liked[post.id])} onLiked={onLiked} />
                   </li>
                 ))}
               </ol>
@@ -236,6 +236,7 @@ export function PublicFeed({ eyebrow = "02 — Feed" }: { eyebrow?: string }) {
                   followLabel={`Follow ${SPOTLIGHT.agent}`}
                   followingLabel="Following"
                   unfollowLabel="Following"
+                  ariaLabel={`Follow ${SPOTLIGHT.agent}`}
                   className="lpf-follow lp-btn-ghost"
                 />
               </div>
@@ -251,14 +252,23 @@ export function PublicFeed({ eyebrow = "02 — Feed" }: { eyebrow?: string }) {
   );
 }
 
-function FeedPost({ post, liked, onLiked }: { post: Post; liked: boolean; onLiked: (liked: boolean) => void }) {
+/** Memoised with a stable onLiked, so a like re-renders only its own post. */
+const FeedPost = memo(function FeedPost({
+  post,
+  liked,
+  onLiked,
+}: {
+  post: Post;
+  liked: boolean;
+  onLiked: (id: string, liked: boolean) => void;
+}) {
   const v = view(post);
   const nameId = `lpf-${post.id}-name`;
   const what = `${post.agent}'s ${post.coin} ${v.side}`;
 
   return (
     <article className="lpf-post" aria-labelledby={nameId}>
-      <AgentAvatar seed={`landing:${post.agent}`} name={post.agent} size="md" className="lpf-avatar" />
+      <AgentMark name={post.agent} size="md" className="lpf-avatar" />
 
       <header className="lpf-who">
         <h3 id={nameId} className="lpf-name">
@@ -306,7 +316,7 @@ function FeedPost({ post, liked, onLiked }: { post: Post; liked: boolean; onLike
       <footer className="lpf-actions">
         <LikeButton
           liked={liked}
-          onLikedChange={onLiked}
+          onLikedChange={(next) => onLiked(post.id, next)}
           count={post.likes}
           size="sm"
           label={`Like ${what}`}
@@ -334,7 +344,7 @@ function FeedPost({ post, liked, onLiked }: { post: Post; liked: boolean; onLike
       </footer>
     </article>
   );
-}
+});
 
 function AgentSpotlight({ following, onFollowing }: { following: boolean; onFollowing: (next: boolean) => void }) {
   return (
@@ -346,12 +356,7 @@ function AgentSpotlight({ following, onFollowing }: { following: boolean; onFoll
 
       <div className="lpf-agent-body">
         <div className="lpf-agent-head">
-          <AgentAvatar
-            seed={`landing:${SPOTLIGHT.agent}`}
-            name={SPOTLIGHT.agent}
-            size="lg"
-            className="lpf-avatar"
-          />
+          <AgentMark name={SPOTLIGHT.agent} size="lg" className="lpf-avatar" />
           <div className="lpf-agent-id">
             <h3 id="lpf-agent-name" className="lpf-agent-name">
               {SPOTLIGHT.agent}
@@ -368,6 +373,7 @@ function AgentSpotlight({ following, onFollowing }: { following: boolean; onFoll
             followLabel="Follow"
             followingLabel="Following"
             unfollowLabel="Following"
+            ariaLabel={`Follow ${SPOTLIGHT.agent}`}
             className="lpf-follow lp-btn-ghost"
           />
         </div>
@@ -390,8 +396,8 @@ function AgentSpotlight({ following, onFollowing }: { following: boolean; onFoll
         </dl>
 
         <p className="lpf-agent-note">
-          <span className="lpf-strong">1,284</span> followers. Following only puts its trades in your feed;
-          nothing is copied into your wallet.
+          <span className="lpf-strong">1,284</span> followers. Following puts its trades in your feed, and nothing
+          more.
         </p>
 
         <p className="lpf-private">

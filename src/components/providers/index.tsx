@@ -11,16 +11,19 @@ import { RunStatusProvider } from "./run-status";
  * The app's client providers: the CSP nonce for Base UI, the query cache, Privy, run
  * status and tooltips.
  *
- * Mounted by `src/app/(app)/layout.tsx` and `src/app/login/layout.tsx` — the two trees
- * that use any of them — and deliberately not by the root layout: Privy, its wallet
- * connectors, viem and the query client were a third of the landing page's script, for
- * a page that uses none of them. A new route that calls `useSession`, `useQuery`,
- * `useRunStatus` or renders a Base UI control needs a layout that mounts this. The
- * toaster is not in here; the root layout mounts it (`./toaster`) for every page.
+ * Mounted once by `src/app/(client)/layout.tsx`, the layout the app and /login share, and
+ * deliberately not by the root layout: Privy, its wallet connectors, viem and the query
+ * client were a third of the landing page's script, for a page that uses none of them.
+ * Sharing one layout keeps a single instance across sign-in and every navigation between
+ * /login and the app. A new route that calls `useSession`, `useQuery`, `useRunStatus` or
+ * renders a Base UI control belongs under `src/app/(client)/`; do not mount a second copy
+ * in another layout. The toaster is not in here; the root layout mounts it (`./toaster`)
+ * for every page.
  */
 export function Providers({ children, nonce }: { children: ReactNode; nonce?: string }) {
   // One client per mount of this tree, created lazily so it is never shared between
-  // requests on the server. Moving between /login and the app starts a fresh one.
+  // requests on the server. /login and the app share the mount, so they share the cache;
+  // leaving for the landing page, which sits outside it, and coming back starts a new one.
   const [queryClient] = useState(
     () =>
       new QueryClient({

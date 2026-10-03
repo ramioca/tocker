@@ -1,29 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { MIN_SCORED_PER_TICK } from "@/lib/agent/limits";
 import { COINS } from "./coins";
-import {
-  SAMPLE_EVERY_MIN,
-  SAMPLE_FLOOR,
-  SAMPLE_ROWS,
-  SAMPLE_STOP_PCT,
-  SAMPLE_TAKE_PROFIT_PCT,
-  SAMPLE_TRADE_USD,
-  clearsFloor,
-} from "./sample";
+import { HERO_LABEL, SAMPLE_OTHER_SCORES, SAMPLE_PROMPT, SAMPLE_ROWS, SAMPLE_SCORED, clearsFloor } from "./sample";
 
-/** The sample agent runs on the defaults a new agent gets, so its numbers can't drift from the app's. */
-describe("the landing's sample agent uses the real defaults", () => {
-  it("matches DEFAULT_AGENT_CONFIG", () => {
-    expect(SAMPLE_FLOOR).toBe(DEFAULT_AGENT_CONFIG.universe.minScore);
-    expect(SAMPLE_TRADE_USD).toBe(DEFAULT_AGENT_CONFIG.risk.maxTradeUsd);
-    expect(SAMPLE_STOP_PCT).toBe(DEFAULT_AGENT_CONFIG.risk.stopLossPct);
-    expect(SAMPLE_TAKE_PROFIT_PCT).toBe(DEFAULT_AGENT_CONFIG.risk.takeProfitPct);
-    expect(SAMPLE_EVERY_MIN).toBe(DEFAULT_AGENT_CONFIG.schedule.intervalMinutes);
-    expect(DEFAULT_AGENT_CONFIG.execution.mode).toBe("approve");
-  });
-
+describe("the landing's sample run", () => {
   it("shows two tokens that clear the floor and one that doesn't, each a known coin", () => {
     expect(SAMPLE_ROWS.filter((r) => clearsFloor(r.score))).toHaveLength(2);
     for (const r of SAMPLE_ROWS) expect(COINS[r.coin]).toBeDefined();
+  });
+
+  it("shows its top three: everything else it scored is lower, and under the floor", () => {
+    const lowest = Math.min(...SAMPLE_ROWS.map((r) => r.score));
+    for (const s of SAMPLE_OTHER_SCORES) {
+      expect(s).toBeLessThan(lowest);
+      expect(clearsFloor(s)).toBe(false);
+    }
+  });
+
+  it("scores at least the run loop's minimum of fresh candidates, plus SOL, which discovery never lists", () => {
+    const fresh = SAMPLE_SCORED - SAMPLE_ROWS.filter((r) => r.coin === "SOL").length;
+    expect(fresh).toBeGreaterThanOrEqual(MIN_SCORED_PER_TICK);
+  });
+
+  it("gives the hero card's picture a text alternative with the strategy and every row", () => {
+    expect(HERO_LABEL).toContain(SAMPLE_PROMPT);
+    for (const r of SAMPLE_ROWS) expect(HERO_LABEL).toContain(`${r.coin} on ${r.chain} ${r.score}`);
+    expect(HERO_LABEL).not.toMatch(/\bbuys (TIBBIR|SOL)\b/);
   });
 });

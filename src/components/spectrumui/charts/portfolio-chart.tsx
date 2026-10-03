@@ -85,6 +85,11 @@ export interface PortfolioChartProps {
    * 450 hidden nodes on a marketing page. Omit for every point.
    */
   tableMaxRows?: number;
+  /**
+   * Whether the line may draw in. Pass false until the chart is on screen (a page that
+   * mounts it far below the fold), then true to play the intro there. Default true.
+   */
+  intro?: boolean;
 }
 
 export function PortfolioChart({
@@ -98,6 +103,7 @@ export function PortfolioChart({
   status = 'ready',
   onRetry,
   tableMaxRows,
+  intro = true,
 }: PortfolioChartProps) {
   const reduce = usePrefersReducedMotion();
   const [wrapRef, width] = useElementWidth<HTMLDivElement>();
@@ -106,6 +112,8 @@ export function PortfolioChart({
     () => ranges.find((r) => r.label === defaultRange)?.label ?? ranges[ranges.length - 1].label,
   );
   const [hoverIndex, setHoverIndex] = React.useState<number | null>(null);
+  // Scrubbing from the keyboard is announced (below); a pointer's hover is not.
+  const [keyScrub, setKeyScrub] = React.useState(false);
 
   const range = ranges.find((r) => r.label === rangeLabel) ?? ranges[ranges.length - 1];
   const view = React.useMemo(() => {
@@ -180,8 +188,9 @@ export function PortfolioChart({
   }, [showDrawdown, drawdowns, cx, ddY, ddTop, n]);
 
   const valueTicks = React.useMemo(() => niceTicks(dLo, dHi, 4), [dLo, dHi]);
-  // One label format per axis (see formatAxisPrice).
+  // One label format per axis, as precise as its tick gap (see formatAxisPrice).
   const axisScale = React.useMemo(() => Math.max(0, ...valueTicks.map(Math.abs)), [valueTicks]);
+  const axisStep = valueTicks.length > 1 ? valueTicks[1] - valueTicks[0] : undefined;
   const timeTicks = React.useMemo(() => {
     if (!n) return [];
     const want = Math.max(2, Math.min(6, Math.floor(plotW / 96)));
@@ -204,15 +213,22 @@ export function PortfolioChart({
   const readoutColor = up ? UP : DOWN;
   const latest = view[n - 1];
   const dirColor = latest && latest.value >= latest.basis ? UP : DOWN;
+  // The chart's name describes the latest point, whatever is being scrubbed.
+  const latestPct = latest && latest.basis ? ((latest.value - latest.basis) / latest.basis) * 100 : 0;
 
   const displayValue = useTweenNumber(active?.value ?? 0, {
     duration: 260,
     enabled: !reduce && hoverIndex == null,
   });
 
-  const onKeyDown = useHoverIndexKeys({ count: n, setIndex: setHoverIndex });
+  const onHoverKeys = useHoverIndexKeys({ count: n, setIndex: setHoverIndex });
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if (!keyScrub) setKeyScrub(true);
+    onHoverKeys(event);
+  };
 
   const onMove = (clientX: number) => {
+    if (keyScrub) setKeyScrub(false);
     const svg = svgRef.current;
     if (!svg) return;
     const box = svg.getBoundingClientRect();
@@ -252,9 +268,10 @@ export function PortfolioChart({
               animate={!reduce}
               className="font-mono text-[26px] font-medium text-neutral-950 dark:text-white"
             />
+            {/* Full dollars and cents at every size, so the figure never flips format as it crosses $1,000. */}
             <span className="mb-1 font-mono text-[12px] tabular-nums" style={{ color: readoutColor }}>
               {up ? '+' : '−'}
-              {formatMoney(Math.abs(pnl), true).replace('$', '$')} ({formatSignedPct(pnlPct)})
+              {formatMoney(Math.abs(pnl))} ({formatSignedPct(pnlPct)})
             </span>
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 font-mono text-[10.5px] tabular-nums">
@@ -287,6 +304,13 @@ export function PortfolioChart({
         <RangeSelector ranges={ranges} value={rangeLabel} onChange={setRangeLabel} reduce={reduce} />
       </div>
 
+      {/* The plot is one picture (role="img"), so a keyboard scrub is read out here. */}
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {keyScrub && hoverIndex != null && active
+          ? `${DATE_FULL.format(active.t)}: ${formatMoney(active.value)}, ${formatSignedPct(pnlPct)} against cost basis`
+          : ''}
+      </span>
+
       <ChartState
 
         status={status}
@@ -310,10 +334,15 @@ export function PortfolioChart({
             viewBox={`0 0 ${w} ${h}`}
             className="block w-full touch-pan-y select-none overflow-visible"
             role="img"
-            aria-label={`${label} value ${formatMoney(view[n - 1]?.value ?? 0)}, ${formatSignedPct(pnlPct)} against cost basis. Max drawdown ${maxDrawdown.toFixed(2)} percent.`}
+            aria-label={`${label} value ${formatMoney(latest?.value ?? 0)}, ${formatSignedPct(latestPct)} against cost basis.${
+              showDrawdown ? ` Max drawdown ${maxDrawdown.toFixed(2)} percent.` : ''
+            } Arrow keys step through the dates.`}
             tabIndex={0}
             onKeyDown={onKeyDown}
-            onBlur={() => setHoverIndex(null)}
+            onBlur={() => {
+              setHoverIndex(null);
+              setKeyScrub(false);
+            }}
             onPointerMove={(e) => onMove(e.clientX)}
             onPointerDown={(e) => onMove(e.clientX)}
             onPointerLeave={() => setHoverIndex(null)}
@@ -361,7 +390,7 @@ export function PortfolioChart({
                     fill="currentColor"
                     className="tabular-nums"
                   >
-                    {formatAxisPrice(tick, axisScale)}
+                    {formatAxisPrice(tick, axisScale, axisStep)}
                   </text>
                 );
               })}
@@ -371,7 +400,7 @@ export function PortfolioChart({
               <path
                 d={`${valuePath}L${cx(n - 1)},${valueBottom}L${cx(0)},${valueBottom}Z`}
                 fill={`url(#${uid}-value)`}
-                style={reduce ? undefined : { animation: 'spectrum-mc-fade 560ms ease-out both' }}
+                style={reduce ? undefined : intro ? { animation: 'spectrum-mc-fade 560ms ease-out both' } : { opacity: 0 }}
               />
               <path
                 d={basisPath}
@@ -392,7 +421,9 @@ export function PortfolioChart({
                 style={
                   reduce
                     ? undefined
-                    : { strokeDasharray: 1, animation: `spectrum-mc-draw 900ms ${EASE} both` }
+                    : intro
+                      ? { strokeDasharray: 1, animation: `spectrum-mc-draw 900ms ${EASE} both` }
+                      : { strokeDasharray: 1, strokeDashoffset: 1 }
                 }
               />
             </g>
@@ -414,7 +445,9 @@ export function PortfolioChart({
                   stroke={DOWN}
                   strokeWidth={1.2}
                   strokeOpacity={0.75}
-                  style={reduce ? undefined : { animation: 'spectrum-mc-fade 620ms ease-out 120ms both' }}
+                  style={
+                    reduce ? undefined : intro ? { animation: 'spectrum-mc-fade 620ms ease-out 120ms both' } : { opacity: 0 }
+                  }
                 />
                 <text
                   x={x0 + 2}

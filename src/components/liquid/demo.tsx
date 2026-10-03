@@ -5,32 +5,16 @@ import { ApprovalCard, type ApprovalDecision } from "@/components/spectrumui/blo
 import { AnimatedSwitch } from "@/components/spectrumui/animated-switch";
 import { TokenIcon } from "@/components/common/token-icon";
 import { COINS } from "./coins";
-import { SAMPLE_PROPOSAL_TTL_MIN } from "./console-run";
-import { SAMPLE_AGENT, SAMPLE_FLOOR, SAMPLE_ROWS, SAMPLE_STOP_PCT, SAMPLE_TAKE_PROFIT_PCT, SAMPLE_TRADE_USD } from "./sample";
+import { APPROVAL } from "./console-run";
 
 /**
  * The end of the console's run: the first of its two proposals, waiting on the
  * owner. A local demo: Approve, Skip and the switch only change this card;
  * nothing is sent anywhere. The request never claims a gate result for the
- * real token it names.
+ * real token it names (its copy lives in console-run.ts, where the tests read it).
  */
 
-const TIBBIR = SAMPLE_ROWS.find((r) => r.coin === "TIBBIR")!;
-
-const RESULT: Record<ApprovalDecision | "auto", { title: string; note: string }> = {
-  approved: {
-    title: `Approved · $${SAMPLE_TRADE_USD} of TIBBIR on paper`,
-    note: "In the app it fills on paper and posts to the feed. This demo sends nothing.",
-  },
-  rejected: {
-    title: "Skipped TIBBIR · no position opened",
-    note: "The agent moves on. SOL is still waiting for your OK.",
-  },
-  auto: {
-    title: "Approvals off · it buys on its own",
-    note: "Your floor, your budget, your stop and the hard gates still apply to every entry.",
-  },
-};
+const RESULT = APPROVAL.result;
 
 export function ApprovalDemo() {
   const labelId = useId();
@@ -38,7 +22,7 @@ export function ApprovalDemo() {
   const [ask, setAsk] = useState(true);
   const outcome = !ask ? "auto" : decision;
   const result = outcome ? RESULT[outcome] : null;
-  const waiting = !ask ? "none waiting" : decision ? "1 waiting · SOL" : "1 of 2 waiting";
+  const waiting = !ask ? "none waiting" : decision ? "1 waiting · SOL" : "2 waiting · TIBBIR first";
 
   // The pressed button is hidden when the card turns over; move focus to
   // whatever replaces it so keyboard users keep their place.
@@ -75,9 +59,9 @@ export function ApprovalDemo() {
         <div className="lp-ap-req" inert={result ? true : undefined}>
           <ApprovalCard
             className="lp-ap-card max-w-none"
-            title={`${SAMPLE_AGENT} wants to buy TIBBIR`}
-            description={`$${SAMPLE_TRADE_USD} on paper at a score of ${TIBBIR.score}, against your floor of ${SAMPLE_FLOOR}. Stop ${SAMPLE_STOP_PCT}%, take profit ${SAMPLE_TAKE_PROFIT_PCT}%.`}
-            meta={`${TIBBIR.chain} · place_trade · expires in ${SAMPLE_PROPOSAL_TTL_MIN} min`}
+            title={APPROVAL.title}
+            description={APPROVAL.description}
+            meta={APPROVAL.meta}
             approveLabel="Approve buy"
             rejectLabel="Skip"
             decision={null}
@@ -117,13 +101,13 @@ export function ApprovalDemo() {
 
       <div className="lp-ap-foot">
         <span className="lp-ap-foot-text">
-          <span className="lp-ap-foot-title">Ask before entries</span>
+          <span className="lp-ap-foot-title">Ask before trades</span>
           <span className="lp-ap-foot-note">
-            {ask ? "On by default: it proposes, you decide." : "Off: it enters on its own."}
+            {ask ? "On by default: it proposes, you decide. Rule exits never wait." : "Off: it trades on its own."}
           </span>
         </span>
         <AnimatedSwitch
-          label="Ask before entries"
+          label="Ask before trades"
           checked={ask}
           onCheckedChange={(on) => {
             setAsk(on);

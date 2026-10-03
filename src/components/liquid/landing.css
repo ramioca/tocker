@@ -251,6 +251,11 @@
     grid-template-columns: var(--split-cols);
     align-items: end;
   }
+  /* The h2 always hangs from the eyebrow (a taller lede must not push it
+     down); a taller h2 still carries the lede on its last line. */
+  .lp-split-head > .lp-h2 {
+    align-self: start;
+  }
   .lp-split-head .lp-lede {
     margin-top: 0;
   }
@@ -267,9 +272,8 @@
 
 /* ============================ buttons ============================ */
 /* The primary pill: off-white with black type. Every "Join the waitlist" on
-   the page (hero, FAQ, close) and the waitlist's submit. */
+   the page (hero, close) and the waitlist's submit. */
 .lp-btn-primary,
-.lp .lp-faq-card > button:last-child,
 .wl-overlay .wl-morph,
 .wl-overlay .wl-submit {
   display: inline-flex;
@@ -300,7 +304,6 @@
 }
 @media (hover: hover) and (pointer: fine) {
   .lp-btn-primary:hover,
-  .lp .lp-faq-card > button:last-child:hover,
   .wl-overlay .wl-morph-idle:hover,
   .wl-overlay .wl-submit:hover {
     background: #fff;
@@ -371,6 +374,39 @@
 }
 .lp-btn-ghost:active {
   transform: scale(0.97);
+}
+
+/* ============================ agent mark ============================ */
+/* An agent's initials on a quiet square (agent-mark.tsx): one identity for
+   every agent on the page, so colour stays with P&L. */
+.lp-agentmark {
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--raised);
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--fg-2);
+  user-select: none;
+}
+.lp-agentmark[data-size="md"] {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.lp-agentmark[data-size="lg"] {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-inner);
+  font-size: 14px;
 }
 
 /* ============================ brand ============================ */
@@ -445,12 +481,14 @@
     transform: none;
   }
 }
-/* A block that holds keyboard focus is never left half faded. */
+/* A block that holds keyboard focus is never left half faded. Important
+   declarations outrank the running animation's values without removing it:
+   taking the animation away and giving it back when focus leaves would
+   restart it from nothing, and the block would blink out and fade in again. */
 .rise:focus-within,
 .reveal:focus-within {
-  animation: none;
-  opacity: 1;
-  transform: none;
+  opacity: 1 !important;
+  transform: none !important;
 }
 
 /* Reduced motion: end states, no transitions, and no loop survives (this
@@ -479,7 +517,6 @@
 /* Forced colours: filled pills keep an edge. */
 @media (forced-colors: active) {
   .lp-btn-primary,
-  .lp .lp-faq-card > button:last-child,
   .wl-overlay .wl-morph,
   .wl-overlay .wl-submit,
   .lp-btn-ghost {

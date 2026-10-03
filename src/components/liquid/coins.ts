@@ -2,8 +2,9 @@
  * The real tokens the landing's sample cards show. Values on the page stay
  * samples; only the identity is real. SOL's logo (from the Solana token list) and
  * Super Inu's (supplied by the team; DexScreener has none for this mint) ship with
- * the site. TIBBIR's loads from DexScreener's image CDN by contract address; if it
- * fails, TokenIcon falls back to the symbol.
+ * the site, as 96px WebP copies (the page draws them at 32px at most; the full-size
+ * PNGs next to them are the sources). TIBBIR's loads from DexScreener's image CDN
+ * by contract address; if it fails, TokenIcon falls back to the symbol.
  */
 export type Coin = { id: string; symbol: string; name: string; logoUrl: string };
 
@@ -18,13 +19,13 @@ export const COINS = {
     id: "solana:6zemoTVh54EFoP5peMJ9tWiJxPp37Xsgu9dMhq73evw7",
     symbol: "SI",
     name: "SUPER INU",
-    logoUrl: "/tokens/super-inu.png",
+    logoUrl: "/tokens/super-inu-96.webp",
   },
   SOL: {
     id: "solana:So11111111111111111111111111111111111111112",
     symbol: "SOL",
     name: "SOL",
-    logoUrl: "/tokens/sol.png",
+    logoUrl: "/tokens/sol-96.webp",
   },
 } as const satisfies Record<string, Coin>;
 

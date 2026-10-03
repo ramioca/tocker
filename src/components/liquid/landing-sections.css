@@ -1,7 +1,7 @@
 /* ============================================================================
  * Landing sections after the feed: 03 data sources, 04 performance, 05
  * guardrails + go-live demo, 06 FAQ, the closing call to action and the footer
- * (liquid-landing.tsx, performance.tsx, go-live.tsx, faq-card.tsx,
+ * (liquid-landing.tsx, performance.tsx, go-live.tsx, Spectrum's FAQTabsCard,
  * waitlist-button.tsx). Section heads use the shared `.lp-split-head`.
  *
  * One system: frames are 20px hairline cards on --card, inner parts are split
@@ -96,6 +96,17 @@
   text-transform: none;
 }
 
+/* Small phones: tighter tags, so a name and its tags stay on one line. */
+@media (max-width: 399px) {
+  .lp .lp-src-name {
+    gap: 4px 6px;
+  }
+  .lp .lp-src-tag {
+    padding-inline: 6px;
+    letter-spacing: 0;
+  }
+}
+
 /* Phones: two lines per source. Name (and tags) with the price on the right,
    then provider · kind. The column heads stay for screen readers only. */
 @media (max-width: 639px) {
@@ -149,12 +160,15 @@
 }
 
 /* ============================ 04 performance ============================ */
+/* Every frame's header row is 52px, like the feed's. */
 .lp .lp-perf-bar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: space-between;
   gap: 4px 24px;
-  padding: 14px 24px;
+  min-height: 52px;
+  padding: 10px 24px;
   border-bottom: 1px solid var(--line-soft);
 }
 .lp .lp-perf-bar-stats {
@@ -288,10 +302,25 @@
 .lp .lp-perf-chart .dark\:text-neutral-500 {
   color: var(--fg-3);
 }
-/* Range tabs: 19px tall in the vendored control; give them a real target. */
+/* Its "Equity" title is the frame's caps label, like "Open positions". */
+.lp .lp-perf-chart .font-mono.text-\[12px\].tracking-wide {
+  font-size: var(--fs-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+/* Its 10.5px meta row and axis labels, up to the page's 11px floor. */
+.lp .lp-perf-chart .text-\[10\.5px\],
+.lp .lp-perf-chart svg text {
+  font-size: var(--fs-label);
+}
+/* Range tabs: 19px tall in the vendored control; give them a real target,
+   in mono like every other figure (the page's button reset made them sans). */
 .lp .lp-perf-chart [role="tablist"] > button {
   min-height: 28px;
   padding-inline: 12px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 .lp .lp-perf-chart [role="tablist"] > button::after {
   content: "";
@@ -353,7 +382,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 17px 24px;
+  min-height: 52px;
+  padding: 10px 24px;
   border-bottom: 1px solid var(--line-soft);
 }
 .lp .lp-golive-title,
@@ -362,6 +392,9 @@
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--fg);
+}
+.lp .lp-golive-title {
+  white-space: nowrap;
 }
 .lp .lp-golive-meta,
 .lp .lp-defaults-meta {
@@ -488,10 +521,16 @@
     display: none;
   }
 }
+@media (max-width: 359px) {
+  .lp .lp-golive-meta-more {
+    display: none;
+  }
+}
 
 /* ============================ 06 FAQ ============================ */
-/* Spectrum's FAQTabsCard without its outer card: the topics and the call to
-   action sit under the h2, the questions under the lede. */
+/* Spectrum's FAQTabsCard without its outer card or its footer (the page's one
+   closing call to action follows): the topics sit under the h2, the questions
+   under the lede. */
 .lp .lp-faq-card {
   padding: 0;
   border-radius: 0;
@@ -556,26 +595,12 @@
   color: var(--fg-2);
   text-wrap: pretty;
 }
-/* Its footer is the page's primary pill (landing.css), with the arrow drawn by
-   a mask. Under 900px the closing call to action follows right after, so the
-   footer steps aside there. */
-.lp .lp-faq-card > button:last-child {
-  display: none;
-}
-.lp .lp-faq-card > button:last-child::after {
-  content: "";
-  width: 14px;
-  height: 14px;
-  background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 8h11M8.5 3.5 13 8l-4.5 4.5' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
-    center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 8h11M8.5 3.5 13 8l-4.5 4.5' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
-    center / contain no-repeat;
-  transition: transform 200ms var(--ease-out);
-}
-@media (hover: hover) and (pointer: fine) {
-  .lp .lp-faq-card > button:last-child:hover::after {
-    transform: translateX(3px);
+/* Touch: the topic tabs keep their 34px look with a 44px target. */
+@media (pointer: coarse) {
+  .lp .lp-faq-card > [role="group"] > button::after {
+    content: "";
+    position: absolute;
+    inset: -5px 0;
   }
 }
 /* From 900px the topics become a vertical list in the h2's column. */
@@ -583,7 +608,6 @@
   .lp .lp-faq-card {
     display: grid;
     grid-template-columns: var(--split-cols);
-    grid-template-rows: auto 1fr;
     column-gap: var(--split-gap);
     align-items: start;
   }
@@ -613,15 +637,8 @@
   }
   .lp .lp-faq-card > div:nth-child(2) {
     grid-column: 2;
-    grid-row: 1 / span 2;
+    grid-row: 1;
     margin-top: 0;
-  }
-  .lp .lp-faq-card > button:last-child {
-    display: inline-flex;
-    grid-column: 1;
-    grid-row: 2;
-    justify-self: start;
-    margin-top: 28px;
   }
 }
 

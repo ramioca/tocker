@@ -68,11 +68,20 @@ export function WaitlistProvider({ children }: { children: ReactNode }) {
     if (el) requestAnimationFrame(() => el.focus({ preventScroll: true }));
   }, []);
 
+  // Inert lands a frame after the click, not in it: it restyles the whole page,
+  // and the press should paint first. The Tab trap and the focus move cover the gap.
   useEffect(() => {
     if (!open) return;
     const root = pageRoot();
-    root?.setAttribute("inert", "");
-    return () => root?.removeAttribute("inert");
+    let t = 0;
+    const raf = requestAnimationFrame(() => {
+      t = window.setTimeout(() => root?.setAttribute("inert", ""), 0);
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t);
+      root?.removeAttribute("inert");
+    };
   }, [open]);
 
   const value = useMemo(() => ({ open: doOpen }), [doOpen]);
@@ -115,10 +124,12 @@ function WaitlistModal({ onClose }: { onClose: () => void }) {
 
   // Lock the page, move focus in, trap Tab, close on Escape. On a touch screen
   // focus goes to the dialog itself: focusing the email would raise the
-  // keyboard over the fields the visitor has not read yet.
+  // keyboard over the fields the visitor has not read yet. The lock is on
+  // <body> (it reaches the viewport the same way): a style change on <html>
+  // restyles the whole document.
   useEffect(() => {
-    const prev = document.documentElement.style.overflow;
-    document.documentElement.style.overflow = "hidden";
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const coarse = window.matchMedia("(pointer: coarse)").matches;
     const t = window.setTimeout(() => {
       if (coarse) panelRef.current?.focus({ preventScroll: true });
@@ -151,7 +162,7 @@ function WaitlistModal({ onClose }: { onClose: () => void }) {
     };
     window.addEventListener("keydown", onKey);
     return () => {
-      document.documentElement.style.overflow = prev;
+      document.body.style.overflow = prev;
       window.clearTimeout(t);
       window.removeEventListener("keydown", onKey);
     };
@@ -300,6 +311,7 @@ function WaitlistModal({ onClose }: { onClose: () => void }) {
                 options={VOLUMES}
                 selected={volume ? [volume] : []}
                 onToggle={setVolume}
+                invalid={showMissing && volume === null}
               />
               <ChipGroup label="Where you trade" options={CHAINS} selected={chains} onToggle={toggleChain} />
               <ChipGroup
@@ -353,6 +365,7 @@ function ChipGroup({
   options,
   selected,
   onToggle,
+  invalid,
 }: {
   label: string;
   required?: boolean;
@@ -360,6 +373,8 @@ function ChipGroup({
   options: ReadonlyArray<string>;
   selected: ReadonlyArray<string>;
   onToggle: (value: string) => void;
+  /** Still missing after a submit: tied to the message that says so. */
+  invalid?: boolean;
 }) {
   const labelId = useId();
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -388,6 +403,8 @@ function ChipGroup({
         role={single ? "radiogroup" : "group"}
         aria-labelledby={labelId}
         aria-required={(single && required) || undefined}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? "wl-missing" : undefined}
       >
         {options.map((o, i) => {
           const on = selected.includes(o);

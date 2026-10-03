@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { canonicalSlug } from "@/app/(app)/agents/[slug]/canonical-slug";
+import { canonicalSlug } from "@/app/(client)/(app)/agents/[slug]/canonical-slug";
 import { AgentConfigSummary } from "@/components/agents/agent-config-summary";
 import { AgentHeader } from "@/components/agents/agent-header";
 import { AgentStats } from "@/components/agents/agent-stats";

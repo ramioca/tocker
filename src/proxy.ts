@@ -2,15 +2,17 @@
  * Proxy — Next.js 16's renamed Middleware (`src/proxy.ts`, one per project, Node
  * runtime by default; the `runtime` segment option is not available here).
  *
- * It does two things, both of which have to happen before anything else touches
+ * It does three things, all of which have to happen before anything else touches
  * the request:
  *
  *  1. **Security headers on every response**, including a nonce-based CSP. The
  *     nonce is set on the *request* headers as well, because that is how Next
  *     picks it up and stamps its own bootstrap scripts (see the CSP guide in
  *     `node_modules/next/dist/docs/01-app/02-guides/content-security-policy.md`).
- *     Setting a per-request nonce opts those routes into dynamic rendering; every
- *     route in this app already reads cookies for the session, so nothing is lost.
+ *     A nonce only works on a page rendered per request, and setting one does not
+ *     make a route dynamic; the root layout's `await connection()`
+ *     (`src/app/layout.tsx`) does that for every route, the landing page included,
+ *     which reads no request data of its own. Do not remove that call.
  *
  *  2. **Coarse rate limits** on `/api/me/*`, `/api/cron/*` and the public endpoints
  *     that cost something per call (the Solana RPC relay, the waitlist, token search;

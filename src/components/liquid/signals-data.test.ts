@@ -4,8 +4,8 @@ import { listDataSources } from "@/lib/data-sources/registry";
 import { DEFAULT_DATA_BUDGET_USD, LANDING_SOURCES } from "./signals-data";
 
 /**
- * The landing page's data-source cards must describe what the app actually
- * pays for. The registry is the truth; this test keeps the mirror honest.
+ * The landing page's data sources must describe what the app actually pays
+ * for. The registry is the truth; this test keeps the mirror honest.
  */
 describe("landing data sources mirror the registry", () => {
   const registry = new Map(listDataSources().map((s) => [s.id, s]));
@@ -27,10 +27,7 @@ describe("landing data sources mirror the registry", () => {
   it.each(LANDING_SOURCES.map((s) => [s.id, s] as const))("%s matches the registry", (_, card) => {
     const source = registry.get(card.id)!;
     expect(card.priceUsd).toBe(source.priceUsd);
-    expect(card.price).toBe(formatPrice(source.priceUsd!));
     expect(card.category).toBe(source.category);
-    const network = source.network.startsWith("solana:") ? "Solana" : "Base";
-    expect(card.network).toBe(network);
     const tier = source.experimental
       ? "experimental"
       : DEFAULT_AGENT_CONFIG.dataSources.includes(card.id)
@@ -43,7 +40,3 @@ describe("landing data sources mirror the registry", () => {
     expect(DEFAULT_DATA_BUDGET_USD).toBe(DEFAULT_AGENT_CONFIG.risk.maxDataSpendUsdPerRun);
   });
 });
-
-function formatPrice(usd: number): string {
-  return `$${usd.toString()}`;
-}

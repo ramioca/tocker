@@ -59,7 +59,7 @@ describe("the server/client boundary around the helper", () => {
 
   it("the token page imports the helpers from the server-safe module", () => {
     const page = readFileSync(
-      join(process.cwd(), "src", "app", "(app)", "tokens", "[chain]", "[address]", "page.tsx"),
+      join(process.cwd(), "src", "app", "(client)", "(app)", "tokens", "[chain]", "[address]", "page.tsx"),
       "utf8",
     );
     for (const helper of ["pricePointsFrom", "priceAxisPadLeft"]) {

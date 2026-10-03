@@ -1,28 +1,18 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
+import { memo, useEffect, useId, useRef, useState } from "react";
 import { useInView } from "motion/react";
 import { EyeOff } from "lucide-react";
 import { AgentSteps } from "@/components/spectrumui/blocks/ai-assistants/agent-steps";
 import { ReasoningTrace } from "@/components/spectrumui/blocks/ai-assistants/reasoning-trace";
 import { StatusTracker } from "@/components/spectrumui/blocks/ai-assistants/status-tracker";
 import { ToolChips } from "@/components/spectrumui/blocks/ai-assistants/tool-chips";
-import { AgentAvatar } from "@/components/common/agent-avatar";
-import { BEAT_MS, DATA_TOTAL_USD, FINAL_BEAT, REASONING, STAGES, THOUGHT_MS, runAt, usd3 } from "./console-run";
+import { AgentMark } from "./agent-mark";
+import { BEAT_MS, CONSOLE_SUMMARY, DATA_TOTAL_USD, FINAL_BEAT, REASONING, STAGES, THOUGHT_MS, runAt } from "./console-run";
 import { ApprovalDemo } from "./demo";
 import { usePageVisible, useSafeReducedMotion } from "./motion";
-import { DEFAULT_DATA_BUDGET_USD } from "./signals-data";
-import {
-  SAMPLE_AGENT,
-  SAMPLE_EVERY_MIN,
-  SAMPLE_FLOOR,
-  SAMPLE_NEXT_RUN_AT,
-  SAMPLE_ROWS,
-  SAMPLE_RUN_AT,
-  SAMPLE_SCORED,
-  SAMPLE_TRADE_USD,
-  clearsFloor,
-} from "./sample";
+import { SAMPLE_AGENT, SAMPLE_EVERY_MIN, SAMPLE_MODE, SAMPLE_NEXT_RUN_AT, SAMPLE_RUN_AT } from "./sample";
+import { usd3 } from "./signals-data";
 
 /**
  * The agent console: the hero's sample run, opened up as its owner sees it,
@@ -32,23 +22,41 @@ import {
  * first of its two proposals waiting on you. Owner only: nobody else ever sees
  * a run's reasoning or transcript.
  *
- * Motion: each time the console comes into view the run replays once, in
- * under five seconds, then holds the finished run, perfectly still. Off
- * screen, in a background tab, under reduced motion, or once you touch a
- * control, it shows the finished run and nothing ticks. The server renders
- * the finished run too.
+ * Motion: when the console comes up into view, the run replays once, in under
+ * five seconds, then holds the finished run, perfectly still. Every row keeps
+ * its height through the replay, so nothing on the page moves with it.
+ * Scrolling back up into it, off screen, in a background tab, under reduced
+ * motion, or once you touch or focus a control, it shows the finished run and
+ * nothing ticks. The server renders the finished run too.
  */
 
-const BUYS = SAMPLE_ROWS.filter((r) => clearsFloor(r.score));
-const SKIPS = SAMPLE_ROWS.filter((r) => !clearsFloor(r.score));
+// The parts that change only with the beat (or never) are memoised, and each
+// beat hands out the same frame objects (console-run.ts), so a beat or an
+// in-view change re-renders only what it moved.
+const Tracker = memo(StatusTracker);
+const Trace = memo(ReasoningTrace);
+const Steps = memo(AgentSteps);
+const Chips = memo(ToolChips);
+const Approval = memo(ApprovalDemo);
 
-const SUMMARY =
-  `Sample, owner only: the ${SAMPLE_RUN_AT} run of ${SAMPLE_AGENT}, as its owner sees it. ` +
-  `It scored ${SAMPLE_SCORED} tokens on Solana and Base against a floor of ${SAMPLE_FLOOR} and bought ` +
-  `${usd3(DATA_TOTAL_USD)} of data: an X search on TIBBIR and a token safety report on SUPER INU. ` +
-  `It proposed ${BUYS.length} paper buys of $${SAMPLE_TRADE_USD}: ${BUYS.map((r) => `${r.coin} at ${r.score}`).join(" and ")}. ` +
-  `${SKIPS.map((r) => `${r.coin} stopped at ${r.score}`).join(", ")}, below the floor. ` +
-  `Both wait for the owner's approval, starting with the request below. The next run is at ${SAMPLE_NEXT_RUN_AT}.`;
+const HEAD = (
+  <div className="lp-cx-head" aria-hidden>
+    <span className="lp-cx-agent">
+      <AgentMark name={SAMPLE_AGENT} className="lp-cx-avatar" />
+      <span className="lp-cx-id">
+        <span className="lp-cx-name">{SAMPLE_AGENT}</span>
+        <span className="lp-cx-meta lp-mono">
+          paper · {SAMPLE_MODE}
+          <span className="lp-cx-wide"> · every {SAMPLE_EVERY_MIN} min</span>
+        </span>
+      </span>
+    </span>
+    <span className="lp-cx-tag lp-mono">
+      <EyeOff size={12} strokeWidth={1.75} aria-hidden />
+      owner only · sample
+    </span>
+  </div>
+);
 
 export function AgentConsole() {
   const ref = useRef<HTMLDivElement>(null);
@@ -71,10 +79,14 @@ export function AgentConsole() {
       due.current = true;
       return;
     }
-    // First pixel of a new entry: rewind while most of the console is still below the fold.
+    // First pixel of a new entry: rewind while most of the console is still below the fold,
+    // but only on the way down (or a jump to it). Scrolled back up into, or entered with
+    // focus already inside, the finished run stays as it is.
     if (due.current) {
       const t = window.setTimeout(() => {
         due.current = false;
+        const el = ref.current;
+        if (!el || el.getBoundingClientRect().top < 0 || el.contains(document.activeElement)) return;
         setPlaying(false);
         setBeat(0);
       }, 0);
@@ -95,9 +107,11 @@ export function AgentConsole() {
   // Only the replay moves: the clock, the shimmer and the pulses stop with it.
   const moving = live && playing && !frame.finished;
 
-  // Using any control ends the replay: the run shows finished and stays put.
-  const onClickCapture = (e: MouseEvent) => {
-    if (!touched && (e.target as Element).closest("button, [role='switch']")) setTouched(true);
+  // Using any control ends the replay, and so does focusing one: a step that is still
+  // running has nothing to open, so a replay under the keyboard would pull the focused
+  // step out from under it. The run shows finished and stays put.
+  const stop = () => {
+    if (!touched) setTouched(true);
   };
 
   return (
@@ -107,32 +121,21 @@ export function AgentConsole() {
       role="group"
       aria-label={`Sample run by ${SAMPLE_AGENT}, owner's view`}
       data-live={moving ? "" : undefined}
-      onClickCapture={onClickCapture}
+      onClickCapture={(e) => {
+        if ((e.target as Element).closest("button, [role='switch']")) stop();
+      }}
+      onFocusCapture={stop}
     >
-      <p className="lp-sr">{SUMMARY}</p>
+      <p className="lp-sr">{CONSOLE_SUMMARY}</p>
 
-      <div className="lp-cx-head" aria-hidden>
-        <span className="lp-cx-agent">
-          <AgentAvatar seed={SAMPLE_AGENT} name={SAMPLE_AGENT} size="sm" className="lp-cx-avatar" />
-          <span className="lp-cx-id">
-            <span className="lp-cx-name">{SAMPLE_AGENT}</span>
-            <span className="lp-cx-meta lp-mono">
-              paper · asks first<span className="lp-cx-wide"> · every {SAMPLE_EVERY_MIN} min</span>
-            </span>
-          </span>
-        </span>
-        <span className="lp-cx-tag lp-mono">
-          <EyeOff size={12} strokeWidth={1.75} aria-hidden />
-          owner only · sample
-        </span>
-      </div>
+      {HEAD}
 
       <div className="lp-cx-trk" aria-hidden>
         <div className="lp-cx-trk-full">
-          <StatusTracker stages={STAGES} activeIndex={frame.stage} progress={1} className="max-w-none" />
+          <Tracker stages={STAGES} activeIndex={frame.stage} progress={1} className="max-w-none" />
         </div>
         <div className="lp-cx-trk-min">
-          <StatusTracker stages={STAGES} activeIndex={frame.stage} progress={1} variant="Minimal" className="max-w-none" />
+          <Tracker stages={STAGES} activeIndex={frame.stage} progress={1} variant="Minimal" className="max-w-none" />
         </div>
       </div>
 
@@ -147,17 +150,11 @@ export function AgentConsole() {
             </p>
             {/* Every line is always laid out; the replay reveals them in place, so nothing below moves. */}
             <div className="lp-cx-reason" data-lines={frame.lines} inert>
-              <ReasoningTrace
-                steps={REASONING}
-                status={moving ? "thinking" : "complete"}
-                durationMs={THOUGHT_MS}
-                defaultOpen
-                className="max-w-none"
-              />
+              <Trace steps={REASONING} status={moving ? "thinking" : "complete"} durationMs={THOUGHT_MS} defaultOpen className="max-w-none" />
             </div>
           </div>
 
-          <ApprovalDemo />
+          <Approval />
         </div>
 
         <div className="lp-cx-col">
@@ -167,31 +164,28 @@ export function AgentConsole() {
               <span aria-hidden>open a step</span>
             </p>
             <div className="lp-cx-steps">
-              <AgentSteps steps={frame.steps} className="max-w-none" />
+              <Steps steps={frame.steps} className="max-w-none" />
             </div>
           </div>
 
           <div className="lp-cx-block" aria-hidden>
             <p className="lp-cx-label lp-label">
               <span>Data bought this run</span>
-              <span className="lp-cx-total" data-on={frame.paid.every((p) => p.bought) ? "" : undefined}>
+              <span className="lp-cx-total" data-on={frame.allBought ? "" : undefined}>
                 {usd3(DATA_TOTAL_USD)}
               </span>
             </p>
             <div className="lp-cx-receipt" inert>
-              <ToolChips calls={frame.paid.map((p) => p.call)} variant="Stack" className="max-w-none" />
+              <Chips calls={frame.chips} variant="Stack" className="max-w-none" />
               <ul className="lp-cx-prices lp-mono">
                 {frame.paid.map((p) => (
                   <li key={p.call.id} data-on={p.bought ? "" : undefined}>
-                    <span className="lp-cx-for">{p.token}</span>
+                    <span className="lp-cx-for">×{p.count}</span>
                     {usd3(p.priceUsd)}
                   </li>
                 ))}
               </ul>
             </div>
-            <p className="lp-cx-fine lp-mono">
-              Paid per call in USDC over x402 · ${DEFAULT_DATA_BUDGET_USD.toFixed(2)} run budget
-            </p>
           </div>
 
           <div className="lp-cx-block lp-cx-next" aria-hidden>

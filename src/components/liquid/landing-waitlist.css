@@ -30,6 +30,8 @@
   max-height: calc(100dvh - 40px);
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* Focus scrolled into view clears the sticky bar (about 69px). */
+  scroll-padding-top: 80px;
   padding: 0 28px 28px;
 }
 .wl-panel:focus {
@@ -163,13 +165,13 @@
 .wl-seg {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 .wl-chip {
   display: inline-flex;
   align-items: center;
   min-height: 38px;
-  padding: 0 15px;
+  padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: var(--r-pill);
   background: transparent;
@@ -190,6 +192,17 @@
 }
 .wl-chip:active {
   transform: scale(0.97);
+}
+/* Touch: a 44px target; the 6px gap between rows takes the overlap. */
+@media (pointer: coarse) {
+  .wl-overlay .wl-chip {
+    position: relative;
+  }
+  .wl-overlay .wl-chip::after {
+    content: "";
+    position: absolute;
+    inset: -3px 0;
+  }
 }
 .wl-overlay .wl-chip-on,
 .wl-overlay .wl-chip-on:hover {
@@ -265,6 +278,8 @@
   .wl-panel {
     max-width: none;
     max-height: 92dvh;
+    /* …and the pinned submit strip at the bottom. */
+    scroll-padding-bottom: 96px;
     padding: 0 20px calc(16px + env(safe-area-inset-bottom));
     border-width: 1px 0 0;
     border-radius: var(--r-frame) var(--r-frame) 0 0;

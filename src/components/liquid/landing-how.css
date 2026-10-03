@@ -84,16 +84,19 @@
   display: none;
 }
 /* Connectors on the circles' centre line (the circle is 20px), not the
-   centre of circle plus label. */
+   centre of circle plus label. Every stage is the same width, so the
+   connectors are equal and each ends the same distance from its dots. */
 .lp .lp-cx-trk-full ol > li {
   align-items: flex-start;
 }
 .lp .lp-cx-trk-full ol > li > span[aria-hidden] {
   margin-top: 9.5px;
-  margin-inline: 12px;
+  margin-inline: 4px;
 }
 .lp .lp-cx-trk-full ol > li > span:last-child {
+  width: 104px;
   gap: 9px;
+  text-align: center;
 }
 .lp .lp-cx-trk-full ol > li > span:last-child > span:last-child {
   font-size: var(--fs-label);
@@ -143,6 +146,11 @@
   flex-direction: column;
   gap: 14px;
   min-width: 0;
+}
+/* The approval block fills the story column, so its switch row and the
+   "Next run" row opposite both sit on the columns' shared bottom edge. */
+.lp-cx-col > .lp-ap {
+  flex: 1;
 }
 /* Closes the machinery column level with the approval switch opposite. */
 .lp .lp-cx-next {
@@ -299,10 +307,20 @@
 .lp .lp-cx-steps li:has(svg.lucide-circle-dashed) .font-mono.text-\[12px\] {
   color: var(--fg-3);
 }
-/* A step that opens is a real control: at least 24px to hit. */
-.lp .lp-cx-steps button[aria-expanded] {
+/* Every step's head is 24px, whether it is a button yet (finished, it opens)
+   or a plain row (queued, running), and so is the status cell beside it, which
+   centres the dot on the head. Rows never change height in the replay, so
+   nothing below the transcript moves. A finished head is a real control: at
+   least 24px to hit. */
+.lp .lp-cx-steps li > div > :first-child {
   min-height: 24px;
+}
+.lp .lp-cx-steps button[aria-expanded] {
   border-radius: 6px;
+}
+/* Spectrum's 10.5px durations and status words, up to the page's 11px floor. */
+.lp .lp-cx-steps .text-\[10\.5px\] {
+  font-size: var(--fs-label);
 }
 @media (hover: hover) and (pointer: fine) {
   .lp .lp-cx-steps button[aria-expanded]:hover svg {
@@ -345,10 +363,6 @@
   font-size: var(--fs-code);
   color: var(--fg);
 }
-.lp .lp-cx-receipt button > span:last-child:not(:nth-child(2)) {
-  font-size: var(--fs-label);
-  color: var(--fg-3);
-}
 .lp-cx-prices {
   display: grid;
   gap: 2px;
@@ -378,12 +392,6 @@
   letter-spacing: 0.04em;
   opacity: 0.32;
   transition: opacity 320ms var(--ease-out);
-}
-.lp-cx-fine {
-  font-size: var(--fs-meta);
-  line-height: 16px;
-  color: var(--fg-3);
-  text-wrap: balance;
 }
 
 /* ---------------------------- approval ---------------------------- */
@@ -564,7 +572,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-top: 4px;
+  margin-top: auto;
   padding-top: 16px;
   border-top: 1px solid var(--line-soft);
 }
@@ -588,6 +596,23 @@
   content: "";
   position: absolute;
   inset: -10px -4px;
+}
+/* Off, Spectrum's dark track and thumb nearly vanish on the console: a lit
+   track with an edge, and a light thumb that shows which side it is on. */
+.lp .lp-ap-switch[aria-checked="false"] {
+  background: var(--raised-hi);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32);
+}
+.lp .lp-ap-switch[aria-checked="false"] > span:last-child {
+  background: var(--fg-2);
+}
+/* Touch: Approve and Skip keep their 36px look with a 44px target. */
+@media (pointer: coarse) {
+  .lp .lp-ap-card button::after {
+    content: "";
+    position: absolute;
+    inset: -4px 0;
+  }
 }
 
 /* ---------------------------- motion ---------------------------- */
@@ -626,16 +651,32 @@
   .lp-cx-head {
     padding-block: 14px;
   }
+  .lp-cx-receipt {
+    column-gap: 10px;
+  }
   /* The tag drops under the name, lined up with it. */
   .lp-cx-tag {
     margin-left: 40px;
   }
-  .lp-cx-wide,
-  .lp-cx-for {
+  .lp-cx-wide {
     display: none;
   }
-  .lp .lp-cx-receipt button > span:last-child:not(:nth-child(2)) {
-    display: none;
+}
+
+@media (max-width: 359px) {
+  .lp-cx-receipt {
+    padding-right: 12px;
+    column-gap: 8px;
+  }
+  .lp .lp-cx-receipt button {
+    padding-inline: 6px 0;
+  }
+  .lp .lp-cx-receipt button > .font-mono,
+  .lp-cx-prices > li {
+    font-size: var(--fs-meta);
+  }
+  .lp-cx-prices > li {
+    gap: 8px;
   }
 }
 

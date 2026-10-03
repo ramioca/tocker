@@ -119,6 +119,17 @@
   color: var(--fg);
   text-wrap: balance;
 }
+/* The headline only slides in: painted at opacity 0 it would not count as
+   painted, and it is the largest text on the screen. */
+.lp-h1.reveal {
+  opacity: 1;
+  animation-name: lp-in-y;
+}
+@keyframes lp-in-y {
+  to {
+    transform: none;
+  }
+}
 /* Two set lines from 640px; free, balanced wrapping on phones. */
 @media (min-width: 640px) {
   .lp-h1-line {
@@ -194,6 +205,16 @@
     margin-top: 32px;
   }
 }
+/* The narrowest phones: three lines of headline, and the eyebrow on one. */
+@media (max-width: 359px) {
+  .lp .lp-h1 {
+    font-size: 46px;
+  }
+  .lp .lp-hero-eyebrow {
+    gap: 8px;
+    letter-spacing: 0.08em;
+  }
+}
 
 /* ============================ the run card ============================ */
 .lp-hr-stage {
@@ -247,17 +268,18 @@
   letter-spacing: -0.01em;
   white-space: nowrap;
 }
+/* The page's small mono tag: 20px, 8px in, a hairline, lowercase at 0.04em. */
 .lp-hr-chip {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
   height: 20px;
   margin-left: -2px;
-  padding-inline: 7px;
+  padding-inline: 8px;
   border-radius: var(--r-pill);
   border: 1px solid var(--line);
   font-size: var(--fs-label);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
   color: var(--fg-2);
 }
 .lp-hr-meta {
@@ -375,16 +397,12 @@
   width: calc(var(--s) * 1%);
   border-radius: 2px;
   background: rgba(244, 244, 241, 0.3);
-  transform: scaleX(0);
   transform-origin: left;
   transition: transform 700ms var(--ease-out) calc(var(--i) * 90ms);
 }
 .lp-hr-row[data-pass] .lp-hr-fill {
   background: var(--brand-neon);
   background-size: calc(100% * 100 / var(--s)) 100%;
-}
-.lp-hr[data-in] .lp-hr-fill {
-  transform: none;
 }
 
 .lp-hr-score {
@@ -398,12 +416,9 @@
 .lp-hr-row:not([data-pass]) .lp-hr-score {
   color: var(--fg-3);
 }
-/* A flex item, so the digit columns centre like the text beside them
-   instead of sitting on the baseline. */
+/* The counting digits (a flex item, so the columns centre like the text
+   beside them) run only in the intro; the still number is the default. */
 .lp-hr-num-tick {
-  display: flex;
-}
-.lp-hr-num-still {
   display: none;
 }
 
@@ -418,7 +433,6 @@
   letter-spacing: -0.005em;
   color: var(--fg);
   white-space: nowrap;
-  opacity: 0;
   transition: opacity 240ms ease-out calc(480ms + var(--i) * 90ms);
 }
 .lp-hr-vdot {
@@ -435,9 +449,6 @@
 .lp-hr-row:not([data-pass]) .lp-hr-vdot {
   background: none;
   box-shadow: inset 0 0 0 1px var(--fg-3);
-}
-.lp-hr[data-in] .lp-hr-verdict {
-  opacity: 1;
 }
 
 /* The rest of the run, lined up under the token names. */
@@ -494,7 +505,8 @@
     padding-inline: 56px 16px;
   }
 }
-/* Small phones: the header tightens so "sample" and "asks first" both fit. */
+/* Small phones: the header tightens so "sample" and "asks first" both fit
+   (under 360px only "sample" stays). */
 @media (max-width: 399px) {
   .lp-hr-who {
     gap: 6px;
@@ -516,26 +528,39 @@
     font-size: var(--fs-label);
   }
 }
-@media (max-width: 339px) {
+@media (max-width: 359px) {
   .lp-hr-who > .lp-hr-meta {
     display: none;
   }
 }
 
 /* ============================ motion and modes ============================ */
-/* Reduced motion: the final frame, from CSS alone (no hydration difference). */
-@media (prefers-reduced-motion: reduce) {
+/* The intro's start state, only where it will run: with scripting on and
+   motion welcome. Without JavaScript (or in a browser that can't tell), and
+   under reduced motion, the card is its final frame from CSS alone, so the
+   markup never differs. Until the intro starts, the scores stay blank rather
+   than reading "00". */
+@media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
   .lp-hr-fill {
+    transform: scaleX(0);
+  }
+  .lp-hr[data-in] .lp-hr-fill {
     transform: none;
   }
   .lp-hr-verdict {
+    opacity: 0;
+  }
+  .lp-hr[data-in] .lp-hr-verdict {
     opacity: 1;
   }
   .lp-hr-num-tick {
-    display: none;
+    display: flex;
   }
   .lp-hr-num-still {
-    display: block;
+    display: none;
+  }
+  .lp-hr:not([data-in]) .lp-hr-num-tick {
+    visibility: hidden;
   }
 }
 /* Forced colours: bars keep their ink. */

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { canonicalSlug } from "@/app/(app)/agents/[slug]/canonical-slug";
+import { canonicalSlug } from "@/app/(client)/(app)/agents/[slug]/canonical-slug";
 import { EmptyState } from "@/components/common/empty-state";
 import { LiveWizard } from "@/components/live/live-wizard";
 import { agentBySlug, agentWalletBudget, viewerSession } from "@/components/common/data-access";

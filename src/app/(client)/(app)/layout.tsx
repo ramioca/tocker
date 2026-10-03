@@ -1,6 +1,4 @@
 import type { ReactNode } from "react";
-import { headers } from "next/headers";
-import { Providers } from "@/components/providers";
 import { AppShell } from "@/components/shell/app-shell";
 import { EMPTY_COMMAND_INDEX } from "@/components/shell/command-index";
 import { OnboardingGate } from "@/components/onboarding/onboarding-gate";
@@ -36,10 +34,6 @@ function killSwitchFor(userId: string | null): Promise<KillSwitchState> {
 }
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
-  // The per-request CSP nonce, set on the request headers by `src/proxy.ts`. Base UI's
-  // sliders, tabs and selects render their own inline <script>/<style> and need it;
-  // `CSPProvider` inside `Providers` hands it to them.
-  const nonce = (await headers()).get("x-nonce") ?? undefined;
   const session = await viewerSession();
   const userId = session?.userId ?? null;
   // Everything below only decorates the chrome — a badge, the ⌘K index, which nav item
@@ -64,10 +58,11 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     killSwitchFor(userId),
   ]);
 
-  // The client providers (auth, the query cache, run status, tooltips) start here and at
-  // /login, not in the root layout, so the landing page ships none of their code.
+  // The client providers (auth, the query cache, run status, tooltips) come from the
+  // parent `src/app/(client)/layout.tsx`, which /login shares, so signing in and moving
+  // into the app keeps one Privy instance and one query cache.
   return (
-    <Providers nonce={nonce}>
+    <>
       <style>{SHELL_SCROLL_PADDING}</style>
       <AppShell
         unreadCount={unreadCount}
@@ -80,6 +75,6 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         {/* First-run only, so the modal's code loads behind a gate rather than on every page. */}
         <OnboardingGate ownedAgentCount={mine.length} />
       </AppShell>
-    </Providers>
+    </>
   );
 }

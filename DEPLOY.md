@@ -96,10 +96,10 @@ nothing), `wasm-unsafe-eval` + `worker-src blob:` for the WebGPU shader, `https:
 The policy was **verified in a browser, not reasoned about**: loading it on the landing page,
 the feed, agent settings and the live wizard turned up fifteen real violations on the settings
 page alone — Base UI's slider emits its own inline `<script>` during SSR. The fix is upstream
-of the CSP: the app and sign-in layouts (`src/app/(app)/layout.tsx`, `src/app/login/layout.tsx`)
-read the proxy's `x-nonce` request header and `Providers` wraps their trees in Base UI's
-`CSPProvider`, so those tags are nonced too. (The providers are deliberately not in the root
-layout: the landing page uses none of them.) Re-checked afterwards: zero violations on any of
+of the CSP: the layout shared by the app and sign-in (`src/app/(client)/layout.tsx`) reads the
+proxy's `x-nonce` request header and `Providers` wraps both trees in Base UI's `CSPProvider`,
+so those tags are nonced too. (The providers are deliberately not in the root layout: the
+landing page uses none of them.) Re-checked afterwards: zero violations on any of
 those routes. If a future component starts emitting un-nonced inline script, it will show up
 the same way — open the page and read the console. A nonce only works on a page rendered per
 request, so the root layout calls `connection()`: every route, the landing page included, is

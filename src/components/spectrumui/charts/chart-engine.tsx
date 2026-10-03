@@ -160,9 +160,24 @@ export const DATE_FULL = new Intl.DateTimeFormat('en-US', {
  * $1,000 every label is compact ("$9.5K", "$10K", "$10.5K"), so one axis never mixes
  * "$9,500.00" with "$10K". Small axes keep cents ("$98.50"). Called without `scale`, a
  * label is judged on its own value.
+ *
+ * `step` is the gap between ticks. Given it, a compact axis keeps as many decimals as the
+ * gap needs (up to three), so a tight axis never prints the same label twice: a $10,000
+ * book moving ±$5 reads "$9.995K … $10.005K", not "$10K" four times.
  */
-export function formatAxisPrice(value: number, scale: number = value) {
-  return formatMoney(value, Math.abs(scale) >= 1_000);
+export function formatAxisPrice(value: number, scale: number = value, step?: number) {
+  const size = Math.abs(scale);
+  if (size < 1_000) return formatMoney(value, false);
+  if (!step || !(step > 0)) return formatMoney(value, true);
+  const unit = size >= 1e9 ? 1e9 : size >= 1e6 ? 1e6 : 1e3;
+  const digits = Math.min(3, Math.max(0, Math.ceil(Math.log10(unit / step) - 1e-9)));
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    notation: 'compact',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  }).format(value);
 }
 
 /**
@@ -377,9 +392,12 @@ const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
 function Digit({ char, animate }: { char: string; animate: boolean }) {
   const digit = char >= '0' && char <= '9' ? Number(char) : null;
+  // Every glyph is centred in its own 1em box: with a reader's line-height override
+  // (WCAG 1.4.12) a taller line box would otherwise push each digit down into the
+  // next one's window, and slices of the neighbours would show.
   if (digit == null) {
     return (
-      <span aria-hidden className="inline-block h-[1em] align-bottom leading-none">
+      <span aria-hidden className="inline-flex h-[1em] items-center align-bottom leading-none">
         {char}
       </span>
     );
@@ -397,7 +415,7 @@ function Digit({ char, animate }: { char: string; animate: boolean }) {
         }}
       >
         {DIGITS.map((d) => (
-          <span key={d} className="block h-[1em] text-center leading-none">
+          <span key={d} className="flex h-[1em] items-center justify-center leading-none">
             {d}
           </span>
         ))}

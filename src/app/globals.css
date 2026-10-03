@@ -530,7 +530,7 @@
 
 /* Keyboard focus must not land under the chrome. The base padding — the sticky top bar
    (3.5rem) and, on phones, the fixed tab bar — is a <style> the app layout renders
-   (src/app/(app)/layout.tsx), so it exists exactly while the shell does, from the first
+   (src/app/(client)/(app)/layout.tsx), so it exists exactly while the shell does, from the first
    paint, and the landing page never gets it. A sticky sub-nav or action bar adds to it:
    the components that render one hold a flag on <html> while mounted
    (src/hooks/root-flag.ts), and they only ever render inside the shell.

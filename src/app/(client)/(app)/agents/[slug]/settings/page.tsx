@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { canonicalSlug } from "@/app/(app)/agents/[slug]/canonical-slug";
+import { canonicalSlug } from "@/app/(client)/(app)/agents/[slug]/canonical-slug";
 import { ArrowLeft } from "lucide-react";
 import { AgentSettingsForm } from "@/components/agents/settings/agent-settings-form";
 import { DangerZone } from "@/components/agents/settings/danger-zone";

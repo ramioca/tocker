@@ -1,15 +1,14 @@
-import type { FaqTab } from "@/components/spectrumui/faq-tabs-card";
+import { FAQTabsCard, type FaqTab } from "@/components/spectrumui/faq-tabs-card";
 import { BrandHeroMark, BrandLockup } from "./brand";
 import { AgentConsole } from "./console";
 import { DEFAULT_ROWS } from "./defaults";
-import { FaqCard } from "./faq-card";
 import { PublicFeed } from "./feed";
 import { GoLiveDemo } from "./go-live";
 import { Hero } from "./hero";
 import { Nav } from "./nav";
 import { PerformancePanel } from "./performance";
 import { SectionHead } from "./section-head";
-import { DEFAULT_DATA_BUDGET_USD, LANDING_SOURCES, type LandingSource } from "./signals-data";
+import { DEFAULT_DATA_BUDGET_USD, LANDING_SOURCES, usd2, usd3, type LandingSource } from "./signals-data";
 import { WaitlistProvider } from "./waitlist";
 import { WaitlistButton } from "./waitlist-button";
 import "./landing.css";
@@ -25,15 +24,16 @@ import "./landing-waitlist.css";
  * P&L. Every visual below the hero is the app's own UI (Spectrum components)
  * drawn in DOM on labelled sample data.
  *
- * A server component. The interactive parts are client islands: Nav, Hero,
- * AgentConsole, PublicFeed, PerformancePanel's chart, GoLiveDemo, FaqCard and
- * WaitlistButton. WaitlistProvider is the client wrapper that owns the modal.
+ * A server component. The interactive parts are client islands: the nav's
+ * waitlist pill, the hero's run card, AgentConsole, PublicFeed,
+ * PerformancePanel's chart, GoLiveDemo, the FAQ card and WaitlistButton.
+ * WaitlistProvider is the client wrapper that owns the modal.
  *
  * Section order: Nav, Hero, 01 How, 02 Feed, 03 Data, 04 Performance,
  * 05 Guardrails, 06 Questions, closing call to action, Footer.
  */
 
-const BUDGET = `$${DEFAULT_DATA_BUDGET_USD.toFixed(2)}`;
+const BUDGET = usd2(DEFAULT_DATA_BUDGET_USD);
 
 const FAQ_TABS: FaqTab[] = [
   {
@@ -71,11 +71,12 @@ const FAQ_TABS: FaqTab[] = [
       {
         question: "Does it trade real money from day one?",
         answer:
-          "No. Every agent starts on paper against real quotes and asks before each entry. Going live is a separate screen with a checklist and a hold-to-confirm.",
+          "No. Every agent starts on paper against real quotes and asks before each trade. Going live is a separate screen with a checklist and a hold-to-confirm.",
       },
       {
         question: "What if I miss an approval?",
-        answer: "The proposal expires after an hour and nothing trades. Exits never wait for an approval.",
+        answer:
+          "The proposal expires after an hour and nothing trades. Stop loss, take profit and the other rule exits never wait for an approval.",
       },
       {
         question: "Who controls the agent’s wallet?",
@@ -85,7 +86,7 @@ const FAQ_TABS: FaqTab[] = [
       {
         question: "Can other people see my strategy?",
         answer:
-          "They see your trades on the public feed: token, size, price, result and the one-line note your agent posts with each fill. They never see your prompt, thresholds, data sources or the run transcript.",
+          "If the agent is public (the default), they see its trades on the feed: token, size, price, result and the one-line note it posts with each fill. They never see your prompt, thresholds, data sources or the run transcript.",
       },
     ],
   },
@@ -135,7 +136,7 @@ function How() {
         num="01"
         label="How it decides"
         title="Inside the run."
-        lede="The run from the top of the page, as its owner sees it: what it scored, the data it bought, and the buy it is waiting on you to approve."
+        lede="The run from the top of the page, as its owner sees it: what it scored, the data it bought, and the two buys waiting for approval."
       />
       <AgentConsole />
     </section>
@@ -144,10 +145,8 @@ function How() {
 
 /** How many sources the table shows; the rest are counted in its last line. */
 const SHOWN_SOURCES = 6;
-/** Defaults first, then the sources that feed a hard gate, then the rest in registry order. */
+/** Defaults first, then the safety sources, then the rest in registry order. */
 const sourceRank = (s: LandingSource) => (s.tier === "default" ? 0 : s.guard ? 1 : 2);
-/** Three decimals, so every price lines up on the point. */
-const sourcePrice = (s: LandingSource) => `$${s.priceUsd.toFixed(3)}`;
 
 function Sources() {
   const total = LANDING_SOURCES.length;
@@ -160,7 +159,7 @@ function Sources() {
         num="03"
         label="Data"
         title="It buys its own research, by the call."
-        lede={`${total} paid sources in the registry, ${defaults} on by default. Tocker pays each source per call in USDC over x402, up to the per-run budget you set (${BUDGET} by default).`}
+        lede={`${total} paid sources to choose from, ${defaults} on by default. Tocker pays each source per call in USDC over x402, up to the per-run budget you set (${BUDGET} by default).`}
       />
       <div className="lp-src lp-frame">
         <div className="lp-src-table" role="table" aria-label={`Paid data sources, ${rows.length} of ${total}`}>
@@ -190,15 +189,15 @@ function Sources() {
                   {s.category}
                 </span>
                 <span className="lp-src-price lp-src-num lp-mono" role="cell">
-                  {sourcePrice(s)}
+                  {usd3(s.priceUsd)}
                 </span>
               </div>
             ))}
           </div>
         </div>
         <p className="lp-src-foot lp-label">
-          <span>+ {total - rows.length} more in the registry</span>
-          <span className="lp-src-legend">guard: feeds a hard gate</span>
+          <span>+ {total - rows.length} more sources</span>
+          <span className="lp-src-legend">guard: safety data</span>
         </p>
       </div>
     </section>
@@ -213,7 +212,7 @@ function Performance() {
         num="04"
         label="Performance"
         title="Your book, at a glance."
-        lede="Equity, open positions and what each run spends on data. Your trades are public; your strategy never is."
+        lede="Equity, open positions and what each run spends on data. Trades are public by default; your strategy never is."
       />
       <PerformancePanel />
     </section>
@@ -228,7 +227,7 @@ function Guardrails() {
         num="05"
         label="Guardrails"
         title="Entry rules never block an exit."
-        lede="Stop loss, take profit and trailing stops run in code on a five-minute clock, whether or not the model is awake. Blocklist a token you hold, spend the day’s trades, hit the kill switch: the sell still goes through."
+        lede="Stop loss, take profit, a collapsing score and a draining pool are checked in code every five minutes, between runs too. Blocklist a token you hold, spend the day’s trades, hit the kill switch: the sell still goes through."
       />
       <div className="lp-guard-grid">
         <GoLiveDemo />
@@ -261,7 +260,7 @@ function Faq() {
         title="Before you join."
         lede="How it trades, what it costs, who holds the wallet and who sees what."
       />
-      <FaqCard tabs={FAQ_TABS} />
+      <FAQTabsCard tabs={FAQ_TABS} className="lp-faq-card" />
     </section>
   );
 }
@@ -299,8 +298,9 @@ function Footer() {
         </div>
         <div className="lp-footer-legal">
           <p>
-            Not investment advice. Token names are real; every price, score and result on this page is an
-            illustrative sample. Trading crypto can lose everything you put in an agent’s wallet.
+            Not investment advice. Token names are real; every token price, score, P&amp;L and trade on this page is
+            an illustrative sample. Data prices and defaults are the product’s own. Trading crypto can lose everything
+            you put in an agent’s wallet.
           </p>
           <p className="lp-mono lp-footer-copy">© 2026 Tocker</p>
         </div>

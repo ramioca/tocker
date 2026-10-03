@@ -1,7 +1,8 @@
-import { PortfolioChart, type PortfolioPoint } from "@/components/spectrumui/charts/portfolio-chart";
+import type { PortfolioPoint } from "@/components/spectrumui/charts/portfolio-chart";
 import { TokenIcon } from "@/components/common/token-icon";
 import { COINS, type CoinName } from "./coins";
-import { DEFAULT_DATA_BUDGET_USD } from "./signals-data";
+import { PerformanceChart } from "./performance-chart";
+import { DEFAULT_DATA_BUDGET_USD, usd2 } from "./signals-data";
 
 /**
  * A sample paper book as its owner sees it: Spectrum's PortfolioChart for
@@ -10,7 +11,7 @@ import { DEFAULT_DATA_BUDGET_USD } from "./signals-data";
  * deliberately unnamed: it is not the hero's agent.
  *
  * A server component: the series and sparklines are computed here once, and
- * only the chart (and the token logos) hydrate.
+ * only the chart (performance-chart.tsx) and the token logos hydrate.
  */
 
 const DAY = 86_400_000;
@@ -18,12 +19,7 @@ const END = Date.UTC(2026, 8, 30);
 /** `agents.paperStartingUsd` defaults to $10,000. */
 const START_USD = 10_000;
 
-/**
- * Ninety days of a deterministic paper book: about +9.7% with a 6% drawdown.
- * Seed and drift were picked so every range's axis stays above the basis
- * ticks' compact-format threshold ($10K, $10.5K, $11K), so no axis mixes
- * "$9,500.00" with "$10K".
- */
+/** Ninety days of a deterministic paper book: about +9.7% with a 6% drawdown. */
 const EQUITY: PortfolioPoint[] = (() => {
   let seed = 789;
   const rand = () => {
@@ -63,25 +59,35 @@ function sparkPath(seed: number, drift: number) {
 type Position = {
   token: CoinName;
   chain: "Base" | "Solana";
-  pnl: string;
-  said: string;
-  up: boolean;
-  held: string;
-  heldWords: string;
+  /** Unrealised P&L, dollars. */
+  pnlUsd: number;
+  heldMin: number;
   spark: ReturnType<typeof sparkPath>;
 };
 
 const POSITIONS: Position[] = [
-  { token: "TIBBIR", chain: "Base", pnl: "+$27.90", said: "up $27.90", up: true, held: "3h", heldWords: "3 hours", spark: sparkPath(11, 0.35) },
-  { token: "SUPER INU", chain: "Solana", pnl: "+$21.75", said: "up $21.75", up: true, held: "52m", heldWords: "52 minutes", spark: sparkPath(23, 0.25) },
-  { token: "SOL", chain: "Solana", pnl: "−$11.40", said: "down $11.40", up: false, held: "1h", heldWords: "1 hour", spark: sparkPath(41, -0.25) },
+  { token: "TIBBIR", chain: "Base", pnlUsd: 27.9, heldMin: 180, spark: sparkPath(11, 0.35) },
+  { token: "SUPER INU", chain: "Solana", pnlUsd: 21.75, heldMin: 52, spark: sparkPath(23, 0.25) },
+  { token: "SOL", chain: "Solana", pnlUsd: -11.4, heldMin: 60, spark: sparkPath(41, -0.25) },
 ];
 
-const POSITIONS_LABEL = `Open positions, sample: ${POSITIONS.map(
-  (p) => `${p.token} on ${p.chain}, ${p.said}, held ${p.heldWords}`,
-).join("; ")}.`;
+/** What each row prints, and says, from the one number. */
+const show = (p: Position) => {
+  const hours = p.heldMin / 60;
+  const whole = p.heldMin % 60 === 0;
+  return {
+    up: p.pnlUsd >= 0,
+    pnl: `${p.pnlUsd >= 0 ? "+" : "\u2212"}${usd2(Math.abs(p.pnlUsd))}`,
+    said: `${p.pnlUsd >= 0 ? "up" : "down"} ${usd2(Math.abs(p.pnlUsd))}`,
+    held: whole ? `${hours}h` : `${p.heldMin}m`,
+    heldWords: whole ? `${hours} hour${hours === 1 ? "" : "s"}` : `${p.heldMin} minutes`,
+  };
+};
 
-const usd = (v: number) => `$${v.toFixed(2)}`;
+const POSITIONS_LABEL = `Open positions, sample: ${POSITIONS.map((p) => {
+  const v = show(p);
+  return `${p.token} on ${p.chain}, ${v.said}, held ${v.heldWords}`;
+}).join("; ")}.`;
 
 export function PerformancePanel() {
   return (
@@ -95,7 +101,7 @@ export function PerformancePanel() {
 
       <div className="lp-perf-grid">
         <div className="lp-perf-chart">
-          <PortfolioChart
+          <PerformanceChart
             data={EQUITY}
             label="Equity"
             ranges={[
@@ -118,17 +124,19 @@ export function PerformancePanel() {
             {/* The rows are a picture of the list; the label carries every figure in it. */}
             <div role="img" aria-label={POSITIONS_LABEL}>
               <div className="lp-perf-rows" inert>
-                {POSITIONS.map((p) => (
+                {POSITIONS.map((p) => {
+                  const v = show(p);
+                  return (
                   <div key={p.token} className="lp-pos">
                     <TokenIcon token={COINS[p.token]} size="md" className="lp-pos-logo" />
                     <span className="lp-pos-id">
                       <span className="lp-pos-name">{p.token}</span>
                       <span className="lp-mono lp-pos-sub">
-                        {p.chain} · {p.held}
+                        {p.chain} · {v.held}
                       </span>
                     </span>
                     <svg
-                      className={`lp-pos-spark ${p.up ? "lp-up" : "lp-down"}`}
+                      className={`lp-pos-spark ${v.up ? "lp-up" : "lp-down"}`}
                       viewBox="0 0 100 32"
                       preserveAspectRatio="none"
                       aria-hidden
@@ -144,9 +152,10 @@ export function PerformancePanel() {
                         vectorEffect="non-scaling-stroke"
                       />
                     </svg>
-                    <span className={`lp-mono lp-pos-pnl ${p.up ? "lp-up" : "lp-down"}`}>{p.pnl}</span>
+                    <span className={`lp-mono lp-pos-pnl ${v.up ? "lp-up" : "lp-down"}`}>{v.pnl}</span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -154,7 +163,7 @@ export function PerformancePanel() {
           <div className="lp-perf-data">
             <p className="lp-perf-label lp-label">Data per run</p>
             <p className="lp-perf-data-value lp-mono">
-              {usd(DATA_PER_RUN_USD)} <span>avg · {usd(DEFAULT_DATA_BUDGET_USD)} budget</span>
+              {usd2(DATA_PER_RUN_USD)} <span>avg · {usd2(DEFAULT_DATA_BUDGET_USD)} budget</span>
             </p>
             <div className="lp-perf-meter" aria-hidden>
               <span style={{ width: `${(DATA_PER_RUN_USD / DEFAULT_DATA_BUDGET_USD) * 100}%` }} />
