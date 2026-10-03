@@ -36,12 +36,14 @@ import "./landing-waitlist.css";
 const DEFAULTS = [
   ["Mode", "paper · asks first"],
   ["Runs", "every 15 min"],
+  ["Chains", "Solana (Base opt-in)"],
   ["Score floor", "62 / 100"],
   ["Per trade", "$100"],
   ["Per day", "10 trades"],
-  ["Data per run", `$${DEFAULT_DATA_BUDGET_USD.toFixed(2)}`],
   ["Stop loss", "15%"],
   ["Take profit", "40%"],
+  ["Max slippage", "3%"],
+  ["Data per run", `$${DEFAULT_DATA_BUDGET_USD.toFixed(2)}`],
   ["Min liquidity", "$15k"],
   ["Min age", "30 min"],
 ] as const;
@@ -65,7 +67,7 @@ const FAQ_TABS: FaqTab[] = [
       {
         question: "How do exits work?",
         answer:
-          "In code, not in the prompt. Stop loss, take profit, an optional trailing stop, max hold, a collapsing score and a draining pool are checked every five minutes, model awake or not. Each one sells the whole position, and entry rules never block an exit.",
+          "In code, not in the prompt. Stop loss, take profit, a collapsing score, a draining pool, and an optional trailing stop or max hold are checked every five minutes, model awake or not. Each one sells the whole position, and entry rules never block an exit.",
       },
       {
         question: "What does the data cost?",

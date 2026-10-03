@@ -78,11 +78,11 @@ export function GoLiveDemo() {
           onConfirm={confirm}
           className="lp-golive-btn"
         />
-        <p className="lp-golive-note">
-          Every agent starts on paper. In the app, going live is its own screen: the checklist, then this hold. A
-          tap can&rsquo;t do it.
-        </p>
       </div>
+      <p className="lp-golive-note">
+        Every agent starts on paper. In the app, going live is its own screen: the checklist, then this hold. A tap
+        can&rsquo;t do it.
+      </p>
     </div>
   );
 }
