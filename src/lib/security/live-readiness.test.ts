@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FIRST_TRADE_PRESET,
+  checkDataSources,
   databaseStep,
   evaluateFirstTradeRisk,
   simulateFirstTrade,
@@ -228,6 +229,38 @@ describe("dataChainsFor", () => {
 
   it("is empty for an agent that buys no data", () => {
     expect(dataChainsFor([])).toEqual([]);
+  });
+});
+
+describe("checkDataSources", () => {
+  const withSources = (dataSources: string[]): AgentConfig => ({ ...config(), dataSources });
+  const check = (dataSources: string[]) => checkDataSources(withSources(dataSources), "/agents/a/settings", false);
+
+  beforeEach(() => {
+    vi.stubEnv("X402_MOCK", "");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("passes on registry sources and counts only those", () => {
+    const step = check(["x-search", "cmc-quotes"]);
+    expect(step.state).toBe("pass");
+    expect(step.detail).toContain("2 registered sources");
+  });
+
+  it("does not hold a retired id against an agent that still has it saved", () => {
+    // It buys nothing and the picker cannot untick it, so it must not block going live.
+    const alongside = check(["bazaar", "x-search"]);
+    expect(alongside.state).toBe("pass");
+    expect(alongside.detail).toContain("1 registered source ");
+    expect(check(["bazaar"]).state).toBe("warn");
+  });
+
+  it("still fails on an id that was never retired on purpose", () => {
+    const step = check(["x-search", "made-up-source"]);
+    expect(step.state).toBe("fail");
+    expect(step.detail).toContain("made-up-source");
   });
 });
 

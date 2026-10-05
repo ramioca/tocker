@@ -227,6 +227,14 @@ describe("describeResult", () => {
     );
   });
 
+  it("counts the registry matches of a data-source search, and reads older runs that carry a second list", () => {
+    expect(describeResult("search_data_sources", { ok: true, registry: [{}, {}] })).toBe("2 matching sources");
+    expect(describeResult("search_data_sources", { ok: true, registry: [{}] })).toBe("1 matching source");
+    expect(describeResult("search_data_sources", { ok: true, registry: [{}], bazaar: [{}, {}, {}] })).toBe(
+      "1 matching source · 3 outside listings",
+    );
+  });
+
   it("says when finish sent the model back, and why", () => {
     expect(describeResult("finish", { ok: true, summary: "Proposed DOVE, sat on the rest." })).toBe("Finished");
     expect(

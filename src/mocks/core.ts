@@ -1135,18 +1135,6 @@ export const mockDataSources: DataSourceInfo[] = [
     url: "https://agentdata-api.com",
     experimental: true,
   },
-  {
-    id: "bazaar",
-    name: "x402 Bazaar",
-    description: "Anything discoverable on the open x402 resource index — priced at request time.",
-    category: "other",
-    network: "eip155:8453",
-
-    chains: ["base"],
-    priceUsd: null,
-    url: "https://x402.org/bazaar",
-    experimental: true,
-  },
 ];
 
 export function mockLlmKeys(): LlmKeyRow[] {

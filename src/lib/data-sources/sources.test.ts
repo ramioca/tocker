@@ -11,7 +11,9 @@
  * returns — see the header of each source file for which.
  */
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import type { Db } from "@/db";
+import * as schema from "@/db/schema";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { newBudget, type AgentWalletRef, type X402Context } from "@/lib/x402/types";
 import { DATA_SOURCES, getDataSource } from "./registry";
@@ -251,7 +253,7 @@ describe("payable chains (W7)", () => {
     expect(getDataSource("deepnets-token-safety")?.chains).toEqual(["solana"]);
     expect(getDataSource("x-search")?.chains).toEqual(["base"]);
     expect(getDataSource("cmc-quotes")?.chains).toEqual(["base"]);
-    for (const id of ["nansen-smart-money", "otto-pulse", "plexa-pretrade", "solenrich-launches", "bazaar"]) {
+    for (const id of ["nansen-smart-money", "otto-pulse", "plexa-pretrade", "solenrich-launches"]) {
       expect(getDataSource(id)?.chains, id).toEqual(["base", "solana"]);
     }
 
@@ -262,7 +264,7 @@ describe("payable chains (W7)", () => {
     // Without agent chains, every chain a source could be paid on counts.
     expect(dataChainsFor(["plexa-pretrade"])).toEqual(["base", "solana"]);
 
-    expect(unpayableSources(["x-search", "deepnets-token-safety", "bazaar"], ["solana"]).map((s) => s.id)).toEqual([
+    expect(unpayableSources(["x-search", "deepnets-token-safety"], ["solana"]).map((s) => s.id)).toEqual([
       "x-search",
     ]);
     expect(unpayableSources(["x-search"], ["base", "solana"])).toEqual([]);
@@ -270,8 +272,89 @@ describe("payable chains (W7)", () => {
     const solanaOnly = sourcesPayableOn(["solana"]).map((s) => s.id);
     expect(solanaOnly).toContain("deepnets-token-safety");
     expect(solanaOnly).toContain("plexa-pretrade");
-    expect(solanaOnly).toContain("bazaar");
     expect(solanaOnly).not.toContain("x-search");
     expect(solanaOnly).not.toContain("cmc-quotes");
+  });
+});
+
+describe("no open-ended source", () => {
+  it("has no source whose URL the model chooses, and drops a config that still names one", async () => {
+    const { DATA_SOURCES, getDataSource, resolveDataSources, dataChainsFor } = await import("./registry");
+    expect(getDataSource("bazaar")).toBeUndefined();
+    expect(resolveDataSources(["bazaar", "x-search"]).map((s) => s.id)).toEqual(["x-search"]);
+    expect(dataChainsFor(["bazaar"])).toEqual([]);
+    // No input schema asks the model for a URL or a host.
+    for (const source of DATA_SOURCES) {
+      const fields = Object.keys((source.inputSchema as { shape?: Record<string, unknown> }).shape ?? {});
+      expect(fields.filter((f) => /url|host|endpointurl|resource/i.test(f)), source.id).toEqual([]);
+    }
+  });
+
+  /**
+   * One minimal valid input per source and per mode. The registry `url` is a display
+   * field; this is what each `query()` really fetches, so a source that calls a host
+   * other than its own, or a new mode nobody listed here, fails this test rather than
+   * failing closed in production.
+   */
+  const BONK = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
+  const ERC20 = `0x${"1".repeat(40)}`;
+  const CALLS: Array<[id: string, input: unknown]> = [
+    ["x-search", { query: "BONK" }],
+    ["sentimentalpha", { query: "BONK" }],
+    ["cmc-quotes", { symbols: ["SOL"] }],
+    ["cmc-dex-search", { query: "bonk" }],
+    ["deepnets-token-safety", { mint: BONK }],
+    ...["market-overview", "funding-rates", "volatility", "prices", "correlation", "liquidation-levels"].map(
+      (endpoint): [string, unknown] => ["agentdata", { endpoint }],
+    ),
+    ...["netflow", "holdings", "dex-trades"].map((endpoint): [string, unknown] => ["nansen-smart-money", { endpoint, chains: ["solana"] }]),
+    ["plexa-pretrade", { token: ERC20 }],
+    ["gate402-base-radar", { mode: "launches" }],
+    ["gate402-base-radar", { mode: "momentum", address: ERC20 }],
+    ["solenrich-launches", { mode: "launches" }],
+    ["solenrich-launches", { mode: "token", mint: BONK }],
+    ["solenrich-launches", { mode: "ask", question: "what launched today?" }],
+    ["dripmetrics-summary", {}],
+    ...["buy-sell-volume-imbalance", "cvd", "amihud-illiquidity", "realized-vol", "momentum"].map(
+      (metric): [string, unknown] => ["dripmetrics-metric", { metric }],
+    ),
+    ["dripmetrics-metric", { metric: "orderbook/execution-impact", side: "buy" }],
+    ["otto-pulse", { mode: "pulse" }],
+    ["otto-pulse", { mode: "recap" }],
+  ];
+
+  it("every source, in every mode, fetches a host on the paid-URL allowlist", async () => {
+    const { DATA_SOURCES } = await import("./registry");
+    const { PAID_HOSTS, checkPaidUrl } = await import("@/lib/x402/url-policy");
+    const paid = () => db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
+
+    const hostsCalled = new Set<string>();
+    const seen = new Set<string>();
+    for (const [id, input] of CALLS) {
+      const before = (await paid()).length;
+      // What the normalizer makes of the fixture is other tests' business; this one is
+      // about the request, and the simulated payment row carries its URL.
+      await query(id, input).catch(() => undefined);
+      const rows = await paid();
+      expect(rows.length, `${id} ${JSON.stringify(input)} never reached paidFetch`).toBe(before + 1);
+      const row = rows.find((r) => !seen.has(r.id));
+      for (const r of rows) seen.add(r.id);
+      expect(row?.sourceId, JSON.stringify(input)).toBe(id);
+      expect(checkPaidUrl(row?.url ?? ""), `${id} ${row?.url}`).toBeNull();
+      hostsCalled.add(new URL(row?.url ?? "").hostname);
+    }
+
+    // Every registry source was driven, and the list names exactly the hosts they call.
+    expect([...new Set(CALLS.map(([id]) => id))].sort()).toEqual(DATA_SOURCES.map((s) => s.id).sort());
+    expect([...hostsCalled].sort()).toEqual([...PAID_HOSTS].sort());
+  });
+
+  it("keeps the paid-URL allowlist in step with the registry", async () => {
+    const { DATA_SOURCES } = await import("./registry");
+    const { PAID_HOSTS, checkPaidUrl } = await import("@/lib/x402/url-policy");
+    const registryHosts = new Set(DATA_SOURCES.map((source) => new URL(source.url).hostname));
+    for (const source of DATA_SOURCES) expect(checkPaidUrl(source.url), source.id).toBeNull();
+    // Nothing on the list that no source uses: a retired vendor's host comes off it.
+    expect([...PAID_HOSTS].sort()).toEqual([...registryHosts].sort());
   });
 });

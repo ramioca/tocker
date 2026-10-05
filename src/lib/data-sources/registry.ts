@@ -29,11 +29,16 @@
  *
  * They are gone from here and from `SENTIMENT_SOURCE_IDS` in `src/lib/tokens/index.ts`.
  * A dead source is not a feature with a caveat.
+ *
+ * ## No open-ended source
+ *
+ * Every entry calls its own fixed host, and `paidFetch` refuses any other
+ * (`src/lib/x402/url-policy.ts`). The `bazaar` source is retired; an agent config that
+ * still names it resolves to nothing.
  */
 import type { Chain } from "@/server/types";
 import type { DataSourceInfo } from "@/server/types";
 import { agentData } from "./agentdata";
-import { bazaar } from "./bazaar";
 import { cmcDexSearch, cmcQuotes } from "./coinmarketcap";
 import { dripmetricsMetric, dripmetricsSummary } from "./dripmetrics";
 import { gate402BaseRadar } from "./gate402";
@@ -62,7 +67,6 @@ export const DATA_SOURCES: DataSource[] = [
   dripmetricsMetric,
   ottoPulse,
   sentimentAlpha,
-  bazaar,
 ];
 
 const BY_ID = new Map(DATA_SOURCES.map((s) => [s.id, s]));
@@ -89,14 +93,10 @@ export function resolveDataSources(ids: readonly string[]): DataSource[] {
  *
  * Unknown ids and networks the platform holds no wallet for are dropped: they are a
  * different failure, reported by the `data` step's registry check.
- *
- * `bazaar` is deliberately no signal — the chain depends on whichever resource the model
- * picks at runtime, so its registry `network` is a default, not a fact.
  */
 export function dataChainsFor(ids: readonly string[], agentChains?: readonly Chain[]): Chain[] {
   const out: Chain[] = [];
   for (const source of resolveDataSources(ids)) {
-    if (source.id === "bazaar") continue;
     // A source payable on several chains is paid on one the agent trades when it can
     // be (`selectPaymentOption` prefers the same), so only that wallet has to be funded.
     const onAgentChains = agentChains ? source.chains.filter((chain) => agentChains.includes(chain)) : [];
@@ -107,21 +107,16 @@ export function dataChainsFor(ids: readonly string[], agentChains?: readonly Cha
   return out.sort();
 }
 
-/**
- * Sources an agent could not pay for on any chain it trades (W7). `bazaar` is never
- * listed: the chain depends on the resource picked at runtime.
- */
+/** Sources an agent could not pay for on any chain it trades (W7). */
 export function unpayableSources(ids: readonly string[], agentChains: readonly Chain[]): DataSourceInfo[] {
   return resolveDataSources(ids)
-    .filter((source) => source.id !== "bazaar" && !source.chains.some((chain) => agentChains.includes(chain)))
+    .filter((source) => !source.chains.some((chain) => agentChains.includes(chain)))
     .map(toDataSourceInfo);
 }
 
 /** Registry entries payable on at least one of these chains — what the picker offers. */
 export function sourcesPayableOn(chains: readonly Chain[]): DataSourceInfo[] {
-  return DATA_SOURCES.filter((source) => source.id === "bazaar" || source.chains.some((chain) => chains.includes(chain))).map(
-    toDataSourceInfo,
-  );
+  return DATA_SOURCES.filter((source) => source.chains.some((chain) => chains.includes(chain))).map(toDataSourceInfo);
 }
 
 export function toDataSourceInfo(source: DataSource): DataSourceInfo {

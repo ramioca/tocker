@@ -264,6 +264,22 @@ describe("visibleRationale", () => {
     expect(visibleRationale("Score 31, under my exit floor of 40. Out.", { isOwner: false })).toBe("Score 31. Out.");
   });
 
+  it("still redacts a retired source's spellings in rows written while it existed", () => {
+    for (const text of [
+      "Checked bazaar for a second sentiment read; it agreed with the score.",
+      "Found a whale-flow feed on the Bazaar and it confirmed the bid.",
+      "Bazaar search turned up nothing, so I bought on the score alone.",
+      "Momentum plus a read from the x402 Bazaar resource looked clean.",
+    ]) {
+      expect(visibleRationale(text, { isOwner: false }) ?? "", text).not.toMatch(/bazaar/i);
+    }
+    expect(visibleRationale("Bought DOVE: bazaar listing confirmed holder growth.", { isOwner: false })).toBe(
+      "Bought DOVE: a paid source listing confirmed holder growth.",
+    );
+    // The owner still reads what the agent wrote.
+    expect(visibleRationale("Checked bazaar first.", { isOwner: true })).toBe("Checked bazaar first.");
+  });
+
   it("replaces paid source names and ids, never leaving a vendor behind", () => {
     const buy =
       "BONK scores 85.9/100 (strong) with no hard-gate blockers: X sentiment 77.9 via SentimentAlpha (paid), safety 90. A clean Deepnets read; nansen-smart-money shows wallets adding. Nansen Smart Money agrees.";

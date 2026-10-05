@@ -272,7 +272,7 @@ async function sweepPaidLaunches(
   minLiquidityUsd: number,
 ): Promise<TokenCandidate[]> {
   const id = PAID_LAUNCH_SOURCE[chain];
-  if (dataSources && dataSources.length > 0 && !dataSources.includes(id)) return [];
+  if (dataSources !== undefined && !dataSources.includes(id)) return [];
 
   try {
     const [{ getDataSource }, { parseGate402Launches }, { parseSolEnrichLaunches }] = await Promise.all([

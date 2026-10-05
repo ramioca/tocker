@@ -361,8 +361,11 @@ export function describeResult(toolName: string | null | undefined, result: unkn
     }
     case "search_data_sources": {
       const registry = arr(r.registry).length;
-      const bazaar = arr(r.bazaar).length;
-      return `${registry} configured ${plural(registry, "source")} · ${bazaar} from the Bazaar`;
+      // Runs recorded before the open x402 index was dropped carry a second list.
+      const listed = arr(r.bazaar).length;
+      return listed === 0
+        ? `${registry} matching ${plural(registry, "source")}`
+        : `${registry} matching ${plural(registry, "source")} · ${listed} outside listings`;
     }
     default:
       return describeUnknown(name, r);

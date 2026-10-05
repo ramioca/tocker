@@ -137,7 +137,7 @@ export function buildSystemPrompt(agent: PromptAgent, sources: DataSource[]): st
   const { config } = agent;
   const sourceLines =
     sources.length === 0
-      ? "  (none configured — you may still use search_data_sources to find one in the Bazaar)"
+      ? "  (none enabled — query_data_source will refuse every source)"
       : sources
           .map(
             (s) =>

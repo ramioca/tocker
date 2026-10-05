@@ -19,7 +19,6 @@ import { eq } from "drizzle-orm";
 import { getDb, posts, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
 import { DATA_SOURCES, getDataSource, toDataSourceInfo } from "@/lib/data-sources/registry";
-import { searchDataSources } from "@/lib/x402/discovery";
 import { X402BudgetError, type RunBudget, type X402Context } from "@/lib/x402/types";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
 import { applyFill, heldAmountToken, sellAmountToken } from "@/lib/trading/positions";
@@ -477,45 +476,32 @@ export function buildTools(ctx: RunContext): ToolSet {
 
     search_data_sources: tool({
       description:
-        "Find data you could buy: matches from your configured registry sources plus live results from the x402 Bazaar. Returns ids/URLs and prices; it costs nothing to search.",
+        "Find data you could buy: the registry sources that match what you are looking for, with what each one returns and costs, and whether your owner enabled it. Free to search. Only an enabled source can be bought.",
       inputSchema: z.object({
         query: z.string().min(2).max(200).describe("What you are looking for, e.g. 'solana token safety'"),
-        maxUsdPrice: z.number().min(0).max(10).optional().describe("Only return resources at or under this price"),
+        maxUsdPrice: z.number().min(0).max(10).optional().describe("Only return sources at or under this price"),
       }),
       execute: logged(ctx, "search_data_sources", async (input) => {
         const parsed = z
           .object({ query: z.string(), maxUsdPrice: z.number().optional() })
           .parse(input);
-        const needle = parsed.query.toLowerCase();
+        // Registry only, matched on the query's words and ranked by how many hit: a model
+        // asks for "twitter sentiment", not for a substring of one description.
+        const phrase = parsed.query.toLowerCase();
+        const words = phrase.split(/[^a-z0-9]+/).filter((word) => word.length >= 3);
+        const needles = words.length > 0 ? words : [phrase];
         const registry = DATA_SOURCES.filter(
-          (s) =>
-            s.id !== "bazaar" &&
-            (s.id.includes(needle) ||
-              s.name.toLowerCase().includes(needle) ||
-              s.description.toLowerCase().includes(needle) ||
-              s.category.includes(needle)),
-        ).map((s) => ({ ...toDataSourceInfo(s), configured: allowedSources.includes(s.id) }));
+          (s) => parsed.maxUsdPrice === undefined || s.priceUsd === null || s.priceUsd <= parsed.maxUsdPrice,
+        )
+          .map((s) => {
+            const text = `${s.id} ${s.name} ${s.summary} ${s.description} ${s.category}`.toLowerCase();
+            return { source: s, hits: needles.filter((needle) => text.includes(needle)).length };
+          })
+          .filter((match) => match.hits > 0)
+          .sort((a, b) => b.hits - a.hits)
+          .map(({ source }) => ({ ...toDataSourceInfo(source), configured: allowedSources.includes(source.id) }));
 
-        let discovered: Array<Record<string, unknown>> = [];
-        try {
-          const found = await searchDataSources({
-            query: parsed.query,
-            ...(parsed.maxUsdPrice !== undefined ? { maxUsdPrice: parsed.maxUsdPrice } : {}),
-            limit: 6,
-          });
-          discovered = found.map((r) => ({
-            resourceUrl: r.resource,
-            name: r.serviceName,
-            description: r.description,
-            network: r.network,
-            priceUsd: r.priceUsd,
-            callVia: "query_data_source with sourceId 'bazaar' and params { resourceUrl }",
-          }));
-        } catch (err) {
-          discovered = [{ error: err instanceof Error ? err.message : "Bazaar search unavailable" }];
-        }
-
-        return { ok: true, registry, bazaar: discovered };
+        return { ok: true, registry };
       }),
     }),
 
@@ -523,19 +509,23 @@ export function buildTools(ctx: RunContext): ToolSet {
       description:
         "Buy data from one of your configured sources over x402. Costs real money against your per-run data budget. `params` must match the source's schema (see the system prompt) — several sources take a `mode` that selects both the endpoint and the price, so read the description before you call one.",
       inputSchema: z.object({
-        sourceId: z.string().min(1).describe("Registry id, e.g. 'sentimentalpha', or 'bazaar' for a discovered resource"),
+        sourceId: z.string().min(1).describe("Registry id of an enabled source, e.g. 'x-search'"),
         params: z.record(z.string(), z.unknown()).default({}).describe("Source-specific parameters"),
       }),
       execute: logged(ctx, "query_data_source", async (input) => {
         const parsed = z.object({ sourceId: z.string(), params: z.record(z.string(), z.unknown()).default({}) }).parse(input);
         const source = getDataSource(parsed.sourceId);
         if (!source) {
-          return fail(`Unknown data source "${parsed.sourceId}".`, {
-            available: DATA_SOURCES.map((s) => s.id),
-          });
+          return fail(`There is no data source "${parsed.sourceId.slice(0, 64)}".`, { enabled: allowedSources });
         }
-        if (allowedSources.length > 0 && !allowedSources.includes(source.id)) {
-          return fail(`Source "${source.id}" is not enabled for this agent.`, { enabled: allowedSources });
+        // An empty list means none, here and for score_token's paid signals.
+        if (!allowedSources.includes(source.id)) {
+          return fail(
+            allowedSources.length === 0
+              ? `No data sources are enabled for this agent, so "${source.id}" cannot be bought.`
+              : `Source "${source.id}" is not enabled for this agent.`,
+            { enabled: allowedSources },
+          );
         }
         try {
           const result = await source.query(ctx.x402, parsed.params);

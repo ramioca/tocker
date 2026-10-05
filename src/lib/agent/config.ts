@@ -3,10 +3,18 @@
  * Used by the builder form (client), server actions (validation) and the run loop.
  */
 import { z } from "zod";
-import type { AgentConfigWithSizing } from "@/db/schema";
+import type { AgentConfig, AgentConfigWithSizing } from "@/db/schema";
 import { DEFAULT_SIZING } from "@/lib/trading/sizing";
+import { MAX_DATA_SPEND_PER_RUN_USD } from "@/lib/x402/types";
 
 export const chainSchema = z.enum(["solana", "base"]);
+
+/**
+ * Source ids that used to be in the registry and are still in saved configs. They are
+ * dropped on parse, and the live checklist ignores them, so an agent that names one is
+ * not left with a pick it cannot see and cannot untick.
+ */
+export const RETIRED_DATA_SOURCE_IDS: readonly string[] = ["bazaar"];
 
 /**
  * The longest name an agent can have. One constant for the builder, the settings form
@@ -33,7 +41,10 @@ export { DEFAULT_MODELS } from "./models";
 
 export const agentConfigSchema = z.object({
   strategyPrompt: z.string().min(20, "Describe the strategy in at least a sentence.").max(8000),
-  dataSources: z.array(z.string()).max(12),
+  dataSources: z
+    .array(z.string())
+    .max(12)
+    .transform((ids) => ids.filter((id) => !RETIRED_DATA_SOURCE_IDS.includes(id))),
   chains: z.array(chainSchema).min(1, "Pick at least one chain"),
   universe: z.object({
     // `paid_launches` is the only feed that costs money; it runs a paid launch radar
@@ -58,7 +69,13 @@ export const agentConfigSchema = z.object({
     maxTradeUsd: z.number().positive().max(1_000_000),
     maxDailyTrades: z.number().int().min(1).max(500),
     maxPositionPct: z.number().min(1).max(100),
-    maxDataSpendUsdPerRun: z.number().min(0).max(100),
+    // Clamped, not rejected: a config saved before the ceiling existed still parses,
+    // and reads back as what a run will actually be allowed to spend.
+    maxDataSpendUsdPerRun: z
+      .number()
+      .min(0)
+      .max(100)
+      .transform((usd) => Math.min(usd, MAX_DATA_SPEND_PER_RUN_USD)),
     stopLossPct: z.number().min(0.1).max(99).nullable(),
     takeProfitPct: z.number().min(0.1).max(10_000).nullable(),
     slippageBps: z.number().int().min(1).max(5000),
@@ -137,6 +154,22 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigWithSizing = {
   // a note and a finish fit with room to widen a thin sweep; 12 forced a single proposal.
   llm: { provider: "anthropic", model: "claude-sonnet-5", temperature: 0.4, maxSteps: 20 },
 };
+
+/**
+ * A stored config as every reader should see it: the two rewrites the schema makes on
+ * write (retired source ids dropped, data budget inside the ceiling), applied on read so
+ * a row saved before them does not have to be re-saved first.
+ */
+export function readStoredConfig(config: AgentConfig): AgentConfig {
+  return {
+    ...config,
+    dataSources: config.dataSources.filter((id) => !RETIRED_DATA_SOURCE_IDS.includes(id)),
+    risk: {
+      ...config.risk,
+      maxDataSpendUsdPerRun: Math.min(config.risk.maxDataSpendUsdPerRun, MAX_DATA_SPEND_PER_RUN_USD),
+    },
+  };
+}
 
 export function parseAgentConfig(input: unknown): AgentConfigWithSizing {
   return agentConfigSchema.parse(input);

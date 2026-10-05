@@ -24,12 +24,25 @@ export interface RunBudget {
   spentUsd: number;
 }
 
+/**
+ * The most one run may spend on data, whatever its config says. The builder's slider
+ * stops here too. Enforced where a budget is made and again where it is spent.
+ */
+export const MAX_DATA_SPEND_PER_RUN_USD = 5;
+
+function cappedMaxUsd(maxUsd: number): number {
+  // Not a finite number means not a budget: nothing may be spent against it.
+  return Number.isFinite(maxUsd) ? Math.min(Math.max(0, maxUsd), MAX_DATA_SPEND_PER_RUN_USD) : 0;
+}
+
 export function newBudget(maxUsd: number): RunBudget {
-  return { maxUsd, spentUsd: 0 };
+  return { maxUsd: cappedMaxUsd(maxUsd), spentUsd: 0 };
 }
 
 export function budgetRemaining(budget: RunBudget): number {
-  return Math.max(0, budget.maxUsd - budget.spentUsd);
+  // A spend that is negative or not a number never buys headroom.
+  const spent = Number.isFinite(budget.spentUsd) ? Math.max(0, budget.spentUsd) : Number.POSITIVE_INFINITY;
+  return Math.max(0, cappedMaxUsd(budget.maxUsd) - spent);
 }
 
 /** Everything `paidFetch` needs about the caller. */

@@ -4,7 +4,17 @@ import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { correctEip712Domains, paidFetch, parsePaymentOptions, selectPaymentOption } from "./paidFetch";
-import { chainForNetwork, newBudget, X402BudgetError, type AgentWalletRef, type X402Context } from "./types";
+import {
+  chainForNetwork,
+  MAX_DATA_SPEND_PER_RUN_USD,
+  newBudget,
+  X402BudgetError,
+  X402RequestError,
+  type AgentWalletRef,
+  type X402Context,
+} from "./types";
+
+const QUOTES_URL = "https://pro-api.coinmarketcap.com/x402/v3/cryptocurrency/quotes/latest?symbol=SOL";
 
 let db: Db;
 let agentId: string;
@@ -72,6 +82,19 @@ describe("parsePaymentOptions", () => {
     );
     const options = await parsePaymentOptions(res);
     expect(options[0]?.amountUsd).toBeCloseTo(0.01, 9);
+  });
+
+  it("drops a quote whose amount is not an unsigned atomic amount", async () => {
+    const quote = (amount: unknown) =>
+      Response.json(
+        { x402Version: 1, accepts: [{ scheme: "exact", network: "base", maxAmountRequired: amount, asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", payTo: "0xpay" }] },
+        { status: 402 },
+      );
+    for (const amount of ["-100000000", "-1", "1e9", "10.5", "0x10", " 10000", "", "abc", -5]) {
+      expect(await parsePaymentOptions(quote(amount)), String(amount)).toEqual([]);
+    }
+    expect(await parsePaymentOptions(quote("10000"))).toHaveLength(1);
+    expect(await parsePaymentOptions(quote(10000))).toHaveLength(1);
   });
 
   it("returns nothing for a body with no accepts", async () => {
@@ -202,7 +225,7 @@ describe("paidFetch in mock mode", () => {
     for (let i = 0; i < 3; i += 1) {
       await paidFetch(c, {
         sourceId: "cmc-quotes",
-        url: "https://example.test/quote",
+        url: "https://pro-api.coinmarketcap.com/x402/v3/cryptocurrency/quotes/latest?symbol=SOL",
         network: "eip155:8453",
         priceUsd: 0.01,
         fixture: {},
@@ -215,7 +238,7 @@ describe("paidFetch in mock mode", () => {
     const c = ctx(0.015);
     await paidFetch(c, {
       sourceId: "cmc-quotes",
-      url: "https://example.test/quote",
+      url: "https://pro-api.coinmarketcap.com/x402/v3/cryptocurrency/quotes/latest?symbol=SOL",
       network: "eip155:8453",
       priceUsd: 0.01,
       fixture: {},
@@ -224,7 +247,7 @@ describe("paidFetch in mock mode", () => {
     await expect(
       paidFetch(c, {
         sourceId: "cmc-quotes",
-        url: "https://example.test/quote",
+        url: "https://pro-api.coinmarketcap.com/x402/v3/cryptocurrency/quotes/latest?symbol=SOL",
         network: "eip155:8453",
         priceUsd: 0.01,
         fixture: {},
@@ -303,14 +326,59 @@ describe("paidFetch in mock mode", () => {
   it("charges nothing for a source with no registry price", async () => {
     const c = ctx();
     const res = await paidFetch(c, {
-      sourceId: "bazaar:https://example.test/thing",
-      url: "https://example.test/thing",
+      sourceId: "otto-pulse",
+      url: "https://x402.ottoai.services/twitter-summary",
       network: "eip155:8453",
       priceUsd: null,
       fixture: { ok: true },
     });
     expect(res.amountUsd).toBe(0);
     expect(c.budget.spentUsd).toBe(0);
+  });
+
+  it("refuses a URL that is not a registry source's host, before the fixture, and writes no row", async () => {
+    const c = ctx();
+    for (const url of [
+      "https://other.example/x402",
+      "http://sentimentalpha.ai/v1/narrative-alpha",
+      "https://sentimentalpha.ai:8443/v1/narrative-alpha",
+      "https://user:pw@sentimentalpha.ai/v1/narrative-alpha",
+      "https://sentimentalpha.ai.other.example/v1/narrative-alpha",
+      "http://169.254.169.254/latest/meta-data/",
+      "not a url",
+    ]) {
+      await expect(
+        paidFetch(c, { sourceId: "sentimentalpha", url, network: "eip155:8453", priceUsd: 0.01, fixture: {} }),
+        url,
+      ).rejects.toBeInstanceOf(X402RequestError);
+    }
+    expect(c.budget.spentUsd).toBe(0);
+    const rows = await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("holds a run to the per-run ceiling whatever budget it was handed", async () => {
+    // A budget above the ceiling is held to the ceiling.
+    const c = ctx(100);
+    expect(c.budget.maxUsd).toBe(MAX_DATA_SPEND_PER_RUN_USD);
+    const over = { sourceId: "cmc-quotes", url: QUOTES_URL, network: "eip155:8453", fixture: {} } as const;
+    await expect(paidFetch(c, { ...over, priceUsd: MAX_DATA_SPEND_PER_RUN_USD + 0.01 })).rejects.toBeInstanceOf(X402BudgetError);
+
+    // A budget object built by hand, not by newBudget, is capped where it is spent.
+    const handmade: X402Context = { ...ctx(), budget: { maxUsd: 100, spentUsd: 0 } };
+    await expect(paidFetch(handmade, { ...over, priceUsd: MAX_DATA_SPEND_PER_RUN_USD + 0.01 })).rejects.toBeInstanceOf(X402BudgetError);
+
+    // And a budget that is not a number is no budget at all.
+    const broken: X402Context = { ...ctx(), budget: { maxUsd: Number.NaN, spentUsd: 0 } };
+    await expect(paidFetch(broken, { ...over, priceUsd: 0.01 })).rejects.toBeInstanceOf(X402BudgetError);
+    expect(newBudget(Number.NaN).maxUsd).toBe(0);
+    expect(newBudget(-1).maxUsd).toBe(0);
+
+    // A spend that went below zero, or is not a number, buys no headroom.
+    const credited: X402Context = { ...ctx(), budget: { maxUsd: 5, spentUsd: -100 } };
+    await expect(paidFetch(credited, { ...over, priceUsd: MAX_DATA_SPEND_PER_RUN_USD + 0.01 })).rejects.toBeInstanceOf(X402BudgetError);
+    const unread: X402Context = { ...ctx(), budget: { maxUsd: 5, spentUsd: Number.NaN } };
+    await expect(paidFetch(unread, { ...over, priceUsd: 0.01 })).rejects.toBeInstanceOf(X402BudgetError);
   });
 });
 
@@ -373,12 +441,15 @@ describe("paidFetch accounting when a payment fails", () => {
   let signBeforeRetry = true;
   let registeredPolicies: Array<(v: number, r: unknown[]) => unknown[]>;
   let spendControls: { maxAmountPerPayment: string } | null;
+  /** The redirect mode the paid retry was sent with. */
+  let paidRedirect: RequestRedirect | undefined;
 
   beforeEach(() => {
     vi.stubEnv("X402_MOCK", "");
     vi.resetModules();
     registeredPolicies = [];
     spendControls = null;
+    paidRedirect = undefined;
     signBeforeRetry = true;
     paidBehaviour = async () => new Response("{}", { status: 200 });
 
@@ -411,7 +482,8 @@ describe("paidFetch accounting when a payment fails", () => {
     vi.doMock("@privy-io/node/x402", () => ({ createX402Client: () => fakeClient }));
     vi.doMock("@x402/fetch", async (importOriginal) => ({
       ...(await importOriginal<typeof import("@x402/fetch")>()),
-      wrapFetchWithPayment: () => async () => {
+      wrapFetchWithPayment: () => async (_input: RequestInfo | URL, init?: RequestInit) => {
+        paidRedirect = init?.redirect;
         // The real client fires this the instant a payload is signed, which is the line
         // this module charges against.
         if (signBeforeRetry) for (const hook of afterPaymentHooks) await hook();
@@ -469,6 +541,73 @@ describe("paidFetch accounting when a payment fails", () => {
     priceUsd: 0.01,
     fixture: {},
   } as const;
+
+  it("never sends a request to a URL off the registry hosts, with real payments on", async () => {
+    const fetched: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      fetched.push(String(input));
+      return new Response("{}", { status: 200 });
+    });
+    const { paidFetch: livePaidFetch } = await live();
+    const c = ctx();
+
+    await expect(livePaidFetch(c, { ...req, url: "https://other.example/x402" })).rejects.toThrow(/not a registry source's host/);
+    await expect(livePaidFetch(c, { ...req, url: "http://127.0.0.1:9001/x" })).rejects.toThrow(/only https/);
+
+    expect(fetched).toEqual([]);
+    expect(spendControls).toBeNull();
+    expect(c.budget.spentUsd).toBe(0);
+    const rows = await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("does not follow a redirect: a 3xx is the answer, and nothing is signed for wherever it points", async () => {
+    const calls: Array<{ url: string; redirect: RequestRedirect | undefined }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), redirect: init?.redirect });
+      return new Response(null, { status: 302, headers: { location: "https://other.example/x402" } });
+    });
+    const { paidFetch: livePaidFetch } = await live();
+    const c = ctx();
+
+    await expect(livePaidFetch(c, req)).rejects.toThrow(/responded 302/);
+
+    expect(calls).toEqual([{ url: req.url, redirect: "manual" }]);
+    expect(spendControls).toBeNull();
+    expect(c.budget.spentUsd).toBe(0);
+    const rows = await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("signs nothing for a quote below zero, and the run's budget does not move", async () => {
+    vi.stubGlobal("fetch", async () =>
+      Response.json(
+        {
+          x402Version: 1,
+          accepts: [
+            {
+              scheme: "exact",
+              network: "base",
+              maxAmountRequired: "-100000000",
+              asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+              payTo: "0xpay",
+              extra: { name: "USDC", version: "2" },
+            },
+          ],
+        },
+        { status: 402 },
+      ),
+    );
+    const { paidFetch: livePaidFetch } = await live();
+    const c = ctx();
+
+    await expect(livePaidFetch(c, req)).rejects.toThrow(/cannot parse or pay/);
+
+    expect(spendControls).toBeNull();
+    expect(c.budget.spentUsd).toBe(0);
+    const rows = await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
+    expect(rows).toHaveLength(0);
+  });
 
   it("charges the run and writes an unsettled row when the resource fails after payment", async () => {
     stubProbe402();
@@ -535,6 +674,8 @@ describe("paidFetch accounting when a payment fails", () => {
 
     // +5% of $0.01, so a resource that reprices upward on the retry is refused.
     expect(spendControls).toEqual({ maxAmountPerPayment: "$0.010500" });
+    // The paid retry is sent the same way as the probe: a redirect is not followed.
+    expect(paidRedirect).toBe("manual");
     expect(registeredPolicies).toHaveLength(1);
     const [fixed] = registeredPolicies[0]!(1, [
       { asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", extra: { name: "USDC", version: "2" } },
