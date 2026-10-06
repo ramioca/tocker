@@ -37,6 +37,7 @@ import {
   trades,
   x402Payments,
 } from "@/db";
+import { DEFAULT_MODELS, knownModel } from "@/lib/agent/models";
 import { getPortfolio } from "@/lib/agent/portfolio";
 import { splitPnl, toNum } from "@/lib/money";
 import { winRate } from "@/lib/pnl";
@@ -72,33 +73,29 @@ export interface ModelPrice {
  * A model with no entry here contributes `null`, not `0`: "we do not know" and "it was
  * free" are different facts and the UI prints them differently.
  */
-export const MODEL_PRICES: Record<string, ModelPrice> = {
-  "claude-sonnet-5": { label: "Claude Sonnet 5", inputPerMTok: 3, outputPerMTok: 15 },
-  "claude-opus-5": { label: "Claude Opus 5", inputPerMTok: 15, outputPerMTok: 75 },
-  "claude-haiku-4-5-20251001": { label: "Claude Haiku 4.5", inputPerMTok: 1, outputPerMTok: 5 },
-  "gpt-5": { label: "GPT-5", inputPerMTok: 1.25, outputPerMTok: 10 },
-};
+export const MODEL_PRICES: Record<string, ModelPrice> = Object.fromEntries(
+  // Anthropic's and OpenAI's own rows. OpenRouter resells the same models at the same
+  // list price, and `resolveModelPrice` reads its ids through to these.
+  [...DEFAULT_MODELS.anthropic, ...DEFAULT_MODELS.openai].flatMap((model) =>
+    model.inputPerMTok === undefined || model.outputPerMTok === undefined
+      ? []
+      : [[model.id, { label: model.label, inputPerMTok: model.inputPerMTok, outputPerMTok: model.outputPerMTok }]],
+  ),
+);
 
 /**
  * Find the price for a model id.
  *
- * Exact match first, then the OpenRouter form (`anthropic/claude-sonnet-5`), then a
- * prefix match so a dated snapshot (`claude-haiku-4-5-20251001` vs `claude-haiku-4-5`)
- * resolves either way round. Unknown → `null`.
+ * Through the catalogue's own lookup, so the id resolves in any of its spellings: as
+ * stored, a dated snapshot or its alias (`claude-haiku-4-5[-20251001]`), and the
+ * OpenRouter form (`anthropic/claude-sonnet-5.5`). No prefix guessing: `claude-opus-5-5`
+ * is not `claude-opus-5` at a different price, and a model that is not listed is
+ * unknown → `null`.
  */
 export function resolveModelPrice(model: string | null | undefined): ModelPrice | null {
-  if (!model) return null;
-  const id = model.trim().toLowerCase();
-  if (!id) return null;
-  if (MODEL_PRICES[id]) return MODEL_PRICES[id];
-
-  const bare = id.includes("/") ? id.slice(id.lastIndexOf("/") + 1) : id;
-  if (MODEL_PRICES[bare]) return MODEL_PRICES[bare];
-
-  for (const [known, price] of Object.entries(MODEL_PRICES)) {
-    if (bare.startsWith(known) || known.startsWith(bare)) return price;
-  }
-  return null;
+  const known = knownModel(model);
+  if (!known || known.inputPerMTok === undefined || known.outputPerMTok === undefined) return null;
+  return { label: known.label, inputPerMTok: known.inputPerMTok, outputPerMTok: known.outputPerMTok };
 }
 
 /** Token counts × list price. `null` when the model has no published price here. */

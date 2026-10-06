@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { AgentConfig, AgentConfigWithSizing } from "@/db/schema";
 import { DEFAULT_SIZING } from "@/lib/trading/sizing";
 import { MAX_DATA_SPEND_PER_RUN_USD } from "@/lib/x402/types";
+import { MAX_MODEL_ID, MODEL_ID_PATTERN } from "./models";
 
 export const chainSchema = z.enum(["solana", "base"]);
 
@@ -26,14 +27,10 @@ export const RETIRED_DATA_SOURCE_IDS: readonly string[] = ["bazaar"];
  */
 export const MAX_AGENT_NAME = 60;
 
-/**
- * The model id is printed on every public card, so it is bounded and has to look like an
- * id: letters, digits and `. _ : / -`, which covers every provider's ("gpt-5-mini",
- * "claude-haiku-4-5-20251001", "nousresearch/hermes-4-405b", an OpenRouter ":free"
- * variant). Free text there could carry a megabyte, or a sentence beside the agent's name.
- */
-export const MAX_MODEL_ID = 100;
-const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/;
+// The rule for a model id lives beside the model list (`models.ts`, a leaf module), so
+// the picker can apply it to what somebody types before the schema ever sees it.
+export { MAX_MODEL_ID };
+const MODEL_ID = MODEL_ID_PATTERN;
 const NOT_A_MODEL_ID = "That does not look like a model id";
 
 /**
@@ -50,7 +47,7 @@ export const positionSizingSchema = z.object({
 export const llmProviderSchema = z.enum(["anthropic", "openai", "openrouter"]);
 
 // The id → label list lives in a leaf module so display code can use it without zod.
-export { DEFAULT_MODELS } from "./models";
+export { DEFAULT_MODELS, DEFAULT_MODEL_ID } from "./models";
 
 export const agentConfigSchema = z.object({
   strategyPrompt: z.string().min(20, "Describe the strategy in at least a sentence.").max(8000),

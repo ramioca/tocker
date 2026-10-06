@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_AGENT_CONFIG, DEFAULT_MODELS } from "@/lib/agent/config";
+import { DEFAULT_AGENT_CONFIG, DEFAULT_MODEL_ID } from "@/lib/agent/config";
 import { DEFAULT_PLATFORM_FEE_USD } from "@/lib/platform/fee";
 import {
   INTERVAL_PRESETS,
@@ -54,11 +54,11 @@ describe("withDefaultKey", () => {
   });
 
   /** The OpenRouter key onboarding recommends, then a builder that said "No Anthropic key on file yet". */
-  it("moves to the provider of the only key the account has, with that provider's first model", () => {
+  it("moves to the provider of the only key the account has, with that provider's default model", () => {
     const next = withDefaultKey(emptyDraft(), [openrouter]);
     expect(next.llmKeyId).toBe("key_or");
     expect(next.config.llm.provider).toBe("openrouter");
-    expect(next.config.llm.model).toBe(DEFAULT_MODELS.openrouter[0].id);
+    expect(next.config.llm.model).toBe(DEFAULT_MODEL_ID.openrouter);
     // Nothing else about the model settings moves.
     expect(next.config.llm.temperature).toBe(DEFAULT_AGENT_CONFIG.llm.temperature);
     expect(next.config.llm.maxSteps).toBe(DEFAULT_AGENT_CONFIG.llm.maxSteps);

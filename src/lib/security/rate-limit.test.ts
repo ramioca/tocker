@@ -126,6 +126,7 @@ describe("limitForPath", () => {
     expect(limitForPath("/api/solana/rpc")?.rule).toBe(RATE_LIMITS.solanaRpc);
     expect(limitForPath("/api/solana/blockhash")?.rule).toBe(RATE_LIMITS.blockhash);
     expect(limitForPath("/api/tokens/search")?.rule).toBe(RATE_LIMITS.tokenSearch);
+    expect(limitForPath("/api/models/openrouter")).toEqual({ rule: RATE_LIMITS.tokenSearch, prefix: "models" });
     expect(limitForPath("/api/health")?.rule).toBe(RATE_LIMITS.cron);
   });
 

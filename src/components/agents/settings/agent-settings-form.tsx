@@ -19,7 +19,8 @@ import { UniversePreview } from "@/components/agents/settings/universe-preview";
 import { sameConfig } from "@/components/agents/settings/same-config";
 import { AddKeyInline, PROVIDER_LABELS } from "@/components/agents/builder/steps";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
-import { DEFAULT_MODELS, agentConfigSchema } from "@/lib/agent/config";
+import { DEFAULT_MODEL_ID, agentConfigSchema } from "@/lib/agent/config";
+import { ModelPicker } from "@/components/agents/model-picker";
 import { DataSourcePicker } from "@/components/agents/data-source-picker";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
 import { ExitRulesFields } from "@/components/agents/exit-rules";
@@ -398,7 +399,7 @@ function SettingsForm({
                 const provider = next as AgentConfig["llm"]["provider"];
                 setConfig((current) => ({
                   ...current,
-                  llm: { ...current.llm, provider, model: DEFAULT_MODELS[provider][0].id },
+                  llm: { ...current.llm, provider, model: DEFAULT_MODEL_ID[provider] },
                 }));
                 setLlmKeyId(null);
               }}
@@ -408,10 +409,10 @@ function SettingsForm({
             <label htmlFor="settings-llm-model" className="mb-1 block text-xs text-muted-foreground">
               Model
             </label>
-            <SimpleSelect
+            <ModelPicker
               id="settings-llm-model"
+              provider={config.llm.provider}
               value={config.llm.model}
-              options={DEFAULT_MODELS[config.llm.provider].map((model) => ({ value: model.id, label: model.label }))}
               onChange={(model) => setConfig((current) => ({ ...current, llm: { ...current.llm, model } }))}
             />
           </div>

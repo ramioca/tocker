@@ -1,4 +1,4 @@
-import { DEFAULT_AGENT_CONFIG, DEFAULT_MODELS } from "@/lib/agent/config";
+import { DEFAULT_AGENT_CONFIG, DEFAULT_MODEL_ID } from "@/lib/agent/config";
 import { DEFAULT_FUND_USD } from "@/lib/wallets/funding";
 import type { AgentConfigInput } from "@/lib/agent/config";
 import type { AgentConfig } from "@/db/schema";
@@ -129,7 +129,7 @@ export function withDefaultKey(
     llmKeyId: first.id,
     config: {
       ...draft.config,
-      llm: { ...draft.config.llm, provider: first.provider, model: DEFAULT_MODELS[first.provider][0].id },
+      llm: { ...draft.config.llm, provider: first.provider, model: DEFAULT_MODEL_ID[first.provider] },
     },
   };
 }

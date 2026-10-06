@@ -35,13 +35,14 @@ export function ChainBadges({ chains, className }: { chains: Chain[]; className?
 }
 
 /**
- * The builder's own name for a model ("GPT-5 mini", "Claude Haiku 4.5"). The chip already
- * sits next to the chain badges, so the "(OpenRouter)" routing note is dropped. Only an
- * id the builder does not offer falls back to prettifying the raw id.
+ * The builder's own name for a model ("GPT-5 mini", "Claude Haiku 4.5"). The chip is
+ * small, so the vendor OpenRouter puts in front of a name ("Anthropic: Claude Sonnet 5")
+ * is dropped: the model is what the chip is for. Only an id the builder does not list
+ * falls back to prettifying the raw id.
  */
 export function modelLabel(model: string): string {
   const known = knownModelLabel(model);
-  if (known) return known.replace(/\s*\(OpenRouter\)$/, "");
+  if (known) return known.replace(/^[^:]{1,24}:\s+/, "");
   const bare = model.includes("/") ? model.split("/").slice(1).join("/") : model;
   return bare.replace(/-\d{8}$/, "").replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }

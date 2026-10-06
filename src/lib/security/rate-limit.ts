@@ -161,6 +161,8 @@ export function limitForPath(pathname: string): { rule: RateLimitRule; prefix: s
   if (pathname === "/api/tokens/search") return { rule: RATE_LIMITS.tokenSearch, prefix: "token-search" };
   // Discover's infinite scroll and search box: public, and an ilike plus aggregates per call.
   if (pathname === "/api/discover/agents") return { rule: RATE_LIMITS.tokenSearch, prefix: "discover-agents" };
+  // The model picker's list: cached on the server, but each call is a few hundred rows of JSON.
+  if (pathname.startsWith("/api/models/")) return { rule: RATE_LIMITS.tokenSearch, prefix: "models" };
   return null;
 }
 
