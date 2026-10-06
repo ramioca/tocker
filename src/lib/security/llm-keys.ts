@@ -13,10 +13,10 @@ import type { LlmKeyDetail } from "./types";
  *
  * Storage, verified: `addLlmKey` writes `encryptSecret(key)` from
  * `src/lib/crypto.ts` — AES-256-GCM, `base64(iv|tag|ciphertext)`, key from
- * `ENCRYPTION_KEY` (32 raw bytes, base64). `decryptSecret` is called in exactly
- * one place in the app, `resolveModel` in `src/lib/agent/run.ts`, inside the run
- * loop. The plaintext never reaches a server component, an action result, or the
- * browser.
+ * `ENCRYPTION_KEY` (32 raw bytes, base64). `decryptSecret` is called in two places:
+ * the run loop (`src/lib/agent/run.ts`) and `listKeyModels`, which asks the provider
+ * which models the owner's own key can use. The plaintext never reaches a server
+ * component, an action result, a log, or the browser.
  *
  * "Last used" is derived rather than stored: the most recent run of any agent
  * currently pointed at the key. That means it moves if you re-point an agent, and

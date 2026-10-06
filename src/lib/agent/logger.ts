@@ -4,6 +4,7 @@
  */
 import { nanoid } from "nanoid";
 import { agentRunSteps, getDb } from "@/db";
+import { redactDeep } from "@/lib/security/redact";
 
 export type StepKind = "thought" | "tool_call" | "tool_result" | "message" | "error";
 
@@ -53,12 +54,18 @@ export class RunLogger {
 
 const MAX_PAYLOAD_CHARS = 24_000;
 
-/** Keeps a single step from ballooning the runs table with a whole API response. */
+/**
+ * Keeps a single step from ballooning the runs table with a whole API response, and
+ * keeps credentials out of it: a step holds whatever a tool or a provider answered, and
+ * an error among it can carry a key (see `redactSecrets`).
+ */
 function safePayload(payload: Record<string, unknown>): Record<string, unknown> {
   try {
     const json = JSON.stringify(payload);
-    if (json !== undefined && json.length <= MAX_PAYLOAD_CHARS) return JSON.parse(json) as Record<string, unknown>;
-    return { truncated: true, preview: (json ?? "").slice(0, MAX_PAYLOAD_CHARS) };
+    if (json !== undefined && json.length <= MAX_PAYLOAD_CHARS) {
+      return redactDeep(JSON.parse(json) as Record<string, unknown>);
+    }
+    return { truncated: true, preview: redactDeep((json ?? "").slice(0, MAX_PAYLOAD_CHARS)) };
   } catch {
     return { unserializable: true };
   }

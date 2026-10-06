@@ -2,6 +2,7 @@ import "server-only";
 import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { agents, comments, getDb, likes, posts, trades, users, type Db } from "@/db";
 import type { CommentRow, FeedItem, Page, TradeRow } from "@/server/types";
+import { redactSecrets } from "@/lib/security/redact";
 import { visibleRationale } from "./visibility";
 import {
   decodeCursor,
@@ -81,7 +82,9 @@ async function hydrate(db: Db, rows: PostJoin[], viewerId?: string | null): Prom
               exitReason: r.trade?.exitReason as TradeRow["exitReason"] | undefined,
               symbol: token?.symbol,
             })
-          : r.post.body,
+          : r.post.body === null
+            ? null
+            : redactSecrets(r.post.body),
       createdAt: r.post.createdAt.toISOString(),
       author: toUserCard(r.author),
       agent: r.agent
@@ -206,7 +209,7 @@ export async function getComments(
   return {
     items: page.map((r) => ({
       id: r.comment.id,
-      body: r.comment.body,
+      body: redactSecrets(r.comment.body),
       author: toUserCard(r.author),
       createdAt: r.comment.createdAt.toISOString(),
     })),

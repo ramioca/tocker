@@ -11,6 +11,7 @@ import { isAdminEmail } from "@/lib/admin";
 import { DISPLAY_NAME_RESERVED, HANDLE_RESERVED, isReservedHandle, isStaffLikeName } from "@/lib/reserved-handles";
 import { decryptSecret, encryptSecret, last4 } from "@/lib/crypto";
 import { recordAudit } from "@/lib/security/audit";
+import { SECRET_IN_PUBLIC_TEXT, dbErrorForLog, looksLikeSecret } from "@/lib/security/redact";
 import { newId } from "@/server/queries/_shared";
 import { countKeylessAgents } from "@/server/queries/users";
 import { mismatchedProvider, wrongProviderOnAdd, wrongProviderOnRotate } from "@/lib/agent/key-prefix";
@@ -33,6 +34,14 @@ function rejectedBy(provider: string): string {
 }
 
 const HANDLE_RE = /^[a-z0-9_]{2,20}$/;
+
+/** No provider issues a key this long; the forms stop at the same length. */
+const MAX_KEY_CHARS = 512;
+/** Anthropic's own shape for a workspace id. Anything else in that field is a mistake. */
+const WORKSPACE_ID_RE = /^wrkspc_[A-Za-z0-9]{1,72}$/;
+/** Adding or replacing a key asks its provider about it, so it is paced like any outbound call. */
+const KEY_WRITE_LIMIT = { limit: 10, windowMs: 60_000 } as const;
+const LABEL_IS_A_KEY = "Label looks like an API key. A label is only a name; the key itself goes in the key field.";
 
 export async function updateProfile(input: {
   handle?: string;
@@ -68,11 +77,13 @@ export async function updateProfile(input: {
     if (name !== (session.displayName ?? "") && isStaffLikeName(name) && !isAdminEmail(session.email)) {
       return fail(DISPLAY_NAME_RESERVED);
     }
+    if (looksLikeSecret(name)) return fail(SECRET_IN_PUBLIC_TEXT);
     patch.displayName = name || null;
   }
   if (input.bio !== undefined) {
     const bio = input.bio.trim();
     if (bio.length > 280) return fail("Bio must be 280 characters or fewer");
+    if (looksLikeSecret(bio)) return fail(SECRET_IN_PUBLIC_TEXT);
     patch.bio = bio || null;
   }
   if (input.avatarUrl !== undefined) {
@@ -101,12 +112,25 @@ export async function addLlmKey(input: {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
-  const key = input.key?.trim();
-  if (!key || key.length < 16) return fail("That does not look like an API key");
+  const key = typeof input.key === "string" ? input.key.trim() : "";
+  if (key.length < 16 || key.length > MAX_KEY_CHARS || /\s/.test(key)) return fail("That does not look like an API key");
   if (!["anthropic", "openai", "openrouter"].includes(input.provider)) return fail("Unknown provider");
   if (input.label !== undefined && (typeof input.label !== "string" || input.label.trim().length > 60)) {
     return fail("Label must be 60 characters or fewer");
   }
+  // The label and the workspace id are stored as they are typed and shown back in
+  // Settings and the audit log. The key is the only field that is encrypted, so a key
+  // pasted into either of the others is refused rather than kept in the clear.
+  const label = input.label?.trim() ?? "";
+  if (label && (looksLikeSecret(label) || (label.length >= 12 && key.includes(label)))) {
+    return fail(LABEL_IS_A_KEY);
+  }
+  if (input.workspaceId !== undefined && typeof input.workspaceId !== "string") return fail("Unknown Workspace ID");
+  if (input.provider === "anthropic" && input.workspaceId?.trim() && !WORKSPACE_ID_RE.test(input.workspaceId.trim())) {
+    return fail("That does not look like a Workspace ID. It starts with wrkspc_ (Anthropic Console, Settings, Workspaces).");
+  }
+  const limited = slowDown("llm-key", session.userId, KEY_WRITE_LIMIT);
+  if (limited) return fail(limited);
   // The form refuses this before calling; this covers a direct call. A key saved under
   // the wrong provider passes when that provider can't be probed and fails on the next run.
   const otherProvider = mismatchedProvider(key, input.provider);
@@ -115,7 +139,7 @@ export async function addLlmKey(input: {
   // An Anthropic key made at the organization level must name a workspace on every
   // request. Nobody should have to know that: one free request says whether this key
   // needs one, and the Admin API says which — the id is saved with the key.
-  let workspaceId = input.provider === "anthropic" && input.workspaceId?.trim() ? input.workspaceId.trim().slice(0, 80) : null;
+  let workspaceId = input.provider === "anthropic" && input.workspaceId?.trim() ? input.workspaceId.trim() : null;
   if (input.provider === "anthropic" && !workspaceId && (await needsWorkspaceHeader(key)) === true) {
     const found = await discoverAnthropicWorkspace(key);
     if (found.kind === "found") workspaceId = found.workspaceId;
@@ -139,15 +163,15 @@ export async function addLlmKey(input: {
       id,
       userId: session.userId,
       provider: input.provider,
-      label: input.label?.trim() || null,
+      label: label || null,
       encryptedKey: encryptSecret(key),
       last4: last4(key),
       workspaceId,
     });
   } catch (err) {
-    // Message only: the raw error can echo bound query params near the encrypted
-    // key blob into logs.
-    console.error("[addLlmKey]", err instanceof Error ? err.message : String(err));
+    // Never the error itself or its message: the driver's message is the statement and
+    // every bound parameter, the encrypted key among them.
+    console.error("[addLlmKey]", dbErrorForLog(err));
     return fail("Could not save the key");
   }
 
@@ -156,7 +180,7 @@ export async function addLlmKey(input: {
   await recordAudit({
     userId: session.userId,
     kind: "llm_key_added",
-    summary: `Added ${withArticle(providerLabel(input.provider))} API key ending ${last4(key)}${input.label?.trim() ? ` (${input.label.trim()})` : ""}.`,
+    summary: `Added ${withArticle(providerLabel(input.provider))} API key ending ${last4(key)}${label ? ` (${label})` : ""}.`,
     metadata: { provider: input.provider, last4: last4(key) },
   });
 
@@ -335,8 +359,10 @@ export async function rotateLlmKey(input: {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
-  const key = input.key?.trim();
-  if (!key || key.length < 16) return fail("That does not look like an API key");
+  const key = typeof input.key === "string" ? input.key.trim() : "";
+  if (key.length < 16 || key.length > MAX_KEY_CHARS || /\s/.test(key)) return fail("That does not look like an API key");
+  const limited = slowDown("llm-key", session.userId, KEY_WRITE_LIMIT);
+  if (limited) return fail(limited);
 
   const db = await getDb();
   const [existing] = await db
@@ -366,7 +392,7 @@ export async function rotateLlmKey(input: {
       .set({ encryptedKey: encryptSecret(key), last4: last4(key) })
       .where(eq(llmKeys.id, input.id));
   } catch (err) {
-    console.error("[rotateLlmKey]", err);
+    console.error("[rotateLlmKey]", dbErrorForLog(err));
     return fail("Could not rotate the key");
   }
 

@@ -11,6 +11,7 @@
  */
 import type { AgentConfig } from "@/db/schema";
 import { DATA_SOURCES } from "@/lib/data-sources/registry";
+import { redactDeep, redactSecrets } from "@/lib/security/redact";
 import { publicExitText } from "@/lib/trading/exits";
 import type { AgentDetail, Chain, ExitReason, RunStep, TradeScore } from "@/server/types";
 
@@ -54,7 +55,9 @@ export function toPublicProfile(config: AgentConfig | null | undefined): PublicP
  * line written after the fact. Owner-only.
  */
 export function visibleSteps(steps: RunStep[], isOwner: boolean): RunStep[] {
-  return isOwner ? steps : [];
+  // The owner reads their own transcript, with credentials removed: steps are scrubbed
+  // when they are written now, and this covers the ones stored before that.
+  return isOwner ? steps.map((step) => ({ ...step, payload: redactDeep(step.payload) })) : [];
 }
 
 /**
@@ -71,12 +74,17 @@ export function visibleSteps(steps: RunStep[], isOwner: boolean): RunStep[] {
  * worthless. Only the sentence explaining it is owner-only, and non-owners get a fixed
  * string rather than `null` so the row still reads as an explained failure instead of an
  * empty one.
+ *
+ * The owner reads the sentence with any credential in it removed. Their own key, half
+ * masked by the provider, is theirs to see; the operator's RPC key or database password
+ * is not, and an owner is any account. Scrubbed here as well as where errors are written,
+ * because not every writer goes through one door and old rows were stored as they came.
  */
 export const REDACTED_ERROR = "This run failed. The details are visible to the owner." as const;
 
 export function visibleError(error: string | null | undefined, isOwner: boolean): string | null {
   if (!error) return null;
-  return isOwner ? error : REDACTED_ERROR;
+  return isOwner ? redactSecrets(error) : REDACTED_ERROR;
 }
 
 /**
@@ -190,7 +198,9 @@ export function visibleRationale(
   opts: { isOwner: boolean; exitReason?: ExitReason | null; symbol?: string | null },
 ): string | null {
   if (text === null || text === undefined) return null;
-  if (opts.isOwner) return text;
+  // A model writes this, and it can quote anything its owner pasted into the strategy.
+  // A credential is cut for everyone, the owner included: this text is the public record.
+  if (opts.isOwner) return redactSecrets(text);
   if (opts.exitReason) {
     // Every exit template writes the trade's move with a sign ("+91.5%", "−18.2%") and
     // the rule values without one, so the first signed percentage is the move.
@@ -200,5 +210,5 @@ export function visibleRationale(
     const line = publicExitText(opts.exitReason, opts.symbol || "the position", pnlPct);
     return out ? `${line} ${out} out.` : line;
   }
-  return redactSourceNames(text.replace(THRESHOLD_CLAUSE, ""));
+  return redactSecrets(redactSourceNames(text.replace(THRESHOLD_CLAUSE, "")));
 }

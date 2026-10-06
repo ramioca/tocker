@@ -8,6 +8,7 @@ import { isLlmMock } from "@/lib/agent/mock-model";
 import { RUN_REFUSED_WHILE_PAUSED } from "@/lib/agent/run-gate";
 import { getSession } from "@/lib/auth";
 import { isTradingPaused } from "@/lib/security/kill-switch";
+import { SECRET_IN_PUBLIC_TEXT, looksLikeSecret } from "@/lib/security/redact";
 import { applyAgentBudgetPolicy, createAgentWallets, getAgentWallets } from "@/lib/wallets";
 import { chainLabelFor, describeStranded } from "@/lib/wallets/funding";
 import { readStrandedHoldings } from "@/lib/wallets/stranded";
@@ -120,6 +121,8 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
   if (input.tagline !== undefined && (typeof input.tagline !== "string" || input.tagline.trim().length > MAX_TAGLINE)) {
     return fail(`Tagline must be ${MAX_TAGLINE} characters or fewer`);
   }
+  // Both are printed on every public card, and the tagline becomes the first post.
+  if (looksLikeSecret(name) || looksLikeSecret(input.tagline)) return fail(SECRET_IN_PUBLIC_TEXT);
   if (input.avatarSeed !== undefined && (typeof input.avatarSeed !== "string" || input.avatarSeed.trim().length > MAX_AVATAR_SEED)) {
     return fail(`Avatar seed must be ${MAX_AVATAR_SEED} characters or fewer`);
   }
@@ -294,11 +297,13 @@ export async function updateAgent(id: string, input: Partial<CreateAgentInput>):
     const name = typeof input.name === "string" ? input.name.trim() : "";
     if (name.length < 2) return fail("Give your agent a name");
     if (name.length > MAX_NAME) return fail(`Name must be ${MAX_NAME} characters or fewer`);
+    if (looksLikeSecret(name)) return fail(SECRET_IN_PUBLIC_TEXT);
     patch.name = name;
   }
   if (input.tagline !== undefined) {
     const tagline = typeof input.tagline === "string" ? input.tagline.trim() : "";
     if (tagline.length > MAX_TAGLINE) return fail(`Tagline must be ${MAX_TAGLINE} characters or fewer`);
+    if (looksLikeSecret(tagline)) return fail(SECRET_IN_PUBLIC_TEXT);
     patch.tagline = tagline || null;
   }
   if (input.avatarSeed !== undefined) {
