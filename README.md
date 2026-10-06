@@ -68,6 +68,5 @@ Every source is an x402 endpoint the agent pays per call from its own wallet, ca
 | `solenrich-launches` | Solana new launches ranked safest-first, token enrichment (experimental shape) | Solana | $0.003–0.012 |
 | `dripmetrics-summary`, `dripmetrics-metric` | BTC/ETH/SOL microstructure regime summary; single metrics incl. execution impact | Base | $0.25 / $0.05 |
 | `otto-pulse` | crypto-Twitter pulse and news recap (experimental shape) | Base | $0.001–0.003 |
-| `bazaar` | any resource found via `search_data_sources`, priced from its own 402 | any | market |
 
 Paid signals are opt-in per call: `score_token` takes `deep` (sentiment), `smartMoney` and `sellCheck`; the `paid_launches` discovery feed runs the two launch radars.

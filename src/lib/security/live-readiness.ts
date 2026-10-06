@@ -7,6 +7,7 @@ import { getAgentWalletBalances, isPaperWallet } from "@/lib/wallets";
 import { LAMPORTS_PER_SOL, MIN_PLATFORM_SOL, sponsoredFundingLamports } from "@/lib/wallets/gas";
 import { FEES_COVERED, chainLabelFor, feeFailureKind } from "@/lib/wallets/funding";
 import { fmtUsd } from "@/lib/money";
+import { RETIRED_DATA_SOURCE_IDS } from "@/lib/agent/config";
 import { dataChainsFor, getDataSource } from "@/lib/data-sources/registry";
 import { isMockMode } from "@/lib/x402/paidFetch";
 import { UNAVAILABLE_TO_USERS, getMfaStatus } from "./mfa";
@@ -1014,12 +1015,15 @@ async function checkPlatformDataWallets(
   }
 }
 
-function checkDataSources(config: AgentConfig, settings: string, viewerIsAdmin: boolean): ReadinessStep {
+export function checkDataSources(config: AgentConfig, settings: string, viewerIsAdmin: boolean): ReadinessStep {
   // `isMockMode()` is the authority on what the runtime actually does: mock only
   // when X402_MOCK is exactly "1". Reading it rather than re-deriving the rule is
   // the point — a checklist that disagrees with the code it is checking is worse
   // than no checklist.
-  const unknown = config.dataSources.filter((id) => !getDataSource(id));
+  // A retired id still saved on the config buys nothing and cannot be unticked in the
+  // picker, so it is not held against the agent.
+  const sourceIds = config.dataSources.filter((id) => !RETIRED_DATA_SOURCE_IDS.includes(id));
+  const unknown = sourceIds.filter((id) => !getDataSource(id));
 
   if (isMockMode()) {
     return {
@@ -1041,7 +1045,7 @@ function checkDataSources(config: AgentConfig, settings: string, viewerIsAdmin: 
       fix: { label: "Agent settings → Data", href: `${settings}#data` },
     };
   }
-  if (config.dataSources.length === 0) {
+  if (sourceIds.length === 0) {
     return {
       id: "data",
       title: "Data sources live",
@@ -1054,7 +1058,7 @@ function checkDataSources(config: AgentConfig, settings: string, viewerIsAdmin: 
     id: "data",
     title: "Data sources live",
     state: "pass",
-    detail: `Real x402 payments are on, and ${config.dataSources.length} registered source${config.dataSources.length === 1 ? "" : "s"} will be paid for, capped at ${fmtUsd(config.risk.maxDataSpendUsdPerRun)} a run.`,
+    detail: `Real x402 payments are on, and ${sourceIds.length} registered source${sourceIds.length === 1 ? "" : "s"} will be paid for, capped at ${fmtUsd(config.risk.maxDataSpendUsdPerRun)} a run.`,
     fix: null,
   };
 }

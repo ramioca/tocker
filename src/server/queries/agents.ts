@@ -15,6 +15,7 @@ import {
   wallets,
   x402Payments,
 } from "@/db";
+import { readStoredConfig } from "@/lib/agent/config";
 import { DATA_SOURCES, toDataSourceInfo } from "@/lib/data-sources/registry";
 import { splitPnl, toNum } from "@/lib/money";
 import { computeEquity, exitDistances, pnlOverWindow, unrealized, winRate, WINDOW_DAYS } from "@/lib/pnl";
@@ -260,6 +261,10 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
       ? null
       : splitPnl({ equityUsd, cashUsd, basisUsd, costBasisUsd: equitySnapshot.costBasisUsd });
 
+  // What a save would store, so a row written before a schema rewrite reads the same
+  // to the settings form as the row its next save produces.
+  const storedConfig = readStoredConfig(agent.config);
+
   return {
     ...card,
     equityUsd,
@@ -268,8 +273,8 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
     // THE GATE. The strategy prompt, universe rules, thresholds and data-source list
     // never leave the server for anyone but the owner. Everyone else gets the shape of
     // the agent (chains, model, cadence, how many sources it buys) and nothing more.
-    config: visibleConfig(agent.config, isOwner),
-    publicProfile: toPublicProfile(agent.config),
+    config: visibleConfig(storedConfig, isOwner),
+    publicProfile: toPublicProfile(storedConfig),
     isOwner,
     isFollowedByViewer: followed,
     paperStartingUsd: toNum(agent.paperStartingUsd),

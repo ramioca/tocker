@@ -267,7 +267,7 @@ async function fetchSentiment(
   allowed: readonly string[] | undefined,
 ): Promise<SentimentInput | null> {
   const { getDataSource } = await import("@/lib/data-sources/registry");
-  const candidates = SENTIMENT_SOURCE_IDS.filter((id) => !allowed || allowed.length === 0 || allowed.includes(id));
+  const candidates = SENTIMENT_SOURCE_IDS.filter((id) => allowedBy(allowed, id));
   for (const id of candidates) {
     const source = getDataSource(id);
     if (!source) continue;
@@ -287,9 +287,12 @@ async function fetchSentiment(
   return null;
 }
 
-/** True when this source is enabled for the agent (an empty list means "anything"). */
+/**
+ * True when this source is enabled for the agent. `undefined` means the caller did not
+ * restrict; an empty list means none, the same rule `query_data_source` applies.
+ */
 function allowedBy(allowed: readonly string[] | undefined, id: string): boolean {
-  return !allowed || allowed.length === 0 || allowed.includes(id);
+  return allowed === undefined || allowed.includes(id);
 }
 
 /**

@@ -90,7 +90,7 @@ const paidFetch = wrapFetchWithPayment(fetch, client);
 ```
 - **The platform pays (`platform_wallets`, 2026-09-16).** The signer is the app-owned Privy server wallet for the resource's network, not the agent's — see "The platform's own money" below. The budget, the per-payment cap and the `x402_payments` row stay per agent and per run.
 - Wrap it in `src/lib/x402/paidFetch.ts` that: enforces `risk.maxDataSpendUsdPerRun`, decodes `PAYMENT-RESPONSE` header, writes `x402_payments`, and in `X402_MOCK=1` returns fixtures from `src/lib/data-sources/fixtures/*.json` without paying.
-- Discovery: `searchX402Resources` from `@coinbase/cdp-sdk` (public, no key) for the "Add data source" picker.
+- Which URLs it may pay: `https`, default port, a registry source's own host (`src/lib/x402/url-policy.ts`); checked before anything else, mock mode included. There is no open-ended source: the model picks parameters, never a host. A run's data budget is capped at `MAX_DATA_SPEND_PER_RUN_USD` ($5) whatever its config says, and an empty `dataSources` list means `query_data_source` buys nothing.
 
 Seed registry (`src/lib/data-sources/registry.ts`), each with `{ id, name, description, category, network, priceUsd, url, query(params) }`:
 | id | service | network | price |
@@ -107,7 +107,6 @@ Seed registry (`src/lib/data-sources/registry.ts`), each with `{ id, name, descr
 | `solenrich-launches` | SolEnrich `entrypoints/new-tokens/invoke` (experimental) safest-first Solana launches; `paid_launches` feed, paid from the Solana wallet | solana | $0.012 |
 | `dripmetrics-summary` / `dripmetrics-metric` | DripMetrics regime summary; metrics allowlist incl. `orderbook/execution-impact` for sizing | eip155:8453 | $0.25 / $0.05 |
 | `otto-pulse` | Otto AI `/twitter-summary` (experimental), `/news-recaps` | eip155:8453 | $0.001–0.003 |
-| `bazaar` | dynamic: any resource found via searchX402Resources | any | from listing |
 Exact paths for "see 402" sources: fetch the service's `/.well-known/x402` or root and read the 402 body at build time; if unreachable, keep the entry but mark `experimental: true` and ship a fixture.
 
 ### Token universe & scoring (Runtime owner)
@@ -188,7 +187,7 @@ Deliberately, a high score is necessary but not sufficient: the LLM still decide
    - `get_portfolio()` — cash, positions with live marks, unrealized PnL, daily trade count remaining.
    - `discover_tokens({ chain?, feeds?, limit? })` — free sweep of the agent's discovery feeds (Jupiter recent / top-traded / top-organic on Solana; GeckoTerminal new + trending pools and DexScreener on Base). Stablecoins, the quote asset and wrapped majors are never surfaced. Only *known* free-gate violations are dropped here; unknowns defer to `score_token`.
    - `score_token({ chain, address, deep? })` — full 0-100 score, verdict, components and hard-gate blockers from free providers. `deep: true` also buys an X-sentiment reading over x402 and folds it in; it is the only paid path in scoring.
-   - `search_data_sources(query)` — Bazaar search + registry.
+   - `search_data_sources(query)` — registry search; marks which sources the owner enabled.
    - `query_data_source({ sourceId, params })` — paid fetch, spend-capped.
    - `get_token_price({ chain, address })`, `get_token_intel({ chain, address })`.
    - `place_trade({ chain, side, tokenAddress, amountUsd, rationale })` — runs `riskGuard()` → executor → writes `trades` + updates `positions` → creates a `posts` row of kind `trade` with `rationale` as body → notification to followers.

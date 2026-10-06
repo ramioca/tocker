@@ -12,7 +12,7 @@ export const MAX_DATA_SOURCES = 12;
 
 /** Registry entries payable on at least one of these chains. */
 export function payableSources(sources: readonly DataSourceInfo[], chains: readonly Chain[]): DataSourceInfo[] {
-  return sources.filter((source) => source.id === "bazaar" || source.chains.some((chain) => chains.includes(chain)));
+  return sources.filter((source) => source.chains.some((chain) => chains.includes(chain)));
 }
 
 /**
@@ -75,12 +75,9 @@ export function DataSourcePicker({
         {visible.map((source) => {
           const active = picked.has(source.id);
           const paysOnAgentChain = source.chains.some((chain) => chains.includes(chain));
-          const paysOn =
-            source.id === "bazaar"
-              ? "any chain"
-              : (paysOnAgentChain ? source.chains.filter((chain) => chains.includes(chain)) : source.chains)
-                  .map(chainLabelFor)
-                  .join(" · ");
+          const paysOn = (paysOnAgentChain ? source.chains.filter((chain) => chains.includes(chain)) : source.chains)
+            .map(chainLabelFor)
+            .join(" · ");
           return (
             <button
               key={source.id}
@@ -107,13 +104,13 @@ export function DataSourcePicker({
                 <span
                   className={cn(
                     "rounded border px-1.5 py-px text-[10px]",
-                    paysOnAgentChain || source.id === "bazaar"
+                    paysOnAgentChain
                       ? "border-border bg-muted/40 text-muted-foreground"
                       : "border-primary/40 bg-primary/8 text-foreground",
                   )}
                 >
                   paid on {paysOn}
-                  {isAdmin && !paysOnAgentChain && source.id !== "bazaar" ? " — needs that platform wallet funded" : ""}
+                  {isAdmin && !paysOnAgentChain ? " — needs that platform wallet funded" : ""}
                 </span>
                 <span className="rounded border border-border bg-muted/40 px-1.5 py-px text-[10px] capitalize text-muted-foreground">
                   {source.category}

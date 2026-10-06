@@ -63,6 +63,7 @@ import type { PaymentRequired, PaymentRequirements } from "@x402/fetch";
 import { getDb, x402Payments } from "@/db";
 import type { Chain } from "@/server/types";
 import {
+  budgetRemaining,
   chainForNetwork,
   X402BudgetError,
   X402RequestError,
@@ -71,6 +72,7 @@ import {
   type ParsedPaymentOption,
   type X402Context,
 } from "./types";
+import { checkPaidUrl } from "./url-policy";
 
 type WrappedFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -215,7 +217,9 @@ function normalizeRequirement(raw: RawRequirement): ParsedPaymentOption | null {
   const payTo = typeof raw.payTo === "string" ? raw.payTo : "";
   const amountRaw = raw.amount ?? raw.maxAmountRequired;
   const amount = typeof amountRaw === "string" ? amountRaw : typeof amountRaw === "number" ? String(amountRaw) : null;
-  if (!network || !amount) return null;
+  // An atomic amount is unsigned digits (the x402 client's own rule). A signed, decimal
+  // or exponent "amount" is not a price, and one below zero would credit the run budget.
+  if (!network || !amount || !/^\d+$/.test(amount)) return null;
   return { scheme, network, asset, payTo, amount, amountUsd: toUsd(amount, asset) };
 }
 
@@ -431,8 +435,7 @@ async function registerVerifiedSchemes(client: PayingClient, wallet: PayingWalle
  *
  * The cap is the whole point: `wrapFetchWithPayment` issues its own request and
  * pays whatever *that* 402 demands, so a resource that quotes cheap on the probe
- * and expensive on the paid retry (or an attacker-controlled URL reached through
- * the Bazaar tool) would otherwise drain the wallet. `createPaymentPayload`
+ * and expensive on the paid retry would otherwise be paid what it asked. `createPaymentPayload`
  * enforces `maxAmountPerPayment` before signing, so anything above the quote is
  * rejected. A fresh client per call keeps that cap from racing across runs.
  *
@@ -517,6 +520,9 @@ function buildInit(req: PaidRequest, signal: AbortSignal): RequestInit {
     method,
     headers,
     signal,
+    // The URL was checked; where it redirects to was not. A 3xx is returned as the
+    // answer (and fails as one) instead of being followed, probe and paid retry alike.
+    redirect: "manual",
     ...(req.body === undefined ? {} : { body: JSON.stringify(req.body) }),
   };
 }
@@ -526,10 +532,15 @@ function buildInit(req: PaidRequest, signal: AbortSignal): RequestInit {
  * Throws {@link X402BudgetError} when the call would blow the per-run data budget.
  */
 export async function paidFetch(ctx: X402Context, req: PaidRequest): Promise<PaidResponse> {
+  // Before anything else, mock mode included: a URL that is not a registry source's own
+  // https host is never fetched, let alone paid (`./url-policy.ts`).
+  const refused = checkPaidUrl(req.url);
+  if (refused) throw new X402RequestError(`${req.sourceId} was not called: ${refused}`);
+
   if (isMockMode()) {
     const price = req.priceUsd ?? 0;
-    const remaining = ctx.budget.maxUsd - ctx.budget.spentUsd;
-    if (price > remaining) throw new X402BudgetError(price, Math.max(0, remaining));
+    const remaining = budgetRemaining(ctx.budget);
+    if (price > remaining) throw new X402BudgetError(price, remaining);
     ctx.budget.spentUsd += price;
     await recordPayment({
       agentId: ctx.agentId,
@@ -596,8 +607,8 @@ export async function paidFetch(ctx: X402Context, req: PaidRequest): Promise<Pai
       );
       if (!option) throw new X402RequestError(`${req.sourceId} returned a 402 we cannot parse or pay`, 402);
 
-      const remaining = ctx.budget.maxUsd - ctx.budget.spentUsd;
-      if (option.amountUsd > remaining) throw new X402BudgetError(option.amountUsd, Math.max(0, remaining));
+      const remaining = budgetRemaining(ctx.budget);
+      if (option.amountUsd > remaining) throw new X402BudgetError(option.amountUsd, remaining);
 
       // The platform pays. The agent's wallets are not consulted: they are for trading.
       const payWallet = await payingWalletFor(option.network, req.sourceId);

@@ -134,6 +134,9 @@ const PROVIDER_BRANDS = [
   "Otto AI",
   "AgentData",
   "x402 Bazaar",
+  // Retired source: its registry name and id no longer come from DATA_SOURCES.
+  "x402 Bazaar resource",
+  "Bazaar",
 ];
 
 function escapeRegExp(text: string): string {
