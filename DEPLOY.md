@@ -30,7 +30,11 @@ Seed demo data into a staging database only. Never seed production.
 
 ## 2. Environment variables
 
-Set these in Vercel → Project → Settings → Environment Variables, for Production and Preview.
+Set these in Vercel → Project → Settings → Environment Variables, for **Production only**.
+A Preview deployment builds a branch's code, which may not have been reviewed, so it must
+never be handed the production database, the Privy secrets or the wallet authorization
+key. If you want working previews, give Preview its own database and its own Privy app.
+`vercel-build` skips migrations on anything but a production build.
 
 | Variable | Value |
 |---|---|
@@ -42,7 +46,9 @@ Set these in Vercel → Project → Settings → Environment Variables, for Prod
 | `CRON_SECRET` | `openssl rand -hex 32` |
 | `NEXT_PUBLIC_APP_URL` | `https://your-app.vercel.app`, or the custom domain once it is attached. Share cards are built from it: unset, every page's `og:image` points at `http://localhost:3000` and a link to the site previews with no image. |
 | `X402_MOCK` | `1` runs on fixtures. Anything else — including unset — means **real** payments; `isMockMode()` tests for exactly `"1"`. |
-| `CRON_MAX_AGENTS` | Agents per cron invocation. Default 5; use 2 on Hobby. |
+| `X402_OWNER_DAILY_USD` | The most one owner's agents may spend on platform-paid data in 24 hours. Default `5`. Counted from `x402_payments`, so it holds across instances. |
+| `X402_PLATFORM_DAILY_USD` | The most all agents together may spend on platform-paid data in 24 hours. Default `100`. This is the ceiling on what the platform data wallets can lose in a day; `0` switches paid data off. |
+| `CRON_MAX_AGENTS` | Agent *runs* per `/api/cron/tick` invocation. Default 5; use 2 on Hobby. It does not limit the exit engine: `/api/cron/marks` checks every agent holding a position, live books first, up to 200 a pass. |
 | `LLM_MOCK` | unset (or `0`) |
 | `SOLANA_RPC_URL` | Solana RPC, server-only. Use Helius or another provider — the public RPC is rate-limited. The browser never sees it; `/api/solana/blockhash` proxies the one call it needs. |
 | `BASE_RPC_URL` | Any Base RPC |

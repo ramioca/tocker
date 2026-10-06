@@ -51,13 +51,24 @@ async function dataTools(dataSources: string[]) {
     postIds: [],
   };
   const tools = buildTools(ctx);
-  const call = (name: "query_data_source" | "search_data_sources" | "score_token") => {
+  const call = (name: "query_data_source" | "search_data_sources" | "score_token" | "get_token_intel" | "place_trade" | "post_note") => {
     const execute = tools[name]?.execute as unknown as ToolExec | undefined;
     if (!execute) throw new Error(`${name} is not registered`);
     return (input: unknown) => execute(input, { toolCallId: `call_${name}`, messages: [] });
   };
   const payments = () => db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
-  return { query: call("query_data_source"), search: call("search_data_sources"), score: call("score_token"), budget, payments };
+  return {
+    query: call("query_data_source"),
+    search: call("search_data_sources"),
+    score: call("score_token"),
+    intel: call("get_token_intel"),
+    trade: call("place_trade"),
+    note: call("post_note"),
+    agentId,
+    ownerId: agent.ownerId,
+    budget,
+    payments,
+  };
 }
 
 describe("query_data_source", () => {
@@ -164,5 +175,75 @@ describe("score_token", () => {
     const res = await t.score({ chain: "solana", address: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", deep: true });
     expect(res.ok).toBe(true);
     expect((await t.payments()).map((row) => row.sourceId)).toEqual(["x-search"]);
+  });
+});
+
+const BONK_MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
+
+describe("get_token_intel", () => {
+  /** A paid call like any other: the owner's list decides, and an empty list enables nothing. */
+  it("buys nothing when the owner did not enable the source", async () => {
+    for (const sources of [[], ["x-search"]]) {
+      const t = await dataTools(sources);
+      const res = await t.intel({ chain: "solana", address: BONK_MINT });
+      expect(res.ok).toBe(false);
+      expect(String(res.reason)).toContain("not enabled for this agent");
+      expect(await t.payments()).toHaveLength(0);
+      expect(t.budget.spentUsd).toBe(0);
+    }
+  });
+
+  it("buys the safety read when the owner enabled it", async () => {
+    const t = await dataTools(["deepnets-token-safety"]);
+    const res = await t.intel({ chain: "solana", address: BONK_MINT });
+    expect(res.ok).toBe(true);
+    expect((await t.payments()).map((row) => row.sourceId)).toEqual(["deepnets-token-safety"]);
+  });
+});
+
+describe("place_trade under the kill switch", () => {
+  it("places no buy while the owner has trading paused, and says so", async () => {
+    const t = await dataTools([]);
+    await db.insert(schema.userSecurity).values({ userId: t.ownerId, tradingPaused: true, tradingPausedAt: new Date() });
+
+    const res = await t.trade({
+      chain: "solana",
+      side: "buy",
+      tokenAddress: BONK_MINT,
+      amountUsd: 10,
+      rationale: "Scored 84/100 with organic volume leading; taking a starter.",
+    });
+
+    expect(res.ok).toBe(false);
+    expect(String(res.reason)).toContain("Trading is paused");
+    expect(await db.select().from(schema.trades).where(eq(schema.trades.agentId, t.agentId))).toHaveLength(0);
+    // Refused before anything was looked up.
+    expect(fetched).toEqual([]);
+  });
+
+  /** An exit is never what "pause" means: a sell gets past the switch (and fails on its own terms here). */
+  it("does not stop a sell", async () => {
+    const t = await dataTools([]);
+    await db.insert(schema.userSecurity).values({ userId: t.ownerId, tradingPaused: true, tradingPausedAt: new Date() });
+
+    const res = await t
+      .trade({ chain: "solana", side: "sell", tokenAddress: BONK_MINT, amountUsd: 10, rationale: "Closing the position on a falling score." })
+      .catch((err: unknown) => ({ ok: false, reason: err instanceof Error ? err.message : String(err) }));
+
+    expect(String(res.reason ?? "")).not.toContain("Trading is paused");
+  });
+});
+
+describe("post_note", () => {
+  it("publishes one note a tick and refuses the second", async () => {
+    const t = await dataTools([]);
+    expect((await t.note({ body: "Sat this one out: nothing cleared the bar." })).ok).toBe(true);
+
+    const second = await t.note({ body: "A second note in the same tick." });
+    expect(second.ok).toBe(false);
+    expect(String(second.reason)).toContain("One note per tick");
+
+    const notes = await db.select().from(schema.posts).where(eq(schema.posts.agentId, t.agentId));
+    expect(notes).toHaveLength(1);
   });
 });

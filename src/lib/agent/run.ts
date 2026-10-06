@@ -422,7 +422,9 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
       },
     });
 
-    const summary = ctx.finished.summary ?? result.text.trim() ?? null;
+    // The fallback is the model's last free text, which nothing bounded: it is stored
+    // and shown publicly, so it gets the same ceiling `finish` puts on a summary.
+    const summary = ctx.finished.summary ?? (result.text.trim().slice(0, 1000) || null);
     await logger.flush();
 
     const finalPortfolio = await getPortfolio(input.agentId);

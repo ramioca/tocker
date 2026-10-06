@@ -278,6 +278,28 @@ describe("run and trade history are gated on the viewer", () => {
     expect(JSON.stringify(theirs.items)).not.toContain("sk-proj");
   });
 
+  /** A summary is the model's own words, public like a rationale and redacted like one. */
+  it("shows a stranger a run's summary without the sources it names", async () => {
+    const agent = await seedAgent(db);
+    const written = "Nansen shows wallets adding and SentimentAlpha agrees, so I proposed BONK.";
+    await db.insert(schema.agentRuns).values({
+      id: nanoid(),
+      agentId: agent.agentId,
+      trigger: "manual",
+      status: "succeeded",
+      summary: written,
+      startedAt: daysAgo(1),
+      finishedAt: daysAgo(1),
+    });
+
+    const mine = await getAgentRuns(agent.agentId, null, agent.userId);
+    expect(mine.items[0].summary).toBe(written);
+
+    const theirs = await getAgentRuns(agent.agentId, null, STRANGER);
+    expect(theirs.items[0].summary).toContain("proposed BONK");
+    expect(theirs.items[0].summary).not.toMatch(/nansen|sentimentalpha/i);
+  });
+
   it("does the same for a failed trade", async () => {
     const agent = await seedAgent(db);
     await seedFailedTrade(agent.agentId, agent.userId);

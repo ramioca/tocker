@@ -66,6 +66,7 @@ import {
   budgetRemaining,
   chainForNetwork,
   X402BudgetError,
+  X402DailyBudgetError,
   X402RequestError,
   type PaidRequest,
   type PaidResponse,
@@ -609,6 +610,13 @@ export async function paidFetch(ctx: X402Context, req: PaidRequest): Promise<Pai
 
       const remaining = budgetRemaining(ctx.budget);
       if (option.amountUsd > remaining) throw new X402BudgetError(option.amountUsd, remaining);
+
+      // The run's budget bounds one run; these bound the day, for one owner and for
+      // everyone, because a run costs its owner nothing and the platform pays for all of
+      // them. Counted from the payments table, so it holds across instances and restarts.
+      const { dailyCapCrossed, dailyDataCaps, realDataSpend24h } = await import("./daily-budget");
+      const crossed = dailyCapCrossed(await realDataSpend24h(ctx.agentId), option.amountUsd, dailyDataCaps());
+      if (crossed) throw new X402DailyBudgetError(option.amountUsd, crossed);
 
       // The platform pays. The agent's wallets are not consulted: they are for trading.
       const payWallet = await payingWalletFor(option.network, req.sourceId);

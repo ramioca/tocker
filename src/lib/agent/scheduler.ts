@@ -6,14 +6,15 @@
  *    stall the others, capped at 20 agents so a cron invocation stays inside the
  *    serverless timeout. `/api/cron/tick`, every 5 minutes.
  *  - {@link tickMarks} — the marks loop. No model, no tokens, no money: refresh marks,
- *    ratchet peaks, run the exit engine for every agent holding something, and snapshot
- *    equity for every active agent even when flat. `/api/cron/marks`, every 5 minutes.
+ *    ratchet peaks, run the exit engine for every agent holding something (whatever its
+ *    status: a paused agent's stop loss still has to fire), and snapshot equity for
+ *    every active agent even when flat. `/api/cron/marks`, every 5 minutes.
  *
  * The second loop is what makes a stop loss real. An agent on a 4-hour cadence used to
  * be able to lose everything between two thoughts, and its equity curve was a step
  * function with one point per run.
  */
-import { and, asc, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { agents, getDb, positions, userSecurity } from "@/db";
 import { settleFeesForAgent } from "@/lib/platform/settlement";
 import { runGuardian, type GuardianResult } from "@/lib/trading/guardian";
@@ -144,16 +145,33 @@ async function recycleRent(agentIds: readonly string[], now: Date): Promise<numb
   }
 }
 
-/** Active agents, split by whether they are holding anything right now. */
-export async function findGuardableAgents(limit = 100): Promise<{ holding: string[]; flat: string[] }> {
+/** The most agents one marks pass takes on. See {@link findGuardableAgents} for who is cut first. */
+export const MARKS_MAX_AGENTS = 200;
+
+/** How long the flat agents' snapshots may take before the pass moves on. */
+const FLAT_PASS_BUDGET_MS = 200_000;
+
+/**
+ * Who the marks loop looks after, split by whether they are holding anything right now.
+ *
+ * Every agent with a book is guarded whatever its status: pausing an agent stops it
+ * waking up, it does not switch its stop loss off. Flat agents are included only while
+ * active (they get an equity point and the fee sweep).
+ *
+ * The order is what the cap cuts by, so it is books first, real money before paper, and
+ * only then id. A crowd of flat or paper agents can never push a live book out of the
+ * pass; ordering by id alone did exactly that once there were more agents than the cap.
+ */
+export async function findGuardableAgents(limit = MARKS_MAX_AGENTS): Promise<{ holding: string[]; flat: string[] }> {
   const db = await getDb();
+  const held = sql<number>`count(${positions.tokenId})`;
   const rows = await db
     .select({ id: agents.id, held: sql<number>`count(${positions.tokenId})::int` })
     .from(agents)
     .leftJoin(positions, and(eq(positions.agentId, agents.id), gt(positions.amountToken, "0")))
-    .where(eq(agents.status, "active"))
     .groupBy(agents.id)
-    .orderBy(asc(agents.id))
+    .having(sql`${agents.status} = 'active' or ${held} > 0`)
+    .orderBy(desc(sql`${held} > 0`), desc(sql`${agents.mode} = 'live'`), asc(agents.id))
     .limit(limit);
   return {
     holding: rows.filter((r) => Number(r.held) > 0).map((r) => r.id),
@@ -169,7 +187,7 @@ export async function findGuardableAgents(limit = 100): Promise<{ holding: strin
  * sweep, so a paused-but-active flat agent still has a continuous equity curve to draw
  * and still pays what it owes.
  */
-export async function tickMarks(limit = 100, now: Date = new Date()): Promise<MarksTickResult> {
+export async function tickMarks(limit = MARKS_MAX_AGENTS, now: Date = new Date()): Promise<MarksTickResult> {
   // The marks loop runs on the same five-minute clock as the tick loop and is the one
   // that keeps running when the tick loop is wedged, so it reaps too.
   const reaped = await reapStaleRuns(undefined, now);
@@ -188,11 +206,19 @@ export async function tickMarks(limit = 100, now: Date = new Date()): Promise<Ma
   // the worst state this system can be in. Never throws.
   const settled = await sweepSubmittedTrades(now);
   const { holding, flat } = await findGuardableAgents(limit);
+  if (holding.length >= limit) {
+    // Loud on purpose: past this point a book is going unguarded.
+    console.warn(`[marks] ${holding.length} books fill the cap of ${limit}: some exits were not checked this pass`);
+  }
 
   const guarded = await inBatches(holding, (agentId) => runGuardian({ agentId, trigger: "marks", now }));
   const results = guarded.filter((r): r is GuardianResult => r !== null);
 
+  // Flat agents come second and inside a budget: an equity point for an empty book is
+  // never worth the function's time limit, which the next pass's exits also need.
+  const flatDeadline = Date.now() + FLAT_PASS_BUDGET_MS;
   const flatSnapshots = await inBatches(flat, async (agentId) => {
+    if (Date.now() > flatDeadline) return false;
     const portfolio = await getPortfolio(agentId);
     // `false` when a live balance read failed: a gap in the curve, not a zero (W7 H8).
     const written = await snapshotEquity(portfolio);

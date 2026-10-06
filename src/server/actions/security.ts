@@ -11,10 +11,9 @@
  * Neither action is refused for a missing second factor, and nothing here fails closed
  * on Privy's MFA read.
  *
- * `agent-actions.ts` still exposes the older `setAgentModeAction` /
- * `withdrawAction`, which are not gated. The UI in this workstream no longer
- * calls them for live-mode or withdrawal; folding the gate into those actions is
- * a one-line change in files this workstream does not own.
+ * These two are the only ways an agent changes mode: the older, ungated mode action
+ * is gone. `agent-actions.ts` still exposes the older `withdrawAction`, which the UI
+ * no longer calls.
  */
 import { revalidatePath } from "next/cache";
 import { and, eq, gt, inArray } from "drizzle-orm";
@@ -89,6 +88,52 @@ async function simulatedOpenPositions(db: Db, agentId: string): Promise<number> 
     );
   const real = new Set(tradedLive.map((trade) => trade.tokenId));
   return open.filter((position) => !real.has(position.tokenId)).length;
+}
+
+/**
+ * How many of an agent's open positions are in a token it has filled a real order in:
+ * the ones a wallet backs. The mirror of `simulatedOpenPositions`.
+ */
+async function liveOpenPositions(db: Db, agentId: string): Promise<number> {
+  const open = await db
+    .select({ tokenId: positions.tokenId })
+    .from(positions)
+    .where(and(eq(positions.agentId, agentId), gt(positions.amountToken, "0")));
+  if (open.length === 0) return 0;
+
+  const tradedLive = await db
+    .selectDistinct({ tokenId: trades.tokenId })
+    .from(trades)
+    .where(
+      and(
+        eq(trades.agentId, agentId),
+        eq(trades.isPaper, false),
+        eq(trades.status, "filled"),
+        inArray(
+          trades.tokenId,
+          open.map((position) => position.tokenId),
+        ),
+      ),
+    );
+  return tradedLive.length;
+}
+
+/**
+ * A proposal belongs to the mode it was made in. One made on paper says "simulated" on
+ * its card and takes a single tap; approved after the switch it would sign a real swap.
+ * So a change of mode retires every proposal still waiting, and `decideProposal` refuses
+ * any that slip through. The agent proposes again on its next run.
+ */
+async function expireOpenProposals(db: Db, agentId: string): Promise<void> {
+  await db
+    .update(trades)
+    .set({
+      status: "expired",
+      decidedAt: new Date(),
+      decidedBy: "expiry",
+      error: "The agent changed between paper and live, so this was not traded. It will propose again on its next run.",
+    })
+    .where(and(eq(trades.agentId, agentId), eq(trades.status, "proposed")));
 }
 
 // ------------------------------------------------------------------ kill switch
@@ -355,6 +400,7 @@ export async function goLiveAction(input: {
     .update(agents)
     .set({ mode: "live", updatedAt: new Date(), ...(startSchedule ? { nextRunAt: new Date() } : {}) })
     .where(eq(agents.id, agent.id));
+  await expireOpenProposals(db, agent.id);
 
   // The first live point, so the curve and the "vs start" baseline exist from the
   // switch rather than from the next marks pass. Best-effort: a balance read that fails
@@ -385,9 +431,10 @@ export async function goLiveAction(input: {
 }
 
 /**
- * Back to paper. Owner-only, nothing more — stopping is never the dangerous direction,
- * so open positions do not block it. The audit line says what that leaves behind: real
- * tokens stay in the wallet, and only a live sell moves them.
+ * Back to paper. Owner-only, and refused while the agent holds tokens it bought with
+ * real money: on paper every sale goes to the simulator, the stop loss included, so the
+ * book would close while the tokens stayed in the wallet with nothing left to sell them
+ * from. Pausing is the way to stop an agent that is holding; its exits keep running.
  */
 export async function backToPaperAction(agentId: string): Promise<ActionResult<{ mode: "paper" }>> {
   const session = await getSession();
@@ -396,13 +443,20 @@ export async function backToPaperAction(agentId: string): Promise<ActionResult<{
   const { error, agent, db } = await ownedAgent(agentId, session.userId);
   if (error || !agent) return fail(error ?? "Agent not found");
 
+  if (agent.mode === "live" && (await liveOpenPositions(db, agent.id)) > 0) {
+    return fail(
+      "Sell this agent's live positions first, or pause it instead. On paper they could only be sold in the simulator, and the real tokens would stay in its wallet.",
+    );
+  }
+
   await db.update(agents).set({ mode: "paper", updatedAt: new Date() }).where(eq(agents.id, agent.id));
+  await expireOpenProposals(db, agent.id);
   await recordAudit({
     userId: session.userId,
     kind: "go_paper",
     agentId: agent.id,
     agentName: agent.name,
-    summary: `Switched ${agent.name} back to paper. Real tokens it still holds stay in its wallet; sell them before switching, or switch back to live to sell them.`,
+    summary: `Switched ${agent.name} back to paper. Fills are simulated from here.`,
   });
 
   revalidateAgent(agent.slug);

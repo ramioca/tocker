@@ -7,11 +7,17 @@
 # The run commands are block scalars on purpose: an unquoted `Authorization: Bearer`
 # on a `run:` line is a YAML mapping to the parser, and the whole workflow fails at
 # startup — silently, since a scheduled workflow that never parses never runs.
+#
+# Only the status code is printed. This repository is public and so are its Actions
+# logs: the response bodies carry agent ids, run summaries and raw failure text, none of
+# which belongs in one. The detail is in the Vercel function logs.
 name: tocker cron
 on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+# The job calls two URLs and needs nothing from the repository.
+permissions: {}
 jobs:
   tick:
     runs-on: ubuntu-latest
@@ -21,9 +27,8 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          resp=$(curl -sS --max-time 300 -w "\n%{http_code}" -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/marks")
-          code=${resp##*$'\n'}; body=${resp%$'\n'*}
-          echo "marks HTTP $code: ${body:0:1200}"
+          code=$(curl -sS --max-time 300 -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/marks")
+          echo "marks HTTP $code"
           [ "$code" -lt 300 ]
       # Always: the two loops are independent, and a marks pass that 500s or times out
       # must not also stop every agent from thinking. The reverse ordering is deliberate
@@ -34,7 +39,6 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          resp=$(curl -sS --max-time 300 -w "\n%{http_code}" -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/tick")
-          code=${resp##*$'\n'}; body=${resp%$'\n'*}
-          echo "tick HTTP $code: ${body:0:1200}"
+          code=$(curl -sS --max-time 300 -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/tick")
+          echo "tick HTTP $code"
           [ "$code" -lt 300 ]

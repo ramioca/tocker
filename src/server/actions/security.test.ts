@@ -257,17 +257,97 @@ describe("goLiveAction", () => {
   });
 });
 
+/** A buy the agent proposed and is waiting on its owner for. */
+async function proposeBuy(agent: { agentId: string; userId: string }, isPaper: boolean): Promise<string> {
+  const id = `trade_${nanoid(8)}`;
+  await db.insert(schema.trades).values({
+    id,
+    agentId: agent.agentId,
+    ownerId: agent.userId,
+    chain: "solana",
+    side: "buy",
+    tokenId: `solana:${BONK}`,
+    quoteTokenId: `solana:${USDC_MINT.solana}`,
+    amountToken: "0",
+    amountUsd: "20",
+    priceUsd: "0.02",
+    status: "proposed",
+    isPaper,
+    proposedAt: new Date(),
+  });
+  return id;
+}
+
+async function tradeStatus(id: string): Promise<{ status: string; error: string | null } | undefined> {
+  const [row] = await db.select({ status: schema.trades.status, error: schema.trades.error }).from(schema.trades).where(eq(schema.trades.id, id));
+  return row;
+}
+
+describe("a change of mode retires the proposals made before it", () => {
+  it("expires a paper proposal when the agent goes live", async () => {
+    const agent = await seedReadyAgent();
+    const proposal = await proposeBuy(agent, true);
+
+    expect(await goLiveAction({ agentId: agent.agentId, capUsd: 2 })).toEqual({ ok: true, data: { mode: "live" } });
+
+    const row = await tradeStatus(proposal);
+    expect(row?.status).toBe("expired");
+    expect(row?.error).toMatch(/changed between paper and live/);
+  });
+
+  it("expires a live proposal when the agent goes back to paper", async () => {
+    const agent = await seedReadyAgent("live");
+    const proposal = await proposeBuy(agent, false);
+
+    expect(await backToPaperAction(agent.agentId)).toEqual({ ok: true, data: { mode: "paper" } });
+    expect((await tradeStatus(proposal))?.status).toBe("expired");
+  });
+});
+
 describe("backToPaperAction", () => {
-  it("is never blocked by open positions, and its audit line says what stays behind", async () => {
+  it("refuses while the agent holds tokens bought with real money, and says to pause instead", async () => {
     const agent = await seedReadyAgent("live");
     await hold(agent.agentId, BONK);
     await recordTrade(agent, BONK, { isPaper: false, status: "filled" });
 
+    expect(await backToPaperAction(agent.agentId)).toEqual({
+      ok: false,
+      error:
+        "Sell this agent's live positions first, or pause it instead. On paper they could only be sold in the simulator, and the real tokens would stay in its wallet.",
+    });
+    expect(await modeOf(agent.agentId)).toBe("live");
+    expect(await auditSummaries(agent.agentId, "go_paper")).toHaveLength(0);
+  });
+
+  it("goes through once the live positions are sold", async () => {
+    const agent = await seedReadyAgent("live");
+    await hold(agent.agentId, BONK);
+    await recordTrade(agent, BONK, { isPaper: false, status: "filled" });
+    // A sell leaves the row behind at zero; a closed position is not a holding.
+    await db.update(schema.positions).set({ amountToken: "0" }).where(eq(schema.positions.agentId, agent.agentId));
+
     expect(await backToPaperAction(agent.agentId)).toEqual({ ok: true, data: { mode: "paper" } });
     expect(await modeOf(agent.agentId)).toBe("paper");
     expect(await auditSummaries(agent.agentId, "go_paper")).toEqual([
-      "Switched Test Agent back to paper. Real tokens it still holds stay in its wallet; sell them before switching, or switch back to live to sell them.",
+      "Switched Test Agent back to paper. Fills are simulated from here.",
     ]);
+  });
+
+  it("is not blocked by a position that only ever existed on paper", async () => {
+    // Bought on paper, went live without trading that token for real, and back again.
+    const agent = await seedReadyAgent("live");
+    await hold(agent.agentId, WIF);
+    await recordTrade(agent, WIF, { isPaper: true, status: "filled" });
+
+    expect(await backToPaperAction(agent.agentId)).toEqual({ ok: true, data: { mode: "paper" } });
+  });
+
+  it("is a no-op switch for an agent already on paper, whatever it holds", async () => {
+    const agent = await seedReadyAgent();
+    await hold(agent.agentId, BONK);
+    await recordTrade(agent, BONK, { isPaper: false, status: "filled" });
+
+    expect(await backToPaperAction(agent.agentId)).toEqual({ ok: true, data: { mode: "paper" } });
   });
 });
 

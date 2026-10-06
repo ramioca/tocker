@@ -30,8 +30,20 @@ describe("safeNext", () => {
     ["//tocker.xyz@evil.com/", "userinfo trick"],
     ["javascript:alert(1)", "not http at all"],
     ["", "empty"],
+    // Same origin on the first parse, another site once the dot segments are gone.
+    ["/.//evil.example", "dot segment in front of a double slash"],
+    ["/home/..//evil.example", "parent segment in front of a double slash"],
+    ["/%2e//evil.example", "encoded dot segment"],
+    ["/./\\evil.example", "dot segment in front of a backslash"],
+    ["https://tocker.xyz//evil.example", "our origin, then a double slash"],
+    ["/login/..//evil.example", "through the sign-in path"],
   ])("refuses %s (%s)", (value) => {
     expect(safeNext(value, ORIGIN, HOME)).toBe(HOME);
+  });
+
+  it("keeps a double slash that is not at the front", () => {
+    expect(safeNext("/a//b", ORIGIN, HOME)).toBe("/a//b");
+    expect(safeNext("/?x=//evil.example", ORIGIN, HOME)).toBe("/?x=//evil.example");
   });
 
   it("refuses to bounce back to /login, which would loop", () => {

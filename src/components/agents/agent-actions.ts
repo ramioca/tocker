@@ -20,7 +20,6 @@ import {
 import {
   createAgent,
   deleteAgent,
-  setAgentMode,
   setAgentStatus,
   triggerRun,
   updateAgent,
@@ -32,7 +31,6 @@ import type { WithdrawResult } from "@/lib/wallets";
 import { MOCK_AGENT_SLUG, MOCK_RUN_ID } from "@/mocks/core";
 import type {
   ActionResult,
-  AgentMode,
   AgentStatus,
   Chain,
   DataSourceInfo,
@@ -120,15 +118,6 @@ export async function setAgentStatusAction(
 ): Promise<ActionResult> {
   const result = await withMock(
     () => setAgentStatus(id, status),
-    () => ({ ok: true as const, data: undefined }),
-  );
-  if (result.ok) revalidatePath("/agents");
-  return result;
-}
-
-export async function setAgentModeAction(id: string, mode: AgentMode): Promise<ActionResult> {
-  const result = await withMock(
-    () => setAgentMode(id, mode),
     () => ({ ok: true as const, data: undefined }),
   );
   if (result.ok) revalidatePath("/agents");

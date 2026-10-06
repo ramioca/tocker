@@ -19,7 +19,7 @@ import { getSession } from "@/lib/auth";
 import { tradeRefusals } from "@/lib/agent/narrate";
 import { toTokenRef } from "@/lib/trading/tokens";
 import { toTradeRow } from "@/server/queries/_shared";
-import { isAgentOwner, visibleError, visibleSteps } from "@/server/queries/visibility";
+import { isAgentOwner, visibleError, visibleRationale, visibleSteps } from "@/server/queries/visibility";
 import type { RunDetail, RunStep, TradeRow } from "@/server/types";
 
 export const dynamic = "force-dynamic";
@@ -92,7 +92,7 @@ export async function GET(
     status: run.status,
     startedAt: run.startedAt?.toISOString() ?? null,
     finishedAt: run.finishedAt?.toISOString() ?? null,
-    summary: run.summary,
+    summary: visibleRationale(run.summary, { isOwner }),
     error: visibleError(run.error, isOwner),
     dataSpendUsd: Number(run.dataSpendUsd),
     inputTokens: run.inputTokens,

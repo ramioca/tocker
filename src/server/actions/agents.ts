@@ -1,8 +1,8 @@
 "use server";
-import { MAX_AGENTS_PER_USER, RATE_LIMITS, limiter } from "@/lib/security/rate-limit";
+import { MAX_AGENTS_PER_USER, MAX_NEW_AGENTS_PER_DAY, RATE_LIMITS, limiter } from "@/lib/security/rate-limit";
 import { revalidatePath } from "next/cache";
-import { and, eq, sql } from "drizzle-orm";
-import { agentRuns, agents, getDb, llmKeys, posts } from "@/db";
+import { and, eq, gte, sql } from "drizzle-orm";
+import { agentRuns, agents, getDb, llmKeys, posts, wallets } from "@/db";
 import { MAX_AGENT_NAME, agentConfigSchema, type AgentConfigInput } from "@/lib/agent/config";
 import { isLlmMock } from "@/lib/agent/mock-model";
 import { getSession } from "@/lib/auth";
@@ -10,7 +10,7 @@ import { applyAgentBudgetPolicy, createAgentWallets } from "@/lib/wallets";
 import { describeStranded } from "@/lib/wallets/funding";
 import { readStrandedHoldings } from "@/lib/wallets/stranded";
 import { newId, uniqueSlug } from "@/server/queries/_shared";
-import type { ActionResult, AgentMode, AgentStatus } from "@/server/types";
+import type { ActionResult, AgentStatus } from "@/server/types";
 import { slowDown } from "./_shared";
 
 /** The same constant as the `maxLength` on the builder's and the settings form's inputs. */
@@ -133,6 +133,23 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
     .where(eq(agents.ownerId, session.userId));
   if ((owned?.n ?? 0) >= MAX_AGENTS_PER_USER) {
     return fail(`You have ${MAX_AGENTS_PER_USER} agents, the most one account can hold. Delete one to make room.`);
+  }
+
+  // The durable limit. The hourly one above lives in this process's memory and the cap
+  // on agents held is reset by deleting one; this counts the wallets creations left
+  // behind, which no delete removes.
+  const [recent] = await db
+    .select({ n: sql<number>`count(distinct ${wallets.agentId})::int` })
+    .from(wallets)
+    .where(
+      and(
+        eq(wallets.userId, session.userId),
+        eq(wallets.kind, "agent_server"),
+        gte(wallets.createdAt, new Date(Date.now() - 86_400_000)),
+      ),
+    );
+  if ((recent?.n ?? 0) >= MAX_NEW_AGENTS_PER_DAY) {
+    return fail(`You've set up ${MAX_NEW_AGENTS_PER_DAY} agents in the last 24 hours, the most Tocker creates in a day. Try again tomorrow.`);
   }
 
   if (input.llmKeyId) {
@@ -300,21 +317,6 @@ export async function setAgentStatus(id: string, status: Exclude<AgentStatus, "e
   return { ok: true, data: undefined };
 }
 
-export async function setAgentMode(id: string, mode: AgentMode): Promise<ActionResult> {
-  const session = await getSession();
-  if (!session) return fail("Sign in first");
-
-  const db = await getDb();
-  const [agent] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
-  if (!agent) return fail("Agent not found");
-  if (agent.ownerId !== session.userId) return fail("You do not own this agent");
-  if (mode === "live" && !agent.llmKeyId) return fail("Add an LLM API key before going live");
-
-  await db.update(agents).set({ mode, updatedAt: new Date() }).where(eq(agents.id, id));
-  revalidateAgent(agent.slug, session.handle);
-  return { ok: true, data: undefined };
-}
-
 export async function deleteAgent(id: string): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
@@ -332,6 +334,23 @@ export async function deleteAgent(id: string): Promise<ActionResult> {
   if (!stranded.ok) return fail(stranded.error);
   const blocked = describeStranded(stranded.holdings);
   if (blocked) return fail(blocked);
+
+  // Its payment rows go with it, and the daily data ceiling is counted from them. Carry
+  // what it spent today over to the audit log, which outlives it, so deleting an agent
+  // is not a way to start the day's allowance again.
+  const { DATA_SPEND_CARRYOVER, agentRealDataSpend24h } = await import("@/lib/x402/daily-budget");
+  const spentToday = await agentRealDataSpend24h(id);
+  if (spentToday > 0) {
+    const { recordAudit } = await import("@/lib/security/audit");
+    await recordAudit({
+      userId: session.userId,
+      kind: "budget_change",
+      agentId: id,
+      agentName: agent.name,
+      summary: `Deleted ${agent.name}. The $${spentToday.toFixed(2)} of data it bought in the last 24 hours still counts toward today's data allowance.`,
+      metadata: { reason: DATA_SPEND_CARRYOVER, dataSpendUsd: spentToday },
+    });
+  }
 
   await db.delete(agents).where(eq(agents.id, id));
   revalidateAgent(agent.slug, session.handle);

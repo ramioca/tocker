@@ -423,6 +423,21 @@ export async function decideProposal(input: {
     };
   }
 
+  // A proposal belongs to the mode it was made in. The card and the push notification
+  // were drawn from the row (a paper one says "simulated" and takes one tap), while the
+  // executor below is picked from the agent as it is now: approved across a switch, a
+  // card that says nothing real will move would sign a real swap, or the reverse.
+  if (row.trade.isPaper !== (row.agent.mode === "paper")) {
+    const reason = row.trade.isPaper
+      ? "This was proposed while the agent was on paper, and it is live now, so it was not traded. The agent will propose again on its next run."
+      : "This was proposed while the agent was live, and it is on paper now, so it was not traded. The agent will propose again on its next run.";
+    await db
+      .update(trades)
+      .set({ status: "expired", decidedAt: now, decidedBy: "expiry", error: reason })
+      .where(and(eq(trades.id, input.tradeId), eq(trades.status, "proposed")));
+    return { ok: false, error: reason, status: "expired" };
+  }
+
   if (expiresAt.getTime() <= now.getTime()) {
     await db
       .update(trades)
