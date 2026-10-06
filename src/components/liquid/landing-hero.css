@@ -573,3 +573,34 @@
     background: CanvasText;
   }
 }
+
+/* The hero's aurora (hero-shader.tsx): a WebGPU canvas behind the headline that
+   fades in once it has drawn, and fades out into the black before the card. It
+   never takes pointer events, and the type keeps its own contrast over it. */
+.lp-hero-shader {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 0;
+  height: min(860px, 100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1200ms var(--ease-out);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 45%, transparent 82%);
+  mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 45%, transparent 82%);
+}
+.lp-hero-shader[data-ready] {
+  opacity: 0.5;
+}
+.lp-hero-shader-canvas {
+  width: 100%;
+  height: 100%;
+}
+.lp-hero > :not(.lp-hero-shader) {
+  position: relative;
+  z-index: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp-hero-shader {
+    display: none;
+  }
+}

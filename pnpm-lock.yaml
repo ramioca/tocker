@@ -155,8 +155,8 @@ importers:
         specifier: ^4.21.0
         version: 4.21.0(typescript@5.9.3)
       shaders:
-        specifier: ^3.2.470
-        version: 3.2.470(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        specifier: ^4.0.0
+        version: 4.0.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       sonner:
         specifier: ^2.0.8
         version: 2.0.8(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -6569,8 +6569,8 @@ packages:
     engines: {node: '>=20.18.1'}
     hasBin: true
 
-  shaders@3.2.470:
-    resolution: {integrity: sha512-Qmqro6fwQW575Axue1RVMFsy1uiV1wxtHtEj/JWh5iPpIltA96fsIUznGKFF8tava4r5KAALP9wjdyF6ohDXyg==}
+  shaders@4.0.0:
+    resolution: {integrity: sha512-VZcovZurQf1tkkRiJWHoujpxkivfJUX7jZPC8jNmN/+s7dg+TE57kqh10puLXLHhXAP8I00zdWLXhbPhWlZEYQ==}
     hasBin: true
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
@@ -13769,7 +13769,7 @@ snapshots:
 
   extension-port-stream@3.0.0:
     dependencies:
-      readable-stream: 3.6.2
+      readable-stream: 4.7.0
       webextension-polyfill: 0.10.0
 
   eyes@0.1.8: {}
@@ -14971,10 +14971,10 @@ snapshots:
   ox@0.6.7(typescript@5.9.3)(zod@3.25.76):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
-      '@noble/curves': 1.8.1
-      '@noble/hashes': 1.7.1
-      '@scure/bip32': 1.6.2
-      '@scure/bip39': 1.5.4
+      '@noble/curves': 1.9.7
+      '@noble/hashes': 1.8.0
+      '@scure/bip32': 1.7.0
+      '@scure/bip39': 1.6.0
       abitype: 1.0.8(typescript@5.9.3)(zod@3.25.76)
       eventemitter3: 5.0.1
     optionalDependencies:
@@ -15726,7 +15726,7 @@ snapshots:
       - supports-color
       - typescript
 
-  shaders@3.2.470(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  shaders@4.0.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       typegpu: 0.12.3
     optionalDependencies:
