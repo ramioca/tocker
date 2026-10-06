@@ -2,6 +2,8 @@
 import { useMemo, type ReactNode } from "react";
 import { PrivyProvider } from "@privy-io/react-auth";
 import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
+import { ENABLED_LOGIN_METHODS } from "@/components/auth/login-methods";
+import { SessionKeepAlive } from "./session-keep-alive";
 
 /** Set at build time; empty in local dev without a Privy app. */
 export const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
@@ -74,9 +76,11 @@ export function AppPrivyProvider({ children }: { children: ReactNode }) {
           walletChainType: "ethereum-and-solana",
           showWalletLoginFirst: false,
           landingHeader: "Sign in to Tocker",
-          loginMessage: "Build agents that trade for you.",
+          loginMessage: "New here? Signing in makes your account.",
         },
-        loginMethods: ["email", "google", "twitter", "wallet"],
+        // The same list the sign-in card draws its buttons from (NEXT_PUBLIC_LOGIN_METHODS),
+        // so the modal can never offer a method the card has left out.
+        loginMethods: [...ENABLED_LOGIN_METHODS],
         embeddedWallets: {
           ethereum: { createOnLogin: "users-without-wallets" },
           solana: { createOnLogin: "users-without-wallets" },
@@ -88,6 +92,7 @@ export function AppPrivyProvider({ children }: { children: ReactNode }) {
         },
       }}
     >
+      <SessionKeepAlive />
       {children}
     </PrivyProvider>
   );

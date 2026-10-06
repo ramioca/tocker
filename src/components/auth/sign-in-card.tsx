@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import Link from "next/link";
 import { KeyRound, Loader2 } from "lucide-react";
-import { useLoginWithEmail, useLoginWithOAuth, useLoginWithPasskey } from "@privy-io/react-auth";
+import { useLoginWithEmail, useLoginWithOAuth, useLoginWithPasskey, useModalStatus } from "@privy-io/react-auth";
 import { cn } from "cn";
 import { PetriClock } from "@/components/brand/petri-mark";
 import { PRIVY_APP_ID } from "@/components/providers/privy-provider";
@@ -11,14 +11,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSession } from "@/hooks/use-session";
+import { FOUNDER_X } from "@/lib/contact";
 import {
   OTP_LENGTH,
   RESEND_DELAY_MS,
+  isAllowlistRejection,
   isCompleteOtp,
   isEmailish,
   loginErrorMessage,
   normalizeOtp,
+  oauthReturnMethod,
+  refusalView,
+  type NotInvited,
 } from "./login-helpers";
+import { loginMethodEnabled, type LoginMethod } from "./login-methods";
 import { GoogleGlyph, XGlyph } from "./oauth-glyphs";
 
 export interface SignInCardProps {
@@ -31,25 +37,60 @@ export interface SignInCardProps {
    * their sign-in completes behind it.
    */
   returningFromOAuth?: boolean;
+  /**
+   * Which provider that return leg is from, read off the URL before the auth client
+   * strips it. It only decides how a refusal reads: a refused Google account and a
+   * refused X account get different answers.
+   */
+  oauthProvider?: string | null;
 }
 
 /** Which of the one-shot buttons is mid-flight. The email form tracks its own state. */
 type Pending = "google" | "twitter" | "passkey" | null;
 
-/**
- * Passkeys are a dashboard-level switch on the auth vendor's side, and this app has not
- * turned them on; the button would only ever say "Passkeys aren't available here". Set
- * NEXT_PUBLIC_PRIVY_PASSKEYS=1 once they are enabled and it appears.
+/** The sentence under "We can't let you in yet": who was refused. */
+const NOT_INVITED_SUBTITLE: Record<NotInvited, string> = {
+  // Only when the address itself is somehow gone; the card normally names it.
+  email: "That email isn't on the access list.",
+  google: "That Google account isn't on the access list.",
+  wallet: "That wallet isn't on the access list.",
+  account: "That account isn't on the access list.",
+};
+
+/*
+ * Which methods this deploy offers (`login-methods.ts`, from NEXT_PUBLIC_LOGIN_METHODS).
+ * Each one is also a switch in the auth vendor's dashboard and fails when pressed if it
+ * is off there, so one that is off here is not drawn: no button, and no "or" divider
+ * when none of the buttons under it are left. Email is always on.
  */
-const PASSKEYS_ENABLED = process.env.NEXT_PUBLIC_PRIVY_PASSKEYS === "1";
+const GOOGLE_ENABLED = loginMethodEnabled("google");
+const X_ENABLED = loginMethodEnabled("twitter");
+const PASSKEY_ENABLED = loginMethodEnabled("passkey");
+const WALLET_ENABLED = loginMethodEnabled("wallet");
+const ANY_BUTTON_ENABLED = GOOGLE_ENABLED || X_ENABLED || PASSKEY_ENABLED;
+
+/**
+ * What an X account the access list refuses is told (see `refusalView` for why it is
+ * not the not-invited view). Unreachable unless X is one of the enabled methods.
+ */
+const X_USE_EMAIL = "X doesn't share your email, so this account can't be matched. Sign in with your email instead.";
+
+/** How long "Taking you in…" may spin before the card admits it and offers a way on. */
+const SIGNED_IN_STALL_MS = 10_000;
 
 /**
  * Tocker's sign-in, start to finish, on Tocker's own surface.
  *
  * Everything here runs through headless auth hooks: an emailed one-time code first,
- * then the two OAuth providers and a passkey. The auth vendor's modal survives in
- * exactly one place — the quiet "Use a crypto wallet instead" at the bottom, which is
- * the external-wallet connector and genuinely is not ours to draw.
+ * then whichever of the two OAuth providers and a passkey this deploy has enabled. The
+ * auth vendor's modal survives in exactly one place — the quiet "Use a crypto wallet
+ * instead" at the bottom, which is the external-wallet connector and genuinely is not
+ * ours to draw.
+ *
+ * Sign-in is also sign-up: an address the auth vendor has not seen makes an account.
+ * The vendor can still be set to admit only the accounts on its access list; a sign-in
+ * that list refuses gets a next step (DM the founder) instead of an error under the
+ * field. Nothing here can grant access.
  *
  * The shape of the flow is fixed by what the hooks give us:
  *   - email is two steps in one card (address, then code) rather than two screens,
@@ -62,8 +103,8 @@ export function SignInCard(props: SignInCardProps) {
   return <Impl {...props} />;
 }
 
-function PrivySignInCard({ next, returningFromOAuth = false }: SignInCardProps) {
-  const { login, prepareRedirect } = useSession();
+function PrivySignInCard({ next, returningFromOAuth = false, oauthProvider = null }: SignInCardProps) {
+  const { login } = useSession();
 
   const [stage, setStage] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
@@ -72,29 +113,52 @@ function PrivySignInCard({ next, returningFromOAuth = false }: SignInCardProps) 
   const [pending, setPending] = useState<Pending>(null);
   /** Privy has authenticated; the session query and the redirect are a beat behind. */
   const [signedIn, setSignedIn] = useState(false);
+  /** The access list refused this sign-in; the card shows what to do about it instead of the form. */
+  const [notInvited, setNotInvited] = useState<NotInvited | null>(null);
   /** When the current code was sent, which is what the resend countdown runs off. */
   const [codeSentAt, setCodeSentAt] = useState<number | null>(null);
 
   const codeRef = useRef<HTMLInputElement>(null);
+  const notInvitedHeading = useRef<HTMLHeadingElement>(null);
   /** The last code auto-submitted, so a six-digit value is only ever tried once. */
   const autoSubmitted = useRef<string | null>(null);
+  /**
+   * The method the visitor last started. Failures arrive on one shared channel that does
+   * not say which method they belong to, and a refusal by the access list reads
+   * differently for an email address, a Google account, an X account and a wallet.
+   */
+  const attempt = useRef<LoginMethod | null>(
+    returningFromOAuth ? oauthReturnMethod(oauthProvider, loginMethodEnabled) : null,
+  );
 
   const onComplete = useCallback(() => {
     setPending(null);
     setSignedIn(true);
   }, []);
 
-  const onError = useCallback((err: unknown) => {
+  // Every failure ends here: the shared `onError` channel and each `catch` below, often
+  // both for the same failure, so it has to be safe to run twice with the same error.
+  const fail = useCallback((err: unknown) => {
     setPending(null);
-    setError(loginErrorMessage(err));
+    if (!isAllowlistRejection(err)) {
+      setError(loginErrorMessage(err));
+      return;
+    }
+    const view = refusalView(attempt.current, X_ENABLED);
+    if (view === "x-use-email") {
+      setError(X_USE_EMAIL);
+      return;
+    }
+    setError(null);
+    setNotInvited(view);
   }, []);
 
   // One object, memoised: the hooks subscribe in an effect keyed on the identity of
   // what they are handed, so a fresh literal every render would re-subscribe every
   // render. The three flows share one login event channel, so they share one pair of
-  // callbacks — an error raised by any of them reaches `onError` either way, and the
-  // `catch` blocks below are what tell the flows apart.
-  const callbacks = useMemo(() => ({ onComplete, onError }), [onComplete, onError]);
+  // callbacks — an error raised by any of them (or by the wallet modal) reaches `fail`
+  // either way, and `attempt` is what tells the flows apart.
+  const callbacks = useMemo(() => ({ onComplete, onError: fail }), [onComplete, fail]);
   const emailFlow = useLoginWithEmail(callbacks);
   const oauthFlow = useLoginWithOAuth(callbacks);
   const passkeyFlow = useLoginWithPasskey(callbacks);
@@ -145,9 +209,7 @@ function PrivySignInCard({ next, returningFromOAuth = false }: SignInCardProps) 
     const address = email.trim();
     if (!isEmailish(address) || sendingCode) return;
     setError(null);
-    // Arm the post-auth redirect before anything can complete: the sync-and-redirect
-    // effect behind `useSession` is what actually lands the visitor on `next`.
-    prepareRedirect(next);
+    attempt.current = "email";
     try {
       await emailFlow.sendCode({ email: address });
       setCode("");
@@ -156,22 +218,22 @@ function PrivySignInCard({ next, returningFromOAuth = false }: SignInCardProps) 
       setNow(Date.now());
       setStage("code");
     } catch (err) {
-      setError(loginErrorMessage(err));
+      fail(err);
     }
-  }, [email, emailFlow, next, prepareRedirect, sendingCode]);
+  }, [email, emailFlow, fail, sendingCode]);
 
   const submitCode = useCallback(
     async (value: string) => {
       if (!isCompleteOtp(value)) return;
       setError(null);
-      prepareRedirect(next);
+      attempt.current = "email";
       try {
         await emailFlow.loginWithCode({ code: normalizeOtp(value) });
       } catch (err) {
-        setError(loginErrorMessage(err));
+        fail(err);
       }
     },
-    [emailFlow, next, prepareRedirect],
+    [emailFlow, fail],
   );
 
   // Six digits in the box means the person is done typing — submitting for them saves
@@ -197,30 +259,28 @@ function PrivySignInCard({ next, returningFromOAuth = false }: SignInCardProps) 
     async (provider: "google" | "twitter") => {
       setError(null);
       setPending(provider);
-      prepareRedirect(next);
+      attempt.current = provider;
       try {
         // Hands off to the provider; this page unloads. `?next=` rides along in the
         // URL the provider is told to come back to.
         await oauthFlow.initOAuth({ provider });
       } catch (err) {
-        setPending(null);
-        setError(loginErrorMessage(err));
+        fail(err);
       }
     },
-    [next, oauthFlow, prepareRedirect],
+    [fail, oauthFlow],
   );
 
   const startPasskey = useCallback(async () => {
     setError(null);
     setPending("passkey");
-    prepareRedirect(next);
+    attempt.current = "passkey";
     try {
       await passkeyFlow.loginWithPasskey();
     } catch (err) {
-      setError(loginErrorMessage(err));
-      setPending(null);
+      fail(err);
     }
-  }, [next, passkeyFlow, prepareRedirect]);
+  }, [fail, passkeyFlow]);
 
   const changeEmail = useCallback(() => {
     setStage("email");
@@ -230,16 +290,109 @@ function PrivySignInCard({ next, returningFromOAuth = false }: SignInCardProps) 
     setError(null);
   }, []);
 
+  /** Out of the not-invited view, back to an empty email field (it takes focus as it mounts). */
+  const tryAnotherEmail = useCallback(() => {
+    setNotInvited(null);
+    setEmail("");
+    changeEmail();
+  }, [changeEmail]);
+
+  // The form that had focus is gone when the not-invited view replaces it. Move focus to
+  // the new heading, so a keyboard is not left on <body> and a screen reader reads the
+  // answer instead of nothing. Not while the vendor's modal is up, though: a refused
+  // wallet arrives here while that modal is still showing its own answer, and it is a
+  // focus-trapped dialog. The heading takes focus when it closes.
+  const { isOpen: vendorModalOpen } = useModalStatus();
+  useEffect(() => {
+    if (notInvited && !vendorModalOpen) notInvitedHeading.current?.focus();
+  }, [notInvited, vendorModalOpen]);
+
+  // Back from the provider's page, a browser may restore this one from its back/forward
+  // cache exactly as it was left: "Opening Google…" spinning and every button disabled,
+  // with nothing coming to clear it. `persisted` is that restore, and only that.
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) setPending(null);
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
+
+  // "Signed in" is the auth client's word for it; the app is only in once the session
+  // query answers and /login forwards. If that never comes (offline, the request failed)
+  // this card would spin for good, so after a while it says so and offers a full reload.
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    if (!signedIn) return;
+    const id = setTimeout(() => setStalled(true), SIGNED_IN_STALL_MS);
+    return () => clearTimeout(id);
+  }, [signedIn]);
+
   /* --- render ---------------------------------------------------------------- */
 
   if (signedIn || finishingOAuth) {
+    const stuck = signedIn && stalled;
     return (
       <Card>
         <Header title={signedIn ? "Signed in" : "Finishing sign-in"} />
-        <p className="mt-5 flex items-center justify-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden />
-          {signedIn ? "Taking you in…" : "One moment…"}
+        {/* One element whose text changes, so the change is announced. */}
+        <p
+          role="status"
+          className="mt-5 flex items-center justify-center gap-2 text-center text-sm text-balance text-muted-foreground"
+        >
+          {stuck ? null : <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden />}
+          {stuck
+            ? "You're signed in, but your account didn't load."
+            : signedIn
+              ? "Taking you in…"
+              : "One moment…"}
         </p>
+        {stuck ? (
+          // A full page load, not the router: whatever the client is stuck on goes with
+          // it. `next` is the path `safeNext` already vetted, never a URL built here.
+          <Button type="button" className="mt-4 h-10 w-full" onClick={() => window.location.replace(next)}>
+            Try again
+          </Button>
+        ) : null}
+      </Card>
+    );
+  }
+
+  if (notInvited) {
+    const address = email.trim();
+    return (
+      <Card>
+        <Header
+          titleRef={notInvitedHeading}
+          title="We can't let you in yet"
+          subtitle={
+            notInvited === "email" && address
+              ? `${address} isn't on the access list.`
+              : NOT_INVITED_SUBTITLE[notInvited]
+          }
+        />
+        {/* Keyed like the steps below, so it fades up in place of the form it replaces. */}
+        <div key="not-invited" className="mt-6 motion-safe:animate-rise">
+          <p className="text-center text-sm text-balance text-muted-foreground">
+            {"Tocker is opening up in stages. DM us on X and we'll add you."}
+          </p>
+          <div className="mt-5 grid gap-2">
+            <Button
+              nativeButton={false}
+              className="h-10 w-full"
+              render={<a href={FOUNDER_X.href} target="_blank" rel="noreferrer" />}
+            >
+              <XGlyph className="size-3.5" />
+              DM @{FOUNDER_X.handle} on X
+            </Button>
+          </div>
+          <div className="mt-4 text-center">
+            {/* Either way it lands on the empty email field. */}
+            <QuietButton onClick={tryAnotherEmail}>
+              {notInvited === "email" || notInvited === "google" ? "Try a different email" : "Back to sign-in"}
+            </QuietButton>
+          </div>
+        </div>
       </Card>
     );
   }
@@ -252,7 +405,7 @@ function PrivySignInCard({ next, returningFromOAuth = false }: SignInCardProps) 
         title="Sign in to Tocker"
         subtitle={
           stage === "email"
-            ? "Build agents that trade for you."
+            ? "Enter your email and we'll send you a code. New here? That makes your account."
             : `We sent a ${OTP_LENGTH}-digit code to ${email.trim()}.`
         }
       />
@@ -368,69 +521,93 @@ function PrivySignInCard({ next, returningFromOAuth = false }: SignInCardProps) 
 
       <ErrorLine message={error} />
 
-      <div className="my-5 flex items-center gap-3" aria-hidden>
-        <span className="h-px flex-1 bg-border" />
-        <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">or</span>
-        <span className="h-px flex-1 bg-border" />
-      </div>
+      {ANY_BUTTON_ENABLED ? (
+        <>
+          <div className="my-5 flex items-center gap-3" aria-hidden>
+            <span className="h-px flex-1 bg-border" />
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">or</span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
 
-      <div className="grid gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          className="h-10 w-full"
-          disabled={busy}
-          onClick={() => void startOAuth("google")}
-        >
-          {pending === "google" ? (
-            <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
-          ) : (
-            <GoogleGlyph className="size-4" />
-          )}
-          {pending === "google" ? "Opening Google…" : "Continue with Google"}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-10 w-full"
-          disabled={busy}
-          onClick={() => void startOAuth("twitter")}
-        >
-          {pending === "twitter" ? (
-            <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
-          ) : (
-            <XGlyph className="size-3.5" />
-          )}
-          {pending === "twitter" ? "Opening X…" : "Continue with X"}
-        </Button>
-        {PASSKEYS_ENABLED ? (
-          <Button
-            type="button"
-            variant="ghost"
-            className="h-10 w-full text-muted-foreground hover:text-foreground"
-            disabled={busy}
-            onClick={() => void startPasskey()}
-          >
-            {pending === "passkey" ? (
-              <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
-            ) : (
-              <KeyRound className="size-4" aria-hidden />
-            )}
-            {pending === "passkey" ? "Waiting for your passkey…" : "Sign in with a passkey"}
-          </Button>
-        ) : null}
-      </div>
+          <div className="grid gap-2">
+            {GOOGLE_ENABLED ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 w-full"
+                disabled={busy}
+                onClick={() => void startOAuth("google")}
+              >
+                {pending === "google" ? (
+                  <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
+                ) : (
+                  <GoogleGlyph className="size-4" />
+                )}
+                {pending === "google" ? "Opening Google…" : "Continue with Google"}
+              </Button>
+            ) : null}
+            {X_ENABLED ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 w-full"
+                disabled={busy}
+                onClick={() => void startOAuth("twitter")}
+              >
+                {pending === "twitter" ? (
+                  <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
+                ) : (
+                  <XGlyph className="size-3.5" />
+                )}
+                {pending === "twitter" ? "Opening X…" : "Continue with X"}
+              </Button>
+            ) : null}
+            {PASSKEY_ENABLED ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-10 w-full text-muted-foreground hover:text-foreground"
+                disabled={busy}
+                onClick={() => void startPasskey()}
+              >
+                {pending === "passkey" ? (
+                  <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
+                ) : (
+                  <KeyRound className="size-4" aria-hidden />
+                )}
+                {pending === "passkey" ? "Waiting for your passkey…" : "Sign in with a passkey"}
+              </Button>
+            ) : null}
+          </div>
+        </>
+      ) : null}
 
       <div className="mt-5 border-t border-border/60 pt-4 text-center">
-        <QuietButton
-          onClick={() => {
-            setError(null);
-            login({ redirectTo: next });
-          }}
-          disabled={busy}
-        >
-          Use a crypto wallet instead
-        </QuietButton>
+        {WALLET_ENABLED ? (
+          <QuietButton
+            onClick={() => {
+              setError(null);
+              attempt.current = "wallet";
+              login();
+            }}
+            disabled={busy}
+          >
+            Use a crypto wallet instead
+          </QuietButton>
+        ) : null}
+        {/* Somewhere to go when sign-in will not let someone through. `mt-5` keeps this
+            link's enlarged hit area clear of the wallet button's above it. */}
+        <p className={cn("text-xs text-muted-foreground", WALLET_ENABLED && "mt-5")}>
+          Trouble signing in?{" "}
+          <a
+            href={FOUNDER_X.href}
+            target="_blank"
+            rel="noreferrer"
+            className="focus-ring relative inline-block rounded-sm underline underline-offset-2 transition-colors duration-150 after:absolute after:-inset-x-2 after:-top-1 after:-bottom-5 after:content-[''] hover:text-foreground"
+          >
+            DM @{FOUNDER_X.handle} on X
+          </a>
+        </p>
       </div>
     </Card>
   );
@@ -467,13 +644,42 @@ function UnavailableSignInCard() {
 // hooks have no context to read, so the branch can never be a render-time condition.
 const Impl = PRIVY_APP_ID ? PrivySignInCard : UnavailableSignInCard;
 
+/**
+ * The card with one line on it, for the moments either side of the form: /login working
+ * out whether the visitor is already signed in, and forwarding them once it knows.
+ *
+ * Same card, logo and title as the form and as the "Signed in" state above, so the
+ * three are one size and nothing jumps when one replaces another. No auth hooks, so it
+ * renders with or without an auth app behind the build.
+ */
+export function SignInStatus({ message }: { message: string }) {
+  return (
+    <Card>
+      <Header title="Sign in to Tocker" />
+      <p role="status" className="mt-5 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden />
+        {message}
+      </p>
+    </Card>
+  );
+}
+
 /* --- small parts ------------------------------------------------------------- */
 
 function Card({ children }: { children: ReactNode }) {
   return <div className="glass-panel w-full max-w-[360px] rounded-2xl p-6">{children}</div>;
 }
 
-function Header({ title, subtitle }: { title: string; subtitle?: string }) {
+function Header({
+  title,
+  subtitle,
+  titleRef,
+}: {
+  title: string;
+  subtitle?: string;
+  /** Set when the heading is given focus as it appears; it is made focusable for that only. */
+  titleRef?: RefObject<HTMLHeadingElement | null>;
+}) {
   return (
     <div className="flex flex-col items-center text-center">
       {/* The way back for someone who changes their mind, without the browser's back. */}
@@ -484,8 +690,15 @@ function Header({ title, subtitle }: { title: string; subtitle?: string }) {
       >
         <PetriClock size={44} />
       </Link>
-      <h1 className="mt-3 text-lg font-semibold tracking-tight">{title}</h1>
-      {subtitle ? <p className="mt-1 text-sm text-balance text-muted-foreground">{subtitle}</p> : null}
+      <h1
+        ref={titleRef}
+        tabIndex={titleRef ? -1 : undefined}
+        className="mt-3 text-lg font-semibold tracking-tight outline-none"
+      >
+        {title}
+      </h1>
+      {/* `break-words`: the subtitle can carry an email address, which has no spaces to wrap at. */}
+      {subtitle ? <p className="mt-1 text-sm text-balance break-words text-muted-foreground">{subtitle}</p> : null}
     </div>
   );
 }
@@ -522,7 +735,11 @@ function QuietButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "focus-ring rounded-sm text-xs text-muted-foreground transition-colors duration-150 hover:text-foreground disabled:pointer-events-none disabled:opacity-50",
+        // The text is 16px tall; the pseudo-element makes the target 44px without moving
+        // anything. 12px up and 16px down, not centred: 12px is the gap to the button
+        // above the resend row, so the target stops at that button's edge instead of
+        // taking taps meant for it.
+        "focus-ring relative rounded-sm text-xs text-muted-foreground transition-colors duration-150 after:absolute after:-inset-x-2 after:-top-3 after:-bottom-4 after:content-[''] hover:text-foreground disabled:pointer-events-none disabled:opacity-50",
         className,
       )}
     >

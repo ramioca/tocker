@@ -925,9 +925,8 @@ export const agentFundingIntentsRelations = relations(agentFundingIntents, ({ on
 
 // ---- waitlist ----
 /**
- * Landing-page waitlist signups. The only CTA on the front page must not lose data:
- * the API route inserts here when a database is reachable and falls back to a log
- * line when it is not (a first deploy with no DATABASE_URL), never to a 500.
+ * Signups from the landing page's waitlist form. The form and its endpoint are gone
+ * (sign-up is open); the rows stay so the admin page can list who asked.
  */
 export const waitlistSignups = pgTable("waitlist_signups", {
   id: text("id").primaryKey(),

@@ -40,7 +40,7 @@ Set these in Vercel → Project → Settings → Environment Variables, for Prod
 | `PRIVY_AUTHORIZATION_PRIVATE_KEY` | Privy → Wallet infrastructure → Authorization keys |
 | `ENCRYPTION_KEY` | `openssl rand -base64 32` — **generate once and never rotate**, it decrypts stored LLM keys |
 | `CRON_SECRET` | `openssl rand -hex 32` |
-| `NEXT_PUBLIC_APP_URL` | `https://your-app.vercel.app` |
+| `NEXT_PUBLIC_APP_URL` | `https://your-app.vercel.app`, or the custom domain once it is attached. Share cards are built from it: unset, every page's `og:image` points at `http://localhost:3000` and a link to the site previews with no image. |
 | `X402_MOCK` | `1` runs on fixtures. Anything else — including unset — means **real** payments; `isMockMode()` tests for exactly `"1"`. |
 | `CRON_MAX_AGENTS` | Agents per cron invocation. Default 5; use 2 on Hobby. |
 | `LLM_MOCK` | unset (or `0`) |
@@ -49,7 +49,6 @@ Set these in Vercel → Project → Settings → Environment Variables, for Prod
 | `JUPITER_API_KEY` | Optional, raises Jupiter rate limits |
 | `PLATFORM_FEE_USD` | What each executed fill is charged. Default `0.10`; `0` switches the fee off entirely. A malformed value falls back to the default rather than going free. |
 | `PLATFORM_FEE_SETTLE_MIN_USD` | How much an agent must owe before the guardian sweeps its fees on-chain. Default `1.00`. Lower means more transfers for the same money. |
-| `RESEND_API_KEY` | resend.com → API Keys. Every waitlist signup is emailed to `WAITLIST_NOTIFY_EMAIL` (default `rami.djeb@gmail.com`) after the response is sent; unset, signups are still stored and a log line says the mail was skipped. `WAITLIST_FROM_EMAIL` defaults to Resend's `onboarding@resend.dev`, which only delivers to the Resend account owner — verify `tocker.xyz` under Resend → Domains and set `Tocker <waitlist@tocker.xyz>` for anything else. |
 | `ADMIN_EMAILS` | Who may open **Settings → Admin**: a comma-separated list of email addresses, trimmed and matched case-insensitively against the address on the user's row. Unset or blank means **nobody** — there is no bootstrap admin and no "first user wins", so `/settings/admin` 404s for everyone including you until this is set. The address must be one Privy actually linked at signup (a wallet-only account has no email and can never match). Admins see every user's counts, balances, fills and audit events; they do **not** see any strategy, universe rule, data-source list or run transcript, and there is no admin view that reaches one. |
 
 Every one of these is checked by `pnpm preflight` and reported (as booleans only) under
@@ -77,6 +76,31 @@ Two of these are not optional for a deployment that holds money.
 | Authentication → Advanced → **Multi-factor authentication** | Optional: enable **TOTP** or **Passkey** if you want operators to be able to enrol one | A second factor is **optional** in Tocker: `secondFactorBlock` refuses nothing, and neither go-live nor a withdrawal requires enrolment. Enabling a method here only makes enrolment possible from Settings → Security, where it is recorded and shown. It still protects the Privy account itself. |
 | Wallet infrastructure → **Authorization keys** | Create one, paste it into `PRIVY_AUTHORIZATION_PRIVATE_KEY` | Agent server wallets are created with this key as their owner so the server can sign trades and x402 payments with no user session. `pnpm preflight` proves the whole chain before you fund anything. |
 | Settings → **Allowed origins** | Add the production domain | Logins fail with a CORS error otherwise. |
+
+## 2a-2. Who gets in
+
+Sign-in is also sign-up, and who may do it is one switch in the Privy dashboard
+(Users → Access control → allowlist). Nothing in this codebase decides who may sign in.
+
+- **Allowlist off:** anyone can make an account with an email address or a wallet. This
+  is what the landing page's **Get started** button assumes.
+- **Allowlist on:** only the email addresses, phone numbers and wallets on the list get
+  in. Everyone else is refused by Privy (`allowlist_rejected`), and the sign-in card
+  words that refusal and points them at the founder's X account
+  (`FOUNDER_X` in `src/lib/contact.ts`).
+
+The landing page has no waitlist form any more. People who signed up on the old one are
+still listed under **Settings → Admin → Earlier waitlist signups**, with whether an
+account for that address exists yet, so they can be told the doors are open.
+
+The sign-in methods drawn on the card come from `NEXT_PUBLIC_LOGIN_METHODS` (default
+`email,wallet`). Keep it equal to what is switched on in the Privy dashboard: a method
+listed there but off in Privy fails when pressed. Before adding `twitter`, note that X
+shares no email address, so with the allowlist on a new X account can never match an
+entry.
+
+Leave Privy's CAPTCHA and HttpOnly-cookie modes off: the sign-in card renders no captcha
+widget, and the server reads the `privy-token` cookie the client writes and renews.
 
 ## 2b. Security posture, and its limits
 

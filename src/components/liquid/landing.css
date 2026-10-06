@@ -16,12 +16,10 @@
  *   landing-how.css       01 How: agent console, approval
  *   landing-feed.css      02 Feed
  *   landing-sections.css  03 data, 04 performance, 05 guardrails, 06 FAQ, close, footer
- *   landing-waitlist.css  the waitlist modal
  * Section files read these tokens and atoms and scope their own rules.
  * ========================================================================== */
 
-.lp,
-.wl-overlay {
+.lp {
   /* Ground and surfaces. */
   --bg: #000;
   --card: #0a0a0b;
@@ -125,8 +123,7 @@
   background-repeat: no-repeat;
   background-size: 100% 900px;
 }
-.lp ::selection,
-.wl-overlay ::selection {
+.lp ::selection {
   background: var(--fg);
   color: var(--bg);
 }
@@ -134,8 +131,7 @@
 /* One focus ring for every control: a 2px off-white outline that follows the
    control's own radius. Spectrum's Tailwind focus rings are switched off so it
    is never doubled. Programmatic targets (tabindex -1) draw nothing. */
-.lp :where(a, button, summary, input, [tabindex]:not([tabindex="-1"]), [role="switch"]):focus-visible,
-.wl-overlay :where(a, button, input, [tabindex]:not([tabindex="-1"])):focus-visible {
+.lp :where(a, button, summary, input, [tabindex]:not([tabindex="-1"]), [role="switch"]):focus-visible {
   outline: 2px solid var(--fg);
   outline-offset: 3px;
   --tw-ring-shadow: 0 0 #0000;
@@ -150,8 +146,7 @@
   outline: none;
 }
 
-.lp button,
-.wl-overlay button {
+.lp button {
   font-family: inherit;
   cursor: pointer;
   -webkit-appearance: none;
@@ -271,11 +266,9 @@
 }
 
 /* ============================ buttons ============================ */
-/* The primary pill: off-white with black type. Every "Join the waitlist" on
-   the page (hero, close) and the waitlist's submit. */
-.lp-btn-primary,
-.wl-overlay .wl-morph,
-.wl-overlay .wl-submit {
+/* The primary pill: off-white with black type. "Get started" (or "Open the
+   app") in the hero and the close. */
+.lp-btn-primary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -303,17 +296,14 @@
   transition: transform 200ms var(--ease-out);
 }
 @media (hover: hover) and (pointer: fine) {
-  .lp-btn-primary:hover,
-  .wl-overlay .wl-morph-idle:hover,
-  .wl-overlay .wl-submit:hover {
+  .lp-btn-primary:hover {
     background: #fff;
   }
   .lp-btn-primary:hover .lp-btn-arrow {
     transform: translateX(3px);
   }
 }
-.lp-btn-primary:active,
-.wl-overlay .wl-submit:active {
+.lp-btn-primary:active {
   transform: scale(0.97);
 }
 /* Phones: the page's primary pill goes wide and a little taller. */
@@ -326,7 +316,7 @@
 }
 
 /* The ghost pill: a hairline on transparent, for every secondary action (the
-   nav's waitlist link, Follow, Go live, Show the request again). */
+   nav's sign-in link, Follow, Go live, Show the request again). */
 .lp-btn-ghost {
   display: inline-flex;
   align-items: center;
@@ -375,6 +365,7 @@
 .lp-btn-ghost:active {
   transform: scale(0.97);
 }
+
 
 /* ============================ agent mark ============================ */
 /* An agent's initials on a quiet square (agent-mark.tsx): one identity for
@@ -502,10 +493,7 @@
   }
   .lp *,
   .lp *::before,
-  .lp *::after,
-  .wl-overlay *,
-  .wl-overlay *::before,
-  .wl-overlay *::after {
+  .lp *::after {
     transition-duration: 0ms !important;
     transition-delay: 0ms !important;
     animation-duration: 0.01ms !important;
@@ -517,8 +505,6 @@
 /* Forced colours: filled pills keep an edge. */
 @media (forced-colors: active) {
   .lp-btn-primary,
-  .wl-overlay .wl-morph,
-  .wl-overlay .wl-submit,
   .lp-btn-ghost {
     border: 1px solid ButtonText;
   }

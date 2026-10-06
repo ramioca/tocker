@@ -26,7 +26,10 @@ vi.mock("@/lib/auth", () => ({
 
 // Every read the page would do, stubbed empty: reaching any of these means the gate let
 // somebody through, and `listAdminUsers` asserting it was never called says so plainly.
+// The slot requests get the same assertion: they are the addresses of people who are not
+// users yet, the one list here that is nobody's own account.
 const listAdminUsers = vi.fn(async () => []);
+const listAdminSlotRequests = vi.fn(async () => []);
 vi.mock("@/server/queries/admin", () => ({
   getAdminBalances: vi.fn(async () => ({
     rows: [],
@@ -52,6 +55,7 @@ vi.mock("@/server/queries/admin", () => ({
   })),
   getAdminSeries: vi.fn(async () => ({ signups: [], volumeUsd: [], feesUsd: [] })),
   listAdminUsers: () => listAdminUsers(),
+  listAdminSlotRequests: () => listAdminSlotRequests(),
   listAdminAgents: vi.fn(async () => []),
   listAdminTrades: vi.fn(async () => []),
   listAdminAuditEvents: vi.fn(async () => []),
@@ -65,7 +69,7 @@ const ADMIN: Session = {
   handle: "admin",
   displayName: null,
   avatarUrl: null,
-  email: "rami@blockrun.ai",
+  email: "admin@example.com",
 };
 
 /** `notFound()` throws a framework error carrying this digest. */
@@ -81,20 +85,22 @@ beforeEach(() => {
 
 describe("GET /settings/admin", () => {
   it("404s a signed-in user who is not on the admin list, without reading anything", async () => {
-    vi.stubEnv("ADMIN_EMAILS", "rami@blockrun.ai");
-    getSession.mockResolvedValue({ ...ADMIN, userId: "did:privy:someone", email: "someone@else.com" });
+    vi.stubEnv("ADMIN_EMAILS", "admin@example.com");
+    getSession.mockResolvedValue({ ...ADMIN, userId: "did:privy:someone", email: "someone@example.com" });
 
     const { default: AdminSettingsPage } = await import("./page");
     await expect(AdminSettingsPage()).rejects.toSatisfy(isNotFound);
     expect(listAdminUsers).not.toHaveBeenCalled();
+    expect(listAdminSlotRequests).not.toHaveBeenCalled();
   });
 
   it("404s an anonymous visitor rather than redirecting them to /login", async () => {
-    vi.stubEnv("ADMIN_EMAILS", "rami@blockrun.ai");
+    vi.stubEnv("ADMIN_EMAILS", "admin@example.com");
     getSession.mockResolvedValue(null);
 
     const { default: AdminSettingsPage } = await import("./page");
     await expect(AdminSettingsPage()).rejects.toSatisfy(isNotFound);
+    expect(listAdminSlotRequests).not.toHaveBeenCalled();
   });
 
   it("404s everyone, including the listed address, when ADMIN_EMAILS is unset", async () => {
@@ -106,12 +112,13 @@ describe("GET /settings/admin", () => {
   });
 
   it("renders for an admin", async () => {
-    vi.stubEnv("ADMIN_EMAILS", " Rami@BlockRun.AI ");
+    vi.stubEnv("ADMIN_EMAILS", " Admin@Example.COM ");
     getSession.mockResolvedValue(ADMIN);
 
     const { default: AdminSettingsPage } = await import("./page");
     const tree = await AdminSettingsPage();
     expect(tree).toBeTruthy();
     expect(listAdminUsers).toHaveBeenCalledTimes(1);
+    expect(listAdminSlotRequests).toHaveBeenCalledTimes(1);
   });
 });

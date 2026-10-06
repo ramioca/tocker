@@ -14,7 +14,10 @@
  *    for, and counting it would invent a cost;
  *  - a funded wallet is one with USDC above zero, and a paper wallet reads zero
  *    **without a Privy call** — asserted on the call count, not just the number,
- *    because the cost of getting that wrong is hundreds of network calls per page view.
+ *    because the cost of getting that wrong is hundreds of network calls per page view;
+ *  - the slot requests come newest first, and "has an account" is matched on the address
+ *    whatever its case — the list is what onboarding is worked from, so a request marked
+ *    done that is not, or the reverse, sends the wrong person a reply.
  */
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { nanoid } from "nanoid";
@@ -30,6 +33,7 @@ import {
   getAdminSeries,
   listAdminAgents,
   listAdminAuditEvents,
+  listAdminSlotRequests,
   listAdminTrades,
   listAdminUsers,
 } from "./admin";
@@ -152,11 +156,15 @@ beforeAll(async () => {
     },
   ]);
 
+  // Three requests at three moments, so "newest first" has one right answer: b, a, c.
   await db.insert(schema.waitlistSignups).values([
-    { id: nanoid(), email: "a@example.test", volume: "small", chains: ["solana"] },
-    { id: nanoid(), email: "b@example.test", volume: "large", chains: ["base"] },
+    { id: nanoid(), email: "a@example.test", volume: "small", chains: ["solana"], createdAt: new Date(now - 120_000) },
+    { id: nanoid(), email: "b@example.test", volume: "large", chains: ["base"], style: "Majors", createdAt: new Date(now - 60_000) },
     { id: nanoid(), email: "c@example.test", volume: "small", chains: [], createdAt: new Date(now - 5 * DAY) },
   ]);
+  // One of them has since signed in. Privy hands back the address as it was typed, so
+  // the user row's case differs from the request's; the other seeded user has no email.
+  await db.update(schema.users).set({ email: "B@Example.test" }).where(eq(schema.users.id, liveAgent.userId));
 
   await db.insert(schema.auditEvents).values([
     { id: nanoid(), userId: liveAgent.userId, kind: "go_live", summary: "Switched an agent to live", ip: "10.0.0.1" },
@@ -245,6 +253,24 @@ describe("admin tables", () => {
     const paper = rows.find((r) => r.id === paperAgent.userId);
     expect(paper?.agentCount).toBe(1);
     expect(paper?.liveAgentCount).toBe(0);
+  });
+
+  it("lists slot requests newest first, as the form stored them", async () => {
+    const rows = await listAdminSlotRequests();
+    expect(rows.map((r) => r.email)).toEqual(["b@example.test", "a@example.test", "c@example.test"]);
+    expect(rows[0]).toMatchObject({ volume: "large", chains: ["base"], style: "Majors" });
+    expect(rows[2]).toMatchObject({ volume: "small", chains: [], style: null });
+    for (const row of rows) expect(new Date(row.createdAt).toISOString()).toBe(row.createdAt);
+    // The limit takes from the top of that order.
+    expect((await listAdminSlotRequests(1)).map((r) => r.email)).toEqual(["b@example.test"]);
+  });
+
+  it("marks the request whose address has an account, whatever its case, and no other", async () => {
+    const rows = await listAdminSlotRequests();
+    expect(rows.filter((r) => r.hasAccount).map((r) => r.email)).toEqual(["b@example.test"]);
+    // A user with no email on record (a wallet-only account) matches nothing.
+    const [paperUser] = await db.select().from(schema.users).where(eq(schema.users.id, paperAgent.userId));
+    expect(paperUser.email).toBeNull();
   });
 
   it("lists agents as public cards and never carries a config", async () => {

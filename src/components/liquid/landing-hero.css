@@ -64,23 +64,14 @@
   }
 }
 
-/* The quiet waitlist pill: the page's ghost pill, so the hero's off-white
+/* The quiet sign-in pill: the page's ghost pill, so the hero's off-white
    pill stays the one loud action on the screen. */
 .lp-nav-cta {
   justify-self: end;
 }
-.lp-nav-cta-sm {
-  display: none;
-}
 @media (max-width: 639px) {
   .lp-nav-cta {
     padding-inline: 16px;
-  }
-  .lp-nav-cta-lg {
-    display: none;
-  }
-  .lp-nav-cta-sm {
-    display: inline;
   }
 }
 
@@ -203,6 +194,11 @@
     gap: 8px;
     width: 100%;
     margin-top: 32px;
+  }
+  /* The eyebrow keeps to one line: the chains go, and the run card under it
+     still names both. */
+  .lp-hero-eyebrow-more {
+    display: none;
   }
 }
 /* The narrowest phones: three lines of headline, and the eyebrow on one. */

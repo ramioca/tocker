@@ -2,7 +2,7 @@
  * Landing sections after the feed: 03 data sources, 04 performance, 05
  * guardrails + go-live demo, 06 FAQ, the closing call to action and the footer
  * (liquid-landing.tsx, performance.tsx, go-live.tsx, Spectrum's FAQTabsCard,
- * waitlist-button.tsx). Section heads use the shared `.lp-split-head`.
+ * app-link.tsx). Section heads use the shared `.lp-split-head`.
  *
  * One system: frames are 20px hairline cards on --card, inner parts are split
  * by hairlines rather than nested in more cards, labels are 11.5px mono caps in

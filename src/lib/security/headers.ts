@@ -36,7 +36,11 @@
 
 /** Hosts Privy's SDK and iframes talk to. */
 const PRIVY_HOSTS = ["https://auth.privy.io", "https://*.privy.io", "https://*.privy.systems"];
-/** WalletConnect, reachable from Privy's external-wallet connectors. */
+/**
+ * WalletConnect, and Coinbase Wallet's relay (`walletlink`), reachable from Privy's
+ * external-wallet connectors. Without the relay, Coinbase Wallet's QR and mobile
+ * connection cannot open its socket.
+ */
 const WALLET_HOSTS = [
   "https://explorer-api.walletconnect.com",
   "https://*.walletconnect.com",
@@ -44,7 +48,14 @@ const WALLET_HOSTS = [
   "wss://*.walletconnect.com",
   "wss://*.walletconnect.org",
   "wss://relay.walletconnect.com",
+  "wss://www.walletlink.org",
 ];
+/**
+ * WalletConnect's verify frame, and its fallback domain: an invisible iframe its client
+ * loads on this page so the wallet can be told which site is asking to connect.
+ * Refused, the wallet may show the request as coming from an unverified site.
+ */
+const WALLET_FRAME_HOSTS = ["https://verify.walletconnect.com", "https://verify.walletconnect.org"];
 /**
  * Solana RPC for Privy's embedded-wallet UIs (`solana.rpcs` in the provider). HTTP goes
  * through the same-origin `/api/solana/rpc` proxy, so only the websocket endpoint —
@@ -96,7 +107,7 @@ export function contentSecurityPolicy({ nonce, isDev }: CspOptions): string {
       "connect-src",
       ["'self'", ...PRIVY_HOSTS, ...WALLET_HOSTS, ...solanaHosts(), ...(isDev ? ["ws:", "http://localhost:*"] : [])],
     ],
-    ["frame-src", ["'self'", ...PRIVY_HOSTS, "https://challenges.cloudflare.com"]],
+    ["frame-src", ["'self'", ...PRIVY_HOSTS, ...WALLET_FRAME_HOSTS, "https://challenges.cloudflare.com"]],
     // `/sw.js` is the push service worker, served from public/ on this origin. It would
     // already be covered by `default-src`, but this policy enumerates every directive it
     // cares about, and a worker silently refused by a CSP nobody wrote down is a bad

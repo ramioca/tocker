@@ -55,7 +55,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // Every page renders per request. The CSP (`src/proxy.ts`) is nonce-based, and Next
   // stamps its scripts with the nonce only while rendering a request: a page prerendered
   // at build time would ship scripts the browser refuses to run. Nothing else in this
-  // layout reads the request, and the landing page reads nothing at all, so say it here.
+  // layout reads the request, and a page is not required to (the landing page reads one
+  // cookie, as a hint for its buttons, and could stop), so say it here.
   await connection();
 
   return (
