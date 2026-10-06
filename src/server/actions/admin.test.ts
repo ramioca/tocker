@@ -264,6 +264,29 @@ describe("clearInferencePauseAction", () => {
 });
 
 describe("testInferenceSignatureAction", () => {
+  // The test signs only with a wallet of one of the admin's own agents.
+  beforeAll(async () => {
+    await db.update(schema.agents).set({ ownerId: ADMIN.userId }).where(eq(schema.agents.id, agent.agentId));
+  });
+
+  it("will not make another person's agent wallet sign, admin or not", async () => {
+    const theirs = await seedAgent(db, { mode: "live" });
+    const theirWallet = `pw_sol_${theirs.agentId.slice(0, 8)}`;
+    await db.insert(schema.wallets).values({
+      id: theirWallet,
+      kind: "agent_server",
+      chain: "solana",
+      address: "SomebodyElsesSolanaWallet",
+      userId: theirs.userId,
+      agentId: theirs.agentId,
+    });
+
+    const res = await testInferenceSignatureAction({ walletId: theirWallet });
+
+    expect(res).toEqual({ ok: false, error: "That is not the Solana wallet of one of your own agents. Nothing was signed." });
+    expect(probe).not.toHaveBeenCalled();
+  });
+
   it("probes the wallet the database holds for that id, and returns the checks", async () => {
     const res = await testInferenceSignatureAction({ walletId });
     expect(res).toEqual({ ok: true, data: { checks: ["quote passed the pins", "nothing was sent"], agentName: "Test Agent" } });
@@ -284,7 +307,7 @@ describe("testInferenceSignatureAction", () => {
 
     for (const id of [`paper_${agent.agentId}_solana`, baseId, embeddedId, "no-such-wallet", "", undefined as unknown as string]) {
       const res = await testInferenceSignatureAction({ walletId: id });
-      expect(res).toEqual({ ok: false, error: "That is not a real Solana agent wallet. Nothing was signed." });
+      expect(res).toEqual({ ok: false, error: "That is not the Solana wallet of one of your own agents. Nothing was signed." });
     }
     expect(probe).not.toHaveBeenCalled();
   });

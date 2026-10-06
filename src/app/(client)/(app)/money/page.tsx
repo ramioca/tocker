@@ -178,7 +178,7 @@ export default async function MoneyPage() {
               title="Costs"
               hint={
                 costScope === "live"
-                  ? "Three different bills, only one of which we collect."
+                  ? "Separate bills, only one of which we collect."
                   : "What your paper agents have cost so far. The fee is simulated; the model tokens are a real bill on your own key."
               }
             />

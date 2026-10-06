@@ -119,7 +119,9 @@ export function estimateRunUsd(model: PayPerUseModel, steps: number = TYPICAL_RU
 /** Pure: runs a day at a schedule. 0 minutes is manual only. The cron adds about five minutes to every interval. */
 export function runsPerDay(intervalMinutes: number): number {
   if (intervalMinutes <= 0) return 0;
-  return Math.floor(1440 / (intervalMinutes + 5));
+  // Never fewer than one: a daily or weekly schedule still runs, and an estimate of
+  // nothing would be the wrong side to err on.
+  return Math.max(1, Math.floor(1440 / (intervalMinutes + 5)));
 }
 
 export function roundUsd(usd: number): number {
@@ -283,10 +285,12 @@ export function describeInferenceStop(
   reason: InferenceStopReason,
   context: { runCapUsd?: number; dayCapUsd?: number; model?: string } = {},
 ): { title: string; detail: string } {
-  const usd = (value: number | undefined) => (value === undefined ? "its limit" : `$${value.toFixed(2)}`);
+  // The figures are the owner's own settings. A caller writing text other people can
+  // read (a run's summary) leaves them out, and every sentence still reads.
+  const limit = (value: number | undefined, noun: string) => (value === undefined ? `its ${noun}` : `its $${value.toFixed(2)} ${noun}`);
   switch (reason) {
     case "run_cap":
-      return { title: "Run stopped at its thinking limit", detail: `This run reached ${usd(context.runCapUsd)} of thinking and stopped. Anything it had already done is kept.` };
+      return { title: "Run stopped at its thinking limit", detail: `This run reached ${limit(context.runCapUsd, "thinking limit")} and stopped. Anything it had already done is kept.` };
     case "deadline":
       return { title: "Run stopped at its time limit", detail: "This run used the time one run is allowed and stopped. Anything it had already done is kept." };
     case "step_limit":
@@ -294,7 +298,7 @@ export function describeInferenceStop(
     case "needs_funds":
       return { title: "Add USDC to keep thinking", detail: "This agent pays for its own thinking, and its Solana wallet does not hold enough USDC for a run. Add USDC, or switch it to your own API key." };
     case "agent_day_cap":
-      return { title: "Daily thinking limit reached", detail: `This agent has spent ${usd(context.dayCapUsd)} on thinking today, the limit you set. It starts again at 00:00 UTC, or you can raise the limit.` };
+      return { title: "Daily thinking limit reached", detail: `This agent has reached ${limit(context.dayCapUsd, "daily thinking limit")}. It starts again at 00:00 UTC, or you can raise the limit.` };
     case "owner_day_cap":
       return { title: "Your daily thinking limit is reached", detail: "Your agents have reached the most one account may spend on pay-per-use thinking in a day. They start again at 00:00 UTC. Your own API key has no such limit." };
     case "request_limit":

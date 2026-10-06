@@ -15,6 +15,7 @@
  * only way its money leaves: the older, ungated mode and withdraw actions are gone.
  */
 import { revalidatePath } from "next/cache";
+import { thinkSource } from "@/lib/agent/inference";
 import { z } from "zod";
 import { and, eq, gt, inArray } from "drizzle-orm";
 import { agents, getDb, positions, trades, type Db } from "@/db";
@@ -330,7 +331,8 @@ export async function goLiveAction(input: {
   const { error, agent, db } = await ownedAgent(input.agentId, session.userId);
   if (error || !agent) return fail(error ?? "Agent not found");
   if (agent.mode === "live") return { ok: true, data: { mode: "live" } };
-  if (!agent.llmKeyId) return fail("Attach an LLM API key before going live");
+  // An agent that pays per use thinks without a key; every other agent still needs one.
+  if (thinkSource(agent.config) !== "usdc" && !agent.llmKeyId) return fail("Attach an LLM API key before going live");
 
   const blocked = await secondFactorBlock(session.userId);
   if (blocked) return fail(blocked);

@@ -29,7 +29,7 @@ async function route(): Promise<typeof import("./route")> {
   if (loaded?.from !== inferenceModule) {
     const from = inferenceModule;
     vi.resetModules();
-    vi.doMock("@/lib/agent/inference", () => from);
+    vi.doMock("@/lib/agent/inference-gate", () => from);
     loaded = { from, route: await import("./route") };
   }
   return loaded.route;

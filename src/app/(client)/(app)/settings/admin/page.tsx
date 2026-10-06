@@ -99,7 +99,8 @@ export default async function AdminSettingsPage() {
     // The pay-per-use card must not take the page down with it either: its tables are new,
     // and a deployment that has not run their migration yet still has an admin to serve.
     getAdminInference().then(
-      (data): { data: AdminInference | null } => ({ data }),
+      // The signature test signs only with the admin's own agents' wallets, so only those are offered.
+      (data): { data: AdminInference | null } => ({ data: { ...data, wallets: data.wallets.filter((wallet) => wallet.ownerHandle === session.handle) } }),
       (): { data: AdminInference | null } => ({ data: null }),
     ),
   ]);

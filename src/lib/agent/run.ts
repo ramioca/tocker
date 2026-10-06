@@ -779,7 +779,8 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
     const summary = runSummary(
       ctx.finished.summary,
       result.text,
-      pay && stopReason ? describeInferenceStop(stopReason, { runCapUsd: pay.caps.runUsd, dayCapUsd: pay.caps.agentDayUsd, model: pay.model }).detail : null,
+      // No figures: a summary is public, and the limits are the owner's own settings.
+      pay && stopReason ? describeInferenceStop(stopReason, { model: pay.model }).detail : null,
     );
     await logger.flush();
 

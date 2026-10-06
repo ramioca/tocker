@@ -54,7 +54,7 @@ function countsOnly(value: unknown): Record<string, number | boolean> | number |
  * name, so this route builds and runs whether or not that export exists yet.
  */
 async function recheckHolds(): Promise<Record<string, number | boolean> | number | null> {
-  const inference: Record<string, unknown> = await import("@/lib/agent/inference");
+  const inference: Record<string, unknown> = await import("@/lib/agent/inference-gate");
   const recheck = inference.recheckInferenceHolds;
   if (typeof recheck !== "function") return null;
   return countsOnly(await (recheck as () => Promise<unknown>)());

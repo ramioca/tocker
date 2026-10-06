@@ -182,11 +182,14 @@ export async function testInferenceSignatureAction(input: { walletId: string }):
     return { ok: false, error: "Too many signature tests in a minute. Wait a moment and try again." };
   }
 
-  const wallet = await findAgentSolanaWallet(typeof input?.walletId === "string" ? input.walletId : "").catch((err) => {
+  // Only a wallet of one of the admin's own agents. The test has that wallet sign a real
+  // payment (which is then thrown away); being an admin is not a reason to make another
+  // person's wallet sign anything.
+  const wallet = await findAgentSolanaWallet(typeof input?.walletId === "string" ? input.walletId : "", session.userId).catch((err) => {
     console.error(`[admin] signature test: wallet lookup failed: ${dbErrorForLog(err)}`);
     return null;
   });
-  if (!wallet) return { ok: false, error: "That is not a real Solana agent wallet. Nothing was signed." };
+  if (!wallet) return { ok: false, error: "That is not the Solana wallet of one of your own agents. Nothing was signed." };
 
   let result: Awaited<ReturnType<typeof probeInferenceSignature>>;
   try {

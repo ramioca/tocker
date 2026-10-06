@@ -1229,14 +1229,25 @@ export async function getAdminInference(now: Date = new Date()): Promise<AdminIn
  * with is decided here, from the database: the action passes an id and never an address,
  * so a caller cannot point the test at a wallet that is not an agent's.
  */
-export async function findAgentSolanaWallet(walletId: string): Promise<{ walletId: string; address: string; agentName: string } | null> {
+export async function findAgentSolanaWallet(
+  walletId: string,
+  /** When given, only a wallet of one of this account's own agents is found. */
+  ownerId?: string,
+): Promise<{ walletId: string; address: string; agentName: string } | null> {
   if (typeof walletId !== "string" || walletId === "" || walletId.length > 200 || isPaperWallet(walletId)) return null;
   const db = await getDb();
   const [row] = await db
     .select({ walletId: wallets.id, address: wallets.address, agentName: agents.name })
     .from(wallets)
     .innerJoin(agents, eq(wallets.agentId, agents.id))
-    .where(and(eq(wallets.id, walletId), eq(wallets.kind, "agent_server"), eq(wallets.chain, "solana")))
+    .where(
+      and(
+        eq(wallets.id, walletId),
+        eq(wallets.kind, "agent_server"),
+        eq(wallets.chain, "solana"),
+        ...(ownerId === undefined ? [] : [eq(agents.ownerId, ownerId)]),
+      ),
+    )
     .limit(1);
   return row ?? null;
 }

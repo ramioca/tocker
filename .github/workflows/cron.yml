@@ -42,3 +42,15 @@ jobs:
           code=$(curl -sS --max-time 300 -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/tick")
           echo "tick HTTP $code"
           [ "$code" -lt 300 ]
+
+      # Pay-per-use thinking: settle payments whose answer never came, and look again at
+      # agents on hold. Does nothing while the feature is switched off.
+      - name: Settle pay-per-use payments
+        if: always()
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          code=$(curl -sS --max-time 300 -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/inference")
+          echo "inference HTTP $code"
+          [ "$code" -lt 300 ]
