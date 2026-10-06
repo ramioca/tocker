@@ -238,7 +238,7 @@ export function DepositSheet({
                 */}
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">Your address</p>
-                  <FullAddress address={chainCash.address} className="flex" />
+                  <FullAddress address={chainCash.address} className="flex text-[13px]" />
                   <CopyAddressButton key={chainCash.address} address={chainCash.address} />
                 </div>
 
@@ -327,7 +327,7 @@ export function DepositSheet({
 
           <div className="space-y-2">
             <h3 className="text-xs font-medium text-muted-foreground">Where your cash sits</h3>
-            <ChainBreakdown cash={resolved} onDeposit={depositOn} />
+            <ChainBreakdown cash={resolved} onDeposit={depositOn} onNavigate={() => onOpenChange(false)} />
           </div>
         </div>
       </SheetContent>

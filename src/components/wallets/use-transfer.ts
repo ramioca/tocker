@@ -81,6 +81,43 @@ export interface UseTransfer {
 const FEE_TOLERANCE_USDC = 0.005;
 
 /**
+ * The request that submits a signed transfer got no answer: the connection dropped, or a
+ * deploy replaced the server mid-call. By then the server may already have co-signed and
+ * broadcast, so this is not a failure and must never be shown as one. A caller that
+ * reads it as "failed" invites a second send on top of a first that landed.
+ *
+ * Matched by `name` rather than `instanceof`: the withdraw modal is a lazily loaded
+ * chunk, and a class is only itself within one copy of this module.
+ */
+export class TransferStatusUnknown extends Error {
+  constructor(options?: ErrorOptions) {
+    super(
+      "The connection dropped while this was being sent, so Tocker can't tell whether it went. Check your balance in two minutes before sending again.",
+      options,
+    );
+    this.name = "TransferStatusUnknown";
+  }
+}
+
+/** The request that only builds a transfer got no answer. Nothing is signed at that point. */
+const UNREACHABLE = "Couldn't reach Tocker. Nothing was sent. Check your connection and try again.";
+
+/**
+ * A server action that threw instead of answering. `{ ok: false }` is an answer and
+ * passes through untouched; only a request that never got one is turned into `onThrow`.
+ */
+export async function answered<T>(call: () => Promise<T>, onThrow: (cause: unknown) => Error): Promise<T> {
+  try {
+    return await call();
+  } catch (cause) {
+    throw onThrow(cause);
+  }
+}
+
+/** The longest SDK message worth quoting back; beyond it the text is a dump, not a reason. */
+const QUOTABLE_ERROR_CHARS = 120;
+
+/**
  * Turn a Privy signing failure into a sentence a person can act on.
  *
  * Nobody using Tocker holds gas. Base fees are sponsored through Privy; Solana fees are
@@ -132,7 +169,26 @@ export function transferErrorMessage(
   if (lower.includes("user rejected") || lower.includes("rejected the request") || lower.includes("cancel")) {
     return "You cancelled the signature. Nothing was sent.";
   }
-  return raw || "The transfer could not be signed.";
+  // Privy with a lapsed session: "User must be authenticated to use their embedded wallet."
+  if (/not authenticated|must be authenticated|auth token/i.test(raw)) {
+    return "Your sign-in expired. Sign in again and retry. Nothing was sent.";
+  }
+  // The token's own refusal ("ERC20: transfer amount exceeds balance"). On Base the figure
+  // on screen comes from an indexer that can trail a send by minutes.
+  if (/exceeds balance|insufficient balance/i.test(raw)) {
+    const symbol = asset === "usdc" ? "USDC" : chain === "solana" ? "SOL" : "ETH";
+    return chain === "base"
+      ? `You don't have that much ${symbol} on Base right now. If you just sent some, the balance here may still be catching up.`
+      : `You don't have that much ${symbol} on Solana right now.`;
+  }
+  // Unrecognised. A short single line is quoted, because it is the only clue there is; a
+  // multi-line revert or anything carrying a URL is not shown. Neither invents a cause,
+  // and neither says "nothing was sent" outright: this runs for failures after signing too.
+  const line = raw.trim().replace(/[.!?]+$/, "");
+  if (line && line.length <= QUOTABLE_ERROR_CHARS && !/[\r\n]/.test(line) && !line.includes("://")) {
+    return `The transfer didn't complete: ${line}. Check your balance before trying again.`;
+  }
+  return "The transfer didn't complete. Check your balance before trying again. If it hasn't changed, nothing was sent.";
 }
 
 /** True when the failure is a wallet being out of gas, not the user changing their mind. */
@@ -225,7 +281,10 @@ function usePrivyTransfer(): UseTransfer {
 
   const sendFunding = useCallback(
     async (request: TransferRequest, wallet: SolanaWallet): Promise<TransferResult> => {
-      const prepared = await prepareSponsoredFunding({ toAddress: request.to, amount: request.amount });
+      const prepared = await answered(
+        () => prepareSponsoredFunding({ toAddress: request.to, amount: request.amount }),
+        (cause) => new Error(UNREACHABLE, { cause }),
+      );
       if (!prepared.ok) throw new Error(prepared.error);
       // The server no longer answers "sponsored: false" — a platform that cannot pay is
       // an error with its own sentence — but the type still allows it.
@@ -235,14 +294,20 @@ function usePrivyTransfer(): UseTransfer {
       if (plan.from !== wallet.address) throw new Error(WRONG_WALLET);
 
       const signed = await signPrepared(plan.transaction, wallet);
-      const sent = await submitSponsoredFunding({
-        toAddress: request.to,
-        // The amount the transaction was actually built for, not the one we asked for:
-        // the server validates the signed bytes against this number, so submitting
-        // anything else can only ever be a mismatch it refuses to sign.
-        amount: plan.expectedAmount,
-        signedTransaction: signed,
-      });
+      // Only this await: past it the server may have broadcast, so a request that dies
+      // here is "unknown", never "failed".
+      const sent = await answered(
+        () =>
+          submitSponsoredFunding({
+            toAddress: request.to,
+            // The amount the transaction was actually built for, not the one we asked for:
+            // the server validates the signed bytes against this number, so submitting
+            // anything else can only ever be a mismatch it refuses to sign.
+            amount: plan.expectedAmount,
+            signedTransaction: signed,
+          }),
+        (cause) => new TransferStatusUnknown({ cause }),
+      );
       // Not run through `transferErrorMessage`: the server already wrote these in plain
       // language, and the fee payer was Tocker's wallet, not the user's.
       if (!sent.ok) throw new Error(sent.error);
@@ -253,7 +318,10 @@ function usePrivyTransfer(): UseTransfer {
 
   const sendWithdrawal = useCallback(
     async (request: TransferRequest, wallet: SolanaWallet): Promise<TransferResult> => {
-      const prepared = await prepareSponsoredWithdrawal({ toAddress: request.to, amount: request.amount });
+      const prepared = await answered(
+        () => prepareSponsoredWithdrawal({ toAddress: request.to, amount: request.amount }),
+        (cause) => new Error(UNREACHABLE, { cause }),
+      );
       if (!prepared.ok) throw new Error(prepared.error);
 
       const plan = prepared.data;
@@ -268,12 +336,17 @@ function usePrivyTransfer(): UseTransfer {
       }
 
       const signed = await signPrepared(plan.transaction, wallet);
-      const sent = await submitSponsoredWithdrawal({
-        toAddress: request.to,
-        amount: plan.amount,
-        feeUsdc: plan.feeUsdc,
-        signedTransaction: signed,
-      });
+      // As in `sendFunding`: a request that dies here is "unknown", never "failed".
+      const sent = await answered(
+        () =>
+          submitSponsoredWithdrawal({
+            toAddress: request.to,
+            amount: plan.amount,
+            feeUsdc: plan.feeUsdc,
+            signedTransaction: signed,
+          }),
+        (cause) => new TransferStatusUnknown({ cause }),
+      );
       if (!sent.ok) throw new Error(sent.error);
       return { hash: sent.data.hash, feeUsdc: sent.data.feeUsdc, uncertain: sent.data.uncertain };
     },

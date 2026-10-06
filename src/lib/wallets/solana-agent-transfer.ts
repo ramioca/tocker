@@ -1369,7 +1369,7 @@ async function ownerWithdrawalLimited(ownerId: string, now: Date = new Date()): 
     return 0;
   });
   if (today >= OWNER_WITHDRAWALS_PER_DAY) {
-    return `That's ${OWNER_WITHDRAWALS_PER_DAY} withdrawals out of your agents in the last 24 hours, the most Tocker pays the network fee for in a day. Try again later.`;
+    return `That's ${OWNER_WITHDRAWALS_PER_DAY} withdrawals out of your agents in the last 24 hours, which is the daily limit. Try again tomorrow.`;
   }
   return null;
 }

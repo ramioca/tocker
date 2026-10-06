@@ -130,7 +130,7 @@ export default async function AgentSettingsPage({ params }: Params) {
           <GoLiveCard agent={agent} isAdmin={isAdmin} />
         </div>
         <div id="withdraw" className="scroll-mt-20">
-          <WithdrawForm agent={agent} balances={balances} />
+          <WithdrawForm agent={agent} balances={balances} perTxUsd={walletBudget?.perTxUsd ?? null} />
         </div>
         <DangerZone agent={agent} balances={balances} />
       </div>

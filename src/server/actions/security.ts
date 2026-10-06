@@ -17,12 +17,12 @@
  * a one-line change in files this workstream does not own.
  */
 import { revalidatePath } from "next/cache";
-import { and, eq } from "drizzle-orm";
-import { agents, getDb, trades } from "@/db";
+import { and, eq, gt, inArray } from "drizzle-orm";
+import { agents, getDb, positions, trades, type Db } from "@/db";
 import { getSession } from "@/lib/auth";
 import { agentConfigSchema, chainSchema } from "@/lib/agent/config";
 import { withdrawFromAgent as sendWithdrawal, type WithdrawResult } from "@/lib/wallets";
-import { addressProblemForChain, normalizeAddressForChain } from "@/lib/wallet-address";
+import { destinationProblemForChain, normalizeAddressForChain } from "@/lib/wallet-address";
 import { recordAudit, listAuditEvents, type AuditRow } from "@/lib/security/audit";
 import { getKillSwitch, setTradingPaused } from "@/lib/security/kill-switch";
 import { getMfaStatus, rememberMfaStatus, secondFactorBlock, type MfaStatus } from "@/lib/security/mfa";
@@ -33,7 +33,7 @@ import {
 } from "@/lib/security/live-readiness";
 import type { ActionResult, Chain } from "@/server/types";
 import type { AgentConfig, TradeReceiptData } from "@/db/schema";
-import { transferErrorMessage } from "./_shared";
+import { ACTION_LIMITS, slowDown, transferErrorMessage } from "./_shared";
 
 function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
@@ -53,6 +53,42 @@ function revalidateAgent(slug: string) {
   revalidatePath(`/agents/${slug}/settings`);
   revalidatePath(`/agents/${slug}/live`);
   revalidatePath("/agents");
+}
+
+/**
+ * How many of an agent's open positions can only be simulated: held, in a token the
+ * agent has no filled real-money trade in.
+ *
+ * `positions` has no mode column, so a row does not say whether a wallet backs it. The
+ * trade rows do: a token the agent never filled a live order in cannot be in its wallet.
+ * A token it has traded live is left out of the count on purpose. That position may be
+ * real tokens bought before a switch back to paper, and calling those simulated would
+ * send the owner to sell them in paper mode, which empties the book and leaves the
+ * tokens in the wallet with no way to sell them.
+ */
+async function simulatedOpenPositions(db: Db, agentId: string): Promise<number> {
+  const open = await db
+    .select({ tokenId: positions.tokenId })
+    .from(positions)
+    .where(and(eq(positions.agentId, agentId), gt(positions.amountToken, "0")));
+  if (open.length === 0) return 0;
+
+  const tradedLive = await db
+    .selectDistinct({ tokenId: trades.tokenId })
+    .from(trades)
+    .where(
+      and(
+        eq(trades.agentId, agentId),
+        eq(trades.isPaper, false),
+        eq(trades.status, "filled"),
+        inArray(
+          trades.tokenId,
+          open.map((position) => position.tokenId),
+        ),
+      ),
+    );
+  const real = new Set(tradedLive.map((trade) => trade.tokenId));
+  return open.filter((position) => !real.has(position.tokenId)).length;
 }
 
 // ------------------------------------------------------------------ kill switch
@@ -267,10 +303,11 @@ export async function applyFirstTradePresetAction(agentId: string): Promise<Acti
 /**
  * Switch an agent to live mode.
  *
- * Refuses unless, at this moment: the caller owns the agent and every readiness
- * check passes. A second factor is not required — `secondFactorBlock` only records
- * it. The checks are re-run here rather than trusted from the wizard's last render —
- * the browser could be showing a checklist from five minutes and one withdrawal ago.
+ * Refuses unless, at this moment: the caller owns the agent, it holds no simulated
+ * position (see `simulatedOpenPositions`) and every readiness check passes. A second
+ * factor is not required — `secondFactorBlock` only records it. The checks are re-run
+ * here rather than trusted from the wizard's last render — the browser could be showing
+ * a checklist from five minutes and one withdrawal ago.
  */
 export async function goLiveAction(input: {
   agentId: string;
@@ -286,6 +323,16 @@ export async function goLiveAction(input: {
 
   const blocked = await secondFactorBlock(session.userId);
   if (blocked) return fail(blocked);
+
+  // Paper positions do not follow an agent into a live book. The switch only changes
+  // which executor fills the next order, so a simulated holding would be counted in live
+  // equity and offered a Sell button that can never fill: the wallet does not hold it.
+  const simulated = await simulatedOpenPositions(db, agent.id);
+  if (simulated > 0) {
+    return fail(
+      `Sell this agent's ${simulated} paper position${simulated === 1 ? "" : "s"} before going live. They are simulated, so they can't be sold for real money and would sit in the live book as holdings the wallet doesn't have.`,
+    );
+  }
 
   const readiness = await evaluateLiveReadiness({
     agentId: agent.id,
@@ -337,7 +384,11 @@ export async function goLiveAction(input: {
   return { ok: true, data: { mode: "live" } };
 }
 
-/** Back to paper. Owner-only, nothing more — stopping is never the dangerous direction. */
+/**
+ * Back to paper. Owner-only, nothing more — stopping is never the dangerous direction,
+ * so open positions do not block it. The audit line says what that leaves behind: real
+ * tokens stay in the wallet, and only a live sell moves them.
+ */
 export async function backToPaperAction(agentId: string): Promise<ActionResult<{ mode: "paper" }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
@@ -351,7 +402,7 @@ export async function backToPaperAction(agentId: string): Promise<ActionResult<{
     kind: "go_paper",
     agentId: agent.id,
     agentName: agent.name,
-    summary: `Switched ${agent.name} back to paper. Open positions stay on the books and are marked at live prices.`,
+    summary: `Switched ${agent.name} back to paper. Real tokens it still holds stay in its wallet; sell them before switching, or switch back to live to sell them.`,
   });
 
   revalidateAgent(agent.slug);
@@ -402,7 +453,7 @@ export async function secureWithdrawAction(input: {
   // W7 H12 (workstream A): a Privy transfer is a wallet *action*. It can still be
   // `pending` when this returns, and its hash is null until a step broadcasts — so the
   // result carries the status and the action id rather than pretending to be a receipt.
-}): Promise<ActionResult<WithdrawResult>> {
+}): Promise<ActionResult<WithdrawResult & { delivered?: number; accountFeeUsdc?: number; tradingFeesUsdc?: number }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
@@ -414,8 +465,9 @@ export async function secureWithdrawAction(input: {
   const raw = input.toAddress?.trim();
   if (!raw) return fail("Enter a destination address");
   // The same check the form runs, checksum included: a mixed-case Base address with a
-  // typo is refused here in words, not later by the signer in its own.
-  const problem = addressProblemForChain(input.chain, raw);
+  // typo is refused here in words, not later by the signer in its own. So are the other
+  // chain's address, a .sol or .eth name and the USDC token itself.
+  const problem = destinationProblemForChain(input.chain, raw);
   if (problem) return fail(problem);
   const to = normalizeAddressForChain(input.chain, raw);
 
@@ -441,6 +493,16 @@ export async function secureWithdrawAction(input: {
       return { ok: true, data: solana.withdrawalForClient(sent) };
     }
 
+    // Base gas is Privy-sponsored and billed to the app, so this path gets the burst
+    // limit the Solana one enforces inside `withdrawFromAgentSolana`. The key is the
+    // older action's (`withdrawFromAgent` in wallets.ts): one bucket, whichever is called.
+    const { limiter } = await import("@/lib/security/rate-limit");
+    const { OWNER_WITHDRAWAL_BURST_LIMIT, waitSentence } = await import("@/lib/wallets/solana-agent-transfer");
+    const verdict = limiter.consume(`agent-withdraw:${input.chain}:${session.userId}`, OWNER_WITHDRAWAL_BURST_LIMIT);
+    if (!verdict.ok) {
+      return fail(`That's a lot of withdrawals in a short time. Try again in ${waitSentence(verdict.retryAfterSeconds)}.`);
+    }
+
     const result = await sendWithdrawal({
       agentId: input.agentId,
       chain: input.chain,
@@ -464,6 +526,64 @@ export async function secureWithdrawAction(input: {
     console.error("[secureWithdrawAction]", err);
     return fail(
       transferErrorMessage(err, "The withdrawal did not go through. Nothing was sent — try again in a minute.", input.chain, input.asset),
+    );
+  }
+}
+
+/**
+ * What a withdrawal out of an agent's Solana wallet would do, for the Review step: what
+ * arrives, and what the same transaction takes besides it (a one-time fee when the
+ * recipient has never held USDC, and the Tocker trading fees the agent owes). A refusal
+ * the withdrawal would hit (over the wallet cap to an outside address, a token account,
+ * under the minimum, nothing left after fees) comes back here in the same sentence, so
+ * the owner reads it before confirming rather than after.
+ *
+ * Same checks as `secureWithdrawAction`, in the same order. It signs nothing and takes
+ * neither a withdrawal rate-limit slot nor the per-agent lock; it has its own limit,
+ * because every call reads the chain. Like a withdrawal, the planner first settles fee
+ * sweeps that have already landed. The figures are a preview: the withdrawal works
+ * everything out again, and its result is what the receipt reports.
+ */
+export async function previewAgentWithdrawalAction(input: {
+  agentId: string;
+  asset: "usdc" | "native";
+  amount: number;
+  toAddress: string;
+}): Promise<ActionResult<{ delivered: number; accountFeeUsdc: number; tradingFeesUsdc: number }>> {
+  const session = await getSession();
+  if (!session) return fail("Sign in first");
+
+  if (input.asset !== "usdc" && input.asset !== "native") return fail("Unknown asset");
+  if (!(input.amount > 0) || !Number.isFinite(input.amount)) return fail("Enter an amount greater than zero");
+  const raw = input.toAddress?.trim();
+  if (!raw) return fail("Enter a destination address");
+  const problem = destinationProblemForChain("solana", raw);
+  if (problem) return fail(problem);
+  const to = normalizeAddressForChain("solana", raw);
+
+  const { error, agent } = await ownedAgent(input.agentId, session.userId);
+  if (error || !agent) return fail(error ?? "Agent not found");
+
+  const limited = slowDown("agent-withdraw-preview", session.userId, ACTION_LIMITS.preview);
+  if (limited) return fail(limited);
+
+  try {
+    const { planAgentSolanaWithdrawal } = await import("@/lib/wallets/solana-agent-transfer");
+    const plan = await planAgentSolanaWithdrawal({
+      agentId: agent.id,
+      asset: input.asset,
+      amount: input.amount,
+      toAddress: to,
+    });
+    // Three figures and nothing else: the route, the cap and the wallets stay on the server.
+    return {
+      ok: true,
+      data: { delivered: plan.delivered, accountFeeUsdc: plan.accountFeeUsdc, tradingFeesUsdc: plan.tradingFeesUsdc },
+    };
+  } catch (err) {
+    console.error("[previewAgentWithdrawalAction]", err);
+    return fail(
+      transferErrorMessage(err, "Couldn't check this withdrawal just now. Try again in a moment.", "solana", input.asset),
     );
   }
 }
