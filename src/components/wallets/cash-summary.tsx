@@ -52,10 +52,17 @@ export function CashTotal({
 export function ChainBreakdown({
   cash,
   onDeposit,
+  onNavigate,
   className,
 }: {
   cash: UnifiedCash;
   onDeposit?: (chain: Chain) => void;
+  /**
+   * Closes the surface this list sits in when an agent's Withdraw link is followed. A
+   * route change closes it anyway; from that agent's own settings page only the hash
+   * changes, and the panel would stay open over the card it just scrolled to.
+   */
+  onNavigate?: () => void;
   className?: string;
 }) {
   return (
@@ -103,7 +110,18 @@ export function ChainBreakdown({
                 : "agent equity — all cash"}
             </p>
           </div>
-          <p className="tnum text-sm font-medium">{formatUsd(agent.equityUsd)}</p>
+          <div className="shrink-0 text-right">
+            <p className="tnum text-sm font-medium">{formatUsd(agent.equityUsd)}</p>
+            {/* Straight to the agent's Withdraw card: this money cannot be sent from the
+                cash Withdraw, and the agent's name above only leads to its page. */}
+            <Link
+              href={`/agents/${agent.slug}/settings#withdraw`}
+              onClick={onNavigate}
+              className="mt-0.5 inline-block rounded text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Withdraw
+            </Link>
+          </div>
         </li>
       ))}
     </ul>

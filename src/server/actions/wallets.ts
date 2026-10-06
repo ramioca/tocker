@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { and, desc, eq } from "drizzle-orm";
 import { agentFundingIntents, agents, getDb, wallets } from "@/db";
 import { getSession } from "@/lib/auth";
-import { addressProblemForChain, normalizeAddressForChain } from "@/lib/wallet-address";
+import { destinationProblemForChain, normalizeAddressForChain } from "@/lib/wallet-address";
 import {
   applyAgentBudgetPolicy,
   getAgentWallets,
@@ -651,7 +651,7 @@ export async function withdrawFromAgent(input: {
   if (!(input.amount > 0) || !Number.isFinite(input.amount)) return fail("Enter an amount greater than zero");
   const raw = input.toAddress?.trim();
   if (!raw) return fail("Enter a destination address");
-  const problem = addressProblemForChain(input.chain, raw);
+  const problem = destinationProblemForChain(input.chain, raw);
   if (problem) return fail(problem);
   const to = normalizeAddressForChain(input.chain, raw);
 

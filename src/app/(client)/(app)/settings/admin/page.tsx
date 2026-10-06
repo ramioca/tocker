@@ -10,6 +10,7 @@ import { encryptionConfigured } from "@/lib/security/llm-keys";
 import { isPrivyConfigured } from "@/lib/privy";
 import { HeadlineTiles } from "@/components/admin/headline-tiles";
 import { DailyBars } from "@/components/admin/daily-bars";
+import { AdminRequestsTable } from "@/components/admin/requests-table";
 import { AdminUsersTable } from "@/components/admin/users-table";
 import { AdminAgentsTable } from "@/components/admin/agents-table";
 import { AdminTradesTable } from "@/components/admin/trades-table";
@@ -23,6 +24,7 @@ import {
   getAdminSeries,
   listAdminAgents,
   listAdminAuditEvents,
+  listAdminSlotRequests,
   listAdminTrades,
   listAdminUsers,
   type AdminBalancesSnapshot,
@@ -44,6 +46,11 @@ export const metadata: Metadata = { title: "Admin" }; // the root layout appends
  * same thing for an admin as for a stranger. What is here instead is metadata and money:
  * names, counts, notionals, balances, timestamps.
  *
+ * **Earlier waitlist signups are listed, not granted.** The landing page has no
+ * waitlist any more; the addresses that signed up on the old one are here so they can
+ * be told the doors are open. Who may sign in is Privy's switch, in Privy's dashboard;
+ * nothing on this page can change it.
+ *
  * **Every number is a fact.** Counts and sums come from SQL, balances from Privy, and
  * there is no derived "growth" figure anywhere — see the note in the query module.
  */
@@ -61,9 +68,10 @@ export default async function AdminSettingsPage() {
     balanceError = err instanceof Error ? err.message : "Could not read the agent wallets.";
   }
 
-  const [headline, series, userRows, agentRows, tradeRows, auditRows, platformHasWallets, mfa] = await Promise.all([
+  const [headline, series, requestRows, userRows, agentRows, tradeRows, auditRows, platformHasWallets, mfa] = await Promise.all([
     getAdminHeadline(),
     getAdminSeries(),
+    listAdminSlotRequests(),
     listAdminUsers(),
     listAdminAgents(balances),
     listAdminTrades(),
@@ -144,6 +152,16 @@ export default async function AdminSettingsPage() {
           ) : (
             <AdminBalancesTable snapshot={balances} />
           )}
+        </SettingsSection>
+
+        {/* The people who asked before sign-up opened. Read-only, like everything here. */}
+        <SettingsSection
+          id="requests"
+          title="Earlier waitlist signups"
+          description="Newest first. The waitlist is closed; these are the people to tell that sign-up is open."
+          className="min-w-0"
+        >
+          <AdminRequestsTable rows={requestRows} />
         </SettingsSection>
 
         <SettingsSection

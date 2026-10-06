@@ -108,44 +108,18 @@ export function Address({
  *
  * A truncated `7xKX…pTqL` is exactly what address poisoning forges: the attacker grinds
  * a vanity address with the same first and last characters and plants it in the
- * victim's history. So every confirm step shows every character, in groups of four with
- * alternating weight so the eye can walk it against the source instead of skimming it.
+ * victim's history. So every confirm step shows every character.
+ *
+ * It is one plain string, the way a wallet or an explorer prints it. Grouping it in
+ * fours with alternating weight made it easier to walk but stopped it reading as an
+ * address at all, and people check an address against the one they already know.
  */
 export function FullAddress({ address, className }: { address: string; className?: string }) {
-  // "0x" is a prefix, not two hex digits: grouping from the first character left
-  // "0x71 C765 … 6F", every group misaligned and a two-character stub at the end. Split
-  // it off so the 40 hex characters make ten even groups. Base58 has no prefix.
-  const prefix = /^0x/i.test(address) ? address.slice(0, 2) : "";
-  const groups = address.slice(prefix.length).match(/.{1,4}/g) ?? [];
   return (
-    <span className={cn("inline-flex font-mono text-xs leading-relaxed", className)}>
-      {/* One click or long-press selects every character — the fallback when the
-          clipboard refuses. The groups are inline-blocks spaced by margin, not a flex row
-          with a gap: flex items copy out one per line, and a pasted address with nine
-          line breaks in it is not the address. */}
-      <span className="select-all">
-        {/* An aria-label on a plain span is ignored, so the address is real text for a
-            screen reader, kept out of the selection so it is not copied twice. */}
-        <span className="sr-only select-none">{address}</span>
-        {prefix ? (
-          <span aria-hidden className="mr-1 inline-block text-muted-foreground">
-            {prefix}
-          </span>
-        ) : null}
-        {groups.map((group, index) => (
-          <span
-            key={index}
-            aria-hidden
-            className={cn(
-              "inline-block",
-              index < groups.length - 1 && "mr-1",
-              index % 2 === 0 ? "text-foreground" : "text-muted-foreground",
-            )}
-          >
-            {group}
-          </span>
-        ))}
-      </span>
+    <span className={cn("inline-flex min-w-0 font-mono text-xs leading-relaxed", className)}>
+      {/* One click or long-press selects every character: the fallback when the clipboard
+          refuses. It wraps anywhere, because an address has no word breaks of its own. */}
+      <span className="min-w-0 select-all break-all text-foreground">{address}</span>
     </span>
   );
 }

@@ -15,7 +15,9 @@ import "server-only";
  * an operator's recipe is not a support tool. What an admin gets is metadata and money:
  * names, counts, notionals, timestamps, and the two columns of `config` the product
  * already publishes on every agent card (chains and model). The one shape that crosses
- * into private territory is `agents.config`, and it is never selected here.
+ * into private territory is `agents.config`, and it is never selected here. The requests
+ * for an early-access slot are listed too, as the landing form stored them: an address
+ * and three answers, the same kind of thing as the users' emails already shown.
  *
  * **Every number is a fact.** Counts and sums come from SQL; balances come from Privy.
  * There is no "growth %" on this page because nothing in the database supports one
@@ -135,6 +137,18 @@ export interface AdminUserRow {
   agentCount: number;
   liveAgentCount: number;
   lastRunAt: string | null;
+}
+
+/** One request for an early-access slot, as the landing page's form stored it. */
+export interface AdminSlotRequestRow {
+  id: string;
+  email: string;
+  volume: string;
+  chains: string[];
+  style: string | null;
+  createdAt: string;
+  /** A user row carries this address, compared in lower case: the person has signed in. */
+  hasAccount: boolean;
 }
 
 /** An agent card plus the two admin-only columns: what its wallets hold. */
@@ -501,6 +515,48 @@ export async function listAdminUsers(limit = ADMIN_TABLE_LIMIT): Promise<AdminUs
       lastRunAt: isoOf(agg?.lastRunAt),
     };
   });
+}
+
+/**
+ * Who asked for an early-access slot, newest first: the list an admin works through to
+ * let people in. It is the durable record. The request mail is sent after the response
+ * and can fail without anyone noticing; this row was written before the form answered.
+ *
+ * `hasAccount` says whether somebody has since signed in with that address, so a request
+ * already dealt with is told apart from one still waiting. The match is on the lower-cased
+ * email, which is how the form's own duplicate check compares them.
+ */
+export async function listAdminSlotRequests(limit = ADMIN_TABLE_LIMIT): Promise<AdminSlotRequestRow[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      id: waitlistSignups.id,
+      email: waitlistSignups.email,
+      volume: waitlistSignups.volume,
+      chains: waitlistSignups.chains,
+      style: waitlistSignups.style,
+      createdAt: waitlistSignups.createdAt,
+    })
+    .from(waitlistSignups)
+    // The id only settles the order of two requests stored in the same instant.
+    .orderBy(desc(waitlistSignups.createdAt), desc(waitlistSignups.id))
+    .limit(Math.min(Math.max(limit, 1), 500));
+  if (rows.length === 0) return [];
+
+  const emails = [...new Set(rows.map((r) => r.email.toLowerCase()))];
+  const userEmail = sql<string>`lower(${users.email})`;
+  const matched = await db.select({ email: userEmail }).from(users).where(inArray(userEmail, emails));
+  const withAccount = new Set(matched.map((m) => m.email));
+
+  return rows.map((row) => ({
+    id: row.id,
+    email: row.email,
+    volume: row.volume,
+    chains: row.chains,
+    style: row.style,
+    createdAt: row.createdAt.toISOString(),
+    hasAccount: withAccount.has(row.email.toLowerCase()),
+  }));
 }
 
 /**

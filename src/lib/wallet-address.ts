@@ -1,4 +1,5 @@
 import { getAddress, isAddress } from "viem";
+import { USDC_MINT } from "@/lib/wallets/funding";
 import type { Chain } from "@/server/types";
 
 /**
@@ -34,6 +35,45 @@ export function addressProblemForChain(chain: Chain, address: string): string | 
 
 export function isValidAddressForChain(chain: Chain, address: string): boolean {
   return addressProblemForChain(chain, address) === null;
+}
+
+/** A name service handle (`.base.eth` ends in `.eth`). Nothing here resolves one. */
+const NAME = /\.(?:sol|eth)$/i;
+
+/** Shown when a withdrawal's destination is a name rather than an address. */
+export const NAME_NOT_SUPPORTED = "Names like .sol or .eth aren't supported here. Paste the full wallet address.";
+
+/** Shown when a withdrawal's destination is the USDC mint or contract. */
+export const USDC_TOKEN_NOT_A_WALLET =
+  "That's the USDC token itself, not a wallet. Paste the address of the wallet you want the USDC to arrive in.";
+
+/**
+ * What is wrong with `address` as the place a withdrawal on `chain` is sent, or `null`.
+ *
+ * Everything {@link addressProblemForChain} refuses, in more specific words where the
+ * mistake has a name (the other chain's address, a .sol or .eth name), plus one address
+ * that is well-formed and still never a wallet: USDC itself, which the Deposit sheet puts
+ * on the clipboard with its own copy button. It only ever refuses more.
+ *
+ * Apart from `addressProblemForChain` because that one also checks token addresses (the
+ * blocklist, the trade picker), where the USDC contract is a valid answer and nothing is
+ * being withdrawn.
+ */
+export function destinationProblemForChain(chain: Chain, address: string): string | null {
+  const value = address.trim();
+  if (NAME.test(value)) return NAME_NOT_SUPPORTED;
+  // Either chain's USDC, whichever is selected: "switch the chain" would be the wrong
+  // advice for a token. Base58 is case-sensitive; hex is not.
+  if (value === USDC_MINT.solana || value.toLowerCase() === USDC_MINT.base.toLowerCase()) {
+    return USDC_TOKEN_NOT_A_WALLET;
+  }
+  if (chain === "solana" && EVM.test(value)) {
+    return "That's a Base (0x…) address. This withdrawal leaves on Solana. Paste a Solana address, or switch the chain to Base.";
+  }
+  if (chain === "base" && SOLANA.test(value)) {
+    return "That's a Solana address. This withdrawal leaves on Base. Paste a 0x… address, or switch the chain to Solana.";
+  }
+  return addressProblemForChain(chain, value);
 }
 
 /**

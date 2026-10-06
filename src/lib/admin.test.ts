@@ -28,35 +28,35 @@ describe("adminEmails", () => {
   });
 
   it("trims, lowercases and drops blank entries", () => {
-    vi.stubEnv("ADMIN_EMAILS", " Rami@BlockRun.ai , ops@tocker.app ,, ");
-    expect(adminEmails()).toEqual(["rami@blockrun.ai", "ops@tocker.app"]);
+    vi.stubEnv("ADMIN_EMAILS", " Owner@Example.com , ops@tocker.app ,, ");
+    expect(adminEmails()).toEqual(["owner@example.com", "ops@tocker.app"]);
   });
 });
 
 describe("isAdminEmail", () => {
   it("lets nobody in when the list is empty", () => {
     vi.stubEnv("ADMIN_EMAILS", undefined);
-    expect(isAdminEmail("rami@blockrun.ai")).toBe(false);
+    expect(isAdminEmail("owner@example.com")).toBe(false);
     vi.stubEnv("ADMIN_EMAILS", "");
-    expect(isAdminEmail("rami@blockrun.ai")).toBe(false);
+    expect(isAdminEmail("owner@example.com")).toBe(false);
   });
 
   it("matches regardless of case and surrounding whitespace on either side", () => {
-    vi.stubEnv("ADMIN_EMAILS", "  RAMI@blockrun.AI ");
-    expect(isAdminEmail("rami@blockrun.ai")).toBe(true);
-    expect(isAdminEmail("Rami@BlockRun.ai")).toBe(true);
-    expect(isAdminEmail("  rami@blockrun.ai  ")).toBe(true);
+    vi.stubEnv("ADMIN_EMAILS", "  OWNER@example.COM ");
+    expect(isAdminEmail("owner@example.com")).toBe(true);
+    expect(isAdminEmail("Owner@Example.com")).toBe(true);
+    expect(isAdminEmail("  owner@example.com  ")).toBe(true);
   });
 
   it("does not match a different address, a prefix or a suffix", () => {
-    vi.stubEnv("ADMIN_EMAILS", "rami@blockrun.ai");
-    expect(isAdminEmail("ram@blockrun.ai")).toBe(false);
-    expect(isAdminEmail("rami@blockrun.ai.evil.com")).toBe(false);
-    expect(isAdminEmail("xrami@blockrun.ai")).toBe(false);
+    vi.stubEnv("ADMIN_EMAILS", "owner@example.com");
+    expect(isAdminEmail("owne@example.com")).toBe(false);
+    expect(isAdminEmail("owner@example.com.evil.com")).toBe(false);
+    expect(isAdminEmail("xowner@example.com")).toBe(false);
   });
 
   it("refuses a null, undefined or blank email even with a populated list", () => {
-    vi.stubEnv("ADMIN_EMAILS", "rami@blockrun.ai, ops@tocker.app");
+    vi.stubEnv("ADMIN_EMAILS", "owner@example.com, ops@tocker.app");
     expect(isAdminEmail(null)).toBe(false);
     expect(isAdminEmail(undefined)).toBe(false);
     expect(isAdminEmail("")).toBe(false);

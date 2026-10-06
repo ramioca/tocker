@@ -24,6 +24,12 @@ import { listProposals } from "@/server/queries/proposals";
 import { getAgentAnalyticsWindows } from "@/server/queries/analytics";
 import type { AgentDetail, EquityPoint } from "@/server/types";
 
+// Server actions called from this page (`placeManualTrade`, `decideProposalAction`) take
+// their time limit from it, per Next's route-segment-config/maxDuration: a live order is
+// quote, sign, submit and up to 20 s of on-chain confirmation, and must not be cut off
+// between signing and settling. 300 matches the cron and run routes in vercel.json.
+export const maxDuration = 300;
+
 /**
  * The chart's last point is the newest snapshot, which the marks cron writes every five
  * minutes; the positions table under it is live. Append "now" so the headline is the

@@ -12,9 +12,16 @@ import { getFundingIntents, type FundingIntentRow } from "@/server/actions/walle
 import { FundAgentDrawer } from "./fund-agent-drawer";
 import type { WalletBalance } from "@/server/types";
 
+/**
+ * One key per agent, exported so whatever moves money out of the agent can invalidate it:
+ * the query ignores new `initialData` after mount, so a server refresh alone leaves the
+ * Money strip and this card on the balance from before the withdrawal.
+ */
+export const walletBalancesKey = (agentId: string) => ["wallet-balances", agentId] as const;
+
 export function useWalletBalances(agentId: string, initial?: WalletBalance[]) {
   return useQuery({
-    queryKey: ["wallet-balances", agentId],
+    queryKey: walletBalancesKey(agentId),
     queryFn: () => fetchWalletBalances(agentId),
     initialData: initial,
     staleTime: 15_000,

@@ -12,8 +12,8 @@
  * Paper gets a morph button. Live money gets hold-to-confirm: the same gesture as
  * switching an agent to live in the first place, for the same reason.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { ArrowLeftRight, Loader2, ShieldAlert, ShieldCheck, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -37,10 +37,28 @@ import { ChainBadge, chainLabel } from "@/components/common/chain-badge";
 import { Address } from "@/components/common/address";
 import { formatPreviewFees, formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { Field } from "@/components/agents/builder/field";
+import { SellPositionHost } from "@/components/agents/sell-position";
 import { ScoreBadge } from "@/components/tokens";
 import { placeManualTrade, previewTrade } from "@/server/actions/trading";
 import { TradeReceiptCard } from "@/components/trading";
 import { SELL_SLICES, floorCents, sliceLabel, sliceText } from "@/components/trading/sell-amount";
+import {
+  MaxSlippagePicker,
+  RealisedOnSale,
+  TradeFailureAlert,
+  useRefreshAfterTrade,
+} from "@/components/trading/sell-controls";
+import {
+  PREVIEW_FAILED,
+  PREVIEW_PATIENCE_MS,
+  PREVIEW_SLOW,
+  noQuoteLine,
+  realisedOnSale,
+  unpreviewedLine,
+} from "@/components/trading/sell-preview";
+import { safeAction } from "@/lib/safe-action";
+import { widerSlippageChoices } from "@/lib/trading/manual-slippage";
+import { ORDER_IN_FLIGHT_LOST, isSlippageFailure, outcomeUncertain } from "@/lib/trading/trade-error-copy";
 import { cn } from "@/lib/utils";
 import type { AgentDetail, Chain, TradePreview } from "@/server/types";
 import type { TradeReceiptData } from "@/db/schema";
@@ -90,7 +108,33 @@ function buyPresets(maxTrade: number): Array<{ value: number; label: string }> {
 }
 
 export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
-  const router = useRouter();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <TradeSheet agent={agent} triggerRef={triggerRef} />
+      {/* The positions table's Sell dialog, rendered from here because this stays mounted
+          when a row does not: selling a whole position removes its row with the fill, and
+          the result has to outlive it. Owner-only, like everything else in this file.
+          Focus comes back to the sheet's button when the row it was opened from is gone. */}
+      <SellPositionHost
+        agentId={agent.id}
+        isPaper={agent.mode !== "live"}
+        slippageBps={agent.config?.risk.slippageBps ?? null}
+        fallbackFocus={triggerRef}
+      />
+    </>
+  );
+}
+
+function TradeSheet({
+  agent,
+  triggerRef,
+}: {
+  agent: AgentDetail;
+  /** The "Buy / Sell" button, for whoever needs to hand focus back to it. */
+  triggerRef: RefObject<HTMLButtonElement | null>;
+}) {
+  const refreshBook = useRefreshAfterTrade(agent.id);
   const [open, setOpen] = useState(false);
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [chain, setChain] = useState<Chain>(agent.chains[0] ?? "solana");
@@ -113,7 +157,16 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
    * that disappears in four seconds.
    */
   const [receipt, setReceipt] = useState<TradeReceiptData | null>(null);
+  /** What the sale behind that receipt realised. Null for a buy, or a sell of nothing the book listed. */
+  const [realised, setRealised] = useState<{ usd: number; pct: number | null } | null>(null);
   const receiptRef = useRef<HTMLHeadingElement>(null);
+  /**
+   * The last order's failure, and a wider slippage picked for one sell. Both belong to
+   * one token, so both are keyed by it: neither can show up beside, or be sent with, an
+   * order for a different one.
+   */
+  const [failure, setFailure] = useState<{ token: string; text: string } | null>(null);
+  const [slippage, setSlippage] = useState<{ token: string; bps: number } | null>(null);
   /** What the agent holds of the token in the box, from the last preview of it. */
   const [holding, setHolding] = useState<{ key: string; valueUsd: number | null; symbol: string } | null>(null);
 
@@ -145,6 +198,9 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
       if (wanted === "sell" && known?.valueUsd) setAmount(sliceText(known.valueUsd, 100));
     }
     setReceipt(null);
+    setRealised(null);
+    setFailure(null);
+    setSlippage(null);
     setOpen(true);
     /* eslint-enable react-hooks/set-state-in-effect */
     const rest = new URLSearchParams(searchParams.toString());
@@ -175,24 +231,40 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   // a full exit may sell past the cap (see risk.test.ts).
   const overCap = side === "buy" && maxTrade > 0 && Number.isFinite(amountUsd) && amountUsd > maxTrade;
   const isLive = agent.mode === "live";
-  const key = open && ready ? `${chain}|${side}|${address}|${amountUsd}` : null;
+  const tokenKey = `${chain}|${address}`;
+  // One live sell may run under a wider slippage tolerance than the agent's own. Only a
+  // step the action will honour is ever sent; anything else is the agent's setting.
+  const agentBps = agent.config?.risk.slippageBps ?? null;
+  const widerChoices = side === "sell" && isLive && agentBps !== null ? widerSlippageChoices(agentBps) : [];
+  const maxSlippageBps =
+    slippage !== null && slippage.token === tokenKey && widerChoices.includes(slippage.bps) ? slippage.bps : null;
+  const key = open && ready ? `${chain}|${side}|${address}|${amountUsd}|${maxSlippageBps ?? "agent"}` : null;
 
   // Preview whenever the order changes. Free: scoring costs nothing and the quote is
-  // the same call the executor would make.
+  // the same call the executor would make. Asked once per order and never refreshed on
+  // its own, for the same reason: a live quote spends the venue's rate limit.
   useEffect(() => {
     if (key === null) return;
     let cancelled = false;
+    let answered = false;
     const timer = window.setTimeout(async () => {
-      const request: Parameters<typeof previewTrade>[0] & { sellAll: boolean } = {
-        agentId: agent.id,
-        chain,
-        side,
-        tokenAddress: address,
-        amountUsd,
-        sellAll,
-      };
-      const answer = await previewTrade(request);
+      // A request that throws (offline, a deploy in flight) becomes an answer like any
+      // other, instead of leaving the panel on "Scoring…" for good.
+      const answer = await safeAction(
+        () =>
+          previewTrade({
+            agentId: agent.id,
+            chain,
+            side,
+            tokenAddress: address,
+            amountUsd,
+            sellAll,
+            ...(maxSlippageBps === null ? {} : { maxSlippageBps }),
+          }),
+        PREVIEW_FAILED,
+      );
       if (cancelled) return;
+      answered = true;
       setResult(
         answer.ok ? { key, data: answer.data, error: null } : { key, data: null, error: answer.error },
       );
@@ -205,11 +277,17 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
         });
       }
     }, PREVIEW_DEBOUNCE_MS);
+    // A preview that never answers must not hold a sell shut. A late answer replaces this.
+    const patience = window.setTimeout(() => {
+      if (cancelled || answered) return;
+      setResult({ key, data: null, error: PREVIEW_SLOW });
+    }, PREVIEW_PATIENCE_MS);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      window.clearTimeout(patience);
     };
-  }, [key, agent.id, chain, side, address, amountUsd, sellAll]);
+  }, [key, agent.id, chain, side, address, amountUsd, sellAll, maxSlippageBps]);
 
   // The fill lands at the end of a long form, below the fold on a phone, while the token
   // box above it has just been cleared — which read as the sheet resetting. Take the
@@ -230,7 +308,9 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
     previewHeld ??
     (bookPosition ? { key: `${chain}|${address}`, valueUsd: bookPosition.valueUsd, symbol: bookPosition.token.symbol } : null);
   const heldUsd = side === "sell" ? (held?.valueUsd ?? null) : null;
-  const overPosition = heldUsd !== null && amountValid && amountUsd > heldUsd;
+  // "Everything" is never over the position: the server sells the balance at the mark it
+  // reads, whatever this figure was when the page rendered.
+  const overPosition = !sellAll && heldUsd !== null && amountValid && amountUsd > heldUsd;
   // The amount only rides on the button when the order can go: "Sell $99,999.00" under
   // "more than the position is worth" read as an offer the sheet was refusing.
   const orderable = amountValid && !overCap && !overPosition && preview?.allowed !== false;
@@ -250,17 +330,34 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   const [holdKey, setHoldKey] = useState(0);
 
   const place = useCallback(async () => {
-    const placed = await placeManualTrade({
-      agentId: agent.id,
-      chain,
-      side,
-      tokenAddress: address,
-      amountUsd,
-      ...(sellAll ? { sellAll: true } : {}),
-      ...(note.trim() ? { note: note.trim() } : {}),
-    });
+    setFailure(null);
+    // Read before the fill: the book this sheet was rendered with is the position as it
+    // stood, which is what the sale is measured against.
+    const basis = side === "sell" && bookPosition ? bookPosition : null;
+    // A request that throws may still have reached the server and filled, so the
+    // sentence says to check before trying again. It never re-arms the button in silence.
+    const placed = await safeAction(
+      () =>
+        placeManualTrade({
+          agentId: agent.id,
+          chain,
+          side,
+          tokenAddress: address,
+          amountUsd,
+          ...(sellAll ? { sellAll: true } : {}),
+          ...(maxSlippageBps === null ? {} : { maxSlippageBps }),
+          ...(note.trim() ? { note: note.trim() } : {}),
+        }),
+      ORDER_IN_FLIGHT_LOST,
+    );
+    // After every attempt: a failed order still wrote a trade row.
+    refreshBook();
     if (!placed.ok) {
-      toast.error("Trade not placed", { description: placed.error });
+      setFailure({ token: tokenKey, text: placed.error });
+      // "Not placed" is a claim. An order that may have filled does not get that heading.
+      toast.error(outcomeUncertain(placed.error) ? "Trade unconfirmed" : "Trade not placed", {
+        description: placed.error,
+      });
       throw new Error(placed.error);
     }
     toast.success(
@@ -270,11 +367,23 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
       },
     );
     setReceipt(placed.data.receipt);
+    setRealised(
+      basis
+        ? realisedOnSale({
+            amountUsd: placed.data.amountUsd,
+            amountToken: placed.data.amountToken,
+            totalFeeUsd: placed.data.receipt.totalFeeUsd,
+            heldToken: basis.amountToken,
+            avgCostUsd: basis.avgCostUsd,
+          })
+        : null,
+    );
     setPicked(null);
     setNote("");
     setResult(null);
-    router.refresh();
-  }, [agent.id, chain, side, address, amountUsd, sellAll, note, router]);
+    // The wider tolerance was for that one order.
+    setSlippage(null);
+  }, [agent.id, chain, side, address, amountUsd, sellAll, maxSlippageBps, note, bookPosition, tokenKey, refreshBook]);
 
   const submit = useCallback(async () => {
     setSubmitting(true);
@@ -286,7 +395,18 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
     }
   }, [place]);
 
-  const blocked = submitting || !ready || previewing || preview === null || !preview.allowed;
+  const unresolved = previewError !== null && isUnresolvedToken(previewError);
+  // A buy waits for a preview that allows it. A sell only waits for an answer of some
+  // kind: a preview that failed, timed out or could not quote must never be what keeps
+  // someone in a position, and the server runs every check again when the order lands.
+  // Two answers still stop it, because the order would be refused for the same reason:
+  // the guard saying no, and a token that does not resolve.
+  const blocked =
+    side === "sell"
+      ? submitting || !ready || current === null || preview?.allowed === false || unresolved
+      : submitting || !ready || previewing || preview === null || !preview.allowed;
+  // A sell's preview came back as an error and the button is live anyway.
+  const sellUnpreviewed = side === "sell" && previewError !== null && !unresolved;
   // One line above the button saying why it is dead, so the reason is in view wherever
   // the form is scrolled to.
   // Short, because the full text is already in the preview right above it; repeating it
@@ -294,9 +414,11 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
   const footerReason = submitting
     ? null
     : previewError !== null
-      ? isUnresolvedToken(previewError)
+      ? unresolved
         ? "Token not found."
-        : firstSentence(previewError)
+        : sellUnpreviewed
+          ? null
+          : firstSentence(previewError)
       : preview !== null && !preview.allowed
         ? overCap
           ? "Over the per-trade cap."
@@ -304,18 +426,27 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
             ? "Over the position."
             : firstSentence(preview.reason ?? "")
         : null;
+  const shownFailure = failure !== null && failure.token === tokenKey ? failure.text : null;
+  const widerLeft = widerChoices.some((bps) => bps > (maxSlippageBps ?? agentBps ?? 0));
 
   return (
     <Sheet
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (next) setReceipt(null);
+        if (next) {
+          setReceipt(null);
+          setRealised(null);
+          setFailure(null);
+          // A wider tolerance is picked for the order in front of you, not kept for later.
+          setSlippage(null);
+        }
       }}
     >
       <SheetTrigger
         render={
           <button
+            ref={triggerRef}
             type="button"
             className={cn(
               "inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-medium",
@@ -518,7 +649,18 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
               error={previewError}
               loading={previewing}
               ready={ready}
+              widerSlippageLeft={widerLeft}
             />
+
+            {agentBps !== null && widerChoices.length > 0 ? (
+              <MaxSlippagePicker
+                agentBps={agentBps}
+                value={maxSlippageBps}
+                onChange={(bps) => setSlippage(bps === null ? null : { token: tokenKey, bps })}
+                disabled={submitting}
+                labelClassName="text-sm font-medium text-foreground"
+              />
+            ) : null}
 
             <Field label="Note" htmlFor="manual-note" hint="Published with the fill, like any other trade's rationale. Left blank it reads “Manual trade by the owner.”">
               <Textarea
@@ -541,6 +683,7 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
                 >
                   Filled
                 </h3>
+                {realised ? <RealisedOnSale usd={realised.usd} pct={realised.pct} /> : null}
                 <TradeReceiptCard receipt={receipt} />
               </section>
             ) : null}
@@ -554,9 +697,24 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
               it fills immediately.
             </p>
           ) : null}
+          {/* The last order's failure, until the next attempt. Here rather than in the
+              form: the button it explains is here, and the form may be scrolled away. */}
+          {shownFailure !== null ? (
+            <TradeFailureAlert
+              text={shownFailure}
+              settingsHref={`/agents/${agent.slug}/settings#risk`}
+              widerSlippage={isSlippageFailure(shownFailure) && widerLeft ? "above" : null}
+            />
+          ) : null}
           {footerReason ? (
             <p role="status" className="line-clamp-2 text-xs leading-relaxed text-destructive">
               {footerReason}
+            </p>
+          ) : sellUnpreviewed && !submitting ? (
+            // Not a reason the button is dead: it is not. Said so the missing preview is
+            // not mistaken for a refusal.
+            <p role="status" className="text-xs leading-relaxed text-muted-foreground">
+              {unpreviewedLine(firstSentence(previewError ?? ""))}
             </p>
           ) : !ready && !receipt ? (
             <p className="text-xs text-muted-foreground">
@@ -573,6 +731,7 @@ export function ManualTradeSheet({ agent }: { agent: AgentDetail }) {
                 size="lg"
                 onClick={() => {
                   setReceipt(null);
+                  setRealised(null);
                   document.getElementById("manual-token")?.focus();
                 }}
               >
@@ -627,6 +786,7 @@ function PreviewPanel({
   error,
   loading,
   ready,
+  widerSlippageLeft,
 }: {
   preview: TradePreview | null;
   side: "buy" | "sell";
@@ -636,6 +796,8 @@ function PreviewPanel({
   error: string | null;
   loading: boolean;
   ready: boolean;
+  /** A wider Max slippage can still be picked under this panel. */
+  widerSlippageLeft: boolean;
 }) {
   if (!ready) {
     return (
@@ -655,26 +817,48 @@ function PreviewPanel({
   }
 
   if (error !== null) {
+    const unresolved = isUnresolvedToken(error);
+    // A sell does not wait on its preview: the order is checked again on the server. So
+    // a preview that could not be had is a note, not the red box of a refusal.
+    const note = side === "sell" && !unresolved;
     return (
-      <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-xs leading-relaxed text-destructive">
-        {isUnresolvedToken(error)
+      <p
+        className={cn(
+          "rounded-lg border px-3 py-2.5 text-xs leading-relaxed",
+          note ? "border-border/70 text-muted-foreground" : "border-destructive/30 bg-destructive/5 text-destructive",
+        )}
+      >
+        {unresolved
           ? // The resolver's own text names both chains and the raw chain id; say it for this one.
             `Couldn't find “${input}” on ${chainLabel(chain)}. ${
               chain === "solana"
                 ? "Paste the full mint — a symbol only works for a token Tocker has already seen."
                 : "Paste the 0x contract address."
             }`
-          : error}
+          : note
+            ? unpreviewedLine(error)
+            : error}
       </p>
     );
   }
 
   if (preview === null) return null;
 
+  // A sell is shown as the order will be sent: the position's own tokens and the
+  // venue's quote for them, not the typed dollars divided by a price.
+  const sell = side === "sell" ? (preview.sell ?? null) : null;
   const tokens =
-    preview.estimatedToken === null
-      ? "—"
-      : `${formatTokenAmount(preview.estimatedToken)} ${preview.token.symbol}`;
+    sell !== null && sell.amountToken !== null
+      ? `${formatTokenAmount(sell.amountToken)} ${preview.token.symbol}${sell.fullExit ? " (everything)" : ""}`
+      : preview.estimatedToken === null
+        ? "—"
+        : `${formatTokenAmount(preview.estimatedToken)} ${preview.token.symbol}`;
+  // Without a live quote the only honest figure is what the slice is worth at the last
+  // price, and it says that is what it is.
+  const receive =
+    sell !== null && sell.proceedsUsd !== null
+      ? formatUsd(sell.proceedsUsd)
+      : `${formatUsd(sell?.fullExit && preview.positionValueUsd !== null ? preview.positionValueUsd : amountUsd)} at the last price`;
   const fees = formatPreviewFees(preview.fees);
 
   return (
@@ -701,7 +885,14 @@ function PreviewPanel({
         {preview.allowed ? (
           <>
             <Row label={side === "buy" ? "You get ≈" : "You sell ≈"} value={tokens} />
-            {side === "sell" ? <Row label="You receive ≈" value={formatUsd(amountUsd)} /> : null}
+            {side === "sell" ? <Row label="You receive ≈" value={receive} /> : null}
+            {sell !== null && sell.minProceedsUsd !== null ? (
+              <Row
+                label="At worst ≈"
+                value={formatUsd(sell.minProceedsUsd)}
+                hint="past this the order cancels and nothing is sold"
+              />
+            ) : null}
             {fees ? <Row label="Fees" value={fees} /> : null}
           </>
         ) : null}
@@ -709,6 +900,18 @@ function PreviewPanel({
         <Row label="Cash now" value={formatUsd(preview.cashUsd)} />
         <Row label="Equity now" value={formatUsd(preview.equityUsd)} />
       </dl>
+
+      {side === "sell" && preview.allowed && preview.quoted === false ? (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {/* A slippage refusal shows up here first, before any order: point at the
+              choice that fixes it without leaving the sheet. */}
+          {noQuoteLine(
+            preview.quoteNote && isSlippageFailure(preview.quoteNote) && widerSlippageLeft
+              ? `${preview.quoteNote} Or pick a wider Max slippage below.`
+              : preview.quoteNote,
+          )}
+        </p>
+      ) : null}
 
       {preview.allowed ? (
         <p className="flex items-start gap-2 text-xs leading-relaxed text-[oklch(0.78_0.15_150)]">
@@ -728,11 +931,14 @@ function PreviewPanel({
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
       <dt className="shrink-0 text-muted-foreground">{label}</dt>
-      <dd className="tnum min-w-0 text-right font-mono break-words">{value}</dd>
+      <dd className="tnum min-w-0 text-right font-mono break-words">
+        {value}
+        {hint ? <span className="block font-sans text-[11px] text-muted-foreground">{hint}</span> : null}
+      </dd>
     </div>
   );
 }

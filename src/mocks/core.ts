@@ -74,7 +74,7 @@ export const mockSession: Session = {
   handle: "rami",
   displayName: "Rami",
   avatarUrl: null,
-  email: "rami@blockrun.ai",
+  email: "owner@example.com",
 };
 
 const users: Record<string, UserCard> = {

@@ -8,6 +8,17 @@
 
 export const floorCents = (value: number) => Math.floor(value * 100 + 1e-9) / 100;
 
+/**
+ * What "Max" puts in the amount field: everything that can leave once the fee is taken,
+ * floored to a cent and always with two decimals, so it reads 120.50 like every other
+ * amount here. The modal derives the field from this while Max is on, so a fee that
+ * arrives after the tap (the quote for a pasted address) lowers the amount by itself
+ * instead of turning it red.
+ */
+export function maxAmountText(availableUsdc: number, feeUsdc: number): string {
+  return floorCents(Math.max(0, availableUsdc - feeUsdc)).toFixed(2);
+}
+
 export function checkWithdrawAmount({
   amount,
   availableUsdc,

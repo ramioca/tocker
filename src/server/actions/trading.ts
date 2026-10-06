@@ -24,7 +24,8 @@ import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
 import { chargePlatformFee } from "@/lib/platform/fees";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
-import { applyFill, heldAmountToken, sellAmountToken } from "@/lib/trading/positions";
+import { manualSellSlippageBps } from "@/lib/trading/manual-slippage";
+import { applyFill, heldAmountToken, manualSellSizing } from "@/lib/trading/positions";
 import { getPriceUsd } from "@/lib/trading/prices";
 import { recentRangePct } from "@/lib/trading/range";
 import { checkQuoteSanity } from "@/lib/trading/sanity";
@@ -40,6 +41,7 @@ import {
 import { riskGuard, type OrderIntent } from "@/lib/trading/risk";
 import { ownerRiskMessage } from "@/lib/trading/risk-copy";
 import { executeTrade } from "@/lib/trading/settle";
+import { knownTradeError, ownerTradeError, venueErrorFacts } from "@/lib/trading/trade-error-copy";
 import { ensureQuoteToken, resolveToken } from "@/lib/trading/tokens";
 import type {
   ActionResult,
@@ -98,6 +100,14 @@ export interface PreviewTradeInput {
   side: "buy" | "sell";
   tokenAddress: string;
   amountUsd: number;
+  /**
+   * The order will be "sell everything", so the preview is sized from the position at
+   * the mark it reads now, not from `amountUsd`: that figure is the page's reading of
+   * the position, and the guard refuses it the moment the mark falls under it.
+   */
+  sellAll?: boolean;
+  /** As on {@link PlaceManualTradeInput}, so the preview quotes under the same tolerance. */
+  maxSlippageBps?: number;
 }
 
 /**
@@ -139,20 +149,43 @@ export async function previewTrade(input: PreviewTradeInput): Promise<ActionResu
   const config: AgentConfig = agent.config;
   const score = await scoreQuietly(input.chain, token.address, token.symbol, config);
   const portfolio = await getPortfolio(agent.id);
+  const held = portfolio.positions.find((p) => p.token.id === token.id) ?? null;
+  // Sized by the same function the order uses, so the preview answers for the order that
+  // will be sent. "Everything" is the position at this mark: the typed figure is a mark
+  // or two old, and checking it against a fresh, lower mark is how a falling token got
+  // "more than the position is worth" on its own Sell button.
+  const sizing =
+    input.side === "sell"
+      ? manualSellSizing({
+          sellAll: input.sellAll === true,
+          requestedUsd: amountUsd,
+          heldTokenRow: await heldAmountToken(agent.id, token.id),
+          position: held,
+          decimals: token.decimals,
+        })
+      : null;
+  const sizedUsd = sizing?.sizedUsd ?? amountUsd;
+  const slippageBps = manualSellSlippageBps({
+    side: input.side,
+    agentBps: config.risk.slippageBps,
+    requestedBps: input.maxSlippageBps,
+  });
   const order: OrderIntent = {
     chain: input.chain,
     side: input.side,
     tokenId: token.id,
     tokenAddress: token.address,
     symbol: token.symbol,
-    amountUsd,
+    amountUsd: sizedUsd,
     // The preview must be sized by the same rule the real order will be, or it will
     // say "allowed" for a ticket the guard is about to refuse.
     rangePct: input.side === "buy" ? await recentRangePct(token.id) : null,
   };
   const verdict = riskGuard({ id: agent.id, mode: agent.mode, config }, toRiskPortfolio(portfolio), order, score);
 
-  const { priceUsd, venueFeeUsd } = await indicativeQuote(
+  // A sell is quoted for the tokens the order will send, not for dollars at a buy-side
+  // price: on a thin pool those are different numbers, and only one of them is paid.
+  const indicative = await indicativeQuote(
     { id: agent.id, mode: agent.mode, wallets: await getAgentWallets(agent.id) },
     {
       chain: input.chain,
@@ -161,12 +194,35 @@ export async function previewTrade(input: PreviewTradeInput): Promise<ActionResu
       tokenAddress: token.address,
       symbol: token.symbol,
       decimals: token.decimals,
-      amountUsd,
-      slippageBps: config.risk.slippageBps,
+      amountUsd: sizedUsd,
+      ...(sizing?.amountToken === undefined ? {} : { amountToken: sizing.amountToken }),
+      slippageBps,
     },
   );
-
-  const held = portfolio.positions.find((p) => p.token.id === token.id);
+  const { priceUsd, venueFeeUsd } = indicative;
+  // Only the venue's own answer for this size counts as a quote. Without one the price
+  // above is the last mark, and the preview has to say so instead of calling it quoted.
+  const quoted = indicative.amountUsd !== null;
+  const venue = indicative.venue ?? (agent.mode === "paper" ? "paper" : input.chain === "solana" ? "jupiter" : "privy-base");
+  const quoteNote = quoted
+    ? null
+    : ((indicative.error instanceof Error
+        ? knownTradeError({
+            stage: "quote",
+            side: input.side,
+            symbol: token.symbol,
+            limitPct: slippageBps / 100,
+            limitWidened: slippageBps !== config.risk.slippageBps,
+            message: indicative.error.message,
+            venue,
+            ...venueErrorFacts(indicative.error),
+          })
+        : null) ??
+      (venue === "jupiter"
+        ? "Jupiter didn't return a quote just now."
+        : venue === "privy-base"
+          ? "The swap on Base didn't return a quote just now."
+          : "No price came back for the simulator just now."));
 
   return {
     ok: true,
@@ -187,13 +243,28 @@ export async function previewTrade(input: PreviewTradeInput): Promise<ActionResu
       // tool to call next); the owner gets the same fact in their own words.
       reason: verdict.ok ? null : ownerRiskMessage(verdict),
       priceUsd,
-      estimatedToken: priceUsd && priceUsd > 0 ? amountUsd / priceUsd : null,
+      estimatedToken: priceUsd && priceUsd > 0 ? sizedUsd / priceUsd : null,
       cashUsd: portfolio.cashUsd,
       equityUsd: portfolio.equityUsd,
       positionValueUsd: held?.valueUsd ?? null,
       isPaper: agent.mode === "paper",
       requiresApproval: requiresApproval(config),
       fees: { tockerUsd: feeEnabled() ? platformFeeUsd() : 0, venueUsd: venueFeeUsd },
+      quoted,
+      quoteNote,
+      slippageLimitBps: config.risk.slippageBps,
+      sell:
+        sizing === null
+          ? null
+          : {
+              amountToken: indicative.amountToken ?? sizing.amountToken ?? null,
+              proceedsUsd: indicative.amountUsd,
+              minProceedsUsd:
+                indicative.amountUsd !== null && indicative.appliedSlippageBps !== null
+                  ? indicative.amountUsd * (1 - indicative.appliedSlippageBps / 10_000)
+                  : null,
+              fullExit: sizing.fullExit,
+            },
     },
   };
 }
@@ -212,6 +283,12 @@ export interface PlaceManualTradeInput {
    * the position a mark or two old; "everything" is not a dollar figure.
    */
   sellAll?: boolean;
+  /**
+   * Sells only: a wider slippage tolerance for this one order, in basis points. Honoured
+   * when it is a whole number between the agent's own Slippage tolerance and 1500;
+   * anything else is ignored and the agent's setting applies (`manual-slippage.ts`).
+   */
+  maxSlippageBps?: number;
 }
 
 export interface ManualTradeResult {
@@ -277,12 +354,25 @@ export async function placeManualTrade(
   }
 
   const portfolio = await getPortfolio(agent.id);
-  // The balance from the row, not from the book: the book hides dust, and "sell all"
-  // on a position the owner can still see must empty the wallet of it either way.
-  const heldToken = input.side === "sell" ? await heldAmountToken(agent.id, token.id) : 0;
-  const sellAll = input.side === "sell" && input.sellAll === true && heldToken > 0;
   const heldPosition = portfolio.positions.find((p) => p.token.id === token.id) ?? null;
-  const sizedUsd = sellAll && heldPosition?.valueUsd ? Math.max(amountUsd, heldPosition.valueUsd) : amountUsd;
+  // W7 H1: the owner's own sell is sized from the position too — the venue is told how
+  // many tokens to send, not a dollar figure to convert at a price that has moved. And
+  // "sell all" is the whole balance, full stop: the balance from the row, not from the
+  // book (the book hides dust, and a position the owner can still see must be emptied
+  // either way), valued at the mark read just now. Not the larger of that and the typed
+  // figure: the typed one is the page's reading, and keeping it is what refused "sell
+  // everything" as an oversell whenever the price had fallen since the page rendered.
+  const sizing =
+    input.side === "sell"
+      ? manualSellSizing({
+          sellAll: input.sellAll === true,
+          requestedUsd: amountUsd,
+          heldTokenRow: await heldAmountToken(agent.id, token.id),
+          position: heldPosition,
+          decimals: token.decimals,
+        })
+      : null;
+  const sizedUsd = sizing?.sizedUsd ?? amountUsd;
   const order: OrderIntent = {
     chain: input.chain,
     side: input.side,
@@ -301,10 +391,15 @@ export async function placeManualTrade(
     mode: agent.mode,
     wallets: await getAgentWallets(agent.id),
   };
-  // W7 H1: the owner's own sell is sized from the position too — the venue is told how
-  // many tokens to send, not a dollar figure to convert at a price that has moved. And
-  // "sell all" is the whole balance, full stop; the venue clamps to what the wallet
-  // really holds and retries once on an over-ask.
+  // The agent's own Slippage tolerance, unless the owner widened it for this one sell.
+  // It is the number the venue is given and the number the receipt records.
+  const slippageBps = manualSellSlippageBps({
+    side: input.side,
+    agentBps: config.risk.slippageBps,
+    requestedBps: input.maxSlippageBps,
+  });
+  // The venue clamps the token amount to what the wallet really holds and retries once
+  // on an over-ask.
   const request: TradeRequest = {
     chain: input.chain,
     side: input.side,
@@ -313,19 +408,8 @@ export async function placeManualTrade(
     symbol: token.symbol,
     decimals: token.decimals,
     amountUsd: sizedUsd,
-    ...(sellAll
-      ? { amountToken: heldToken }
-      : input.side === "sell" && heldPosition
-        ? {
-            amountToken: sellAmountToken({
-              heldToken: heldPosition.amountToken,
-              positionValueUsd: heldPosition.valueUsd,
-              requestedUsd: amountUsd,
-              decimals: token.decimals,
-            }),
-          }
-        : {}),
-    slippageBps: config.risk.slippageBps,
+    ...(sizing?.amountToken === undefined ? {} : { amountToken: sizing.amountToken }),
+    slippageBps,
   };
 
   let executor;
@@ -336,6 +420,14 @@ export async function placeManualTrade(
     console.error("[placeManualTrade] getExecutor", err);
     return fail(publicErrorMessage(err, "No venue available for this chain right now."));
   }
+  // What every failure sentence below needs to know about this order.
+  const failure = {
+    side: input.side,
+    symbol: token.symbol,
+    limitPct: slippageBps / 100,
+    limitWidened: slippageBps !== config.risk.slippageBps,
+    venue: executor.venue,
+  };
 
   const tradeId = nanoid();
   await db.insert(trades).values({
@@ -367,8 +459,10 @@ export async function placeManualTrade(
     quote = await executor.quote(request);
   } catch (err) {
     const message = err instanceof Error ? err.message : "quote failed";
+    // The venue's own words stay on the row, which is the owner-only audit trail. What
+    // comes back to the person says whether anything moved and what to do next.
     await db.update(trades).set({ status: "failed", error: message }).where(eq(trades.id, tradeId));
-    return fail(`Could not quote ${token.symbol}: ${message}`);
+    return fail(ownerTradeError({ ...failure, stage: "quote", message, ...venueErrorFacts(err) }));
   }
 
   // A manual trade is often somebody's first live one, so it gets the same last check
@@ -395,7 +489,9 @@ export async function placeManualTrade(
     refreshSellAmount: () => heldAmountToken(agent.id, token.id),
   });
   if (settled.status !== "filled") {
-    return fail(`${token.symbol} ${input.side} failed: ${settled.error}`);
+    // `executeTrade` already wrote the raw text to the row. Its own sentences about an
+    // order that may have filled pass through the mapper word for word.
+    return fail(ownerTradeError({ ...failure, stage: "execute", message: settled.error }));
   }
   const fill = settled.fill;
   quote = settled.quote;
@@ -455,7 +551,7 @@ export async function placeManualTrade(
     tokenAddress: token.address,
     quote,
     fill,
-    slippageToleranceBps: config.risk.slippageBps,
+    slippageToleranceBps: slippageBps,
     score,
     platformFeeUsd,
     quotedAt,

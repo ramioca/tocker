@@ -13,6 +13,7 @@ import { useSession } from "@/hooks/use-session";
 import { preferredDepositChain } from "@/lib/wallets/funding";
 import { cn } from "@/lib/utils";
 import type { Chain } from "@/server/types";
+import type { AgentCash } from "@/lib/wallets/funding";
 
 /*
  * Deposit and Withdraw are a few taps a week, and Withdraw drags in the signing path
@@ -34,6 +35,9 @@ const WithdrawModal = dynamic(() => import("./withdraw-modal").then((mod) => mod
  * slide twice on every load. Phone widths drop the "cash" label.
  */
 const CHIP_MIN_WIDTH = "min-w-[4.875rem] sm:min-w-[6.875rem]";
+
+/** A stable empty list: the Withdraw dialog memoises on it. */
+const NO_AGENTS: AgentCash[] = [];
 
 export { ME_WALLETS_QUERY_KEY, useUserWallets } from "@/components/wallets/use-cash";
 export type { MeWallets } from "@/components/wallets/use-cash";
@@ -103,7 +107,12 @@ export function WalletChip() {
         open={panelOpen}
         onOpenChange={(next) => {
           setPanelOpen(next);
-          if (next) setMoneyFlowsWanted(true);
+          if (next) {
+            setMoneyFlowsWanted(true);
+            // Never a figure older than the click: Withdraw opens from here, on whichever
+            // chain this says the cash is on.
+            void refetch();
+          }
         }}
       >
         <PopoverTrigger
@@ -147,7 +156,7 @@ export function WalletChip() {
 
           {data ? (
             <>
-              <ChainBreakdown cash={data.cash} onDeposit={openDeposit} />
+              <ChainBreakdown cash={data.cash} onDeposit={openDeposit} onNavigate={() => setPanelOpen(false)} />
               <CashLegend cash={data.cash} />
             </>
           ) : failed ? (
@@ -211,6 +220,8 @@ export function WalletChip() {
             open={withdrawOpen}
             onOpenChange={setWithdrawOpen}
             wallets={data?.wallets ?? []}
+            // The chip's number counts agents' money; the dialog has to know where it is.
+            agents={data?.cash.agents ?? NO_AGENTS}
             onDeposit={() => {
               setWithdrawOpen(false);
               openDeposit(preferredDepositChain(data?.cash));

@@ -1,4 +1,5 @@
 import { FAQTabsCard, type FaqTab } from "@/components/spectrumui/faq-tabs-card";
+import { AppLink } from "./app-link";
 import { BrandHeroMark, BrandLockup } from "./brand";
 import { AgentConsole } from "./console";
 import { DEFAULT_ROWS } from "./defaults";
@@ -9,25 +10,26 @@ import { Nav } from "./nav";
 import { PerformancePanel } from "./performance";
 import { SectionHead } from "./section-head";
 import { DEFAULT_DATA_BUDGET_USD, LANDING_SOURCES, usd2, usd3, type LandingSource } from "./signals-data";
-import { WaitlistProvider } from "./waitlist";
-import { WaitlistButton } from "./waitlist-button";
 import "./landing.css";
 import "./landing-hero.css";
 import "./landing-how.css";
 import "./landing-feed.css";
 import "./landing-sections.css";
-import "./landing-waitlist.css";
 
 /**
- * Tocker waitlist landing: a black ground, near-black surfaces, off-white type,
- * the neon "T" mark as the one colour that means "brand", and green/red only on
- * P&L. Every visual below the hero is the app's own UI (Spectrum components)
- * drawn in DOM on labelled sample data.
+ * Tocker landing: a black ground, near-black surfaces, off-white
+ * type, the neon "T" mark as the one colour that means "brand", and green/red
+ * only on P&L. Every visual below the hero is the app's own UI (Spectrum
+ * components) drawn in DOM on labelled sample data.
  *
- * A server component. The interactive parts are client islands: the nav's
- * waitlist pill, the hero's run card, AgentConsole, PublicFeed,
- * PerformancePanel's chart, GoLiveDemo, the FAQ card and WaitlistButton.
- * WaitlistProvider is the client wrapper that owns the modal.
+ * A server component. The interactive parts are client islands: the hero's run
+ * card, AgentConsole, PublicFeed, PerformancePanel's chart, GoLiveDemo, the FAQ
+ * card. Getting in is a plain link to sign-in; there is no form on this page.
+ *
+ * `hasSession` is the route's read of the session cookie. It is a hint and
+ * nothing more: it turns "Sign in" and "Get started" into "Open the app" for
+ * someone who is probably signed in already. Nothing is hidden or redirected on
+ * it; the app does the real check.
  *
  * Section order: Nav, Hero, 01 How, 02 Feed, 03 Data, 04 Performance,
  * 05 Guardrails, 06 Questions, closing call to action, Footer.
@@ -94,9 +96,14 @@ const FAQ_TABS: FaqTab[] = [
     label: "Access",
     faqs: [
       {
-        question: "When do I get in?",
+        question: "How do I get in?",
         answer:
-          "We open seats in batches, most active traders first. Join the waitlist and we’ll email you when yours opens.",
+          "Press Get started and enter your email. We send a six-digit code, and that is your account; there is no waitlist and no password. A crypto wallet works too.",
+      },
+      {
+        question: "What do I need to start?",
+        answer:
+          "An email address and an API key for the model your agent runs on (Anthropic, OpenAI or OpenRouter). Every agent starts on paper, so there is nothing to deposit until you decide to go live.",
       },
       {
         question: "Can I run more than one agent?",
@@ -107,24 +114,22 @@ const FAQ_TABS: FaqTab[] = [
   },
 ];
 
-export function LiquidLanding() {
+export function LiquidLanding({ hasSession }: { hasSession: boolean }) {
   return (
-    <WaitlistProvider>
-      <div className="lp">
-        <Nav />
-        <main id="main" tabIndex={-1}>
-          <Hero />
-          <How />
-          <PublicFeed eyebrow="02 — Feed" />
-          <Sources />
-          <Performance />
-          <Guardrails />
-          <Faq />
-          <Close />
-        </main>
-        <Footer />
-      </div>
-    </WaitlistProvider>
+    <div className="lp">
+      <Nav hasSession={hasSession} />
+      <main id="main" tabIndex={-1}>
+        <Hero hasSession={hasSession} />
+        <How />
+        <PublicFeed eyebrow="02 — Feed" />
+        <Sources />
+        <Performance />
+        <Guardrails />
+        <Faq />
+        <Close hasSession={hasSession} />
+      </main>
+      <Footer />
+    </div>
   );
 }
 
@@ -265,8 +270,12 @@ function Faq() {
   );
 }
 
-/** The page closes on the mark, painted on a still glow, and the one call to action. */
-function Close() {
+/**
+ * The page closes on the mark, painted on a still glow, and the hero's call to
+ * action again: the way into sign-in, or into the app for a visitor who came
+ * with a session cookie.
+ */
+function Close({ hasSession }: { hasSession: boolean }) {
   return (
     <section className="lp-wrap lp-close" aria-labelledby="lp-close-title">
       <div className="lp-close-art" aria-hidden>
@@ -275,8 +284,8 @@ function Close() {
       <h2 id="lp-close-title" className="lp-h2 lp-close-title">
         Your strategy, on the clock.
       </h2>
-      <p className="lp-lede lp-close-lede">Private beta on Solana and Base. We’ll email you when your seat opens.</p>
-      <WaitlistButton className="lp-close-cta" />
+      <p className="lp-lede lp-close-lede">Open now on Solana and Base. Every agent starts on paper.</p>
+      <AppLink hasSession={hasSession} className="lp-close-cta" />
     </section>
   );
 }

@@ -7,6 +7,8 @@
  * `invalid_credentials`. Tested in `login-helpers.test.ts`.
  */
 
+import type { LoginMethod } from "./login-methods";
+
 /**
  * The link to sign-in, with the current page to come back to.
  *
@@ -105,6 +107,49 @@ export function loginErrorMessage(err: unknown): string | null {
   return GENERIC;
 }
 
+/**
+ * Did the auth vendor refuse this sign-in because the account is not on its access list?
+ *
+ * That list is a switch in the vendor's dashboard: off, anyone can sign up; on, it is
+ * the gate. A refusal by it is not a typo to fix under the field, so the card answers
+ * it with a next step instead of an error line. This only reads the refusal; nothing
+ * here grants access.
+ */
+export function isAllowlistRejection(err: unknown): boolean {
+  return errorCode(err) === "allowlist_rejected";
+}
+
+/** Who the access list refused, which is the one sentence the not-invited view opens with. */
+export type NotInvited = "email" | "google" | "wallet" | "account";
+
+/**
+ * How the card answers a refusal by the access list, given the method that was tried.
+ *
+ * Almost always the not-invited view, worded for what was refused. The exception is X.
+ * X hands over no email address and the list is matched on email addresses, phone
+ * numbers and wallets, so an X account that has never signed in can never match an
+ * entry, including one its owner really holds. They are told why, and to use their
+ * email instead
+ * (`"x-use-email"`). That answer exists only while X is an enabled method.
+ */
+export function refusalView(via: LoginMethod | null, xEnabled: boolean): NotInvited | "x-use-email" {
+  if (via === "twitter" && xEnabled) return "x-use-email";
+  return via === "email" || via === "google" || via === "wallet" ? via : "account";
+}
+
+/**
+ * The method an OAuth return leg belongs to, from the provider name on the URL.
+ *
+ * The URL is whatever somebody typed or was sent, so it is only believed when it names
+ * an OAuth provider this deploy actually offers; anything else is "unknown".
+ */
+export function oauthReturnMethod(
+  provider: string | null | undefined,
+  isEnabled: (method: LoginMethod) => boolean,
+): LoginMethod | null {
+  return (provider === "google" || provider === "twitter") && isEnabled(provider) ? provider : null;
+}
+
 const GENERIC = "Something went wrong signing you in. Try again.";
 
 /** Codes that mean "the person changed their mind", which is not an error. */
@@ -121,7 +166,10 @@ const BY_CODE: Record<string, string> = {
   invalid_data: "That didn't look right. Check the address and try again.",
   too_many_requests: "Too many attempts. Wait a minute, then try again.",
   client_request_timeout: "That took too long. Check your connection and try again.",
-  allowlist_rejected: "This address isn't on the list for Tocker yet.",
+  // The card shows its own not-invited view for this code (`isAllowlistRejection`), so
+  // this is only what a caller that does not gets. It names no method, because a wallet
+  // or a Google account is refused with the same code as an email address.
+  allowlist_rejected: "Sign-ups aren't open for that account yet.",
   disallowed_login_method: "That way of signing in isn't available here.",
   disallowed_plus_email: "Addresses with a + tag aren't accepted. Use your plain address.",
   user_does_not_exist: "No account for that yet.",

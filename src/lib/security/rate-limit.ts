@@ -117,8 +117,6 @@ export const RATE_LIMITS = {
   solanaRpc: { limit: 60, windowMs: 60_000 },
   /** One blockhash per user-signed transfer. */
   blockhash: { limit: 30, windowMs: 60_000 },
-  /** Unauthenticated, writes a row and emails the founder. Nobody signs up six times. */
-  waitlist: { limit: 5, windowMs: 10 * 60_000 },
   /** ⌘K queries on every keystroke, so this is generous; the response is also cached. */
   tokenSearch: { limit: 120, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
@@ -138,7 +136,6 @@ export function limitForPath(pathname: string): { rule: RateLimitRule; prefix: s
   if (/^\/api\/agents\/[^/]+\/run$/.test(pathname)) return { rule: RATE_LIMITS.sensitive, prefix: "run" };
   if (pathname === "/api/solana/rpc") return { rule: RATE_LIMITS.solanaRpc, prefix: "solana-rpc" };
   if (pathname === "/api/solana/blockhash") return { rule: RATE_LIMITS.blockhash, prefix: "blockhash" };
-  if (pathname === "/api/waitlist") return { rule: RATE_LIMITS.waitlist, prefix: "waitlist" };
   if (pathname === "/api/tokens/search") return { rule: RATE_LIMITS.tokenSearch, prefix: "token-search" };
   return null;
 }

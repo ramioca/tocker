@@ -11,11 +11,11 @@
  *     `node_modules/next/dist/docs/01-app/02-guides/content-security-policy.md`).
  *     A nonce only works on a page rendered per request, and setting one does not
  *     make a route dynamic; the root layout's `await connection()`
- *     (`src/app/layout.tsx`) does that for every route, the landing page included,
- *     which reads no request data of its own. Do not remove that call.
+ *     (`src/app/layout.tsx`) does that for every route, including the ones that
+ *     read no request data of their own. Do not remove that call.
  *
  *  2. **Coarse rate limits** on `/api/me/*`, `/api/cron/*` and the public endpoints
- *     that cost something per call (the Solana RPC relay, the waitlist, token search;
+ *     that cost something per call (the Solana RPC relay, token search;
  *     the full list is `limitForPath`). Coarse is the right word: the buckets are
  *     in this process's memory, so on serverless the real ceiling is
  *     `limit × instances` (see `src/lib/security/rate-limit.ts` and DEPLOY.md). The per-route checks inside the cron handlers are the ones that

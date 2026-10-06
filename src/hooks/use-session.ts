@@ -1,36 +1,36 @@
 "use client";
-import { useCallback, useEffect, useRef } from "react";
-import { usePathname, useRouter } from "next/navigation";
-import { usePrivy } from "@privy-io/react-auth";
+import { useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { getAccessToken, usePrivy } from "@privy-io/react-auth";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { loginMethodEnabled } from "@/components/auth/login-methods";
 import { PRIVY_APP_ID } from "@/components/providers/privy-provider";
 import { ME_WALLETS_QUERY_KEY } from "@/components/wallets/use-cash";
 import { clearAllDrafts } from "@/components/agents/builder/use-draft";
 import type { Session } from "@/server/types";
+import { readSession } from "./session-fetch";
 
 export interface UseSession {
   /** false until Privy has hydrated — render skeletons, not the logged-out state */
   ready: boolean;
   session: Session | null;
   /**
-   * Opens Privy's login modal. Once Privy has authenticated and the user's wallets
-   * are synced, server-rendered pages are refreshed and the browser is sent to
-   * `redirectTo` when one is given; otherwise it stays on the current page, which
-   * then re-renders signed in.
+   * Opens Privy's modal on its list of external wallets, and nothing else.
    *
    * Sign-in proper is `/login`, which is headless. This modal is what is left of
-   * Privy's own UI: the external-wallet connector behind "Use a crypto wallet
-   * instead".
+   * Privy's own UI: the wallet connector behind "Use a crypto wallet instead". It does
+   * nothing when wallets are not one of this deploy's sign-in methods.
+   *
+   * `redirectTo` is accepted and ignored. Where a sign-in ends up is decided in one
+   * place, `LoginFlow` on /login, which forwards as soon as the session exists.
    */
   login: (options?: { redirectTo?: string }) => void;
   /**
-   * Arm the same post-auth redirect `login()` arms, for a sign-in that does not go
-   * through the modal. Call it immediately before starting a headless flow (send an
-   * email code, hand off to an OAuth provider, prompt for a passkey): whichever of
-   * them completes, the effect below still syncs the wallets, refreshes the
-   * server-rendered tree and sends the browser to `target`.
+   * Does nothing; kept so existing callers still compile.
    *
-   * Omit `target` to stay on the current page.
+   * It used to arm a redirect that the sync below performed once the session existed.
+   * `LoginFlow` already forwards a signed-in visitor, so that made two navigations for
+   * one sign-in and a Back button that needed two presses.
    */
   prepareRedirect: (target?: string) => void;
   logout: () => Promise<void>;
@@ -54,11 +54,34 @@ function purgeSignedOutState(queryClient: QueryClient): void {
   clearAllDrafts();
 }
 
-async function fetchSession(): Promise<Session | null> {
-  const res = await fetch("/api/me", { credentials: "include", cache: "no-store" });
-  if (res.status === 401) return null;
-  if (!res.ok) throw new Error(`/api/me failed: ${res.status}`);
-  return (await res.json()) as Session;
+function askForSession(): Promise<Response> {
+  return fetch("/api/me", { credentials: "include", cache: "no-store" });
+}
+
+/**
+ * Ask the auth client for an access token, renewing it if it has run out.
+ *
+ * Renewing is what rewrites the cookie the server reads. Null when there is nobody
+ * signed in, and also when the renewal could not be made (offline, or the auth client
+ * is not up yet, which the standalone getter reports by throwing rather than rejecting,
+ * hence the `try` around the call itself).
+ */
+async function renewedAccessToken(): Promise<string | null> {
+  try {
+    return await getAccessToken();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `/api/me`, with one renewal when the server answers 401 to a browser that is still
+ * signed in (see `session-fetch.ts`). The query stays pending through the renewal, so
+ * `ready` stays false and nothing flashes signed-out chrome at someone who is about to
+ * turn out signed in. Without an auth app there is nothing to renew with.
+ */
+function fetchSession(): Promise<Session | null> {
+  return readSession<Session>(askForSession, PRIVY_APP_ID ? renewedAccessToken : null);
 }
 
 /** Record the user's embedded wallets server-side. Safe to call more than once. */
@@ -94,17 +117,28 @@ function embeddedWalletCount(user: ReturnType<typeof usePrivy>["user"]): number 
   ).length;
 }
 
+/**
+ * `${userId}:${walletCount}` of the last sync, so a new wallet re-runs it.
+ *
+ * Module scope, not a ref inside the hook: `useSession()` is called by half a dozen
+ * components mounted at once (the top bar, the account menu, the cash chip, the tab bar,
+ * the run-status provider, onboarding), and anything held per instance runs once per
+ * caller. That was one wallet sync, with its round of `/api/me` refetches and a server
+ * re-render, per caller on every page load, all drawn from one per-IP rate limit. Here
+ * the first caller to see a new key does the work and the rest return.
+ *
+ * Keyed on the query client because that cache is what the sync refreshes. A provider
+ * tree that is mounted again (back from the landing page, which sits outside it) starts
+ * with a new client and an empty cache, and gets its own first sync.
+ */
+const syncedFor = new WeakMap<QueryClient, string>();
+
 /** With Privy configured: Privy auth state + our `users` row. */
 function usePrivySession(): UseSession {
   const privy = usePrivy();
   const queryClient = useQueryClient();
   const query = useSessionQuery();
   const router = useRouter();
-  const pathname = usePathname();
-  /** `${userId}:${walletCount}` of the last sync, so a new wallet re-runs it. */
-  const syncedFor = useRef<string | null>(null);
-  /** Set by `login()` / `prepareRedirect()`, consumed once the session exists. */
-  const pendingRedirect = useRef<string | null>(null);
 
   const userId = privy.user?.id ?? null;
   const walletCount = embeddedWalletCount(privy.user);
@@ -113,9 +147,8 @@ function usePrivySession(): UseSession {
     if (!privy.ready || !privy.authenticated || !userId) return;
     // Re-sync whenever the wallet count changes, not only on the first authentication.
     const key = `${userId}:${walletCount}`;
-    if (syncedFor.current === key) return;
-    const firstSync = syncedFor.current === null;
-    syncedFor.current = key;
+    if (syncedFor.get(queryClient) === key) return;
+    syncedFor.set(queryClient, key);
     void (async () => {
       await queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
       await syncWallets();
@@ -125,20 +158,17 @@ function usePrivySession(): UseSession {
       // wallet-less answer for a full 30-second staleTime.
       await queryClient.invalidateQueries({ queryKey: ME_WALLETS_QUERY_KEY });
       // Server components rendered this page signed out; re-render them with the
-      // session, then go where the sign-in was meant to go. Only on the first pass:
-      // a wallet appearing later must not yank the user off the page they are on.
-      const target = pendingRedirect.current;
-      pendingRedirect.current = null;
+      // session. No navigation from here: on /login, `LoginFlow` forwards the moment
+      // the session query above answers, and everywhere else the visitor stays put.
       router.refresh();
-      if (firstSync && target && target !== pathname) router.push(target);
     })();
-  }, [privy.ready, privy.authenticated, userId, walletCount, queryClient, router, pathname]);
+  }, [privy.ready, privy.authenticated, userId, walletCount, queryClient, router]);
 
   useEffect(() => {
-    if (privy.ready && !privy.authenticated && syncedFor.current) {
+    if (privy.ready && !privy.authenticated && syncedFor.has(queryClient)) {
       // Signed out elsewhere (another tab, an expired session): drop this account's
       // cached data and re-render the server tree, which is still showing it.
-      syncedFor.current = null;
+      syncedFor.delete(queryClient);
       purgeSignedOutState(queryClient);
       router.refresh();
     }
@@ -146,6 +176,8 @@ function usePrivySession(): UseSession {
 
   const logout = useCallback(async () => {
     await privy.logout();
+    // Signing in again, even as the same account, is a new sign-in and syncs again.
+    syncedFor.delete(queryClient);
     purgeSignedOutState(queryClient);
     // Owner pages (settings, transcripts) are server-rendered with the old session and
     // would otherwise stay on screen after sign-out. Leave for the public landing page.
@@ -153,17 +185,15 @@ function usePrivySession(): UseSession {
     router.refresh();
   }, [privy, queryClient, router]);
 
-  const prepareRedirect = useCallback((target?: string) => {
-    pendingRedirect.current = target ?? null;
-  }, []);
+  const prepareRedirect = useCallback(() => {}, []);
 
-  const login = useCallback(
-    (options?: { redirectTo?: string }) => {
-      prepareRedirect(options?.redirectTo);
-      privy.login();
-    },
-    [privy, prepareRedirect],
-  );
+  const login = useCallback(() => {
+    if (!loginMethodEnabled("wallet")) return;
+    // Wallets only. With no options the modal offers every configured method, so the
+    // visitor who chose "a crypto wallet instead" was shown an email field again and had
+    // to pick "wallet" a second time.
+    privy.login({ loginMethods: ["wallet"] });
+  }, [privy]);
 
   return {
     ready: privy.ready && !query.isPending,
@@ -190,8 +220,6 @@ function useFallbackSession(): UseSession {
     console.warn("[useSession] NEXT_PUBLIC_PRIVY_APP_ID is not set — login is unavailable in this environment.");
   }, []);
 
-  // Nothing to arm: there is no authentication event coming, so there is nothing
-  // for a post-auth redirect to hang off.
   const prepareRedirect = useCallback(() => {}, []);
 
   return { ready: !query.isPending, session: query.data ?? null, login, prepareRedirect, logout };

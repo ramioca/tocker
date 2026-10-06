@@ -35,6 +35,22 @@ describe("contentSecurityPolicy", () => {
     expect(directive(prod, "connect-src")).toContain("https://auth.privy.io");
   });
 
+  /**
+   * From Privy's published CSP list for external wallets. WalletConnect's verify frame
+   * (and its fallback domain) is how a wallet is told which site is asking; the
+   * walletlink socket is Coinbase Wallet's relay. The socket is a connection, not a
+   * frame, so it belongs in connect-src only.
+   */
+  it("lets the wallet connectors load their verify frame and reach their relay", () => {
+    const frames = directive(prod, "frame-src").split(" ");
+    expect(frames).toContain("https://verify.walletconnect.com");
+    expect(frames).toContain("https://verify.walletconnect.org");
+    expect(frames).not.toContain("wss://www.walletlink.org");
+
+    const connects = directive(prod, "connect-src").split(" ");
+    expect(connects).toContain("wss://www.walletlink.org");
+  });
+
   /** The WebGPU shader compiles WGSL and spawns workers from blob URLs. */
   it("permits wasm compilation and blob workers for the shader", () => {
     expect(directive(prod, "script-src")).toContain("'wasm-unsafe-eval'");

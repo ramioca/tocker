@@ -92,14 +92,8 @@ describe("limitForPath", () => {
   it("covers the public endpoints that cost something per call", () => {
     expect(limitForPath("/api/solana/rpc")?.rule).toBe(RATE_LIMITS.solanaRpc);
     expect(limitForPath("/api/solana/blockhash")?.rule).toBe(RATE_LIMITS.blockhash);
-    expect(limitForPath("/api/waitlist")?.rule).toBe(RATE_LIMITS.waitlist);
     expect(limitForPath("/api/tokens/search")?.rule).toBe(RATE_LIMITS.tokenSearch);
     expect(limitForPath("/api/health")?.rule).toBe(RATE_LIMITS.cron);
-  });
-
-  it("keeps the waitlist tight", () => {
-    expect(RATE_LIMITS.waitlist.limit).toBeLessThanOrEqual(5);
-    expect(RATE_LIMITS.waitlist.windowMs).toBeGreaterThanOrEqual(10 * 60_000);
   });
 
   /** The run page and its prefetches must not share the run-trigger bucket. */

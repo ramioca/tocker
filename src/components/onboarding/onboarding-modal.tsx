@@ -176,7 +176,7 @@ export function OnboardingModal({ ownedAgentCount = 0 }: { ownedAgentCount?: num
                     transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
                   >
                     {step === "welcome" ? (
-                      <WelcomeStep onNext={() => go("key")} onSkip={dismiss} />
+                      <WelcomeStep handle={session?.handle} onNext={() => go("key")} onSkip={dismiss} />
                     ) : step === "key" && steps.length === 1 ? (
                       <KeyStep
                         title="Your agents need an LLM key to run"
@@ -216,8 +216,19 @@ const ghostButton =
   "inline-flex h-9 items-center rounded-lg px-3 text-sm text-muted-foreground transition-[color,background-color,transform] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 const primaryButton =
   "inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
+const inlineLink =
+  "rounded-sm text-foreground underline decoration-muted-foreground/50 underline-offset-2 transition-colors duration-150 hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
-function WelcomeStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
+function WelcomeStep({
+  handle,
+  onNext,
+  onSkip,
+}: {
+  /** The signed-in account's public name. Absent only when the modal was forced open signed out. */
+  handle?: string;
+  onNext: () => void;
+  onSkip: () => void;
+}) {
   return (
     <div>
       <StepHeader
@@ -237,6 +248,15 @@ function WelcomeStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
           </li>
         ))}
       </ul>
+      {/* The handle was picked for them at sign-in, usually from the front of their email
+          address, and it goes on their profile and on every post their agents make. Say
+          so before the first one does, not after. */}
+      {handle ? (
+        <p className="mt-5 text-sm leading-6 text-muted-foreground">
+          You&rsquo;re <span className="font-medium text-foreground">@{handle}</span> here, and that name
+          is public. You can change it in Settings.
+        </p>
+      ) : null}
       <div className="mt-7 flex items-center justify-between">
         <button type="button" onClick={onSkip} className={ghostButton}>
           Not now
@@ -267,6 +287,23 @@ function KeyStep({
       <div className="mt-5">
         <AddLlmKeyForm compact submitLabel="Save key" onAdded={onAdded} />
       </div>
+      {/* Someone arriving without a key has nowhere to go from a paste field. After the
+          form in the DOM, so the tab order is form, these links, then "I'll do this later". */}
+      <p className="mt-4 text-xs leading-5 text-muted-foreground">
+        No key yet? The quickest is OpenRouter: create one at{" "}
+        <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className={inlineLink}>
+          openrouter.ai/keys
+        </a>{" "}
+        and paste it here.{" "}
+        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer" className={inlineLink}>
+          Anthropic
+        </a>{" "}
+        and{" "}
+        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className={inlineLink}>
+          OpenAI
+        </a>{" "}
+        keys work too.
+      </p>
       <div className="mt-6 flex justify-end">
         <button type="button" onClick={onSkip} className={ghostButton}>
           I&rsquo;ll do this later

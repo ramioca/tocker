@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   OTP_LENGTH,
+  isAllowlistRejection,
   isCompleteOtp,
   isEmailish,
   loginErrorMessage,
   normalizeOtp,
+  oauthReturnMethod,
+  refusalView,
   signInHref,
 } from "./login-helpers";
+import { parseLoginMethods, type LoginMethod } from "./login-methods";
 
 describe("signInHref", () => {
   it("carries the current page back as next", () => {
@@ -37,25 +41,25 @@ describe("signInHref", () => {
 describe("isEmailish", () => {
   it("accepts the addresses people actually have", () => {
     for (const value of [
-      "rami@tocker.xyz",
-      "rami+agents@gmail.com",
-      "r.a.m.i@sub.domain.co.uk",
+      "ada@tocker.xyz",
+      "ada+agents@example.com",
+      "a.d.a@sub.domain.co.uk",
       "o'brien@example.com",
-      "rami_2@example-host.io",
-      "ramí@exámple.com",
+      "ada_2@example-host.io",
+      "adá@exámple.com",
     ]) {
       expect(isEmailish(value), value).toBe(true);
     }
   });
 
   it("ignores whitespace around the address", () => {
-    expect(isEmailish("  rami@tocker.xyz  ")).toBe(true);
-    expect(isEmailish("rami@tocker.xyz\n")).toBe(true);
+    expect(isEmailish("  ada@tocker.xyz  ")).toBe(true);
+    expect(isEmailish("ada@tocker.xyz\n")).toBe(true);
   });
 
   it("rejects the two typos people actually make", () => {
-    expect(isEmailish("rami@tocker")).toBe(false); // no dot in the domain
-    expect(isEmailish("rami.tocker.xyz")).toBe(false); // no @
+    expect(isEmailish("ada@tocker")).toBe(false); // no dot in the domain
+    expect(isEmailish("ada.tocker.xyz")).toBe(false); // no @
   });
 
   it("rejects the rest of the obvious nonsense", () => {
@@ -63,12 +67,12 @@ describe("isEmailish", () => {
       "",
       "   ",
       "@tocker.xyz",
-      "rami@",
-      "rami@.xyz",
-      "rami@tocker.",
-      "rami@tocker..xyz",
+      "ada@",
+      "ada@.xyz",
+      "ada@tocker.",
+      "ada@tocker..xyz",
       "two words@tocker.xyz",
-      "rami@tocker.xyz, evil@evil.com",
+      "ada@tocker.xyz, evil@evil.com",
       "a@b",
     ]) {
       expect(isEmailish(value), value).toBe(false);
@@ -168,5 +172,105 @@ describe("loginErrorMessage", () => {
     expect(loginErrorMessage(undefined)).toBe(generic);
     expect(loginErrorMessage({})).toBe(generic);
     expect(loginErrorMessage(new Error(""))).toBe(generic);
+  });
+
+  /** The card replaces this with its not-invited view; this is the fallback sentence. */
+  it("names no method when the access list refuses an account", () => {
+    const refused = "Sign-ups aren't open for that account yet.";
+    expect(loginErrorMessage("allowlist_rejected")).toBe(refused);
+    expect(loginErrorMessage(Object.assign(new Error("Forbidden"), { privyErrorCode: "allowlist_rejected" }))).toBe(
+      refused,
+    );
+  });
+});
+
+describe("isAllowlistRejection", () => {
+  /** Both shapes arrive: the event callback gets the bare code, the rejected promise an Error. */
+  it("recognises the refusal as a bare code and riding on an Error", () => {
+    expect(isAllowlistRejection("allowlist_rejected")).toBe(true);
+    expect(isAllowlistRejection("ALLOWLIST_REJECTED")).toBe(true);
+    expect(isAllowlistRejection(Object.assign(new Error("Forbidden"), { privyErrorCode: "allowlist_rejected" }))).toBe(
+      true,
+    );
+  });
+
+  it("is false for any other failure", () => {
+    expect(isAllowlistRejection("invalid_credentials")).toBe(false);
+    expect(isAllowlistRejection("exited_auth_flow")).toBe(false);
+    expect(isAllowlistRejection(Object.assign(new Error("Too many"), { privyErrorCode: "too_many_requests" }))).toBe(
+      false,
+    );
+  });
+
+  /** A sentence that merely mentions the list is not the code. */
+  it("does not guess from a message", () => {
+    expect(isAllowlistRejection(new Error("allowlist_rejected"))).toBe(false);
+    expect(isAllowlistRejection("User is not on the allowlist")).toBe(false);
+    expect(isAllowlistRejection(null)).toBe(false);
+    expect(isAllowlistRejection(undefined)).toBe(false);
+    expect(isAllowlistRejection({})).toBe(false);
+  });
+});
+
+describe("refusalView", () => {
+  it("words the not-invited view for what was refused", () => {
+    expect(refusalView("email", false)).toBe("email");
+    expect(refusalView("google", false)).toBe("google");
+    expect(refusalView("wallet", false)).toBe("wallet");
+  });
+
+  it("falls back to a neutral wording when the method is unknown or has none of its own", () => {
+    expect(refusalView(null, false)).toBe("account");
+    expect(refusalView("passkey", false)).toBe("account");
+    expect(refusalView(null, true)).toBe("account");
+  });
+
+  /** An X account cannot match an entry, so it is pointed at email instead. */
+  it("gives an X account its own answer while X is an enabled method", () => {
+    expect(refusalView("twitter", true)).toBe("x-use-email");
+  });
+
+  /** With X switched off there is no X button, and the sentence about X must not appear. */
+  it("never gives the X answer while X is switched off", () => {
+    const methods: Array<LoginMethod | null> = ["email", "google", "twitter", "passkey", "wallet", null];
+    for (const via of methods) {
+      expect(refusalView(via, false), String(via)).not.toBe("x-use-email");
+    }
+    expect(refusalView("twitter", false)).toBe("account");
+  });
+
+  it("leaves the other methods alone when X is on", () => {
+    expect(refusalView("email", true)).toBe("email");
+    expect(refusalView("google", true)).toBe("google");
+    expect(refusalView("wallet", true)).toBe("wallet");
+  });
+});
+
+describe("oauthReturnMethod", () => {
+  const only = (value: string) => {
+    const enabled = parseLoginMethods(value);
+    return (method: LoginMethod) => enabled.includes(method);
+  };
+
+  it("believes a provider this deploy offers", () => {
+    expect(oauthReturnMethod("google", only("email,google,twitter"))).toBe("google");
+    expect(oauthReturnMethod("twitter", only("email,google,twitter"))).toBe("twitter");
+  });
+
+  /** The provider name is read off the URL, so a typed `privy_oauth_provider=twitter` proves nothing. */
+  it("ignores a provider that is switched off", () => {
+    expect(oauthReturnMethod("twitter", only("email,wallet"))).toBeNull();
+    expect(oauthReturnMethod("google", only("email,wallet"))).toBeNull();
+    expect(oauthReturnMethod("twitter", only("email,google"))).toBeNull();
+  });
+
+  it("ignores anything that is not one of the two OAuth providers", () => {
+    const all = only("email,google,twitter,passkey,wallet");
+    expect(oauthReturnMethod("discord", all)).toBeNull();
+    expect(oauthReturnMethod("email", all)).toBeNull();
+    expect(oauthReturnMethod("wallet", all)).toBeNull();
+    expect(oauthReturnMethod("", all)).toBeNull();
+    expect(oauthReturnMethod(null, all)).toBeNull();
+    expect(oauthReturnMethod(undefined, all)).toBeNull();
   });
 });
