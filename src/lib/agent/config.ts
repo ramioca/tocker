@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { AgentConfig, AgentConfigWithSizing } from "@/db/schema";
 import { DEFAULT_SIZING } from "@/lib/trading/sizing";
 import { MAX_DATA_SPEND_PER_RUN_USD } from "@/lib/x402/types";
-import { MAX_MODEL_ID, MODEL_ID_PATTERN } from "./models";
+import { DEFAULT_MODEL_ID, MAX_MODEL_ID, MODEL_ID_PATTERN } from "./models";
 
 export const chainSchema = z.enum(["solana", "base"]);
 
@@ -47,7 +47,8 @@ export const positionSizingSchema = z.object({
 export const llmProviderSchema = z.enum(["anthropic", "openai", "openrouter"]);
 
 // The id → label list lives in a leaf module so display code can use it without zod.
-export { DEFAULT_MODELS, DEFAULT_MODEL_ID } from "./models";
+export { DEFAULT_MODELS } from "./models";
+export { DEFAULT_MODEL_ID };
 
 export const agentConfigSchema = z.object({
   strategyPrompt: z.string().min(20, "Describe the strategy in at least a sentence.").max(8000),
@@ -177,7 +178,7 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigWithSizing = {
   schedule: { intervalMinutes: 15 },
   // 20 steps: portfolio, positions review, discovery, five scores, up to three proposals,
   // a note and a finish fit with room to widen a thin sweep; 12 forced a single proposal.
-  llm: { provider: "anthropic", model: "claude-sonnet-5", temperature: 0.4, maxSteps: 20 },
+  llm: { provider: "anthropic", model: DEFAULT_MODEL_ID.anthropic, temperature: 0.4, maxSteps: 20 },
 };
 
 /**

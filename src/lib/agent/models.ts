@@ -92,14 +92,13 @@ export const DEFAULT_MODELS: Record<LlmProvider, ModelOption[]> = {
 
 /**
  * The model a provider starts on: when the provider is switched, and when the first key
- * decides the provider. Deliberately not "the newest in the list". It is the one new
- * agents have been running on, and a default is changed on purpose, after a run on the
- * new one, not by adding a row above it.
+ * decides the provider. Named here rather than read off the top of the list, so that a
+ * default is something changed on purpose and not by adding a row above it.
  */
 export const DEFAULT_MODEL_ID: Record<LlmProvider, string> = {
-  anthropic: "claude-sonnet-5",
+  anthropic: "claude-sonnet-5-5",
   openai: "gpt-5",
-  openrouter: "anthropic/claude-sonnet-5",
+  openrouter: "anthropic/claude-sonnet-5.5",
 };
 
 /**

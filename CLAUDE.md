@@ -17,7 +17,7 @@ Read `SPEC.md` first. `src/db/schema.ts` is the shared contract; add columns/tab
 - Mutations are server actions in `src/server/actions/<feature>.ts`, each begins with `const session = await getSession()`.
 - Money math with `number` only for display; persist via drizzle `numeric` (strings). Use `src/lib/money.ts` helpers.
 - x402 calls only through `src/lib/x402/paidFetch.ts`. Trades only through `src/lib/trading/executor.ts`.
-- Secrets never reach the client. LLM keys are decrypted only inside the run loop.
+- Secrets never reach the client. LLM keys are decrypted only on the server, in two places: the run loop (`resolveModel`), and `listKeyModels`, which asks the key's provider which models it can use for its owner's model picker. Do not add a third without saying so here.
 - zod v4 (`import { z } from "zod"`). AI SDK v7 (`generateText`, `tool`, `stepCountIs`).
 - Follow `.agents/skills/emil-design-eng` for UI craft; use `tabular-nums` for numbers; dark theme is primary.
 - Tests: vitest, colocated `*.test.ts` for pure logic.

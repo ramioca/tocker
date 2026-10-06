@@ -242,8 +242,9 @@ export default async function AdminSettingsPage() {
                 ) : (
                   <span className="text-destructive"> — which is NOT configured on this deployment</span>
                 )}
-                . The plaintext is decrypted in exactly one place, inside the agent run loop, and never reaches a
-                server component, an action result, a run transcript or a browser.
+                . The plaintext is decrypted only on the server, inside the agent run loop and when its owner
+                loads the model list for that key, and never reaches a server component, an action result, a run
+                transcript or a browser.
               </dd>
             </div>
             {mfa.operatorNote ? (
