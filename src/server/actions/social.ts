@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { agents, comments, follows, getDb, likes, notifications, posts, users } from "@/db";
 import { getSession } from "@/lib/auth";
+import { SECRET_IN_PUBLIC_TEXT, looksLikeSecret } from "@/lib/security/redact";
 import { newId } from "@/server/queries/_shared";
 import type { ActionResult } from "@/server/types";
 import { ACTION_LIMITS, slowDown } from "./_shared";
@@ -314,6 +315,7 @@ export async function addComment(postId: string, body: string): Promise<ActionRe
   const text = typeof body === "string" ? body.trim() : "";
   if (!text) return fail("Write something first");
   if (text.length > 1000) return fail("Comments are limited to 1000 characters");
+  if (looksLikeSecret(text)) return fail(SECRET_IN_PUBLIC_TEXT);
   // After validation, so a typo'd empty comment does not spend one of the ten.
   const limited = slowDown("comment", session.userId, ACTION_LIMITS.comment);
   if (limited) return fail(limited);
@@ -362,6 +364,7 @@ export async function createNotePost(agentId: string, body: string): Promise<Act
   const text = typeof body === "string" ? body.trim() : "";
   if (!text) return fail("Write something first");
   if (text.length > 2000) return fail("Notes are limited to 2000 characters");
+  if (looksLikeSecret(text)) return fail(SECRET_IN_PUBLIC_TEXT);
   // Notes and comments share one bucket: both are public text on the feed.
   const limited = slowDown("comment", session.userId, ACTION_LIMITS.comment);
   if (limited) return fail(limited);

@@ -3,6 +3,7 @@ import { and, asc, desc, eq, exists, ilike, inArray, isNull, lt, notInArray, or,
 import { agents, follows, getDb, llmKeys, notifications, users, type Db } from "@/db";
 import type { LlmKeyRow, NotificationRow, Page, UserProfile } from "@/server/types";
 import { buildAgentCards, decodeCursor, encodeCursor, isFollowing, pageSize } from "./_shared";
+import { redactSecrets } from "@/lib/security/redact";
 import { visibleRationale } from "./visibility";
 import { isLlmMock } from "@/lib/agent/mock-model";
 import { mutedKinds, sanitizePrefs, type NotificationPrefs } from "@/lib/notifications/prefs";
@@ -167,10 +168,12 @@ export async function getNotifications(userId: string, cursor?: string | null): 
     items: page.map((n) => ({
       id: n.id,
       kind: n.kind,
-      title: n.title,
+      title: redactSecrets(n.title),
       // A `trade` notification goes to followers. Rows written before follower bodies
       // were redacted can still carry an exit threshold or a paid source's name.
-      body: n.kind === "trade" ? visibleRationale(n.body, { isOwner: false }) : n.body,
+      // A failure notice quotes what broke, which can be a provider's or a node's own
+      // sentence with a credential in it.
+      body: n.kind === "trade" ? visibleRationale(n.body, { isOwner: false }) : n.body === null ? null : redactSecrets(n.body),
       href: n.href,
       readAt: n.readAt ? n.readAt.toISOString() : null,
       createdAt: n.createdAt.toISOString(),

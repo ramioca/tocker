@@ -134,8 +134,14 @@ describe("visibleError", () => {
     "Privy policy rjq4ke denied signTransaction for wallet zx91v: Transfer.amount 2000000 exceeds 1000000",
   ];
 
-  it("gives the owner the provider's own words", () => {
-    for (const error of LEAKY) expect(visibleError(error, true)).toBe(error);
+  /** The owner is any account: they get the sentence, never a credential inside it. */
+  it("gives the owner the provider's own words, with the credential cut out", () => {
+    expect(visibleError(LEAKY[0], true)).toBe(
+      "Incorrect API key provided: [redacted]. You can find your API key at https://platform.openai.com/account/api-keys.",
+    );
+    expect(visibleError(LEAKY[1], true)).toBe("fetch failed: https://mainnet.helius-rpc.com/?api-key=[redacted]");
+    // Nothing credential-shaped in it: the owner reads it as it came.
+    expect(visibleError(LEAKY[2], true)).toBe(LEAKY[2]);
   });
 
   it("gives everyone else a fixed sentence and none of the original", () => {

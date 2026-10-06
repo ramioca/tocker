@@ -18,6 +18,8 @@ Read `SPEC.md` first. `src/db/schema.ts` is the shared contract; add columns/tab
 - Money math with `number` only for display; persist via drizzle `numeric` (strings). Use `src/lib/money.ts` helpers.
 - x402 calls only through `src/lib/x402/paidFetch.ts`. Trades only through `src/lib/trading/executor.ts`.
 - Secrets never reach the client. LLM keys are decrypted only on the server, in two places: the run loop (`resolveModel`), and `listKeyModels`, which asks the key's provider which models it can use for its owner's model picker. Do not add a third without saying so here.
+- The repo is public. No key, token, personal email or real connection string in any tracked file, fixtures included: build a stand-in at run time (see `src/lib/security/redact.test.ts`); `repo-secrets.test.ts` fails the suite otherwise.
+- Text that came from outside (a provider or RPC error, a tool result, anything a model wrote) goes through `redactSecrets` from `src/lib/security/redact.ts` before it is stored, logged, shown, or handed to the model. Never log a caught database error or its message: use `dbErrorForLog`.
 - zod v4 (`import { z } from "zod"`). AI SDK v7 (`generateText`, `tool`, `stepCountIs`).
 - Follow `.agents/skills/emil-design-eng` for UI craft; use `tabular-nums` for numbers; dark theme is primary.
 - Tests: vitest, colocated `*.test.ts` for pure logic.

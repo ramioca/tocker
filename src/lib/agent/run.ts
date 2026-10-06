@@ -31,6 +31,7 @@ import { agentRuns, agents, getDb, llmKeys, notifications, tokens, trades } from
 import type { AgentConfig } from "@/db/schema";
 import { MIN_SCHEDULE_MINUTES, parseAgentConfig } from "@/lib/agent/config";
 import { decryptSecret } from "@/lib/crypto";
+import { redactSecrets } from "@/lib/security/redact";
 import { resolveDataSources } from "@/lib/data-sources/registry";
 import { newBudget, type X402Context } from "@/lib/x402/types";
 import { describeGuardian, runGuardian } from "@/lib/trading/guardian";
@@ -53,14 +54,25 @@ export interface RunAgentResult {
 }
 
 /** Builds the language model for an agent from its owner's encrypted key. */
-export async function resolveModel(agent: { llmKeyId: string | null; config: AgentConfig }): Promise<LanguageModel> {
+export async function resolveModel(agent: {
+  ownerId: string;
+  llmKeyId: string | null;
+  config: AgentConfig;
+}): Promise<LanguageModel> {
   if (isLlmMock()) return createMockModel();
 
   if (!agent.llmKeyId) {
     throw new Error("This agent has no LLM API key attached. Add one in Settings and re-select it on the agent.");
   }
   const db = await getDb();
-  const rows = await db.select().from(llmKeys).where(eq(llmKeys.id, agent.llmKeyId)).limit(1);
+  // By id and by owner. Attaching a key checks whose it is; this is the same check at
+  // the moment the key is used, so an agent can never think on somebody else's key
+  // whatever wrote the id onto its row.
+  const rows = await db
+    .select()
+    .from(llmKeys)
+    .where(and(eq(llmKeys.id, agent.llmKeyId), eq(llmKeys.userId, agent.ownerId)))
+    .limit(1);
   const row = rows[0];
   if (!row) throw new Error("The LLM API key attached to this agent no longer exists.");
 
@@ -120,9 +132,13 @@ async function ensureAnthropicWorkspace(keyId: string, apiKey: string): Promise<
 }
 
 /** After a run failed for want of the header anyway: find it, save it, report it. */
-async function recoverAnthropicWorkspace(llmKeyId: string): Promise<string | null> {
+async function recoverAnthropicWorkspace(llmKeyId: string, ownerId: string): Promise<string | null> {
   const db = await getDb();
-  const [row] = await db.select().from(llmKeys).where(eq(llmKeys.id, llmKeyId)).limit(1);
+  const [row] = await db
+    .select()
+    .from(llmKeys)
+    .where(and(eq(llmKeys.id, llmKeyId), eq(llmKeys.userId, ownerId)))
+    .limit(1);
   if (!row || row.provider !== "anthropic" || row.workspaceId) return null;
   return saveDiscoveredWorkspace(llmKeyId, decryptSecret(row.encryptedKey));
 }
@@ -353,7 +369,7 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
       }
     }
 
-    const model = await resolveModel({ llmKeyId: agentRow.llmKeyId, config });
+    const model = await resolveModel({ ownerId: agentRow.ownerId, llmKeyId: agentRow.llmKeyId, config });
     const sources = resolveDataSources(config.dataSources);
 
     // The exit engine runs *before* the model thinks, so the book it reads is the book
@@ -454,13 +470,16 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
 
     return { runId, status: "succeeded", summary: summary ?? undefined };
   } catch (err) {
-    const raw = err instanceof Error ? err.message : String(err);
+    // What broke said this, and it is about to be stored, shown to the owner and sent as
+    // a notification. A provider's refusal echoes the key it refused (half masked), and
+    // an RPC or database client prints the address it was given, key and all.
+    const raw = redactSecrets(err instanceof Error ? err.message : String(err));
     // A multi-workspace key that still failed for want of the header: find the
     // workspace now, save it on the key, and make the agent due again so the next tick
     // simply works.
     const recovered =
       isWorkspaceScopeError(raw) && agentRow.llmKeyId
-        ? await recoverAnthropicWorkspace(agentRow.llmKeyId).catch(() => null)
+        ? await recoverAnthropicWorkspace(agentRow.llmKeyId, agentRow.ownerId).catch(() => null)
         : null;
     const message = recovered
       ? `${raw} — Tocker found this key's workspace (${recovered}) and saved it on the key. The agent runs again on the next tick.`

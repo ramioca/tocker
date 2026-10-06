@@ -268,8 +268,9 @@ describe("run and trade history are gated on the viewer", () => {
     const agent = await seedAgent(db);
     await seedFailedRun(agent.agentId);
 
+    // The owner reads what the provider said, minus the key it echoed.
     const mine = await getAgentRuns(agent.agentId, null, agent.userId);
-    expect(mine.items[0].error).toBe(LEAKY_ERROR);
+    expect(mine.items[0].error).toBe("Incorrect API key provided: [redacted]");
 
     const theirs = await getAgentRuns(agent.agentId, null, STRANGER);
     expect(theirs.items).toHaveLength(1);
@@ -305,7 +306,7 @@ describe("run and trade history are gated on the viewer", () => {
     await seedFailedTrade(agent.agentId, agent.userId);
 
     const mine = await getAgentTrades(agent.agentId, null, agent.userId);
-    expect(mine.items[0].error).toBe(LEAKY_ERROR);
+    expect(mine.items[0].error).toBe("Incorrect API key provided: [redacted]");
 
     const theirs = await getAgentTrades(agent.agentId, null, STRANGER);
     expect(theirs.items[0].status).toBe("failed");

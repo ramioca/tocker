@@ -402,8 +402,11 @@ function RotateForm({
           id={`rotate-${keyId}`}
           type="password"
           value={value}
-          autoComplete="off"
+          // "new-password" is the value Chrome honours on a password field; with "off" it
+          // still offers to save the key into the password manager.
+          autoComplete="new-password"
           spellCheck={false}
+          maxLength={512}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? errorId : undefined}
           onChange={(event) => {

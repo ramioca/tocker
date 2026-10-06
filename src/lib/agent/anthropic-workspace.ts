@@ -18,7 +18,11 @@
  * A key created inside a workspace is refused by the Admin API; that refusal is the
  * signal that no header is needed. Nothing here throws: a failed lookup means "send no
  * header", which is right for a scoped key and no worse than before for the other kind.
+ *
+ * Every function here is handed a plaintext key, so none of it may reach a client
+ * bundle, and none of it logs, returns or keeps the key.
  */
+import "server-only";
 
 const API = "https://api.anthropic.com";
 const API_VERSION = "2023-06-01";
@@ -108,6 +112,7 @@ async function get(
   const res = await fetch(`${API}${path}`, {
     headers: { "x-api-key": apiKey, "anthropic-version": API_VERSION, accept: "application/json", ...extra },
     signal: AbortSignal.timeout(TIMEOUT_MS),
+    cache: "no-store",
   });
   let body: unknown = null;
   try {

@@ -113,6 +113,32 @@ widget, and the server reads the `privy-token` cookie the client writes and rene
 What ships, and exactly how far each control goes. None of it is implied; a person moving
 real money should be able to read this and know what they are relying on.
 
+**API keys, and a public repository** — the code is public; no key is in it, and none can be
+read through it.
+
+- *A user's LLM key* is encrypted before it is stored (AES-256-GCM, `src/lib/crypto.ts`) with
+  `ENCRYPTION_KEY`, which exists only in the hosting environment. No query returns the
+  encrypted column to a page or an action result: the owner sees the provider, the label and
+  the last four characters, and nobody else sees that a key exists. It is decrypted in two
+  places on the server (the run loop, and the owner's model list) and is never logged.
+  Losing `ENCRYPTION_KEY` makes every saved key unreadable; leaking it together with the
+  database exposes them. Keep it in Production only.
+- *Text that could carry a key* is scrubbed (`src/lib/security/redact.ts`): a provider's
+  refusal echoes the key it refused, an RPC client prints the node URL with the operator's key
+  in it. Run and trade errors, transcript steps, notifications, tool results on their way to
+  the model, and everything a model publishes go through it before anyone reads them, so rows
+  stored earlier are covered too. It removes this deployment's own secret values and anything
+  shaped like a credential. It does not recognise a bare wallet private key, which looks the
+  same as a transaction signature.
+- *A key typed in the wrong place* is refused, not stored: the key's label and workspace id,
+  agent names and taglines, profile names and bios, notes and comments.
+- *The repository itself* is checked by `pnpm test` (`src/lib/security/repo-secrets.test.ts`):
+  no tracked env file but `.env.example`, no filled-in secret there, nothing shaped like a live
+  credential in any tracked file. That is a second net. **Turn on GitHub's own, once**, under
+  Settings, Code security: *Secret scanning* and *Push protection*, both free for a public
+  repository. Push protection is the only control that stops a key before it is public; a key
+  that has been pushed is burned and must be revoked, not just deleted.
+
 **Security headers and CSP** — `src/proxy.ts` (Next 16's renamed Middleware) sets a
 nonce-based CSP, HSTS (production TLS only), `frame-ancestors 'none'` plus `X-Frame-Options`,
 `nosniff`, a strict referrer policy, a deny-by-default `Permissions-Policy`, and

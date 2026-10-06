@@ -27,6 +27,7 @@ import { nanoid } from "nanoid";
 import { and, eq, gte, inArray, lt } from "drizzle-orm";
 import { getDb, notifications, tokens, trades } from "@/db";
 import { toNum } from "@/lib/money";
+import { redactSecrets } from "@/lib/security/redact";
 import type { ExitReason, TradeOrigin } from "@/server/types";
 import { receiptSummary, type TradeReceiptData } from "@/lib/trading/receipt";
 
@@ -43,7 +44,15 @@ export async function notify(rows: readonly NotificationInput[]): Promise<void> 
   if (rows.length === 0) return;
   try {
     const db = await getDb();
-    await db.insert(notifications).values(rows.map((r) => ({ id: nanoid(), ...r })));
+    await db.insert(notifications).values(
+      rows.map((r) => ({
+        id: nanoid(),
+        ...r,
+        // A notice is also pushed to a lock screen. Whatever an error said goes out scrubbed.
+        title: redactSecrets(r.title),
+        body: r.body === null ? null : redactSecrets(r.body),
+      })),
+    );
   } catch (err) {
     console.warn(`[notifications] write failed: ${err instanceof Error ? err.message : String(err)}`);
   }

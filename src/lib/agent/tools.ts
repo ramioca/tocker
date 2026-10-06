@@ -28,6 +28,7 @@ import { checkQuoteSanity } from "@/lib/trading/sanity";
 import { buildReceipt, saveReceipt } from "@/lib/trading/receipt";
 import { chargePlatformFee } from "@/lib/platform/fees";
 import { notifyFill } from "@/lib/notifications";
+import { redactDeep, redactSecrets } from "@/lib/security/redact";
 import {
   createProposal,
   openProposalsUsd,
@@ -92,7 +93,10 @@ function logged(
     const startedAt = Date.now();
     await ctx.logger.log({ kind: "tool_call", toolName: name, payload: { input } });
     try {
-      const result = await fn(input);
+      // Scrubbed before the model reads it, not only before it is stored: what a tool
+      // returns includes failure text from RPC nodes and paid APIs, and the model writes
+      // in public. A credential it never saw is one it cannot repeat.
+      const result = redactDeep(await fn(input));
       await ctx.logger.log({
         kind: "tool_result",
         toolName: name,
@@ -101,7 +105,7 @@ function logged(
       });
       return result;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = redactSecrets(err instanceof Error ? err.message : String(err));
       await ctx.logger.log({
         kind: "error",
         toolName: name,
@@ -984,7 +988,8 @@ export function buildTools(ctx: RunContext): ToolSet {
           authorId: agent.ownerId,
           agentId: agent.id,
           kind: "note",
-          body: parsed.body,
+          // Public the moment it is written. A model can repeat anything in its context.
+          body: redactSecrets(parsed.body),
         });
         ctx.postIds.push(postId);
         return { ok: true, postId };

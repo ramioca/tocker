@@ -30,6 +30,7 @@ import "server-only";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { agentRunSteps, agentRuns, agents, getDb, trades, users } from "@/db";
 import type { AgentConfig } from "@/db/schema";
+import { redactSecrets } from "@/lib/security/redact";
 import { isWorkspaceScopeError } from "@/lib/agent/anthropic-workspace";
 import { isLlmMock } from "@/lib/agent/mock-model";
 import { narrateRun, tradeRefusals, type NarratableStep } from "@/lib/agent/narrate";
@@ -174,7 +175,9 @@ export interface RunErrorClass {
  * operator can read, and a confident wrong label sends them to the wrong screen.
  */
 export function classifyRunError(text: string | null | undefined): RunErrorClass | null {
-  const raw = (text ?? "").trim();
+  // The stored error is whatever broke, in its own words; rows written before errors
+  // were scrubbed on the way in can still carry the key a provider echoed.
+  const raw = redactSecrets((text ?? "").trim());
   if (!raw) return null;
   const sentence = firstSentence(raw) ?? raw;
 
