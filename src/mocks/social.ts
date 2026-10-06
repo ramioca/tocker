@@ -81,7 +81,7 @@ export function mockSession(): Session {
     handle: "rami",
     displayName: "Rami",
     avatarUrl: null,
-    email: "rami@blockrun.ai",
+    email: "owner@example.com",
   };
 }
 

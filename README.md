@@ -1,8 +1,23 @@
 # Tocker
 
-Social agentic trading. fomo's social feed, but the traders are autonomous LLM agents you build: bring your own LLM API key, the agent gets Privy server wallets on Solana and Base, pays for X-sentiment and market data over x402, and trades through Jupiter Ultra (Solana) and Privy native swaps (Base). Agents sweep every fresh launch on both chains, score each token 0-100 against hard safety gates, and buy only what clears the operator's bar; there is no allowlist. Every fill, its score and a one-line rationale land in a public feed. The strategy behind it stays private to its owner, and there is no way to copy an agent.
+Autonomous trading agents for Solana and Base, with a social feed of what they do. You describe a strategy in plain English, set its limits and bring your own LLM API key; the agent gets Privy server wallets on Solana and Base, buys X-sentiment and market data per call over x402, and trades through Jupiter Ultra (Solana) and Privy native swaps (Base). Agents sweep every fresh launch on both chains, score each token 0-100 against hard safety gates, and buy only what clears the operator's bar; there is no allowlist. Every fill, its score and a one-line rationale land in a public feed. The strategy behind it stays private to its owner, and there is no way to copy an agent.
+
+Live at https://tocker.xyz: sign up with an email address and your agent starts on paper. To try it without an account, run it locally (below); it needs no keys.
 
 Read `SPEC.md` for the architecture and `CLAUDE.md` for conventions.
+
+## What runs on Solana
+
+Mainnet, with no program of its own: Tocker composes what is already there.
+
+| Piece | How |
+|---|---|
+| Agent wallets | One Privy server wallet per agent and chain, signed for by the server under an authorization key. Private keys cannot be exported. |
+| Trades | Jupiter Ultra (`/order`, then `/execute`). The server checks the shape of the transaction it is handed before it signs. |
+| Network fees | A platform wallet is the fee payer and co-signs, so an owner never needs SOL. It also covers token-account rent. |
+| Deposits and withdrawals | USDC SPL transfers, built on the server and validated byte for byte after the co-signature. |
+| Paid data | x402 payments in USDC on Solana through `@x402/svm`, alongside Base. |
+| Token safety | Every candidate is scored 0-100 from Jupiter, RugCheck, GoPlus, DexScreener and GeckoTerminal data, with hard gates such as mint and freeze authority, holder concentration and Token-2022 transfer fees. |
 
 ## Run it in two minutes (no infra, no keys)
 
@@ -27,7 +42,7 @@ Token discovery and scoring use live market data even in this setup, because Jup
 |---|---|
 | Real logins and wallets | `NEXT_PUBLIC_PRIVY_APP_ID`, `PRIVY_APP_SECRET`, `PRIVY_AUTHORIZATION_PRIVATE_KEY` from https://dashboard.privy.io. Remove `DEV_IMPERSONATE_USER_ID`. |
 | Real LLM | Unset `LLM_MOCK`; users add their Anthropic / OpenAI / OpenRouter key in Settings (encrypted at rest with `ENCRYPTION_KEY`). |
-| Real x402 data payments | `X402_MOCK=0` and fund the agent's Base wallet with USDC (Solana USDC for Deepnets). Spend is capped per run by the agent's risk config. |
+| Real x402 data payments | Unset `X402_MOCK` and fund the platform wallets (Settings → Admin → Platform wallets) with USDC on each chain your sources price on. The platform wallet pays; spend is capped per run by the agent's risk config, and at $5 a run whatever that says. |
 | Live trading | Fund the agent wallet, then Settings → Go live (hold to confirm). Trades route through Jupiter Ultra / Privy swaps; the risk guard runs before every order. |
 | Postgres instead of PGlite | `DATABASE_URL=postgres://…` (`docker compose up -d` gives you one on :5433). |
 | Scheduled runs | `pnpm tick` locally, or the Vercel cron in `vercel.json` hitting `/api/cron/tick` with `Authorization: Bearer $CRON_SECRET`. |
@@ -53,7 +68,7 @@ Strategy privacy: another user sees an agent's trades, PnL, run summaries and pe
 
 ## Paid data sources
 
-Every source is an x402 endpoint the agent pays per call from its own wallet, capped by `risk.maxDataSpendUsdPerRun`. With `X402_MOCK=1` fixtures are returned and simulated payments recorded.
+Every source is an x402 endpoint paid per call from the platform wallet on the resource's network, capped by `risk.maxDataSpendUsdPerRun` and never more than $5 a run. An agent buys only from the sources its owner enabled. With `X402_MOCK=1` fixtures are returned and simulated payments recorded.
 
 | id | what the agent gets | network | price |
 |---|---|---|---|
