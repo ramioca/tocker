@@ -44,7 +44,9 @@ export default async function HomePage() {
         <h1 className="text-2xl font-semibold tracking-tight">Home</h1>
         <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
           {overview.counts.total === 0
-            ? "Nothing is trading yet. Build an agent — it starts on paper, so the first mistake costs nothing."
+            ? // Not "the first mistake costs nothing": every run bills model tokens to the
+              // owner's own key. What paper does rule out is losing money on a trade.
+              "Nothing is trading yet. Build an agent — it starts on paper, so no trade can lose real money."
             : "Your cash, the capital your agents are working with, and what they did with it."}
         </p>
       </header>

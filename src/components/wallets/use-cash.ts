@@ -28,8 +28,13 @@ async function fetchWallets(): Promise<MeWallets> {
 /**
  * The user's cash. One query key, so a deposit, a withdrawal or an agent funding
  * all refresh the same number everywhere it is shown.
+ *
+ * `pollMs` re-reads it on a timer for as long as the caller is mounted and enabled, for
+ * a surface that is waiting on money sent from somewhere else (the deposit sheet). It
+ * is per caller: everything else reading this key gets the fresher number for free, and
+ * the polling stops with the surface that asked for it. Paused in a background tab.
  */
-export function useUserWallets(enabled: boolean) {
+export function useUserWallets(enabled: boolean, options?: { pollMs?: number }) {
   return useQuery({
     queryKey: ME_WALLETS_QUERY_KEY,
     queryFn: fetchWallets,
@@ -39,6 +44,7 @@ export function useUserWallets(enabled: boolean) {
     // moving between two fetches. Route changes refetch it too (see WalletChip).
     staleTime: 10_000,
     refetchOnWindowFocus: true,
+    refetchInterval: enabled && options?.pollMs ? options.pollMs : false,
   });
 }
 

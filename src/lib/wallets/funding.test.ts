@@ -71,6 +71,46 @@ describe("unifiedCash", () => {
   });
 });
 
+describe("unifiedCash: a balance that could not be read", () => {
+  const unread = (chain: "base" | "solana"): WalletBalance => ({ ...wallet(chain, 0, 0), readFailed: true });
+
+  it("marks the chain unread and the totals partial, instead of a wallet at zero", () => {
+    const cash = unifiedCash([unread("base"), wallet("solana", 60, 0)]);
+    expect(cashOn(cash, "base").readFailed).toBe(true);
+    expect(cashOn(cash, "solana").readFailed).toBeUndefined();
+    // The sum of what was read. `partial` is what says it is not the balance.
+    expect(cash.totalUsd).toBe(60);
+    expect(cash.partial).toBe(true);
+  });
+
+  it("is not partial when every wallet answered, even with nothing in it", () => {
+    const cash = unifiedCash([wallet("base", 0, 0), wallet("solana", 0, 0)]);
+    expect(cash.partial).toBeUndefined();
+    expect(cash.perChain.some((c) => c.readFailed)).toBe(false);
+  });
+
+  it("is partial when an agent could not be read, and leaves that agent out", () => {
+    const readable = { id: "a1", slug: "a1", name: "A1", equityUsd: 12, cashUsd: 12, positionsUsd: 0 };
+    const cash = unifiedCash([wallet("base", 5, 0)], [readable], { agentsUnread: true });
+    expect(cash.partial).toBe(true);
+    expect(cash.agents).toEqual([readable]);
+    expect(cash.allUsd).toBe(17);
+  });
+});
+
+describe("unifiedCash: USDC in an agent that is not live yet", () => {
+  it("counts it once, in the agents' side of the total, and never in the user's own cash", () => {
+    const parked = { id: "p", slug: "p", name: "Parked", equityUsd: 25, cashUsd: 25, positionsUsd: 0, parked: true };
+    const live = { id: "l", slug: "l", name: "Live", equityUsd: 50, cashUsd: 15, positionsUsd: 35 };
+    // The $25 left the user's wallet when it was sent, so their own cash is $0.
+    const cash = unifiedCash([wallet("base", 0, 0), wallet("solana", 0, 0)], [live, parked]);
+    expect(cash.totalUsd).toBe(0);
+    expect(cash.inAgentsUsd).toBe(75);
+    expect(cash.allUsd).toBe(75);
+    expect(cash.agents.filter((a) => a.parked).map((a) => a.id)).toEqual(["p"]);
+  });
+});
+
 describe("splitProportional", () => {
   it("splits in proportion to the weights and adds up exactly", () => {
     const legs = splitProportional(100, [
@@ -254,6 +294,38 @@ describe("planFunding", () => {
       cash,
     });
     expect(plan.blockers.some((b) => b.kind === "no-wallet" || b.kind === "over-available")).toBe(true);
+  });
+});
+
+describe("planFunding: a chain whose balance could not be read", () => {
+  const unreadBase: WalletBalance = { ...wallet("base", 0, 0), readFailed: true };
+
+  it("blocks the plan in its own words and offers no deposit for it", () => {
+    const cash = unifiedCash([unreadBase, wallet("solana", 0, 0)]);
+    const plan = planFunding({ mode: "fund", amountUsd: 10, chains: ["base"], cash });
+    expect(plan.ready).toBe(false);
+    expect(plan.blockers.map((b) => b.kind)).toEqual(["balance-unread"]);
+    expect(plan.blockers[0].message).toBe(
+      "Couldn't read your Base balance just now. Nothing has moved. Try again in a minute.",
+    );
+    // Not "you have $0.00, deposit more": nobody knows what the wallet holds.
+    expect(plan.blockers[0].deposit).toBeNull();
+    expect(depositTargets(plan)).toEqual([]);
+  });
+
+  it("does not let the chain that was read stand in for the one that was not", () => {
+    const cash = unifiedCash([unreadBase, wallet("solana", 100, 0)]);
+    const plan = planFunding({ mode: "fund", amountUsd: 10, chains: ["base", "solana"], cash });
+    expect(plan.ready).toBe(false);
+    expect(plan.blockers.some((b) => b.kind === "balance-unread" && b.chain === "base")).toBe(true);
+    expect(plan.blockers.some((b) => b.kind === "over-available")).toBe(false);
+  });
+
+  it("plans as before once the balance is read", () => {
+    const cash = unifiedCash([wallet("base", 40, 0), wallet("solana", 0, 0)]);
+    const plan = planFunding({ mode: "fund", amountUsd: 10, chains: ["base"], cash });
+    expect(plan.ready).toBe(true);
+    expect(plan.blockers).toEqual([]);
   });
 });
 

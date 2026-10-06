@@ -6,6 +6,7 @@ import {
   buildReceipt,
   exceededTolerance,
   explorerUrl,
+  publicReceipt,
   receiptSummary,
   scoreReasons,
   slippageBps,
@@ -165,6 +166,52 @@ describe("buildReceipt", () => {
     expect(receipt.scoreTotal).toBeNull();
     expect(receipt.scoreVerdict).toBeNull();
     expect(receipt.scoreReasons).toEqual([]);
+  });
+});
+
+describe("publicReceipt", () => {
+  /** An agent that paid for both sources, on a token where they were the strongest signals. */
+  const paid = () =>
+    buildReceipt(
+      input({
+        score: score({
+          components: { safety: 92, liquidity: 60, organic: 61, distribution: 70, momentum: 55, gecko: null, sentiment: 88, smartMoney: 91 },
+        }),
+      }),
+    );
+
+  it("is what the owner's receipt says, minus the rows a paid source produced", () => {
+    const owner = paid();
+    // The owner's document names them: that is why the entry scored what it did.
+    expect(owner.scoreReasons.map((r) => r.key)).toEqual(["safety", "smartMoney", "sentiment"]);
+
+    const stranger = publicReceipt(owner);
+    expect(stranger.scoreReasons).toEqual([{ key: "safety", label: "Safety", value: 92 }]);
+    // Nowhere else in the document either.
+    expect(JSON.stringify(stranger)).not.toMatch(/sentiment|smart ?money/i);
+  });
+
+  it("changes nothing else, and does not touch the stored document", () => {
+    const owner = paid();
+    const before = JSON.stringify(owner);
+    const stranger = publicReceipt(owner);
+    expect(JSON.stringify(owner)).toBe(before);
+    expect({ ...stranger, scoreReasons: owner.scoreReasons }).toEqual(owner);
+    // Total and verdict are the public verdict on the token, as on the trade row.
+    expect(stranger.scoreTotal).toBe(owner.scoreTotal);
+    expect(stranger.scoreVerdict).toBe(owner.scoreVerdict);
+    // The tolerance stays: it is part of the receipt's public shape.
+    expect(stranger.slippageToleranceBps).toBe(100);
+  });
+
+  it("leaves a receipt with only free components as it was", () => {
+    const receipt = buildReceipt(input());
+    expect(publicReceipt(receipt)).toEqual(receipt);
+  });
+
+  it("reads a stored row with no reason list as having none", () => {
+    const { scoreReasons: _missing, ...legacy } = buildReceipt(input());
+    expect(publicReceipt(legacy as ReturnType<typeof buildReceipt>).scoreReasons).toEqual([]);
   });
 });
 

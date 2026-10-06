@@ -3,19 +3,16 @@ import { revalidatePath } from "next/cache";
 import { and, desc, eq } from "drizzle-orm";
 import { agentFundingIntents, agents, getDb, wallets } from "@/db";
 import { getSession } from "@/lib/auth";
-import { destinationProblemForChain, normalizeAddressForChain } from "@/lib/wallet-address";
 import {
   applyAgentBudgetPolicy,
   getAgentWallets,
   getAgentWalletBalances as loadBalances,
   getUserWalletBalances,
-  withdrawFromAgent as sendWithdrawal,
-  type WithdrawResult,
 } from "@/lib/wallets";
 import { unifiedCash, type UnifiedCash } from "@/lib/wallets/funding";
 import { toNumeric } from "@/lib/money";
 import { newId } from "@/server/queries/_shared";
-import { publicErrorMessage, transferErrorMessage } from "./_shared";
+import { publicErrorMessage } from "./_shared";
 import type {
   ActionResult,
   Chain,
@@ -617,97 +614,11 @@ export async function getFundingIntents(agentId: string): Promise<ActionResult<F
   };
 }
 
-// ------------------------------------------------------------------ withdraw
-
-/**
- * Move funds from the agent server wallet back to the owner's embedded wallet.
- *
- * On Solana the platform pays the network fee (W8): the agent signs a transfer whose fee
- * payer is the platform Solana wallet, so the agent needs no SOL and none is dripped into
- * it. See `withdrawFromAgentSolana`. Base is unchanged — Privy's `transfer`, gas
- * sponsored by Privy.
- *
- * The product's Withdraw button goes through `secureWithdrawAction` (security.ts), which
- * takes the same Solana path; this is the older action `withdrawAction` wraps.
- *
- * Limits: on Solana every withdrawal is a transaction Tocker pays for, so
- * `withdrawFromAgentSolana` itself enforces the per-owner rate limits, the $1 floor and
- * the one-transfer-at-a-time rule — for this action and `secureWithdrawAction` alike. A
- * Base withdrawal is Privy-sponsored gas the app is billed for, and gets the same burst
- * limit here.
- */
-const WITHDRAW_FAILED = "The withdrawal did not go through. Nothing was sent — try again in a minute.";
-
-export async function withdrawFromAgent(input: {
-  agentId: string;
-  chain: Chain;
-  asset: "usdc" | "native";
-  amount: number;
-  toAddress: string;
-}): Promise<ActionResult<WithdrawResult & { delivered?: number; accountFeeUsdc?: number; tradingFeesUsdc?: number }>> {
-  const session = await getSession();
-  if (!session) return fail("Sign in first");
-
-  if (!(input.amount > 0) || !Number.isFinite(input.amount)) return fail("Enter an amount greater than zero");
-  const raw = input.toAddress?.trim();
-  if (!raw) return fail("Enter a destination address");
-  const problem = destinationProblemForChain(input.chain, raw);
-  if (problem) return fail(problem);
-  const to = normalizeAddressForChain(input.chain, raw);
-
-  const db = await getDb();
-  const [agent] = await db
-    .select({ id: agents.id, ownerId: agents.ownerId, slug: agents.slug, name: agents.name })
-    .from(agents)
-    .where(eq(agents.id, input.agentId))
-    .limit(1);
-  if (!agent) return fail("Agent not found");
-  if (agent.ownerId !== session.userId) return fail("You do not own this agent");
-
-  const [wallet] = await db
-    .select({ id: wallets.id })
-    .from(wallets)
-    .where(and(eq(wallets.agentId, input.agentId), eq(wallets.chain, input.chain), eq(wallets.kind, "agent_server")))
-    .limit(1);
-  if (!wallet) return fail(`This agent has no ${input.chain} wallet`);
-
-  if (input.chain === "solana") {
-    try {
-      const solana = await import("@/lib/wallets/solana-agent-transfer");
-      const sent = await solana.withdrawFromAgentSolana({
-        agentId: input.agentId,
-        asset: input.asset,
-        amount: input.amount,
-        toAddress: to,
-      });
-      await solana.recordAgentSolanaWithdrawal({ userId: session.userId, agent, asset: input.asset, requested: input.amount, to, sent });
-      revalidatePath(`/agents/${agent.slug}/settings`);
-      revalidatePath(`/agents/${agent.slug}`);
-      // What arrived and any account fee travel with the receipt; routing detail stays in the audit.
-      return { ok: true, data: solana.withdrawalForClient(sent) };
-    } catch (err) {
-      console.error("[withdrawFromAgent] solana", err);
-      return fail(transferErrorMessage(err, WITHDRAW_FAILED, "solana", input.asset));
-    }
-  }
-
-  const { limiter } = await import("@/lib/security/rate-limit");
-  const { OWNER_WITHDRAWAL_BURST_LIMIT, waitSentence } = await import("@/lib/wallets/solana-agent-transfer");
-  const verdict = limiter.consume(`agent-withdraw:${input.chain}:${session.userId}`, OWNER_WITHDRAWAL_BURST_LIMIT);
-  if (!verdict.ok) {
-    return fail(`That's a lot of withdrawals in a short time. Try again in ${waitSentence(verdict.retryAfterSeconds)}.`);
-  }
-
-  try {
-    const result = await sendWithdrawal(input);
-    revalidatePath(`/agents/${agent.slug}/settings`);
-    revalidatePath(`/agents/${agent.slug}`);
-    return { ok: true, data: result };
-  } catch (err) {
-    console.error("[withdrawFromAgent]", err);
-    return fail(transferErrorMessage(err, WITHDRAW_FAILED, input.chain, input.asset));
-  }
-}
+// ------------------------------------------------------------- wallet budget
+//
+// Withdrawing from an agent is `secureWithdrawAction` (security.ts): the one action that
+// moves an agent's money out, with the chain and destination checks, the limits and the
+// audit row. There is deliberately no second one in this file.
 
 /**
  * Owner-only. Set the agent's wallet-layer budget: the per-transaction USDC cap

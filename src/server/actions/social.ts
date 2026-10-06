@@ -1,6 +1,7 @@
 "use server";
+import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { agents, comments, follows, getDb, likes, notifications, posts, users } from "@/db";
 import { getSession } from "@/lib/auth";
 import { newId } from "@/server/queries/_shared";
@@ -12,6 +13,14 @@ function fail(error: string): { ok: false; error: string } {
 }
 
 type Db = Awaited<ReturnType<typeof getDb>>;
+
+/**
+ * The most comments one account may write in an hour, counted in the database. A
+ * comment's first line lands in the post author's inbox, so this is also the most one
+ * account can put there.
+ */
+const MAX_COMMENTS_PER_HOUR = 30;
+const COMMENT_WINDOW_MS = 60 * 60_000;
 
 /**
  * A post that belongs to a private agent is invisible in every feed query, so it must
@@ -57,16 +66,41 @@ function followRow(followerId: string, targetType: "user" | "agent", targetId: s
   return and(eq(follows.followerId, followerId), eq(follows.targetType, targetType), eq(follows.targetId, targetId));
 }
 
-async function notifyFollow(db: Db, target: FollowTarget, followerId: string) {
+/**
+ * A notification id that is the same for the same actor, subject and UTC day.
+ *
+ * Unfollow deletes the row, so "following twice inserts once" does not cover follow,
+ * unfollow, follow: every lap used to write another line into someone else's inbox,
+ * which buries the proposals and exits that inbox exists for. With the id derived from
+ * who did it, to what, and the day, the insert itself is the check: a repeat collides
+ * with the first and writes nothing. Keyed on ids rather than on the title so a
+ * follower who renames between laps is still the same follower, and atomic so two taps
+ * racing cannot both get through.
+ */
+function oncePerDayId(kind: "follow" | "like", actorId: string, subject: string): string {
+  const key = createHash("sha256").update(`${kind}\n${actorId}\n${subject}`).digest("base64url").slice(0, 22);
+  return `ntf_${key}_${new Date().toISOString().slice(0, 10)}`;
+}
+
+async function notifyFollow(
+  db: Db,
+  target: FollowTarget,
+  followerId: string,
+  targetType: "user" | "agent",
+  targetId: string,
+) {
   if (target.ownerId === followerId) return;
-  await db.insert(notifications).values({
-    id: newId("ntf"),
-    userId: target.ownerId,
-    kind: "follow",
-    title: target.title,
-    body: null,
-    href: target.href,
-  });
+  await db
+    .insert(notifications)
+    .values({
+      id: oncePerDayId("follow", followerId, `${targetType}:${targetId}`),
+      userId: target.ownerId,
+      kind: "follow",
+      title: target.title,
+      body: null,
+      href: target.href,
+    })
+    .onConflictDoNothing();
 }
 
 async function followerCount(db: Db, targetType: "user" | "agent", targetId: string): Promise<number> {
@@ -88,26 +122,27 @@ export async function toggleFollow(
   if (targetType === "user" && targetId === session.userId) return fail("You cannot follow yourself");
 
   const db = await getDb();
-  const target = await resolveFollowTarget(db, targetType, targetId, session);
-  if ("error" in target) return fail(target.error);
-
+  // The viewer's own row is read, and removed, before the target's visibility is asked
+  // about: see `setFollow`.
   const existing = await db
     .select({ followerId: follows.followerId })
     .from(follows)
     .where(followRow(session.userId, targetType, targetId))
     .limit(1);
+  if (existing.length > 0) await db.delete(follows).where(followRow(session.userId, targetType, targetId));
 
-  let following: boolean;
-  if (existing.length > 0) {
-    await db.delete(follows).where(followRow(session.userId, targetType, targetId));
-    following = false;
-  } else {
+  const target = await resolveFollowTarget(db, targetType, targetId, session);
+  if ("error" in target) {
+    return existing.length > 0 ? { ok: true, data: { following: false, followerCount: 0 } } : fail(target.error);
+  }
+
+  const following = existing.length === 0;
+  if (following) {
     await db
       .insert(follows)
       .values({ followerId: session.userId, targetType, targetId })
       .onConflictDoNothing();
-    following = true;
-    await notifyFollow(db, target, session.userId);
+    await notifyFollow(db, target, session.userId, targetType, targetId);
   }
 
   const count = await followerCount(db, targetType, targetId);
@@ -139,8 +174,17 @@ export async function setFollow(
   if (targetType === "user" && targetId === session.userId) return fail("You cannot follow yourself");
 
   const db = await getDb();
+  // Unfollowing removes the viewer's own row and needs nobody's permission, so it runs
+  // before the visibility rule. An agent that went private after it was followed would
+  // otherwise answer "This agent is private" here and keep its followers for good.
+  if (!following) await db.delete(follows).where(followRow(session.userId, targetType, targetId));
+
   const target = await resolveFollowTarget(db, targetType, targetId, session);
-  if ("error" in target) return fail(target.error);
+  if ("error" in target) {
+    // The unfollow is done. Zero, not a recount: a private agent's follower count is
+    // not this caller's to read.
+    return following ? fail(target.error) : { ok: true, data: { following: false, followerCount: 0 } };
+  }
 
   if (following) {
     const inserted = await db
@@ -148,9 +192,7 @@ export async function setFollow(
       .values({ followerId: session.userId, targetType, targetId })
       .onConflictDoNothing()
       .returning({ followerId: follows.followerId });
-    if (inserted.length > 0) await notifyFollow(db, target, session.userId);
-  } else {
-    await db.delete(follows).where(followRow(session.userId, targetType, targetId));
+    if (inserted.length > 0) await notifyFollow(db, target, session.userId, targetType, targetId);
   }
 
   const count = await followerCount(db, targetType, targetId);
@@ -173,14 +215,18 @@ async function visiblePost(db: Db, postId: string, viewerId: string) {
 
 async function notifyLike(db: Db, post: { id: string; authorId: string }, viewer: { userId: string; handle: string }) {
   if (post.authorId === viewer.userId) return;
-  await db.insert(notifications).values({
-    id: newId("ntf"),
-    userId: post.authorId,
-    kind: "like",
-    title: `@${viewer.handle} liked your post`,
-    body: null,
-    href: `/feed/${post.id}`,
-  });
+  // Like, unlike, like is the same loop as follow, unfollow, follow: once a day per post.
+  await db
+    .insert(notifications)
+    .values({
+      id: oncePerDayId("like", viewer.userId, post.id),
+      userId: post.authorId,
+      kind: "like",
+      title: `@${viewer.handle} liked your post`,
+      body: null,
+      href: `/feed/${post.id}`,
+    })
+    .onConflictDoNothing();
 }
 
 /** Recount from the rows and store it on the post, so the cached count never drifts. */
@@ -273,6 +319,14 @@ export async function addComment(postId: string, body: string): Promise<ActionRe
   if (limited) return fail(limited);
 
   const db = await getDb();
+  // The limiter above lives in one server instance's memory, so its real ceiling is ten
+  // a minute times however many instances are up. This one is counted from the rows.
+  const [recent] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(comments)
+    .where(and(eq(comments.authorId, session.userId), gte(comments.createdAt, new Date(Date.now() - COMMENT_WINDOW_MS))));
+  if (Number(recent?.n ?? 0) >= MAX_COMMENTS_PER_HOUR) return fail("You're commenting a lot. Try again in an hour.");
+
   const post = await visiblePost(db, postId, session.userId);
   if (!post) return fail("Post not found");
 

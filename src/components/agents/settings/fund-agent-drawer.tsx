@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Plus, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -20,6 +22,7 @@ import { formatUsd, truncateAddress } from "@/components/common/format";
 import { shownUsdc } from "@/components/wallets/cash-display";
 import { CashTotal } from "@/components/wallets/cash-summary";
 import { DepositSheet } from "@/components/wallets/deposit-sheet";
+import { attemptFunding } from "@/components/wallets/funding-attempt";
 import { useRefreshCash, useUserWallets } from "@/components/wallets/use-cash";
 import { useTransfer } from "@/components/wallets/use-transfer";
 import { useSession } from "@/hooks/use-session";
@@ -38,15 +41,59 @@ import {
 } from "@/server/actions/wallets";
 import { cn } from "@/lib/utils";
 import type { Chain, WalletBalance } from "@/server/types";
+import { fundingIntentsKey, walletBalancesKey } from "./wallet-query-keys";
 
 /** Privy is only wired once an app id exists; until then this is a copy-address flow. */
 const PRIVY_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID);
+
+/**
+ * When to look again after a send. A Solana transfer is confirmed by the time the send
+ * returns; a Base one is read from an indexer that trails the chain by up to minutes.
+ */
+const LATE_BALANCE_CHECKS_MS = [4_000, 12_000, 45_000] as const;
+/** A send with no answer can still land for about two minutes: look once more after that. */
+const UNKNOWN_SEND_CHECK_MS = 120_000;
 
 interface FundProps {
   agentId: string;
   agentName: string;
   /** The agent's own server wallets, one per enabled chain. */
   wallets: WalletBalance[];
+}
+
+/**
+ * Re-read every balance a funding changes, now and as it confirms: the agent's (the
+ * Money strip, the wallets, Mode and Withdraw cards and this drawer all read one query,
+ * which a server refresh does not reach), its funding history, the user's cash in the
+ * top bar, and whatever on the page was rendered from server props.
+ *
+ * Called from the drawer, which stays mounted with the page: the sheet is usually closed
+ * by the time a late check runs, and the checks must outlive it but not the page.
+ */
+function useRefreshAfterFunding(agentId: string): (outcome?: "unknown") => void {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const refreshCash = useRefreshCash();
+  const lateChecks = useRef<number[]>([]);
+  useEffect(() => {
+    const timers = lateChecks.current;
+    return () => timers.forEach((id) => window.clearTimeout(id));
+  }, []);
+
+  return useCallback(
+    (outcome) => {
+      const refresh = () => {
+        void queryClient.invalidateQueries({ queryKey: walletBalancesKey(agentId) });
+        void queryClient.invalidateQueries({ queryKey: fundingIntentsKey(agentId) });
+        void refreshCash();
+        router.refresh();
+      };
+      refresh();
+      const delays = outcome === "unknown" ? [...LATE_BALANCE_CHECKS_MS, UNKNOWN_SEND_CHECK_MS] : LATE_BALANCE_CHECKS_MS;
+      for (const delay of delays) lateChecks.current.push(window.setTimeout(refresh, delay));
+    },
+    [agentId, queryClient, refreshCash, router],
+  );
 }
 
 /**
@@ -66,10 +113,23 @@ interface FundProps {
  * Tocker cannot pay this fee at all (sponsorship off, a co-sign refused) it says nothing
  * moved and does not pretend a retry will work. It never opens a deposit sheet for gas.
  */
-function FundBody({ agentId, agentName, wallets }: FundProps) {
+function FundBody({
+  agentId,
+  agentName,
+  wallets,
+  onMoved,
+}: FundProps & {
+  /** Money moved, or may have: re-read the balances. */
+  onMoved: (outcome?: "unknown") => void;
+}) {
   const { ready, session } = useSession();
   const { data } = useUserWallets(Boolean(ready && session));
-  const [chain, setChain] = useState<Chain>(wallets[0]?.chain ?? "base");
+  const [picked, setPicked] = useState<Chain>(wallets[0]?.chain ?? "base");
+  // The sheet can open before the agent's wallets have loaded, and the first guess is
+  // then Base whatever the agent trades. A chain the agent has no wallet on is never
+  // the one in use: the transfer would be built for it and addressed to the other
+  // chain's wallet.
+  const chain = wallets.some((wallet) => wallet.chain === picked) ? picked : (wallets[0]?.chain ?? picked);
   const asset = "usdc" as const;
   const [amount, setAmount] = useState("");
   const [pending, setPending] = useState(false);
@@ -79,8 +139,12 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
    * `retry` only when the fee wallet was short for a moment and the same send can work.
    */
   const [feeFailed, setFeeFailed] = useState<{ message: string; retry: boolean } | null>(null);
+  /**
+   * Set when the request that submits the signed transfer got no answer, so it may have
+   * gone. Stays under the form after the toast is gone: the next thing to do is wait.
+   */
+  const [statusUnknown, setStatusUnknown] = useState<string | null>(null);
   const { send, available } = useTransfer();
-  const refresh = useRefreshCash();
 
   const target = wallets.find((entry) => entry.chain === chain) ?? wallets[0];
   const myCash = data?.cash;
@@ -108,6 +172,7 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
     if (!valid || !target || pending) return;
     setPending(true);
     setFeeFailed(null);
+    setStatusUnknown(null);
 
     const recorded = await recordFundingIntents({
       agentId,
@@ -116,28 +181,35 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
     const intentId = recorded.ok ? recorded.data.ids[0] : undefined;
 
     try {
-      const result = await send({ chain, asset, amount: parsed, to: target.address });
-      if (intentId) {
-        void settleFundingIntent({ id: intentId, status: "sent", txHash: result.hash });
-      }
-      toast.success("Funding sent", {
-        description: `${truncateAddress(result.hash, 8, 6)} — balances update once it confirms.`,
+      const attempt = await attemptFunding({
+        send: () => send({ chain, asset, amount: parsed, to: target.address }),
+        settle: intentId ? (settlement) => void settleFundingIntent({ id: intentId, ...settlement }) : undefined,
+        rejected: "Your wallet rejected the request.",
       });
-      setAmount("");
-      void refresh();
-      void refresh(12_000);
-    } catch (error) {
-      // `useTransfer` has already turned an SDK failure into a sentence. The only
-      // question left is whether it was the network fee — Tocker's to fix, never a
-      // reason to ask this user for SOL or ETH — or anything else (a cancel, say).
-      const message = error instanceof Error ? error.message : "Your wallet rejected the request.";
-      if (intentId) {
-        void settleFundingIntent({ id: intentId, status: "failed", error: message });
+      if (attempt.outcome === "sent") {
+        toast.success("Funding sent", {
+          description: `${truncateAddress(attempt.hash, 8, 6)} — balances update once it confirms.`,
+        });
+        setAmount("");
+        onMoved();
+      } else if (attempt.outcome === "unknown") {
+        // The request that submits the signed transfer got no answer, so it may have gone.
+        // Never "failed", and the intent is left as recorded: settled as failed, the
+        // wallets card would offer to "send the rest" on top of money that arrived. The
+        // amount is cleared so the same send is not one tap away while that is unknown.
+        toast.warning("Funding status unknown", { description: attempt.message, duration: 15_000 });
+        setStatusUnknown(attempt.message);
+        setAmount("");
+        onMoved("unknown");
+      } else {
+        // `useTransfer` has already turned an SDK failure into a sentence. The only
+        // question left is whether it was the network fee — Tocker's to fix, never a
+        // reason to ask this user for SOL or ETH — or anything else (a cancel, say).
+        const readable = userFacingTransferError(attempt.message, chain);
+        const kind = feeFailureKind(attempt.message);
+        if (kind) setFeeFailed({ message: readable, retry: kind === "refuel" });
+        toast.error("Transfer failed", { description: readable });
       }
-      const readable = userFacingTransferError(message, chain);
-      const kind = feeFailureKind(message);
-      if (kind) setFeeFailed({ message: readable, retry: kind === "refuel" });
-      toast.error("Transfer failed", { description: readable });
     } finally {
       setPending(false);
     }
@@ -166,7 +238,7 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
               type="button"
               aria-pressed={wallet.chain === chain}
               onClick={() => {
-                setChain(wallet.chain);
+                setPicked(wallet.chain);
                 setFeeFailed(null);
               }}
               className={cn(
@@ -250,6 +322,14 @@ function FundBody({ agentId, agentName, wallets }: FundProps) {
               Try again
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {/* Not red either: nothing is known to have gone wrong. It says what to wait for. */}
+      {statusUnknown ? (
+        <div className="space-y-1 rounded-xl border border-border/60 bg-muted/20 p-3" role="status">
+          <p className="text-xs font-medium">Funding status unknown</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">{statusUnknown}</p>
         </div>
       ) : null}
 
@@ -358,6 +438,7 @@ export function FundAgentDrawer({
   isAdmin = false,
 }: FundProps & { trigger?: React.ReactNode; isAdmin?: boolean }) {
   const [open, setOpen] = useState(false);
+  const refreshAfterFunding = useRefreshAfterFunding(agentId);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -383,7 +464,7 @@ export function FundAgentDrawer({
         </SheetHeader>
         <div className="px-4 pb-6">
           {PRIVY_CONFIGURED ? (
-            <FundBody agentId={agentId} agentName={agentName} wallets={wallets} />
+            <FundBody agentId={agentId} agentName={agentName} wallets={wallets} onMoved={refreshAfterFunding} />
           ) : (
             <FundFallback agentName={agentName} wallets={wallets} isAdmin={isAdmin} />
           )}

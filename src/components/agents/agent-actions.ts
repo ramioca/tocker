@@ -7,7 +7,6 @@
  */
 import { revalidatePath } from "next/cache";
 import { withMock } from "@/lib/data";
-import { isValidAddressForChain, addressHintForChain } from "@/lib/wallet-address";
 import {
   agentRuns,
   agentTrades,
@@ -26,13 +25,10 @@ import {
   type CreateAgentInput,
 } from "@/server/actions/agents";
 import { addLlmKey } from "@/server/actions/users";
-import { withdrawFromAgent } from "@/server/actions/wallets";
-import type { WithdrawResult } from "@/lib/wallets";
 import { MOCK_AGENT_SLUG, MOCK_RUN_ID } from "@/mocks/core";
 import type {
   ActionResult,
   AgentStatus,
-  Chain,
   DataSourceInfo,
   LlmKeyRow,
   Page,
@@ -158,28 +154,7 @@ export async function addLlmKeyAction(input: {
   );
 }
 
-export async function withdrawAction(input: {
-  agentId: string;
-  chain: Chain;
-  asset: "usdc" | "native";
-  amount: number;
-  toAddress: string;
-  // W7 H12 (workstream A): a Privy transfer is a wallet action — it can be `pending`
-  // with no hash yet, so the result carries the status and the action id too.
-}): Promise<ActionResult<WithdrawResult>> {
-  if (!(input.amount > 0)) return { ok: false, error: "Enter an amount greater than zero." };
-  if (!isValidAddressForChain(input.chain, input.toAddress)) {
-    return { ok: false, error: addressHintForChain(input.chain) };
-  }
-  return withMock(
-    () => withdrawFromAgent(input),
-    () => ({
-      ok: true as const,
-      data: {
-        txHash: "0xmocked000withdrawal000hash",
-        actionId: "action_mocked",
-        status: "succeeded" as const,
-      },
-    }),
-  );
-}
+// No withdraw bridge here on purpose. An agent's money leaves through
+// `secureWithdrawAction` (src/server/actions/security.ts) and nothing else: the wrapper
+// that used to sit here called an older action with fewer checks and no audit row on
+// Base, and its mock answered with an invented transaction hash.

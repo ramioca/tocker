@@ -7,7 +7,7 @@ import { getSession } from "@/lib/auth";
 import { getNotifications } from "@/server/queries/users";
 import { listMyProposals } from "@/server/queries/proposals";
 import { receiptsFor } from "@/server/queries/trading";
-import { withMock } from "@/lib/data";
+import { mockDataForced, withMock } from "@/lib/data";
 import { NOW, mockNotifications, mockSession } from "@/mocks/social";
 import { referenceNow } from "@/components/social-common/format";
 import { unreadNotifications } from "@/components/common/data-access";
@@ -59,13 +59,15 @@ export default async function NotificationsPage({
       () => [],
     ),
     withMock(
-      () => receiptsFor(fillTradeIds),
+      // The viewer is passed so `receiptsFor` checks that claim itself and gives the
+      // owner the whole receipt.
+      () => receiptsFor(fillTradeIds, session.userId),
       () => new Map(),
     ),
   ]);
 
   // Mock fixtures are anchored to a fixed clock so relative times stay stable in dev.
-  const now = referenceNow(process.env.MOCK_DATA === "1" ? NOW : undefined);
+  const now = referenceNow(mockDataForced() ? NOW : undefined);
   // Days are the viewer's, not UTC's; AppShell writes the zone. UTC until it has.
   const timeZone = resolveTimeZone((await cookies()).get("tz")?.value);
 

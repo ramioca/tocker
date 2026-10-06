@@ -377,7 +377,7 @@ export function LiveWizard({
         </div>
 
         {/* Next to the button, in this agent's own numbers: the button rewrites saved caps in
-            one tap, and the sentence saying so used to sit under all ten checklist rows. */}
+            one tap, and the sentence saying so used to sit under every checklist row. */}
         <p id="first-trade-preset-desc" className="text-xs leading-5 text-muted-foreground">
           {presetChanges.length > 0 ? (
             <>

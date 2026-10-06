@@ -13,6 +13,7 @@ import {
   platformFeeUsd,
   settleMinUsd,
   sumFees,
+  withdrawableAfterFees,
   type FeeRow,
 } from "./fee";
 
@@ -156,5 +157,31 @@ describe("what a buy actually costs", () => {
     expect(buyCostUsd(Number.NaN, 0.1)).toBeCloseTo(0.1, 9);
     expect(buyCostUsd(50, Number.NaN)).toBe(50);
     expect(buyCostUsd(-5, 0.1)).toBeCloseTo(0.1, 9);
+  });
+});
+
+describe("what may be withdrawn from a wallet that owes fees", () => {
+  it("is the balance less what is owed, to the cent", () => {
+    // 10 − 0.3 is 9.699999… in floating point; a plain floor to cents would say $9.69.
+    expect(withdrawableAfterFees(10, 0.3)).toBe(9.7);
+    expect(withdrawableAfterFees(25, 0.1)).toBe(24.9);
+    expect(withdrawableAfterFees(10.123456, 0.3)).toBe(9.82);
+  });
+
+  it("is the whole balance, floored to a cent, when nothing is owed", () => {
+    expect(withdrawableAfterFees(12.349, 0)).toBe(12.34);
+    expect(withdrawableAfterFees(5, 0)).toBe(5);
+  });
+
+  it("is nothing when the wallet holds no more than it owes", () => {
+    expect(withdrawableAfterFees(0.3, 0.3)).toBe(0);
+    expect(withdrawableAfterFees(0.05, 0.3)).toBe(0);
+    expect(withdrawableAfterFees(0, 0.3)).toBe(0);
+  });
+
+  it("never answers with a number it could not work out", () => {
+    expect(withdrawableAfterFees(Number.NaN, 0.3)).toBe(0);
+    expect(withdrawableAfterFees(10, Number.NaN)).toBe(10);
+    expect(withdrawableAfterFees(-4, 0)).toBe(0);
   });
 });

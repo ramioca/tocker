@@ -65,6 +65,11 @@
  * {@link settleCollectedFees} settles them on confirmation, and
  * {@link releaseFeesFromTransfer} gives them back when the transfer is known not to have
  * moved. A withdrawal left pending is resolved here, like any sweep in flight.
+ *
+ * Base has no transaction of ours to put the fees in (the withdrawal is Privy's
+ * `transfer`), so there the same hole is closed in two steps, in `./withdrawal-fees.ts`:
+ * a USDC withdrawal may not take the fees owed with it, and the sweep runs straight
+ * after it, and again when the agent is deleted, with `minUsd` set to a cent.
  */
 import { and, eq, inArray, isNull, notLike, or } from "drizzle-orm";
 import { getDb, platformFees } from "@/db";
@@ -145,6 +150,13 @@ export interface SettleFeesInput {
   agentName: string;
   mode: "paper" | "live";
   now?: Date;
+  /**
+   * Sweep once this much is owed, in place of `PLATFORM_FEE_SETTLE_MIN_USD`. The batch
+   * threshold exists so the marks pass does not send ten-cent transfers; a caller that
+   * is about to lose its chance to collect (the owner is taking the money out, or
+   * deleting the agent) passes a cent. See `./withdrawal-fees.ts`.
+   */
+  minUsd?: number;
 }
 
 export interface SettledBatch {
@@ -199,7 +211,10 @@ export async function settlePlatformFees(input: SettleFeesInput): Promise<Settle
     const resolved = await resolveInflight(inflight, input, now);
     const resolvedUsd = resolved.batches.reduce((sum, b) => sum + (b.error === null && b.txHash ? b.amountUsd : 0), 0);
 
-    const minUsd = settleMinUsd();
+    const minUsd =
+      typeof input.minUsd === "number" && Number.isFinite(input.minUsd) && input.minUsd >= 0
+        ? input.minUsd
+        : settleMinUsd();
     const plan = planSettlement([...free, ...resolved.released], minUsd);
     if (plan.batches.length === 0) {
       const waiting = resolved.batches.filter((b) => b.error !== null).length;

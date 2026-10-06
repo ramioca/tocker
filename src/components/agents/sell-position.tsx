@@ -28,7 +28,9 @@ import {
   PREVIEW_PATIENCE_MS,
   PREVIEW_SLOW,
   SENDING_SELL,
+  afterFeesLabel,
   noQuoteLine,
+  proceedsAfterFees,
   realisedOnSale,
   sellVenueLine,
   thinPoolLine,
@@ -147,7 +149,8 @@ export function SellPositionButton({ agentId, position }: { agentId: string; pos
         }}
         // One "Sell" per row: the symbol is what tells them apart to a screen reader.
         aria-label={`Sell ${position.token.symbol}`}
-        className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors duration-150 hover:border-negative/50 hover:text-negative focus-ring"
+        // Taller and wider on a phone, where 38 by 26 was the smallest control in the row.
+        className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors duration-150 hover:border-negative/50 hover:text-negative focus-ring max-sm:min-h-9 max-sm:px-3"
       >
         Sell
       </button>
@@ -392,6 +395,10 @@ function SellPositionDialog({
         .filter((part): part is string => Boolean(part))
         .join(" · ")
     : null;
+  // What the sale leaves once the fees above it are taken off. Which fees there are does
+  // not depend on the size, so the row is kept (as a dash) while the next size previews.
+  const afterFeesRow = afterFeesLabel((data ?? latest)?.fees);
+  const afterFees = data && quote ? proceedsAfterFees(quote.proceedsUsd, data.fees) : null;
   // The row is kept while the next size previews, so the dialog does not change height
   // under the cursor; a live agent has one from the start.
   const showFloor = data
@@ -451,7 +458,8 @@ function SellPositionDialog({
 
             <div role="status" className="space-y-3">
               <div>
-                <p className="text-xs text-muted-foreground">Received</p>
+                {/* Not "Received": this is the fill's gross, and the fees below come off it. */}
+                <p className="text-xs text-muted-foreground">Sold for, before fees</p>
                 <p className="tnum font-mono text-2xl font-medium tracking-tight">{formatUsd(sold.fill.amountUsd)}</p>
                 <p className="tnum mt-0.5 text-xs text-muted-foreground">
                   {formatTokenAmount(sold.fill.amountToken)} {sold.fill.symbol} at {formatPriceUsd(sold.fill.priceUsd)}
@@ -532,8 +540,10 @@ function SellPositionDialog({
                         : "—"
                     }
                   />
+                  {/* The venue's gross for these tokens. "You receive" read as what lands in
+                      cash, and on a $1 sale that is a tenth less. */}
                   <QuoteRow
-                    label="You receive ≈"
+                    label="Sale proceeds ≈"
                     value={
                       quote === null
                         ? "—"
@@ -550,6 +560,9 @@ function SellPositionDialog({
                     />
                   ) : null}
                   {feeText !== "" ? <QuoteRow label="Fees" value={feeText ?? "—"} /> : null}
+                  {afterFeesRow ? (
+                    <QuoteRow label={afterFeesRow} value={afterFees === null ? "—" : formatUsd(afterFees)} />
+                  ) : null}
                 </dl>
               ) : null}
               {thin !== null ? <p className="text-xs leading-5 text-destructive">{thinPoolLine(thin)}</p> : null}

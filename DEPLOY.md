@@ -257,7 +257,9 @@ past the cap.
   no explanation — the page is deliberately an existence oracle for nobody.
 - **Leave unset in production:** `X402_MOCK`, `LLM_MOCK`, `TOKENS_MOCK`, `MOCK_DATA`.
   Only the literal `"1"` enables mock mode, so `X402_MOCK=0` and `X402_MOCK=false` both
-  mean *real payments*.
+  mean *real payments*. `MOCK_DATA` is ignored by any production build (it would hand
+  every visitor the mock session), and `/api/health` still reports it to the operator as
+  `mocks.data` and the blocker `noMockData`, so unset it rather than rely on that.
 - **Check Vercel → Settings → Functions: Fluid compute must be enabled** before
   `maxDuration` can go to 300. Without it the build rejects the value, and with a 60s cap
   an agent run that takes longer is killed mid-flight.

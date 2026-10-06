@@ -150,7 +150,7 @@ export default async function MoneyPage() {
             description={
               hasAny
                 ? `Your paper agents are below. Their P&L is real arithmetic on simulated fills, but none of it is counted here — this page only totals live books. Fund an agent and switch it to live when its record convinces you.${bestPaper ? ` Best paper record so far: ${bestPaper.name}, ${formatSignedUsd(bestPaper.pnlUsd)}.` : ""}`
-                : "An agent is a prompt, a wallet and a schedule. Build one — it starts on paper, so the first mistake costs nothing — and this page fills in the day it goes live."
+                : "An agent is a prompt, a wallet and a schedule. Build one — it starts on paper, so no trade can lose real money — and this page fills in the day it goes live."
             }
             action={hasAny ? <GoLiveButton href={goLiveHref} name={bestPaper?.name} /> : NEW_AGENT_BUTTON}
           />

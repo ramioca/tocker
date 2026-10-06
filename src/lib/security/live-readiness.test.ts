@@ -4,6 +4,7 @@ import {
   checkDataSources,
   databaseStep,
   evaluateFirstTradeRisk,
+  paperPositionsStep,
   simulateFirstTrade,
   withFirstTradePreset,
   type DatabaseStepInput,
@@ -300,5 +301,59 @@ describe("databaseStep", () => {
     expect(failed.detail).toContain("ECONNREFUSED");
     expect(failed.fix?.href).toBe("/api/health");
     expect(step({ embedded: true, production: false, viewerIsAdmin: true }).detail).toContain("PGlite");
+  });
+});
+
+/**
+ * The row that says, before the hold, what `goLiveAction` would refuse on. The count
+ * itself is tested against a database in `paper-positions.test.ts`.
+ */
+describe("paperPositionsStep", () => {
+  const step = (symbols: Array<string | null> | null, live = false) =>
+    paperPositionsStep({ slug: "momentum-mike", live, symbols });
+
+  it("passes with nothing to fix when no simulated position is open", () => {
+    const out = step([]);
+    expect(out.id).toBe("paperPositions");
+    expect(out.title).toBe("No paper positions open");
+    expect(out.state).toBe("pass");
+    expect(out.fix).toBeNull();
+  });
+
+  it("fails while paper positions are open, names them, and links to where they are sold", () => {
+    const out = step(["WIF", "JUP", "BONK"]);
+    expect(out.state).toBe("fail");
+    expect(out.detail).toContain("3 paper positions are still open (WIF, JUP, BONK).");
+    expect(out.detail).toContain("They are simulated");
+    expect(out.fix).toEqual({ label: "Sell them on the agent page", href: "/agents/momentum-mike#positions" });
+  });
+
+  it("speaks in the singular for one position", () => {
+    const out = step(["WIF"]);
+    expect(out.detail).toContain("1 paper position is still open (WIF). It is simulated");
+    expect(out.fix?.label).toBe("Sell it on the agent page");
+  });
+
+  it("names three and counts the rest, and still counts a token with no symbol", () => {
+    const out = step(["A", "B", "C", "D", null]);
+    expect(out.detail).toContain("5 paper positions are still open (A, B, C and 2 more).");
+    expect(step([null]).detail).toContain("1 paper position is still open. It is simulated");
+  });
+
+  it("keeps a creator-chosen symbol short", () => {
+    expect(step(["  " + "X".repeat(80)]).detail).toContain(`(${"X".repeat(12)})`);
+  });
+
+  /** "Could not tell" is red on this screen, never green. */
+  it("fails when the book could not be read", () => {
+    const out = step(null);
+    expect(out.state).toBe("fail");
+    expect(out.detail).toMatch(/could not read/i);
+  });
+
+  it("has nothing to guard once the agent is live", () => {
+    const out = step([], true);
+    expect(out.state).toBe("pass");
+    expect(out.fix).toBeNull();
   });
 });

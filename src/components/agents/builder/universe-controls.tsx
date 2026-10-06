@@ -212,6 +212,15 @@ function listSentence(items: string[]): string {
   return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
+/**
+ * A maximum age, as a person says it. `maxAgeHours` is stored in hours, and a preset
+ * that hunts the first fifteen minutes stores 0.25: under an hour it is said in minutes
+ * ("15 minutes"), never "0.25 hours".
+ */
+function maxAgeLabel(hours: number): string {
+  return hours < 1 ? formatMinutes(Math.max(1, Math.round(hours * 60))) : formatHours(hours);
+}
+
 /** The whole universe as one sentence. Nothing here is estimated or invented. */
 export function universeSentence(universe: UniverseConfig, chains: Chain[]): string {
   const where = listSentence(chains.map((chain) => (chain === "solana" ? "Solana" : "Base")));
@@ -222,7 +231,7 @@ export function universeSentence(universe: UniverseConfig, chains: Chain[]): str
     `at least ${formatCompactUsd(universe.minLiquidityUsd)} of liquidity`,
     universe.minHolderCount > 0 ? `${formatHolders(universe.minHolderCount)} holders or more` : null,
     universe.minAgeMinutes > 0 ? `at least ${formatMinutes(universe.minAgeMinutes)} old` : null,
-    universe.maxAgeHours !== null ? `no older than ${formatHours(universe.maxAgeHours)}` : null,
+    universe.maxAgeHours !== null ? `no older than ${maxAgeLabel(universe.maxAgeHours)}` : null,
     `top-10 wallets under ${Math.round(universe.maxTop10HolderPct)}%`,
     `buy tax under ${Math.round(universe.maxBuyTaxPct)}%`,
   ].filter((entry): entry is string => entry !== null);
@@ -590,11 +599,11 @@ export function UniverseControls({
             value={universe.maxAgeHours ?? 72}
             disabled={universe.maxAgeHours === null}
             // The thumb parks at 72h while "Any age" is on; the readout says what is enforced.
-            format={(value) => (universe.maxAgeHours === null ? "Any" : formatHours(value))}
+            format={(value) => (universe.maxAgeHours === null ? "Any" : maxAgeLabel(value))}
             meaning={
               universe.maxAgeHours === null
                 ? "No ceiling — a token from 2021 is as eligible as one from this morning."
-                : `Anything older than ${formatHours(universe.maxAgeHours)} is ignored, however well it scores. This is how you hunt only fresh launches.`
+                : `Anything older than ${maxAgeLabel(universe.maxAgeHours)} is ignored, however well it scores. This is how you hunt only fresh launches.`
             }
             onChange={(hours) => onUniverse({ maxAgeHours: hours })}
             action={

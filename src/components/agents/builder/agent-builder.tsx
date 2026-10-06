@@ -23,9 +23,10 @@ import {
   ttlLabel,
 } from "./steps";
 import { universeSummary } from "./universe-controls";
-import { launchRadarUsdPerRun } from "./types";
+import { PAID_LAUNCH_RADAR_USD_PER_CHAIN, launchRadarUsdPerRun } from "./types";
 import { useDraft } from "./use-draft";
 import { useFundingPlan } from "@/components/wallets/use-funding-plan";
+import { isTransferStatusUnknown } from "@/components/wallets/funding-attempt";
 import { useRefreshCash } from "@/components/wallets/use-cash";
 import { useTransfer } from "@/components/wallets/use-transfer";
 import {
@@ -122,7 +123,7 @@ async function runFundingPlan(input: {
   agentId: string;
   plan: FundingPlan;
   send: ReturnType<typeof useTransfer>["send"];
-}): Promise<{ sent: number; total: number; firstError: string | null }> {
+}): Promise<{ sent: number; total: number; firstError: string | null; unknown?: boolean }> {
   const transfers = transfersFor(input.plan);
   if (transfers.length === 0) return { sent: 0, total: 0, firstError: null };
 
@@ -143,6 +144,7 @@ async function runFundingPlan(input: {
 
   let sent = 0;
   let firstError: string | null = null;
+  let unknown = false;
 
   for (let i = 0; i < transfers.length; i += 1) {
     const transfer = transfers[i];
@@ -151,7 +153,9 @@ async function runFundingPlan(input: {
         void settleFundingIntent({
           id: ids[i],
           status: "cancelled",
-          error: "Skipped after the previous transfer was not signed.",
+          error: unknown
+            ? "Skipped because the previous transfer was not confirmed."
+            : "Skipped after the previous transfer was not signed.",
         });
       }
       continue;
@@ -173,11 +177,14 @@ async function runFundingPlan(input: {
       if (ids[i]) void settleFundingIntent({ id: ids[i], status: "sent", txHash: result.hash });
     } catch (error) {
       firstError = error instanceof Error ? error.message : "Your wallet rejected the transfer.";
-      if (ids[i]) void settleFundingIntent({ id: ids[i], status: "failed", error: firstError });
+      // No answer to the submit is not a refusal: the transfer may have gone. Its intent
+      // stays as recorded rather than "failed", and the caller does not offer it again.
+      if (isTransferStatusUnknown(error)) unknown = true;
+      else if (ids[i]) void settleFundingIntent({ id: ids[i], status: "failed", error: firstError });
     }
   }
 
-  return { sent, total: transfers.length, firstError };
+  return { sent, total: transfers.length, firstError, unknown };
 }
 
 /** A heading that looks like a label, so heading navigation finds the builder's sections. */
@@ -270,14 +277,21 @@ export function AgentBuilder({
   userId,
   sources,
   initialKeys,
+  feeUsd,
 }: {
   userId: string;
   sources: DataSourceInfo[];
   initialKeys: LlmKeyRow[];
+  /**
+   * Tocker's flat fee per fill, from the server (`platformFeeUsd()`); 0 when the fee is
+   * off. The page reads it because the env it comes from never reaches the browser.
+   */
+  feeUsd: number;
 }) {
   const router = useRouter();
-  const { draft, update, updateConfig, clear, restore, restored } = useDraft(userId);
   const [keys, setKeys] = useState(initialKeys);
+  // The draft starts on a key the account already has, so it needs to know them.
+  const { draft, update, updateConfig, clear, restore, restored } = useDraft(userId, keys);
   const [attempted, setAttempted] = useState(false);
   /** An agent that exists whose funding did not go through: offered the signature again, here. */
   const [fundingRetry, setFundingRetry] = useState<FundingRetry | null>(null);
@@ -309,6 +323,7 @@ export function AgentBuilder({
   const runsPerDay = interval === 0 ? 0 : Math.round(1_440 / interval);
   const risk = draft.config.risk;
   const execution = draft.config.execution;
+  const providerLabel = PROVIDER_LABELS[draft.config.llm.provider];
   // "Ask me first" is the default, and an agent in it never fills until you approve; with
   // the Schedule card collapsed, nothing else on the page said so.
   const executionLabel =
@@ -336,6 +351,20 @@ export function AgentBuilder({
     draft.funding.mode === "fund" && !fundingPlan?.ready
       ? (fundingPlan?.blockers[0]?.message ?? "Still reading your wallet balances.")
       : null;
+
+  // The request that submits a signed transfer got no answer, so the money may have
+  // moved. No retry dialog: "Sign the funding again" there is an invitation to fund twice.
+  // The agent's wallets card is where the balance shows what arrived.
+  const leaveFundingUnconfirmed = (name: string, slug: string) => {
+    clear();
+    setFundingRetry(null);
+    toast.warning(`${name} is created. Funding not confirmed yet`, {
+      description:
+        "The connection dropped while the transfer was being sent, so it may still arrive. Check the agent's balance in two minutes before funding again.",
+      duration: 15_000,
+    });
+    router.push(`/agents/${slug}/settings#wallets`);
+  };
 
   const submit = async () => {
     const allErrors = validate(draft, keys);
@@ -399,11 +428,16 @@ export function AgentBuilder({
 
     // The agent exists from here on. Funding is signed by the user in their own
     // wallet, so it can fail on its own — and when it does, the agent stays.
-    let funding: { sent: number; total: number; firstError: string | null } | null = null;
+    let funding: { sent: number; total: number; firstError: string | null; unknown?: boolean } | null = null;
     if (draft.funding.mode === "fund" && fundingPlan?.ready) {
       funding = await runFundingPlan({ agentId: result.data.id, plan: fundingPlan, send });
       void refreshCash();
       void refreshCash(12_000);
+    }
+
+    if (funding?.unknown) {
+      leaveFundingUnconfirmed(draft.name.trim(), result.data.slug);
+      return;
     }
 
     if (funding?.firstError) {
@@ -431,7 +465,10 @@ export function AgentBuilder({
           : `${transfersFor(fundingPlan!).map(transferLabel).join(", ")} on the way. Balances update once they confirm.`,
       });
     } else {
-      toast.success(draft.funding.mode === "fund" ? `${draft.name.trim()} is created` : `${draft.name.trim()} is live on paper`, {
+      // Never "live on paper": live is this product's word for real money.
+      const created =
+        draft.funding.mode === "fund" ? "is created" : draft.activate ? "is running on paper" : "is created on paper";
+      toast.success(`${draft.name.trim()} ${created}`, {
         description: draft.activate
           ? "It will take its first tick on schedule. You can also run it now from its page."
           : "It is paused. Activate it from settings when you are ready.",
@@ -450,6 +487,10 @@ export function AgentBuilder({
     const again = await runFundingPlan({ agentId: fundingRetry.agentId, plan: fundingRetry.plan, send });
     void refreshCash();
     void refreshCash(12_000);
+    if (again.unknown) {
+      leaveFundingUnconfirmed(fundingRetry.name, fundingRetry.slug);
+      return;
+    }
     if (again.firstError) {
       setFundingRetry({ ...fundingRetry, error: again.firstError, sent: again.sent, total: again.total, busy: false });
       return;
@@ -533,6 +574,7 @@ export function AgentBuilder({
             errors={visibleErrors}
             llmKeys={keys}
             onKeyAdded={(key) => setKeys((current) => [key, ...current])}
+            feeUsd={feeUsd}
             hideHeading
           />
         </section>
@@ -554,7 +596,9 @@ export function AgentBuilder({
             title="Data it buys"
             summary={
               chosen.length === 0 && radarPerRun === 0
-                ? "Free feeds only — nothing to pay for."
+                ? // Not "nothing to pay for": every sweep buys the launch radar whatever
+                  // the feed list says (`discover_tokens`), and Tocker pays for it.
+                  `No paid sources. Each sweep still buys the launch radar (about ${formatUsd(PAID_LAUNCH_RADAR_USD_PER_CHAIN)} a chain), paid by Tocker.`
                 : `${[
                     chosen.length > 0 ? `${chosen.length} paid source${chosen.length === 1 ? "" : "s"}` : null,
                     radarPerRun > 0 ? "launch radar" : null,
@@ -571,12 +615,23 @@ export function AgentBuilder({
 
           <RuleCard
             title="Risk limits"
-            summary={`${formatUsd(risk.maxTradeUsd)}/trade · ${risk.maxDailyTrades}/day · ${risk.maxPositionPct}% max position · ${formatUsd(risk.maxDataSpendUsdPerRun)} data/run`}
+            // The fee closes the line: this is the one sentence about trades that is on
+            // screen without opening anything, and nothing in the builder named the fee.
+            summary={`${formatUsd(risk.maxTradeUsd)}/trade · ${risk.maxDailyTrades}/day · ${risk.maxPositionPct}% max position · ${formatUsd(risk.maxDataSpendUsdPerRun)} data/run${
+              feeUsd > 0 ? ` · ${formatUsd(feeUsd)} Tocker fee per fill` : ""
+            }`}
             open={open.has("risk")}
             onToggle={() => toggle("risk")}
             hasError={attempted && RULE_ERROR_KEYS.risk.some((key) => errors[key])}
           >
-            <RiskStep draft={draft} update={update} updateConfig={updateConfig} errors={visibleErrors} hideHeading />
+            <RiskStep
+              draft={draft}
+              update={update}
+              updateConfig={updateConfig}
+              errors={visibleErrors}
+              feeUsd={feeUsd}
+              hideHeading
+            />
           </RuleCard>
 
           <RuleCard
@@ -638,7 +693,9 @@ export function AgentBuilder({
               ? `Signs ${formatUsd(draft.funding.amountUsd)} USDC · ${runsPerDay === 0 ? "manual runs" : `~${runsPerDay}/day`}`
               : runsPerDay === 0
                 ? "Manual runs only"
-                : `~${runsPerDay} runs/day · ≈${formatUsd(costPerRun)} data`}
+                : // Whose bill the runs are, in the room one line has. The data estimate
+                  // that used to sit here is the part Tocker pays.
+                  `~${runsPerDay} runs/day on your key`}
           </span>
           <span className="hidden sm:inline">
             {draft.funding.mode === "fund" ? (
@@ -653,16 +710,20 @@ export function AgentBuilder({
               // The Mode card promises it never trades paper, so this line cannot count
               // paper runs: nothing ticks until the hold-to-confirm on the checklist.
               <>
-                No ticks until you switch it live on the checklist — then ~
-                <span className="tnum font-mono">{runsPerDay}</span> runs/day, ≈
-                <span className="tnum font-mono">{formatUsd(costPerRun)}</span> data each.
+                No ticks until you switch it live on the checklist. Then ~
+                <span className="tnum font-mono">{runsPerDay}</span> runs/day, each billing model tokens to your{" "}
+                {providerLabel} key; its data (≈<span className="tnum font-mono">{formatUsd(costPerRun)}</span>) is
+                paid by Tocker.
               </>
             ) : (
+              // The run count used to stand next to the data estimate alone, which is the
+              // part Tocker pays. The model bill is the owner's, on every run, traded or not.
               <>
-                ~<span className="tnum font-mono">{runsPerDay}</span> runs/day · ≈
-                <span className="tnum font-mono">{formatUsd(costPerRun)}</span> data each, capped at{" "}
-                <span className="tnum font-mono">{formatUsd(risk.maxDataSpendUsdPerRun)}</span>/run —{" "}
-                {execution.mode === "approve" ? "proposes paper trades for you to approve." : "paper trades until you go live."}
+                ~<span className="tnum font-mono">{runsPerDay}</span> runs/day. Each run bills model tokens to your{" "}
+                {providerLabel} key; its data (≈<span className="tnum font-mono">{formatUsd(costPerRun)}</span>,
+                capped at <span className="tnum font-mono">{formatUsd(risk.maxDataSpendUsdPerRun)}</span>) is paid by
+                Tocker.{" "}
+                {execution.mode === "approve" ? "Proposes paper trades for you to approve." : "Paper trades until you go live."}
               </>
             )}
           </span>
@@ -684,15 +745,24 @@ export function AgentBuilder({
             paused={!(metalHovered || metalFocused)}
             className="shrink-0"
           >
-            {/* metal-fx strips the button's dark:bg-white, which would leave its
-                dark:text-neutral-900 on the dark chrome at about 1.2:1. */}
+            {/* metal-fx strips the button's fill, which would leave its dark:text-neutral-900
+                on the dark chrome at about 1.2:1, so inside the ring the label takes the
+                foreground colour. Only inside the ring (`.metal-fx-content` is its wrapper
+                around the child): before hydration, and wherever WebGL2 is missing, there is
+                no ring and the button keeps its own fills, and a forced foreground label was
+                near-white on the white pill, idle and while creating. There it now wears the
+                button's own colours in every state. The `dark:` copy is there to outrank the
+                button's `dark:text-neutral-900` by specificity, not by order. */}
             <MorphButton
               size="lg"
               onAction={submit}
               loadingLabel="Creating…"
               successLabel="Created"
               errorLabel="Check the form"
-              className={cn("text-foreground dark:text-foreground", MORPH_FOCUS)}
+              className={cn(
+                "[.metal-fx-content>&]:text-foreground dark:[.metal-fx-content>&]:text-foreground",
+                MORPH_FOCUS,
+              )}
             >
               Create agent
             </MorphButton>
@@ -738,7 +808,8 @@ function FundingRetryDialog({
           <DialogDescription>
             {partial
               ? `${retry.sent} of ${retry.total} transfers landed. ${retry.error} Finish the rest from the agent's settings page.`
-              : `${retry.error} Nothing moved. Sign the transfer again and the agent starts funded; skip, and it stays on paper until you fund it from its settings page.`}
+              : // The error's own sentence says whether anything moved; this one must not add a claim.
+                `${retry.error} Sign the transfer again and the agent starts funded; skip, and it stays on paper until you fund it from its settings page.`}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

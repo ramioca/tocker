@@ -169,8 +169,11 @@ export interface WindowPnl {
   window: LeaderboardWindow;
   startEquityUsd: number;
   endEquityUsd: number;
+  /** Net of `flowUsd`: the change in equity less what was deposited or withdrawn. */
   pnlUsd: number;
   pnlPct: number;
+  /** Deposits less withdrawals between the two marks. Already taken out of `pnlUsd`. */
+  flowUsd: number;
   startAt: string;
   endAt: string;
   points: number;
@@ -179,15 +182,87 @@ export interface WindowPnl {
 export const WINDOW_DAYS: Record<LeaderboardWindow, number | null> = { "7d": 7, "30d": 30, all: null };
 
 /**
+ * Money that moved into (+) or out of (−) a book without being a trade: a deposit or a
+ * withdrawal. Equity moves by exactly this much, and none of it is profit or loss.
+ */
+export interface MoneyFlow {
+  at: Date | string | number;
+  amountUsd: number;
+}
+
+export interface FlowTotal {
+  /** Deposits less withdrawals. */
+  netUsd: number;
+  /** Deposits alone. */
+  inUsd: number;
+}
+
+/**
+ * What moved after `after` and up to `until`, inclusive (no upper bound when omitted).
+ *
+ * The bounds are the two marks a P&L is measured between. A flow at or before the first
+ * mark is already inside it, and one after the last mark is not in that equity yet, so
+ * neither belongs to the move between them.
+ */
+export function flowsBetween(
+  flows: readonly MoneyFlow[] | null | undefined,
+  after: Date | string | number,
+  until?: Date | string | number | null,
+): FlowTotal {
+  const from = toDate(after).getTime();
+  const to = until === undefined || until === null ? Number.POSITIVE_INFINITY : toDate(until).getTime();
+  let netUsd = 0;
+  let inUsd = 0;
+  for (const flow of flows ?? []) {
+    const at = toDate(flow.at).getTime();
+    const amount = safe(flow.amountUsd);
+    if (!Number.isFinite(at) || amount === 0 || at <= from || at > to) continue;
+    netUsd += amount;
+    if (amount > 0) inUsd += amount;
+  }
+  return { netUsd, inUsd };
+}
+
+export interface BookPnl {
+  /** The starting mark plus deposits, less withdrawals. Equity less this is the P&L. */
+  basisUsd: number;
+  /**
+   * What the percent is taken on: the starting mark plus deposits. A withdrawal does not
+   * shrink it, or taking money out would raise the return on what is left.
+   */
+  capitalUsd: number;
+  pnlUsd: number;
+  pnlPct: number;
+}
+
+/**
+ * P&L between two marks with the money that moved in between taken out. Money moved is
+ * not money made: $25 at the first mark, $25 deposited and $50 at the last is no gain,
+ * and $25 with $20 withdrawn and $5 left is no loss.
+ */
+export function pnlNetOfFlows(startEquityUsd: number, endEquityUsd: number, flow?: FlowTotal | null): BookPnl {
+  const start = safe(startEquityUsd);
+  const basisUsd = start + safe(flow?.netUsd ?? 0);
+  const capitalUsd = start + Math.max(0, safe(flow?.inUsd ?? 0));
+  const pnlUsd = safe(endEquityUsd) - basisUsd;
+  return { basisUsd, capitalUsd, pnlUsd, pnlPct: capitalUsd === 0 ? 0 : (pnlUsd / Math.abs(capitalUsd)) * 100 };
+}
+
+/**
  * PnL over a window from equity snapshots.
  * Baseline = the last snapshot at or before the window start (so a mid-window
  * gap doesn't inflate returns); falls back to the earliest snapshot in range.
  * Returns null when there aren't two comparable points.
+ *
+ * `flows` are the deposits and withdrawals on record for the same book. Whatever moved
+ * between the baseline and the last point is taken out of the result (see
+ * {@link pnlNetOfFlows}); without them the change in equity is the whole answer.
  */
 export function pnlOverWindow(
   snapshots: SnapshotPoint[],
   window: LeaderboardWindow,
   now: Date = new Date(),
+  flows: readonly MoneyFlow[] = [],
 ): WindowPnl | null {
   const points = (snapshots ?? [])
     .map((s) => ({ at: toDate(s.at), equityUsd: safe(s.equityUsd) }))
@@ -205,14 +280,15 @@ export function pnlOverWindow(
   const start = before ?? inWindow[0] ?? points[0];
   if (!start || !end || start === end) return null;
 
-  const pnlUsd = end.equityUsd - start.equityUsd;
-  const pnlPct = start.equityUsd === 0 ? 0 : (pnlUsd / Math.abs(start.equityUsd)) * 100;
+  const flow = flowsBetween(flows, start.at, end.at);
+  const { pnlUsd, pnlPct } = pnlNetOfFlows(start.equityUsd, end.equityUsd, flow);
   return {
     window,
     startEquityUsd: start.equityUsd,
     endEquityUsd: end.equityUsd,
     pnlUsd,
     pnlPct,
+    flowUsd: flow.netUsd,
     startAt: start.at.toISOString(),
     endAt: end.at.toISOString(),
     points: inWindow.length,

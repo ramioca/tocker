@@ -6,7 +6,7 @@ import { formatUsd } from "@/components/common/format";
 import { chainLabelFor, type UnifiedCash } from "@/lib/wallets/funding";
 import { cn } from "@/lib/utils";
 import type { Chain } from "@/server/types";
-import { shownCashTotal, shownUsdc } from "./cash-display";
+import { BALANCE_UNAVAILABLE, cashLegendLead, cashUnavailable, shownCashTotal, shownUsdc } from "./cash-display";
 
 /**
  * The one number. Everything else on these screens is context for it, so it is
@@ -20,7 +20,7 @@ export function CashTotal({
 }: {
   cash: UnifiedCash | undefined;
   size?: "sm" | "md" | "lg";
-  /** "own": the user's wallets (what they can fund with). "all": plus what their live agents hold. */
+  /** "own": the user's wallets (what they can fund with). "all": plus what their agents hold. */
   scope?: "own" | "all";
   className?: string;
 }) {
@@ -34,6 +34,17 @@ export function CashTotal({
         style={{ width: size === "lg" ? "6rem" : size === "sm" ? "2.5rem" : "4rem", height: size === "lg" ? "1.9rem" : "1.1rem" }}
         aria-label="Loading your balance"
       />
+    );
+  }
+
+  // A wallet (or, on the all-in figure, an agent) that could not be read: the sum in
+  // hand is missing it, so there is no balance to print. A dash, never "$0.00".
+  if (cashUnavailable(cash, scope)) {
+    return (
+      <span className={cn("tracking-tight text-muted-foreground", type, className)} title={BALANCE_UNAVAILABLE}>
+        <span aria-hidden>—</span>
+        <span className="sr-only">{BALANCE_UNAVAILABLE}</span>
+      </span>
     );
   }
 
@@ -77,7 +88,12 @@ export function ChainBreakdown({
           </div>
 
           <div className="text-right">
-            <p className="tnum text-sm font-medium">{formatUsd(shownUsdc(chainCash.usdcUsd))}</p>
+            {chainCash.readFailed ? (
+              // Not "$0.00": the read failed, which says nothing about what is there.
+              <p className="text-sm font-medium text-muted-foreground">Unavailable</p>
+            ) : (
+              <p className="tnum text-sm font-medium">{formatUsd(shownUsdc(chainCash.usdcUsd))}</p>
+            )}
             {onDeposit ? (
               <button
                 type="button"
@@ -105,9 +121,11 @@ export function ChainBreakdown({
               {agent.name}
             </Link>
             <p className="tnum text-[11px] text-muted-foreground">
-              {agent.positionsUsd > 0
-                ? `${formatUsd(agent.cashUsd)} cash · ${formatUsd(agent.positionsUsd)} in positions`
-                : "agent equity — all cash"}
+              {agent.parked
+                ? "funded, not live yet"
+                : agent.positionsUsd > 0
+                  ? `${formatUsd(agent.cashUsd)} cash · ${formatUsd(agent.positionsUsd)} in positions`
+                  : "agent equity — all cash"}
             </p>
           </div>
           <div className="shrink-0 text-right">
@@ -129,8 +147,9 @@ export function ChainBreakdown({
 }
 
 /**
- * What "cash" means, and who pays the fees, said once in the words the rest of the
- * product uses.
+ * What the figure above it adds up, and who pays the fees, said once in the words the
+ * rest of the product uses. It is "Cash" while it is only the user's own USDC, and
+ * "Total" once it also counts what their agents hold (`cashLegendLead`).
  *
  * W7 M2 made it say *who* pays — "gas is sponsored" left the reader wondering whether
  * that was them. W8 made the answer the same everywhere: Tocker covers every network
@@ -140,8 +159,8 @@ export function ChainBreakdown({
 export function CashLegend({ cash }: { cash: UnifiedCash }) {
   return (
     <p className="text-[11px] leading-relaxed text-muted-foreground">
-      Cash is USDC across your wallets on Base and Solana{cash.agents.length > 0 ? ", plus your live agents' equity (their cash and open positions at today's marks)" : ""}, shown as one balance. Network
-      fees are covered by Tocker — on your transfers and on every trade your agents make.
+      {cashLegendLead(cash)}, shown as one balance. Network fees are covered by Tocker — on your transfers and
+      on every trade your agents make.
     </p>
   );
 }

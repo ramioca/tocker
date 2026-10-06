@@ -6,6 +6,8 @@ import { revalidatePath } from "next/cache";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { agents, getDb, llmKeys, notifications, users } from "@/db";
 import { getSession } from "@/lib/auth";
+import { isAdminEmail } from "@/lib/admin";
+import { DISPLAY_NAME_RESERVED, HANDLE_RESERVED, isReservedHandle, isStaffLikeName } from "@/lib/reserved-handles";
 import { encryptSecret, last4 } from "@/lib/crypto";
 import { recordAudit } from "@/lib/security/audit";
 import { newId } from "@/server/queries/_shared";
@@ -45,6 +47,9 @@ export async function updateProfile(input: {
   if (input.handle !== undefined) {
     const handle = input.handle.trim().toLowerCase();
     if (!HANDLE_RE.test(handle)) return fail("Handles are 2–20 characters: letters, numbers and underscores");
+    // Only a change is refused: the form always sends the handle, so without this an
+    // account that already holds one of these names could never save its profile again.
+    if (handle !== session.handle && isReservedHandle(handle)) return fail(HANDLE_RESERVED);
     const [taken] = await db
       .select({ id: users.id })
       .from(users)
@@ -56,6 +61,11 @@ export async function updateProfile(input: {
   if (input.displayName !== undefined) {
     const name = input.displayName.trim();
     if (name.length > 60) return fail("Display name must be 60 characters or fewer");
+    // "Tocker Support" beside any handle reads as staff. A change only, like the handle
+    // above; the people in ADMIN_EMAILS are the staff, so the words are theirs to use.
+    if (name !== (session.displayName ?? "") && isStaffLikeName(name) && !isAdminEmail(session.email)) {
+      return fail(DISPLAY_NAME_RESERVED);
+    }
     patch.displayName = name || null;
   }
   if (input.bio !== undefined) {

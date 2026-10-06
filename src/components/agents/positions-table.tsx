@@ -207,7 +207,12 @@ export function PositionsTable({
                     <span className="font-medium">{position.token.symbol}</span>
                   </Link>
                   <ChainBadge chain={position.token.chain} className="hidden sm:inline-flex" />
-                  <GeckoTerminalLink chain={position.token.chain} address={position.token.address} symbol={position.token.symbol} />
+                  <GeckoTerminalLink
+                    chain={position.token.chain}
+                    address={position.token.address}
+                    symbol={position.token.symbol}
+                    roomy
+                  />
                 </span>
                 {showExits ? (
                   <span className="mt-1 block sm:hidden">

@@ -75,7 +75,7 @@ export function AgentsOverview({
           className="mt-5"
           icon={<Bot />}
           title="No agents yet"
-          description="An agent is a prompt, a wallet and a schedule. Build one in about two minutes — it starts on paper, so the first mistake costs nothing."
+          description="An agent is a prompt, a wallet and a schedule. Build one in about two minutes — it starts on paper, so no trade can lose real money."
           action={
             <Link
               href="/agents/new"

@@ -32,8 +32,16 @@ function solanaRpcWssUrl(): string {
 
 /**
  * Wraps Privy with Tocker's embedded-wallet config: every user gets an Ethereum
- * (Base) and a Solana embedded wallet on first login, so they can fund agents
- * from either chain.
+ * (Base) and a Solana embedded wallet on login, so they can fund agents from either
+ * chain.
+ *
+ * `createOnLogin` is "all-users", not "users-without-wallets". The narrower mode skips
+ * a chain as soon as the account has any wallet of that chain type linked, and the
+ * wallet somebody signs in with is exactly that: a Phantom sign-in got no Solana
+ * wallet and a MetaMask sign-in no Base one, so Deposit had no address to show and
+ * funding had nothing to send from. The server records embedded wallets only
+ * (`syncUserEmbeddedWallets`), so the wallet used to sign in never stands in for one.
+ * An account made under the old mode gets its missing wallet the next time it signs in.
  *
  * When `NEXT_PUBLIC_PRIVY_APP_ID` is empty this renders children untouched, so
  * the app still boots without Privy credentials (see DEV_IMPERSONATE_USER_ID).
@@ -82,8 +90,8 @@ export function AppPrivyProvider({ children }: { children: ReactNode }) {
         // so the modal can never offer a method the card has left out.
         loginMethods: [...ENABLED_LOGIN_METHODS],
         embeddedWallets: {
-          ethereum: { createOnLogin: "users-without-wallets" },
-          solana: { createOnLogin: "users-without-wallets" },
+          ethereum: { createOnLogin: "all-users" },
+          solana: { createOnLogin: "all-users" },
           // No confirmation popups from Privy on signatures: every signature in Tocker
           // sits behind an explicit action of ours — the Create button, the fund
           // drawer, a hold-to-confirm on withdraw — and a second, foreign-looking

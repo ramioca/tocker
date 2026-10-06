@@ -6,6 +6,7 @@
  * calls `getDb()` sees it. No Docker, no fixtures directory, no shared state between
  * test files.
  */
+import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
@@ -93,4 +94,22 @@ export async function seedAgent(
   }
 
   return { userId, agentId, slug };
+}
+
+/**
+ * Gives a seeded agent an LLM key row. Seeded agents have none, which is what most of
+ * the suite wants (`LLM_MOCK=1` thinks without one); the scheduler only wakes an agent
+ * that has one. The ciphertext is not a key and is never decrypted by these tests.
+ */
+export async function attachLlmKey(db: Db, agent: { userId: string; agentId: string }): Promise<string> {
+  const keyId = `key_${nanoid(10)}`;
+  await db.insert(schema.llmKeys).values({
+    id: keyId,
+    userId: agent.userId,
+    provider: "anthropic",
+    encryptedKey: "not-a-real-ciphertext",
+    last4: "0000",
+  });
+  await db.update(schema.agents).set({ llmKeyId: keyId }).where(eq(schema.agents.id, agent.agentId));
+  return keyId;
 }

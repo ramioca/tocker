@@ -71,6 +71,17 @@ export class RateLimiter {
     };
   }
 
+  /**
+   * Hand one unit back, for an attempt that was counted and then failed on our side
+   * (a provider outage, say) rather than the caller's. Never below zero, and a bucket
+   * whose window has already rolled over is left alone.
+   */
+  refund(key: string, now: number = Date.now()): void {
+    const bucket = this.buckets.get(key);
+    if (!bucket || bucket.resetAt <= now) return;
+    bucket.count = Math.max(0, bucket.count - 1);
+  }
+
   /** Test helper — and the only way to forget a key without waiting out its window. */
   reset(key?: string): void {
     if (key === undefined) this.buckets.clear();
@@ -115,6 +126,17 @@ export const RATE_LIMITS = {
    * Privy's confirmation modal makes a handful per transaction — not hundreds.
    */
   solanaRpc: { limit: 60, windowMs: 60_000 },
+  /**
+   * The same relay, counted in calls rather than requests: a batch is one request and up
+   * to twenty calls upstream, so the rule above alone let a batch multiply it by twenty.
+   * Applied in the route, which is the first place the body has been read.
+   */
+  solanaRpcCalls: { limit: 120, windowMs: 60_000 },
+  /**
+   * A wallet added to an agent that already exists (a chain switched on in settings).
+   * One attempt a minute per agent: a burst of saves must not become a burst of wallets.
+   */
+  agentWalletAdd: { limit: 1, windowMs: 60_000 },
   /** One blockhash per user-signed transfer. */
   blockhash: { limit: 30, windowMs: 60_000 },
   /** ⌘K queries on every keystroke, so this is generous; the response is also cached. */
@@ -137,6 +159,8 @@ export function limitForPath(pathname: string): { rule: RateLimitRule; prefix: s
   if (pathname === "/api/solana/rpc") return { rule: RATE_LIMITS.solanaRpc, prefix: "solana-rpc" };
   if (pathname === "/api/solana/blockhash") return { rule: RATE_LIMITS.blockhash, prefix: "blockhash" };
   if (pathname === "/api/tokens/search") return { rule: RATE_LIMITS.tokenSearch, prefix: "token-search" };
+  // Discover's infinite scroll and search box: public, and an ilike plus aggregates per call.
+  if (pathname === "/api/discover/agents") return { rule: RATE_LIMITS.tokenSearch, prefix: "discover-agents" };
   return null;
 }
 

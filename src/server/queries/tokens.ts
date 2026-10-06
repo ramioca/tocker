@@ -16,6 +16,7 @@ import type {
   TradeRow,
 } from "@/server/types";
 import { loadTokens, toTokenRef, toTradeRow } from "./_shared";
+import { canonicalTokenAddress, isCaseInsensitiveAddress, tokenIdSpellings } from "./token-address";
 
 /**
  * Token pages are public, so every score on one is computed under the platform's
@@ -122,6 +123,54 @@ async function cachedScore(
   return { score, marketFacts };
 }
 
+/**
+ * The `tokens` rows for one token. One, by id, for a Solana mint or the native alias.
+ * For a Base contract, every row whose address is that contract in any letter-case: an
+ * EVM address is case-insensitive, and rows have been written under more than one
+ * spelling (see `token-address.ts`). Matched on the lowercased address rather than on a
+ * list of spellings, so a row under a spelling nobody thought of is still found.
+ *
+ * Ordered so the first row is the one the page calls the token, the same one whatever
+ * the URL said: the checksum spelling when it has a row, then lowercase, then by id.
+ */
+async function tokenRowsFor(db: Db, chain: Chain, address: string): Promise<Array<typeof tokens.$inferSelect>> {
+  if (!isCaseInsensitiveAddress(chain, address)) {
+    return db.select().from(tokens).where(eq(tokens.id, `${chain}:${address}`)).limit(1);
+  }
+  const lower = address.toLowerCase();
+  const rows = await db
+    .select()
+    .from(tokens)
+    .where(and(eq(tokens.chain, chain), sql`lower(${tokens.address}) = ${lower}`));
+  const preferred = [canonicalTokenAddress(chain, address), lower];
+  const rank = (spelling: string) => {
+    const at = preferred.indexOf(spelling);
+    return at === -1 ? preferred.length : at;
+  };
+  return rows.sort((a, b) => rank(a.address) - rank(b.address) || a.id.localeCompare(b.id));
+}
+
+type CachedReading = Awaited<ReturnType<typeof cachedScore>>;
+
+/**
+ * One reading out of several, for a token whose scores sit under more than one spelling
+ * of its id: the newest public verdict, and the newest market facts. Newest, because that
+ * is what the page claims to show ("the last thing we knew"), and it must not depend on
+ * which spelling the visitor arrived with.
+ */
+function newestReading(readings: readonly CachedReading[]): CachedReading {
+  let score: TokenScore | null = null;
+  let marketFacts: TokenMarketFacts | null = null;
+  for (const reading of readings) {
+    // ISO timestamps from `toISOString()`: they sort as text.
+    if (reading.score && (score === null || reading.score.scoredAt > score.scoredAt)) score = reading.score;
+    if (reading.marketFacts && (marketFacts === null || reading.marketFacts.measuredAt > marketFacts.measuredAt)) {
+      marketFacts = reading.marketFacts;
+    }
+  }
+  return { score, marketFacts };
+}
+
 /** A token we have no row for still deserves a page — build the reference from the URL. */
 function placeholderToken(chain: Chain, address: string, score: TokenScore | null): TokenRef {
   return {
@@ -143,6 +192,10 @@ function placeholderToken(chain: Chain, address: string, score: TokenScore | nul
  * never here is *why* an agent bought it — no config, no universe, no transcript.
  * `viewerId` only widens visibility to the viewer's own private agents, so an
  * operator can see their own position on a token page.
+ *
+ * A Base contract is one token whatever the letter-case of `address`: the rows under
+ * every spelling of it are read together, so the result is the same for all of them.
+ * Nothing stored is rewritten (see `token-address.ts`).
  */
 export async function getTokenPage(
   chain: Chain,
@@ -151,26 +204,23 @@ export async function getTokenPage(
 ): Promise<TokenPage | null> {
   if (!address || address.length < 3) return null;
   const db = await getDb();
-  const id = `${chain}:${address}`;
 
-  const [tokenRows, { score, marketFacts }] = await Promise.all([
-    db.select().from(tokens).where(eq(tokens.id, id)).limit(1),
-    cachedScore(db, id),
-  ]);
-
-  const tokenRow = tokenRows[0];
-  // Nothing known at all and no score: still a valid page, just an empty one.
-  const token = tokenRow ? toTokenRef(tokenRow) : placeholderToken(chain, address, score);
+  const tokenRows = await tokenRowsFor(db, chain, address);
+  // Every id a row about this token may be keyed by: the token rows that exist, and the
+  // spellings a score can have been written under before any trade made a row. One id
+  // for a Solana mint; usually two for a Base contract.
+  const ids = [...new Set([...tokenRows.map((row) => row.id), ...tokenIdSpellings(chain, address)])];
 
   // A private agent's holdings and fills are visible to its owner only.
   const visibleAgent = visibleAgentFor(viewerId);
 
   const since = new Date(Date.now() - FLOW_WINDOW_DAYS * 86_400_000);
 
-  const [history, holderRows, tradeRows, flowRows] = await Promise.all([
+  const [readings, histories, holderRows, tradeRows, flowRows] = await Promise.all([
+    Promise.all(ids.map((id) => cachedScore(db, id))),
     // Public readings only: an agent's total moves with its clip size and paid signals,
     // and its verdict with its gates.
-    getScoreHistory(id, { days: 30, universeKey: PUBLIC_UNIVERSE_KEY }),
+    Promise.all(ids.map((id) => getScoreHistory(id, { days: 30, universeKey: PUBLIC_UNIVERSE_KEY }))),
     db
       .select({
         agentId: agents.id,
@@ -183,12 +233,12 @@ export async function getTokenPage(
       })
       .from(positions)
       .innerJoin(agents, eq(agents.id, positions.agentId))
-      .where(and(eq(positions.tokenId, id), visibleAgent, ne(agents.status, "draft"))),
+      .where(and(inArray(positions.tokenId, ids), visibleAgent, ne(agents.status, "draft"))),
     db
       .select({ trade: trades, ownerId: agents.ownerId })
       .from(trades)
       .innerJoin(agents, eq(agents.id, trades.agentId))
-      .where(and(eq(trades.tokenId, id), eq(trades.status, "filled"), visibleAgent))
+      .where(and(inArray(trades.tokenId, ids), eq(trades.status, "filled"), visibleAgent))
       .orderBy(desc(trades.createdAt), desc(trades.id))
       .limit(RECENT_TRADE_LIMIT),
     db
@@ -200,28 +250,53 @@ export async function getTokenPage(
       .from(trades)
       .innerJoin(agents, eq(agents.id, trades.agentId))
       .where(
-        and(eq(trades.tokenId, id), eq(trades.status, "filled"), gte(trades.createdAt, since), visibleAgent),
+        and(inArray(trades.tokenId, ids), eq(trades.status, "filled"), gte(trades.createdAt, since), visibleAgent),
       ),
   ]);
 
-  const mark = token.lastPriceUsd ?? score?.priceUsd ?? null;
+  const { score, marketFacts } = newestReading(readings);
+  // Oldest first, as one id's history already is.
+  const history =
+    histories.length === 1 ? histories[0] : histories.flat().sort((a, b) => a.at.localeCompare(b.at));
 
-  const holders = holderRows
-    .filter((row) => toNum(row.amountToken) > 1e-12)
-    .map((row) => {
-      const amount = toNum(row.amountToken);
-      const u = unrealized(amount, toNum(row.avgCostUsd), mark);
-      return {
-        agent: {
-          id: row.agentId,
-          slug: row.slug,
-          name: row.name,
-          avatarSeed: row.avatarSeed,
-          mode: row.mode,
-        } satisfies Pick<AgentCard, "id" | "slug" | "name" | "avatarSeed" | "mode">,
-        valueUsd: u.valueUsd,
-        unrealizedPnlPct: u.pnlPct,
-      };
+  const tokenRow = tokenRows[0];
+  // Nothing known at all and no score: still a valid page, just an empty one.
+  const token = tokenRow ? toTokenRef(tokenRow) : placeholderToken(chain, address, score);
+
+  const mark =
+    token.lastPriceUsd ??
+    // A second row for the same contract may be the one the marks pass has priced.
+    tokenRows.slice(1).map((row) => toTokenRef(row).lastPriceUsd).find((price) => price !== null) ??
+    score?.priceUsd ??
+    null;
+
+  // One line per agent. An agent can hold one contract under two stored spellings, and
+  // that is one holding: the amounts add up, at their weighted average cost.
+  const held = new Map<
+    string,
+    { agent: Pick<AgentCard, "id" | "slug" | "name" | "avatarSeed" | "mode">; amount: number; avgCostUsd: number }
+  >();
+  for (const row of holderRows) {
+    const amount = toNum(row.amountToken);
+    if (!(amount > 1e-12)) continue;
+    const avgCostUsd = toNum(row.avgCostUsd);
+    const existing = held.get(row.agentId);
+    if (existing) {
+      const total = existing.amount + amount;
+      existing.avgCostUsd = (existing.amount * existing.avgCostUsd + amount * avgCostUsd) / total;
+      existing.amount = total;
+      continue;
+    }
+    held.set(row.agentId, {
+      agent: { id: row.agentId, slug: row.slug, name: row.name, avatarSeed: row.avatarSeed, mode: row.mode },
+      amount,
+      avgCostUsd,
+    });
+  }
+  const holders = [...held.values()]
+    .map((holding) => {
+      const u = unrealized(holding.amount, holding.avgCostUsd, mark);
+      return { agent: holding.agent, valueUsd: u.valueUsd, unrealizedPnlPct: u.pnlPct };
     })
     .sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0));
 
@@ -364,7 +439,8 @@ export async function getTokenTrade(
     .where(
       and(
         eq(trades.id, tradeId),
-        eq(trades.tokenId, token.id),
+        // "This token" in any spelling of its address, as `getTokenPage` lists its fills.
+        inArray(trades.tokenId, [...new Set([token.id, ...tokenIdSpellings(token.chain, token.address)])]),
         eq(trades.status, "filled"),
         visibleAgentFor(viewerId),
       ),

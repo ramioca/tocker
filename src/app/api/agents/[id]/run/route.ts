@@ -9,6 +9,8 @@ import { eq } from "drizzle-orm";
 import { agents, getDb } from "@/db";
 import { requireSession } from "@/lib/auth";
 import { startRun } from "@/lib/agent/run";
+import { RUN_REFUSED_WHILE_PAUSED } from "@/lib/agent/run-gate";
+import { isTradingPaused } from "@/lib/security/kill-switch";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -37,6 +39,11 @@ export async function POST(
   if (agent.ownerId !== userId) return NextResponse.json({ error: "forbidden" }, { status: 403 });
   if (agent.status === "draft") {
     return NextResponse.json({ error: "This agent is still a draft. Activate it first." }, { status: 409 });
+  }
+  // The kill switch covers a run started by hand too. A 409, so the wizard shows the
+  // sentence as written (see `runErrorMessage`).
+  if (await isTradingPaused(agent.ownerId)) {
+    return NextResponse.json({ error: RUN_REFUSED_WHILE_PAUSED }, { status: 409 });
   }
 
   try {

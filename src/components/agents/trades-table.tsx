@@ -210,7 +210,9 @@ export function TradesTable({
                           {trade.runId ? (
                             <Link
                               href={`/agents/${agentSlug}/runs/${trade.runId}`}
-                              className="rounded underline decoration-muted-foreground/50 decoration-dotted underline-offset-2 transition-colors duration-150 hover:decoration-foreground hover:decoration-solid focus-ring"
+                              // The text is 16px tall; the invisible `after` fills the cell's own
+                              // padding around it so a thumb can find it.
+                              className="relative rounded underline decoration-muted-foreground/50 decoration-dotted underline-offset-2 transition-colors duration-150 after:absolute after:-inset-2 after:content-[''] hover:decoration-foreground hover:decoration-solid focus-ring"
                               title="Open the run that placed this trade"
                             >
                               <RelativeTime iso={trade.createdAt} />
@@ -264,6 +266,7 @@ export function TradesTable({
                             address={trade.token.address}
                             symbol={trade.token.symbol}
                             size="xs"
+                            roomy
                             className="ml-1.5 align-middle"
                           />
                           {/*

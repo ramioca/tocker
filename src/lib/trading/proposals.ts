@@ -91,6 +91,10 @@ function usdLabel(amount: number): string {
  *
  * A follower is never the owner's audience for strategy, so the rationale goes through
  * the same redaction as the public trade row: no paid-source names, no thresholds.
+ *
+ * A private agent tells nobody. Its follows stay (the owner may make it public again),
+ * but an agent taken private after it was followed must stop reporting its trades to
+ * the people who followed it, as it has already left every feed and page they can open.
  */
 export async function notifyAgentFollowers(
   agentId: string,
@@ -99,6 +103,8 @@ export async function notifyAgentFollowers(
   href: string,
 ): Promise<void> {
   const db = await getDb();
+  const [agent] = await db.select({ isPublic: agents.isPublic }).from(agents).where(eq(agents.id, agentId)).limit(1);
+  if (!agent?.isPublic) return;
   const rows = await db
     .select({ followerId: follows.followerId })
     .from(follows)

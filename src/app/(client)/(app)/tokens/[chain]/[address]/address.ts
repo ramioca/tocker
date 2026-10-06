@@ -1,3 +1,4 @@
+import { canonicalTokenAddress } from "@/server/queries/token-address";
 import type { Chain } from "@/server/types";
 
 /**
@@ -15,4 +16,24 @@ const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 export function isTokenAddress(chain: Chain, address: string): boolean {
   if (address === "native") return true;
   return chain === "base" ? EVM_ADDRESS.test(address) : SOLANA_ADDRESS.test(address);
+}
+
+type SearchParams = Record<string, string | string[] | undefined>;
+
+/**
+ * Where a token URL should be instead, or null when it is already there.
+ *
+ * A Base contract has one page, at its checksum spelling: `/tokens/base/0xabc…` and the
+ * same address in any other case are the same token, and were two pages with different
+ * scores and holders. The query string is kept, so a `?trade=…` link still lands on its
+ * row. Same idea as `canonicalSlug` on /agents/[slug].
+ */
+export function canonicalTokenPath(chain: Chain, address: string, searchParams?: SearchParams): string | null {
+  const canonical = canonicalTokenAddress(chain, address);
+  if (canonical === address) return null;
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(searchParams ?? {})) {
+    for (const v of Array.isArray(value) ? value : value === undefined ? [] : [value]) query.append(key, v);
+  }
+  return `/tokens/${chain}/${canonical}${query.size > 0 ? `?${query}` : ""}`;
 }

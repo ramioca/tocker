@@ -16,6 +16,7 @@ export function GeckoTerminalLink({
   symbol,
   label,
   size = "sm",
+  roomy = false,
   className,
 }: {
   chain: Chain;
@@ -24,6 +25,12 @@ export function GeckoTerminalLink({
   /** Render as a text link with this label instead of an icon. */
   label?: string;
   size?: "xs" | "sm";
+  /**
+   * Icon only: a tap target larger than the 12 to 14px glyph, for a table row on a
+   * phone. Opt-in, because the extra area is invisible and belongs only where the row
+   * has the height for it: in a dense list it would overlap the next line's icon.
+   */
+  roomy?: boolean;
   className?: string;
 }) {
   return (
@@ -37,6 +44,9 @@ export function GeckoTerminalLink({
       className={cn(
         "inline-flex shrink-0 items-center gap-1 rounded text-muted-foreground transition-colors duration-150 hover:text-foreground focus-ring",
         label ? "text-[11px]" : "",
+        // Up, down and to the right, and barely to the left: the token's own name sits a
+        // few pixels that way, and a tap meant for it must not leave the app instead.
+        roomy && !label && "relative after:absolute after:-inset-y-2.5 after:-right-3 after:-left-1 after:content-['']",
         className,
       )}
     >

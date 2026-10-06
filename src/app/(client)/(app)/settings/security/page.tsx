@@ -90,10 +90,16 @@ export default async function SecuritySettingsPage() {
           <LlmKeyInventory keys={keys} isAdmin={isAdminEmail(session.email)} keylessAgents={keylessAgents} />
         </SettingsSection>
 
+        {/*
+          The description names what the log covers, not "every withdrawal": a cash
+          withdrawal on Base is signed and broadcast in the browser with no server call,
+          so there is no row for it. Someone checking whether their account was used has
+          to be told where that one shows up instead.
+        */}
         <SettingsSection
           id="audit"
           title="Audit log"
-          description="Append-only. Every withdrawal, budget change, mode switch, key change and kill-switch flip, with the IP address it came from."
+          description="Append-only. Every withdrawal Tocker signs or co-signs (from an agent, or from your cash on Solana), budget change, mode switch, key change and kill-switch flip, with the IP address it came from. Cash withdrawals on Base are signed in your browser, so they show on BaseScan, not here."
         >
           <AuditLog events={events} hasMore={hasMore} cap={AUDIT_CAP} />
         </SettingsSection>

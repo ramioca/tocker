@@ -1,8 +1,9 @@
 import { FAQTabsCard, type FaqTab } from "@/components/spectrumui/faq-tabs-card";
+import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
 import { AppLink } from "./app-link";
 import { BrandHeroMark, BrandLockup } from "./brand";
 import { AgentConsole } from "./console";
-import { DEFAULT_ROWS } from "./defaults";
+import { DEFAULT_ROWS, feeSentence } from "./defaults";
 import { PublicFeed } from "./feed";
 import { GoLiveDemo } from "./go-live";
 import { Hero } from "./hero";
@@ -37,7 +38,12 @@ import "./landing-sections.css";
 
 const BUDGET = usd2(DEFAULT_DATA_BUDGET_USD);
 
-const FAQ_TABS: FaqTab[] = [
+/**
+ * The questions, built per render because one answer states what Tocker charges. That
+ * number is the server's own (`platformFeeUsd()`), never one typed here: the page said
+ * "a flat fee" with no amount, and an amount written in by hand would outlive a change.
+ */
+const faqTabs = (feeUsd: number): FaqTab[] => [
   {
     label: "Trading",
     faqs: [
@@ -58,7 +64,7 @@ const FAQ_TABS: FaqTab[] = [
       },
       {
         question: "What does the data cost?",
-        answer: `Nothing from your wallet. Tocker pays the vendors per call, in USDC over x402. Each run may spend up to its data budget (${BUDGET} by default), and score_token buys enrichment automatically until that budget is used. What Tocker charges is a flat fee per filled trade, never a percentage of its size.`,
+        answer: `Nothing from your wallet. Tocker pays the vendors per call, in USDC over x402. Each run may spend up to its data budget (${BUDGET} by default), and score_token buys enrichment automatically until that budget is used.${feeSentence(feeUsd)}`,
       },
       {
         question: "Which AI model runs it?",
@@ -265,7 +271,7 @@ function Faq() {
         title="Before you join."
         lede="How it trades, what it costs, who holds the wallet and who sees what."
       />
-      <FAQTabsCard tabs={FAQ_TABS} className="lp-faq-card" />
+      <FAQTabsCard tabs={faqTabs(feeEnabled() ? platformFeeUsd() : 0)} className="lp-faq-card" />
     </section>
   );
 }

@@ -1,5 +1,5 @@
 /**
- * The two read-side rules that are not obvious from the call sites.
+ * The read-side rules that are not obvious from the call sites.
  *
  * 1. **Chart markers are owner-only in SQL.** The token page hands `myTokenMarkers` a
  *    viewer id and renders whatever comes back, so the filter has to live in the query
@@ -8,6 +8,10 @@
  *    are on a *public* agent, which is the case that looks safe and is not.
  * 2. **The daily digest is once a day.** It is triggered from the guardian, which runs
  *    twelve times an hour. Every pass after the first has to be a no-op.
+ * 3. **A receipt is whole only for the agent's owner.** The feed, the post page and the
+ *    token page all hand `receiptsFor` trade ids for other people's public agents. The
+ *    score rows a paid source produced are the owner's, exactly as on the trade row, so
+ *    the query drops them for everyone else, and for a caller that names no viewer.
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { nanoid } from "nanoid";
@@ -18,7 +22,8 @@ import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { seedKnownTokens, tokenId } from "@/lib/trading/tokens";
 import { toNumeric } from "@/lib/money";
 import { sendDailyDigest, utcDay } from "@/lib/notifications";
-import { myTokenMarkers, tokenActivityCount } from "./trading";
+import { buildReceipt, saveReceipt } from "@/lib/trading/receipt";
+import { myTokenMarkers, receiptsFor, tokenActivityCount } from "./trading";
 
 let db: Db;
 
@@ -109,6 +114,86 @@ describe("myTokenMarkers", () => {
     const markers = await myTokenMarkers(BONK_ID, mine.userId);
     expect(markers.every((m) => m.priceUsd > 0)).toBe(true);
     expect(markers.some((m) => m.tradeId === broken)).toBe(false);
+  });
+});
+
+describe("receiptsFor", () => {
+  /**
+   * A fill on `agent` with a receipt whose three strongest score components include both
+   * paid ones, which is what the stored document looks like for an agent that bought them.
+   */
+  async function seedFillWithPaidReceipt(agent: { agentId: string; userId: string }): Promise<string> {
+    const tradeId = await seedFill({ agentId: agent.agentId, ownerId: agent.userId, side: "buy", priceUsd: 0.000003, amountUsd: 100 });
+    const receipt = buildReceipt({
+      chain: "solana",
+      side: "buy",
+      symbol: "BONK",
+      tokenAddress: BONK,
+      quote: { venue: "paper", priceUsd: 0.000003, feeUsd: 0.3 },
+      fill: { priceUsd: 0.000003, amountToken: 33_333_333, amountUsd: 100, feeUsd: 0.3, txHash: null },
+      slippageToleranceBps: 150,
+      score: {
+        total: 81,
+        verdict: "candidate",
+        components: { safety: 92, liquidity: 60, organic: 61, distribution: 70, momentum: 55, gecko: null, sentiment: 88, smartMoney: 91 },
+      },
+      quotedAt: new Date("2026-09-16T10:00:00Z"),
+      filledAt: new Date("2026-09-16T10:00:01Z"),
+    });
+    await saveReceipt(tradeId, agent.agentId, receipt);
+    return tradeId;
+  }
+
+  const keys = (receipt: { scoreReasons: Array<{ key: string }> } | undefined) => receipt?.scoreReasons.map((r) => r.key);
+
+  it("gives the agent's owner the whole receipt", async () => {
+    const mine = await seedAgent(db, { config: { chains: ["solana"] } });
+    const tradeId = await seedFillWithPaidReceipt(mine);
+
+    const receipt = (await receiptsFor([tradeId], mine.userId)).get(tradeId);
+    expect(keys(receipt)).toEqual(["safety", "smartMoney", "sentiment"]);
+  });
+
+  it("drops the paid score rows for another signed-in user, on a public agent", async () => {
+    const theirs = await seedAgent(db, { config: { chains: ["solana"] } });
+    const me = await seedAgent(db, { config: { chains: ["solana"] } });
+    const tradeId = await seedFillWithPaidReceipt(theirs);
+
+    const receipt = (await receiptsFor([tradeId], me.userId)).get(tradeId);
+    expect(keys(receipt)).toEqual(["safety"]);
+    expect(JSON.stringify(receipt)).not.toMatch(/sentiment|smart ?money/i);
+    // The rest of the document is the public record and is still there.
+    expect(receipt?.scoreTotal).toBe(81);
+    expect(receipt?.slippageToleranceBps).toBe(150);
+    expect(receipt?.amountUsd).toBe(100);
+  });
+
+  it("drops them for an anonymous viewer, and for a caller that names no viewer at all", async () => {
+    const theirs = await seedAgent(db, { config: { chains: ["solana"] } });
+    const tradeId = await seedFillWithPaidReceipt(theirs);
+
+    for (const viewer of [null, undefined, ""]) {
+      expect(keys((await receiptsFor([tradeId], viewer)).get(tradeId))).toEqual(["safety"]);
+    }
+    expect(keys((await receiptsFor([tradeId])).get(tradeId))).toEqual(["safety"]);
+  });
+
+  it("decides per trade when one page mixes the viewer's fills with someone else's", async () => {
+    const mine = await seedAgent(db, { config: { chains: ["solana"] } });
+    const theirs = await seedAgent(db, { config: { chains: ["solana"] } });
+    const myTrade = await seedFillWithPaidReceipt(mine);
+    const theirTrade = await seedFillWithPaidReceipt(theirs);
+
+    const receipts = await receiptsFor([myTrade, theirTrade], mine.userId);
+    expect(keys(receipts.get(myTrade))).toEqual(["safety", "smartMoney", "sentiment"]);
+    expect(keys(receipts.get(theirTrade))).toEqual(["safety"]);
+  });
+
+  it("leaves a trade with no receipt out of the map", async () => {
+    const mine = await seedAgent(db, { config: { chains: ["solana"] } });
+    const bare = await seedFill({ agentId: mine.agentId, ownerId: mine.userId, side: "buy", priceUsd: 0.000003, amountUsd: 100 });
+    expect((await receiptsFor([bare, "no-such-trade"], mine.userId)).size).toBe(0);
+    expect((await receiptsFor([], mine.userId)).size).toBe(0);
   });
 });
 

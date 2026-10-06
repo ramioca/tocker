@@ -13,6 +13,7 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { formatUsd } from "@/components/common/format";
 import { Field, RiskSlider, Toggle } from "@/components/agents/builder/field";
 import { parseBps } from "@/components/agents/builder/parse-value";
+import { slippageMeaning } from "@/components/agents/builder/slippage-copy";
 import { UniverseControls } from "@/components/agents/builder/universe-controls";
 import { UniversePreview } from "@/components/agents/settings/universe-preview";
 import { sameConfig } from "@/components/agents/settings/same-config";
@@ -615,7 +616,7 @@ function SettingsForm({
             max={5}
             step={0.05}
             format={(value) => formatUsd(value)}
-            meaning={`x402 calls are refused past ${formatUsd(config.risk.maxDataSpendUsdPerRun)} in a single run.`}
+            meaning={`Once a run has spent ${formatUsd(config.risk.maxDataSpendUsdPerRun)} of Tocker's data budget, further paid calls are refused.`}
             onChange={(maxDataSpendUsdPerRun) => patchRisk({ maxDataSpendUsdPerRun })}
           />
           <RiskSlider
@@ -627,7 +628,9 @@ function SettingsForm({
             step={10}
             format={(value) => `${Math.round(value)} bps`}
             parse={parseBps}
-            meaning={`Fills worse than ${(config.risk.slippageBps / 100).toFixed(2)}% off the quote are rejected on chain. Launch-day memecoins usually need 300–500 bps; Jupiter picks tighter when the pool allows.`}
+            // Not "fills worse than this are rejected": see slippage-copy.ts for the one
+            // case where the order goes out looser, and why the sentence is shared.
+            meaning={slippageMeaning(config.risk.slippageBps)}
             onChange={(slippageBps) => patchRisk({ slippageBps: Math.round(slippageBps) })}
           />
         </div>

@@ -36,21 +36,55 @@ export function isPaperWallet(walletId: string): boolean {
   return walletId.startsWith("paper_");
 }
 
+/** How long two creates for the same agent and chain count as the same request. */
+const WALLET_ADD_IDEMPOTENCY_MS = 5 * 60_000;
+
+/**
+ * PURE. The idempotency key for adding one chain's wallet to an agent that already
+ * exists. The same agent, chain and display name inside the same five minutes give the
+ * same key, so a repeated or concurrent create is one wallet.
+ *
+ * The name is part of it because a key that comes back with a different request body is
+ * refused: after a rename the request is a new one and gets a new key. The window is
+ * part of it because Privy remembers a key for 24 hours, and whatever it remembered for
+ * a create that went wrong should not be what a retry is answered with for a day. Two
+ * saves racing each other are seconds apart; five minutes covers them.
+ */
+export function agentWalletIdempotencyKey(
+  agentId: string,
+  chain: Chain,
+  displayName: string,
+  now: number = Date.now(),
+): string {
+  const name = createHash("sha256").update(displayName).digest("hex").slice(0, 16);
+  return `tocker:agent-wallet:${agentId}:${chain}:${name}:${Math.floor(now / WALLET_ADD_IDEMPOTENCY_MS)}`;
+}
+
 /**
  * Create one Privy server wallet per chain for an agent and record them in `wallets`.
  *
  * Without Privy credentials (local dev) it falls back to deterministic fake
  * addresses so paper-mode agents still work end to end. Never in production —
  * `createAgentWallets` throws there if Privy is not configured.
+ *
+ * One wallet per chain, whatever the caller passes: a list that names a chain twice
+ * used to make two wallets for it.
+ *
+ * `existingAgent` is for a chain switched on after the agent was created (see
+ * `updateAgent`). The caller has checked the agent has no wallet on those chains, but
+ * two saves can both get past that check; each create then carries an idempotency key
+ * for the agent, chain and name, so Privy hands the second caller the first one's
+ * wallet instead of making another, and the insert below keeps one row for it.
  */
 export async function createAgentWallets(input: {
   agentId: string;
   userId: string;
   name: string;
   chains?: Chain[];
+  existingAgent?: boolean;
 }): Promise<AgentWalletRow[]> {
   const db = await getDb();
-  const chains: Chain[] = input.chains?.length ? input.chains : ["base", "solana"];
+  const chains: Chain[] = [...new Set<Chain>(input.chains?.length ? input.chains : ["base", "solana"])];
   const configured = isPrivyConfigured();
 
   if (!configured && process.env.NODE_ENV === "production") {
@@ -66,6 +100,7 @@ export async function createAgentWallets(input: {
   const rows: AgentWalletRow[] = [];
   for (const chain of chains) {
     if (configured) {
+      const displayName = `${input.name} · ${chain}`.slice(0, 64);
       const created = await privy()
         .wallets()
         .create({
@@ -74,7 +109,10 @@ export async function createAgentWallets(input: {
           // for data while its owner is asleep, so the server must be able to sign alone.
           // The user↔agent association lives in our `wallets` table.
           owner: { public_key: authorizationPublicKey() },
-          display_name: `${input.name} · ${chain}`.slice(0, 64),
+          display_name: displayName,
+          ...(input.existingAgent
+            ? { idempotency_key: agentWalletIdempotencyKey(input.agentId, chain, displayName) }
+            : {}),
         });
       rows.push({ id: created.id, chain, address: created.address });
     } else {
@@ -122,7 +160,8 @@ export async function getAgentWallets(agentId: string): Promise<AgentWalletRow[]
 }
 
 /**
- * Live balances for one known wallet row. Paper wallets and Privy errors resolve to zeros.
+ * Live balances for one known wallet row. Paper wallets resolve to zeros. So does a read
+ * that failed, with `readFailed: true` on the result: zeros that mean "unknown".
  *
  * Exported for the admin dashboard, which reads hundreds of wallets and needs to own
  * the concurrency and the caching itself rather than fanning out one `Promise.all` per
@@ -163,7 +202,9 @@ export async function readWalletBalances(w: AgentWalletRow): Promise<WalletBalan
     return { chain: w.chain, address: w.address, walletId: w.id, balances: balances.length ? balances : empty };
   } catch (err) {
     console.warn(`[wallets] balance lookup failed for ${w.id}:`, err instanceof Error ? err.message : err);
-    return { chain: w.chain, address: w.address, walletId: w.id, balances: empty };
+    // Still zeros, so every caller keeps rendering, but flagged: an unread wallet is not
+    // an empty one, and a caller that prints "$0.00" or decides on it must check this.
+    return { chain: w.chain, address: w.address, walletId: w.id, balances: empty, readFailed: true };
   }
 }
 

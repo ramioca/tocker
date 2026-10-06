@@ -8,6 +8,7 @@ import {
   equitySnapshots,
   getDb,
   llmKeys,
+  platformFees,
   positions,
   tokens,
   trades,
@@ -36,10 +37,12 @@ import {
   buildAgentCards,
   decodeCursor,
   encodeCursor,
+  fillFeeUsd,
   iso,
   isFollowing,
   loadAgentAggregates,
   loadDailyCloses,
+  loadMoneyFlows,
   loadTokens,
   pageSize,
   snapshotInCurrentMode,
@@ -112,6 +115,8 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
         .select({ id: wallets.id, chain: wallets.chain, address: wallets.address })
         .from(wallets)
         .where(and(eq(wallets.agentId, agent.id), eq(wallets.kind, "agent_server"))),
+      // With the Tocker fee charged on each fill (one `platform_fees` row per trade), so
+      // the win rate counts a sale the way the position ledger booked it.
       db
         .select({
           tokenId: trades.tokenId,
@@ -119,10 +124,12 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
           amountToken: trades.amountToken,
           priceUsd: trades.priceUsd,
           feeUsd: trades.feeUsd,
+          tockerFeeUsd: platformFees.amountUsd,
           status: trades.status,
           createdAt: trades.createdAt,
         })
         .from(trades)
+        .leftJoin(platformFees, eq(platformFees.tradeId, trades.id))
         .where(and(eq(trades.agentId, agent.id), eq(trades.status, "filled")))
         .orderBy(asc(trades.createdAt)),
       db
@@ -141,7 +148,8 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
     ]);
 
   const agg = aggregates.get(agent.id);
-  const card: AgentCard = (await buildAgentCards(db, [agent]))[0];
+  // The aggregates above are the card's numbers; handing them over saves reading them twice.
+  const card: AgentCard = (await buildAgentCards(db, [agent], aggregates))[0];
 
   // Latest score per holding, so the positions table can show "74 at entry → 41 now".
   // Display only — a buy still scores through getTokenScore (see score-cache.ts). The
@@ -209,7 +217,7 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
       side: t.side,
       amountToken: toNum(t.amountToken),
       priceUsd: toNum(t.priceUsd),
-      feeUsd: toNum(t.feeUsd),
+      feeUsd: fillFeeUsd(t.feeUsd, t.tockerFeeUsd),
       status: t.status,
       createdAt: t.createdAt,
     })),
@@ -251,10 +259,25 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
   // All-time PnL is this equity against what the book started with — the subtraction
   // the chart readout and the Equity card make — so the header and the PnL card print
   // the same number as the chart instead of a last-snapshot-minus-first-snapshot one.
-  const basisUsd = agg?.startEquityUsd ?? (agent.mode === "paper" ? toNum(agent.paperStartingUsd) : null);
+  // A live book's basis moves with the money moved: deposits raise it and withdrawals
+  // lower it, so neither reads as a gain or a loss. The aggregate's basis stops at the
+  // last mark; an equity read from the wallet just now also holds whatever moved since.
+  const sinceMarkUsd = live ? (agg?.flowSinceMarkUsd ?? 0) : 0;
+  const markBasisUsd = agg?.startEquityUsd ?? null;
+  const basisUsd =
+    markBasisUsd !== null ? markBasisUsd + sinceMarkUsd : agent.mode === "paper" ? toNum(agent.paperStartingUsd) : null;
+  // The percent is taken on the capital put in, which a withdrawal does not shrink.
+  const capitalUsd =
+    agg?.capitalUsd !== null && agg?.capitalUsd !== undefined
+      ? agg.capitalUsd + (live ? agg.depositsSinceMarkUsd : 0)
+      : basisUsd;
   const pnlUsd = basisUsd === null ? card.pnlUsd : equityUsd - basisUsd;
   const pnlPct =
-    basisUsd === null || pnlUsd === null ? card.pnlPct : basisUsd === 0 ? 0 : (pnlUsd / Math.abs(basisUsd)) * 100;
+    basisUsd === null || capitalUsd === null || pnlUsd === null
+      ? card.pnlPct
+      : capitalUsd === 0
+        ? 0
+        : (pnlUsd / Math.abs(capitalUsd)) * 100;
   // Realised + open must add up to that headline, and to the same split `/home` and
   // `/money` print. Without a basis there is no headline to split; keep the ledger's.
   const split =
@@ -717,17 +740,25 @@ export async function listDataSources(query?: string): Promise<DataSourceInfo[]>
   );
 }
 
-/** Window PnL for one agent — used by the leaderboard and the agent header. */
+/**
+ * Window PnL for one agent, net of what was deposited into or withdrawn from a live
+ * book inside the window.
+ */
 export async function getAgentWindowPnl(agentId: string, window: LeaderboardWindow) {
   const db = await getDb();
-  const rows = await db
-    .select({ at: equitySnapshots.at, equityUsd: equitySnapshots.equityUsd })
-    .from(equitySnapshots)
-    .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
-    .where(and(eq(equitySnapshots.agentId, agentId), snapshotInCurrentMode()))
-    .orderBy(asc(equitySnapshots.at));
+  const [rows, flows] = await Promise.all([
+    db
+      .select({ at: equitySnapshots.at, equityUsd: equitySnapshots.equityUsd })
+      .from(equitySnapshots)
+      .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+      .where(and(eq(equitySnapshots.agentId, agentId), snapshotInCurrentMode()))
+      .orderBy(asc(equitySnapshots.at)),
+    loadMoneyFlows(db, [agentId]),
+  ]);
   return pnlOverWindow(
     rows.map((r) => ({ at: r.at, equityUsd: toNum(r.equityUsd) })),
     window,
+    new Date(),
+    flows.get(agentId) ?? [],
   );
 }

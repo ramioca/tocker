@@ -90,6 +90,18 @@ export const BUDGET_CARDS: StatCardData[] = [
   },
 ];
 
+/**
+ * The size of a card's change, without its sign: two decimals under ten percent, whole
+ * percents from there. Whole percents everywhere printed "↓ 0%" in red for every move
+ * under half a point, beside a PnL card and a chart that both showed the loss.
+ */
+export function deltaPercentText(delta: number): string {
+  const abs = Math.abs(delta);
+  const fine = abs.toFixed(2);
+  // 9.996 rounds to "10.00": from ten up it is a whole percent, like any other.
+  return Number(fine) < 10 ? fine : abs.toFixed(0);
+}
+
 function StatCard({
   card,
   index,
@@ -175,7 +187,7 @@ function StatCard({
       className="flex items-stretch justify-between gap-3 rounded-2xl border border-black/8 bg-white/60 p-3.5 sm:gap-5 sm:p-5 dark:border-white/10 dark:bg-white/[0.02]"
       role="img"
       aria-label={`${label}: ${format(headline)}${
-        delta != null ? `, ${rising ? 'up' : 'down'} ${Math.abs(delta).toFixed(0)} percent ${deltaLabel}` : ''
+        delta != null ? `, ${rising ? 'up' : 'down'} ${deltaPercentText(delta)} percent ${deltaLabel}` : ''
       }.`}
       style={
         reduce
@@ -199,7 +211,7 @@ function StatCard({
             </span>
           ) : delta != null ? (
             <span style={{ color }}>
-              {rising ? '↑' : '↓'} {Math.abs(delta).toFixed(0)}% {deltaLabel}
+              {rising ? '↑' : '↓'} {deltaPercentText(delta)}% {deltaLabel}
             </span>
           ) : (
             <span className="text-neutral-500 dark:text-neutral-400">{caption ?? ' '}</span>

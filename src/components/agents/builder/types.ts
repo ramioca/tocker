@@ -1,7 +1,8 @@
-import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { DEFAULT_AGENT_CONFIG, DEFAULT_MODELS } from "@/lib/agent/config";
 import { DEFAULT_FUND_USD } from "@/lib/wallets/funding";
 import type { AgentConfigInput } from "@/lib/agent/config";
 import type { AgentConfig } from "@/db/schema";
+import type { LlmKeyRow } from "@/server/types";
 
 export type UniverseConfig = AgentConfig["universe"];
 export type DiscoveryFeedId = UniverseConfig["discovery"][number];
@@ -94,6 +95,55 @@ export function emptyDraft(): BuilderDraft {
       },
     },
   };
+}
+
+/**
+ * Put a draft on a key the account already has.
+ *
+ * The builder opened on Anthropic with no key chosen, whatever the account held. Someone
+ * who had just saved the OpenRouter key onboarding recommends read "No Anthropic key on
+ * file yet" and took the key for lost; someone with an Anthropic key still got "Choose a
+ * key" and a refused Create until they picked the only option by hand. So a selection
+ * that is still usable is kept; otherwise the draft takes the first key for its own
+ * provider; and when that provider has none but the account has keys, the draft moves to
+ * the first key's provider and that provider's first model.
+ *
+ * For a fresh, restored or cleared draft only. A provider the user picks in the form is
+ * left alone: switching to a provider is how its first key gets added.
+ */
+export function withDefaultKey(
+  draft: BuilderDraft,
+  keys: ReadonlyArray<Pick<LlmKeyRow, "id" | "provider">>,
+): BuilderDraft {
+  const provider = draft.config.llm.provider;
+  if (keys.some((key) => key.id === draft.llmKeyId && key.provider === provider)) return draft;
+
+  const own = keys.find((key) => key.provider === provider);
+  if (own) return { ...draft, llmKeyId: own.id };
+
+  const first = keys[0];
+  // No key on the account at all: nothing to choose, and a stale id must not linger.
+  if (!first) return draft.llmKeyId === null ? draft : { ...draft, llmKeyId: null };
+  return {
+    ...draft,
+    llmKeyId: first.id,
+    config: {
+      ...draft.config,
+      llm: { ...draft.config.llm, provider: first.provider, model: DEFAULT_MODELS[first.provider][0].id },
+    },
+  };
+}
+
+/**
+ * Tocker's flat fee as a share of one ticket, in whole percent, or null when it is off
+ * or under 1%. A $0.10 fee is nothing on a $100 ticket and 5% each way on a $2 one, and
+ * the builder says so where the ticket size is set. The fee itself is the server's
+ * (`platformFeeUsd()`), handed down as a prop: it is never a number written in here.
+ */
+export function feeSharePct(ticketUsd: number, feeUsd: number): number | null {
+  if (!(feeUsd > 0) || !(ticketUsd > 0)) return null;
+  const share = (feeUsd / ticketUsd) * 100;
+  return share < 1 ? null : Math.round(share);
 }
 
 export interface StrategyPreset {
@@ -316,13 +366,18 @@ export const UNIVERSE_PRESETS: UniversePreset[] = [
   },
 ];
 
+/**
+ * Each hint says how many runs a day the interval is, because every run bills model
+ * tokens to the owner's own key whether or not it trades, and the only cost the builder
+ * used to quote was the data Tocker pays for. `types.test.ts` checks the counts.
+ */
 export const INTERVAL_PRESETS = [
   { minutes: 0, label: "Manual", hint: "Only runs when you press Run now." },
-  { minutes: 5, label: "5 min", hint: "Fast. Expect real LLM and data costs." },
-  { minutes: 15, label: "15 min", hint: "The default. Reacts within a candle." },
-  { minutes: 60, label: "1 hour", hint: "Calm. Good for slower theses." },
-  { minutes: 240, label: "4 hours", hint: "Swing pace." },
-  { minutes: 1_440, label: "Daily", hint: "One decision a day." },
+  { minutes: 5, label: "5 min", hint: "288 runs a day on your key. Fast and the most expensive." },
+  { minutes: 15, label: "15 min", hint: "The default. 96 runs a day on your key." },
+  { minutes: 60, label: "1 hour", hint: "24 runs a day. Calm, and a quarter of the default's model bill." },
+  { minutes: 240, label: "4 hours", hint: "6 runs a day. Swing pace." },
+  { minutes: 1_440, label: "Daily", hint: "One run a day." },
 ] as const;
 
 export const PAPER_BALANCES = [1_000, 10_000, 100_000] as const;
