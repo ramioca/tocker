@@ -309,17 +309,28 @@
 .lp-btn-metal:focus-visible {
   outline: none;
 }
+/* The nav's copy: the same chrome at the bar's height. */
+.lp-metal-sm .lp-btn-metal {
+  height: 36px;
+  padding-inline: 12px 14px;
+  gap: 6px;
+  font-size: var(--fs-body-sm);
+}
+.lp-metal-sm .lp-btn-metal-icon {
+  width: 14px;
+  height: 14px;
+}
 /* Phones: the page's primary action goes wide and a little taller. */
 @media (max-width: 639px) {
-  .lp .lp-metal {
+  .lp .lp-metal:not(.lp-metal-sm) {
     width: 100%;
     max-width: 360px;
   }
-  .lp .lp-metal > *,
-  .lp .lp-btn-metal {
+  .lp .lp-metal:not(.lp-metal-sm) > *,
+  .lp .lp-metal:not(.lp-metal-sm) .lp-btn-metal {
     width: 100%;
   }
-  .lp .lp-btn-metal {
+  .lp .lp-metal:not(.lp-metal-sm) .lp-btn-metal {
     height: 52px;
   }
 }

@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { LOGIN_HREF } from "@/lib/contact";
-import { APP_HREF } from "./app-link";
+import { createAgentHref } from "./app-link";
+import { CreateAgentLink } from "./create-agent-link";
 import { BrandLockup } from "./brand";
 
 const LINKS = [
@@ -11,10 +11,10 @@ const LINKS = [
 ] as const;
 
 /**
- * The page bar: lockup, four section links centred, one quiet pill. The pill is
- * the way back in for someone who has an account: "Sign in", or "Open the app"
- * when the request came with a session cookie. Starting is the hero's button,
- * directly beneath it. All of it is server rendered; the bar has no client part.
+ * The page bar: lockup, four section links centred, and "Create your agent" in
+ * the app's liquid-metal chrome (the builder with a session, sign-in first
+ * without one; sign-in also creates the account). Server rendered, except the
+ * metal button's small client island.
  *
  * It sits in the flow at the top of the page, so there is nothing to blur and
  * nothing to track on scroll. Under 900px the links go and the pill stays, the
@@ -37,10 +37,7 @@ export function Nav({ hasSession }: { hasSession: boolean }) {
             </a>
           ))}
         </nav>
-        {/* A plain anchor, not `Link`: sign-in and the app are entered by a full page load (see app-link.tsx). */}
-        <a href={hasSession ? APP_HREF : LOGIN_HREF} className="lp-nav-cta lp-btn-ghost">
-          {hasSession ? "Open the app" : "Sign in"}
-        </a>
+        <CreateAgentLink href={createAgentHref(hasSession)} size="sm" className="lp-nav-cta" />
       </header>
     </>
   );
