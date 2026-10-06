@@ -37,7 +37,7 @@ import { notifyFill } from "@/lib/notifications";
 import { sendProposalPush } from "@/lib/notifications/push";
 import { visibleRationale } from "@/server/queries/visibility";
 import type { Chain, TokenScore, TradeStatus } from "@/server/types";
-import { getExecutor, type ExecutorAgent, type TradeRequest } from "./executor";
+import { getExecutor, type ExecutorAgent, type Quote, type TradeRequest } from "./executor";
 import { applyFill, heldAmountToken, sellAmountToken } from "./positions";
 import { buildReceipt, saveReceipt } from "./receipt";
 import { getPriceUsd } from "./prices";
@@ -712,25 +712,60 @@ export async function indicativePrice(
   return (await indicativeQuote(executorAgent, request)).priceUsd;
 }
 
+/** What {@link indicativeQuote} found out about an order without placing it. */
+export interface IndicativeQuote {
+  priceUsd: number | null;
+  venueFeeUsd: number | null;
+  /**
+   * The venue's own figures for this exact size: tokens routed, USD notional, and the
+   * slippage tolerance it applied. All null when the venue did not quote and the price
+   * above is only the last mark, so a preview can say which of the two it is showing.
+   */
+  amountToken: number | null;
+  amountUsd: number | null;
+  appliedSlippageBps: number | null;
+  /** The venue that was asked, or null when no executor could be built for the chain. */
+  venue: Quote["venue"] | null;
+  /** What the venue threw, when it threw. Never rethrown; for the caller to explain. */
+  error: unknown;
+}
+
 /**
  * {@link indicativePrice} plus the venue's own fee for this size, so a preview can show
  * the cost before the receipt does. The fee is null when nothing quoted it: the free
  * price feed knows no fee, and the Base executor does not price its gas up front.
  */
-export async function indicativeQuote(
-  executorAgent: ExecutorAgent,
-  request: TradeRequest,
-): Promise<{ priceUsd: number | null; venueFeeUsd: number | null }> {
+export async function indicativeQuote(executorAgent: ExecutorAgent, request: TradeRequest): Promise<IndicativeQuote> {
+  let venue: Quote["venue"] | null = null;
+  let error: unknown = null;
   try {
     const executor = await getExecutor(executorAgent, request.chain);
+    venue = executor.venue;
     const quote = await executor.quote(request);
     if (quote.priceUsd > 0) {
-      return { priceUsd: quote.priceUsd, venueFeeUsd: quote.venue === "privy-base" ? null : quote.feeUsd };
+      return {
+        priceUsd: quote.priceUsd,
+        venueFeeUsd: quote.venue === "privy-base" ? null : quote.feeUsd,
+        amountToken: quote.amountToken,
+        amountUsd: quote.amountUsd,
+        appliedSlippageBps: quote.appliedSlippageBps ?? null,
+        venue,
+        error: null,
+      };
     }
-  } catch {
+  } catch (err) {
     // fall through to the free feed
+    error = err;
   }
-  return { priceUsd: await getPriceUsd(request.chain, request.tokenAddress), venueFeeUsd: null };
+  return {
+    priceUsd: await getPriceUsd(request.chain, request.tokenAddress),
+    venueFeeUsd: null,
+    amountToken: null,
+    amountUsd: null,
+    appliedSlippageBps: null,
+    venue,
+    error,
+  };
 }
 
 /** How many proposals are waiting on this user right now, across every agent they own. */

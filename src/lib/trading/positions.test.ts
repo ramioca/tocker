@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyFillToPosition, sellAmountToken, EMPTY_POSITION } from "./positions";
+import { applyFillToPosition, manualSellSizing, sellAmountToken, EMPTY_POSITION } from "./positions";
 
 /**
  * W7 H1. Sells used to be sized as `amountUsd ÷ (a fresh buy-side quote)`. That is wrong
@@ -52,6 +52,94 @@ describe("sellAmountToken", () => {
   it("declines when the share rounds away to nothing", () => {
     // $0.000001 of a $100 position in a 2-decimal token is less than one base unit.
     expect(sellAmountToken({ heldToken: 100, positionValueUsd: 100, requestedUsd: 1e-6, decimals: 2 })).toBeUndefined();
+  });
+});
+
+/**
+ * The owner's own sell. The preview and the order both size through this, so what the
+ * dialog shows is the order that is sent.
+ */
+describe("manualSellSizing", () => {
+  // 1,000,000 tokens on the row, worth $80 at the mark read now (it was $100 when the
+  // page rendered, which is the figure a "sell everything" still carries).
+  const position = { amountToken: 1_000_000, valueUsd: 80 };
+  const held = { heldTokenRow: 1_000_000, position, decimals: 5 };
+
+  it("sends the row balance for a sell-all and sizes it at the current mark, not the typed figure", () => {
+    const sizing = manualSellSizing({ ...held, sellAll: true, requestedUsd: 100 });
+    expect(sizing.amountToken).toBe(1_000_000);
+    // Under the typed $100: the guard checks this against the $80 position and passes.
+    expect(sizing.sizedUsd).toBe(80);
+    expect(sizing.fullExit).toBe(true);
+  });
+
+  it("takes the balance from the row when the book hides the position as dust", () => {
+    const sizing = manualSellSizing({ sellAll: true, requestedUsd: 0.2, heldTokenRow: 12.5, position: null, decimals: 5 });
+    expect(sizing.amountToken).toBe(12.5);
+    // No mark to size from, so the typed figure stands and the guard decides.
+    expect(sizing.sizedUsd).toBe(0.2);
+    expect(sizing.fullExit).toBe(true);
+  });
+
+  it("does not call an empty row a sell-all", () => {
+    const sizing = manualSellSizing({ sellAll: true, requestedUsd: 40, heldTokenRow: 0, position: null, decimals: 5 });
+    expect(sizing).toEqual({ sizedUsd: 40, amountToken: undefined, fullExit: false });
+  });
+
+  it("sizes a partial sell as its share of the position, floored to an atomic unit", () => {
+    const quarter = manualSellSizing({ ...held, sellAll: false, requestedUsd: 20 });
+    expect(quarter).toEqual({ sizedUsd: 20, amountToken: 250_000, fullExit: false });
+
+    // A third of one 6-decimal token: 333333.33… base units, never rounded up.
+    const third = manualSellSizing({
+      sellAll: false,
+      requestedUsd: 1,
+      heldTokenRow: 1,
+      position: { amountToken: 1, valueUsd: 3 },
+      decimals: 6,
+    });
+    expect(third.amountToken).toBeLessThan(1 / 3);
+    expect(third.amountToken).toBeCloseTo(0.333333, 6);
+    expect(third.fullExit).toBe(false);
+  });
+
+  it("still refuses nothing itself: an over-ask keeps its typed dollars for the guard to refuse", () => {
+    const sizing = manualSellSizing({ ...held, sellAll: false, requestedUsd: 100 });
+    expect(sizing.sizedUsd).toBe(100);
+  });
+
+  it("calls a slice that would leave dust or under 5% behind a full exit", () => {
+    // $77 of $80 leaves $3, under 5% of the position.
+    expect(manualSellSizing({ ...held, sellAll: false, requestedUsd: 77 })).toEqual({
+      sizedUsd: 77,
+      amountToken: 1_000_000,
+      fullExit: true,
+    });
+    // Within a cent of the whole position.
+    expect(manualSellSizing({ ...held, sellAll: false, requestedUsd: 79.995 }).fullExit).toBe(true);
+    // $0.80 of a $1 position leaves $0.20, under the dust line.
+    const small = manualSellSizing({
+      sellAll: false,
+      requestedUsd: 0.8,
+      heldTokenRow: 500,
+      position: { amountToken: 500, valueUsd: 1 },
+      decimals: 5,
+    });
+    expect(small.amountToken).toBe(500);
+    expect(small.fullExit).toBe(true);
+    // $70 of $80 leaves $10: a real remainder.
+    expect(manualSellSizing({ ...held, sellAll: false, requestedUsd: 70 }).fullExit).toBe(false);
+  });
+
+  it("gives the venue no token amount when the position cannot be priced", () => {
+    const sizing = manualSellSizing({
+      sellAll: false,
+      requestedUsd: 20,
+      heldTokenRow: 1_000_000,
+      position: { amountToken: 1_000_000, valueUsd: null },
+      decimals: 5,
+    });
+    expect(sizing).toEqual({ sizedUsd: 20, amountToken: undefined, fullExit: false });
   });
 });
 

@@ -630,4 +630,30 @@ export interface TradePreview {
    * did not quote one.
    */
   fees: { tockerUsd: number; venueUsd: number | null };
+  /**
+   * True when `priceUsd` and the figures below came from the venue's own quote for this
+   * size. False when the venue did not quote and `priceUsd` is only the last mark.
+   */
+  quoted?: boolean;
+  /** Why there is no live quote, in the owner's words. Null when there is one. */
+  quoteNote?: string | null;
+  /**
+   * This agent's own Slippage tolerance, in basis points: what an order runs under
+   * unless the owner widens it for one manual sell. Owner-only, like the whole preview.
+   */
+  slippageLimitBps?: number;
+  /**
+   * Sells only: what the order would send and bring back. `amountToken` is sized from
+   * the position exactly as the order will be; `proceedsUsd` is the venue's quote for
+   * it and `minProceedsUsd` the least it can pay before the order cancels instead. Both
+   * are null without a live quote, and `minProceedsUsd` also when the venue applies no
+   * slippage bound (the paper simulator).
+   */
+  sell?: {
+    amountToken: number | null;
+    proceedsUsd: number | null;
+    minProceedsUsd: number | null;
+    /** The order empties the position: "everything", or a slice within the dust rule of it. */
+    fullExit: boolean;
+  } | null;
 }

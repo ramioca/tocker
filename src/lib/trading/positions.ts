@@ -160,6 +160,44 @@ export function sellAmountToken(input: {
 }
 
 /**
+ * How a sell the owner places by hand is sized: the dollar figure the guard checks and
+ * the token amount the venue is told to send. One function because the preview and the
+ * order have to agree. A preview that quotes dollars at a buy-side price while the order
+ * sends the position's tokens shows proceeds the order will not produce.
+ *
+ * "Sell everything" is the row balance, valued at the mark read now; the typed figure is
+ * the page's reading of the position, a mark or two old, and is ignored. Anything else
+ * is the typed dollars as a share of the position, under {@link sellAmountToken}'s
+ * full-exit rules. `fullExit` says whether the order empties the position either way.
+ */
+export function manualSellSizing(input: {
+  /** The owner asked for the whole position. */
+  sellAll: boolean;
+  requestedUsd: number;
+  /** Whole units on the position row, dust included ({@link heldAmountToken}). */
+  heldTokenRow: number;
+  /** The position as the book lists it, or null when it does not (nothing held, or dust). */
+  position: { amountToken: number; valueUsd: number | null } | null;
+  decimals: number;
+}): { sizedUsd: number; amountToken: number | undefined; fullExit: boolean } {
+  const { requestedUsd, heldTokenRow, position, decimals } = input;
+  const sellAll = input.sellAll && heldTokenRow > 0;
+  const sizedUsd = sellAll && position?.valueUsd ? position.valueUsd : requestedUsd;
+  const amountToken = sellAll
+    ? heldTokenRow
+    : position
+      ? sellAmountToken({
+          heldToken: position.amountToken,
+          positionValueUsd: position.valueUsd,
+          requestedUsd,
+          decimals,
+        })
+      : undefined;
+  const fullExit = sellAll || (position !== null && amountToken !== undefined && amountToken >= position.amountToken);
+  return { sizedUsd, amountToken, fullExit };
+}
+
+/**
  * Below this, a position is dust: worth less than the platform fee a sale would cost,
  * not worth a guardian's attention, and not something the model should count as "held".
  * It stays on the row (its cents still count in equity) but leaves the book.
