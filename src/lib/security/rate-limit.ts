@@ -167,6 +167,14 @@ export function isCrossOrigin(headers: Headers): boolean {
 export const MAX_AGENTS_PER_USER = 25;
 
 /**
+ * New agents one person may set up in 24 hours. Counted in the database from the wallet
+ * rows a creation leaves behind, which outlive the agent, so deleting one does not hand
+ * the slot back: every creation makes real wallets, and opening a deposit address for one
+ * costs the platform rent.
+ */
+export const MAX_NEW_AGENTS_PER_DAY = 5;
+
+/**
  * Best-effort client identity for a bucket key.
  *
  * `x-forwarded-for` is trivially spoofed in general, but on Vercel the platform

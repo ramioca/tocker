@@ -542,6 +542,43 @@ describe("paidFetch accounting when a payment fails", () => {
     fixture: {},
   } as const;
 
+  it("refuses a paid call once the owner's day is spent, before anything is signed", async () => {
+    // $5 of real data already bought today by this owner's agent.
+    await db.insert(schema.x402Payments).values({
+      id: `day-${agentId}`,
+      agentId,
+      sourceId: req.sourceId,
+      url: req.url,
+      network: req.network,
+      amountUsd: "5.000000",
+      simulated: false,
+    });
+    stubProbe402();
+    const { paidFetch: livePaidFetch } = await live();
+    const c = ctx();
+
+    // The module graph is fresh, so the class is matched by name rather than identity.
+    await expect(livePaidFetch(c, req)).rejects.toMatchObject({ name: "X402DailyBudgetError", scope: "owner" });
+
+    expect(spendControls).toBeNull();
+    expect(c.budget.spentUsd).toBe(0);
+    const rows = await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId));
+    expect(rows).toHaveLength(1);
+  });
+
+  it("refuses every paid call when the platform's daily ceiling is zero", async () => {
+    vi.stubEnv("X402_PLATFORM_DAILY_USD", "0");
+    stubProbe402();
+    const { paidFetch: livePaidFetch } = await live();
+    const c = ctx();
+
+    await expect(livePaidFetch(c, req)).rejects.toMatchObject({ name: "X402DailyBudgetError", scope: "platform" });
+    expect(spendControls).toBeNull();
+    expect(c.budget.spentUsd).toBe(0);
+    vi.unstubAllEnvs();
+    vi.stubEnv("X402_MOCK", "");
+  });
+
   it("never sends a request to a URL off the registry hosts, with real payments on", async () => {
     const fetched: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

@@ -24,6 +24,13 @@ export function safeNext(value: string | null | undefined, origin: string | null
   if (url.origin !== origin) return fallback;
   // Path-only. `next=/login` would also loop the visitor back here forever.
   const path = `${url.pathname}${url.search}${url.hash}`;
-  if (!path.startsWith("/") || url.pathname === "/login") return fallback;
+  // Dot segments collapse on that first parse ("/.//evil.com" becomes "//evil.com"), and
+  // the browser parses what we return a second time. It has to be ours then, too.
+  if (!path.startsWith("/") || path.startsWith("//") || url.pathname === "/login") return fallback;
+  try {
+    if (new URL(path, origin).origin !== origin) return fallback;
+  } catch {
+    return fallback;
+  }
   return path;
 }

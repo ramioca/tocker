@@ -181,6 +181,8 @@ export function buildTools(ctx: RunContext): ToolSet {
   /** Tokens scored this tick that clear the bar — the shortlist `finish` holds the model to, once. */
   const shortlistThisTick = new Map<string, { symbol: string; total: number }>();
   let finishNudged = false;
+  /** post_note has been used this tick. */
+  let notePostedThisTick = false;
   /** Tokens whose paid signals were already bought this tick — the score cache holds them. */
   const enrichedThisTick = new Set<string>();
   /** Every token scored this tick, and the fresh candidates discovery surfaced — `finish` compares the two, once. */
@@ -571,7 +573,7 @@ export function buildTools(ctx: RunContext): ToolSet {
 
     get_token_intel: tool({
       description:
-        "Due diligence on one token. On Solana this pays Deepnets for a safety analysis (charged to your data budget); on Base it returns free DexScreener liquidity/volume stats.",
+        "Due diligence on one token. On Solana this pays Deepnets for a safety analysis when your owner enabled that source (charged to your data budget); on Base it returns free DexScreener liquidity/volume stats.",
       inputSchema: z.object({
         chain: chainSchema,
         address: z.string().min(3).describe("Mint (Solana) or contract address (Base)"),
@@ -584,6 +586,12 @@ export function buildTools(ctx: RunContext): ToolSet {
         }
         const source = getDataSource("deepnets-token-safety");
         if (!source) return fail("Token intel source is not registered.");
+        // A paid call like any other: only from a source the owner enabled.
+        if (!allowedSources.includes(source.id)) {
+          return fail("Token intel is not enabled for this agent. Use score_token; it returns the free safety read.", {
+            enabled: allowedSources,
+          });
+        }
         try {
           const result = await source.query(ctx.x402, { mint: token.address });
           return {
@@ -628,6 +636,17 @@ export function buildTools(ctx: RunContext): ToolSet {
             rationale: z.string(),
           })
           .parse(input);
+
+        // The kill switch. The scheduler skips a paused owner's agents, but a run already
+        // in flight, or one started by hand, gets here anyway: it places no buys and
+        // proposes none. Sells are untouched; an exit is never what "pause" means.
+        // (A dynamic import: the module is server-only and scripts load this file.)
+        if (parsed.side === "buy") {
+          const { isTradingPaused } = await import("@/lib/security/kill-switch");
+          if (await isTradingPaused(agent.ownerId)) {
+            return fail("Trading is paused by your owner. Place no buys; finish the tick.", { rejected: true });
+          }
+        }
 
         const db = await getDb();
         // Anything the owner never got round to deciding is dead before this tick sizes
@@ -951,10 +970,13 @@ export function buildTools(ctx: RunContext): ToolSet {
 
     post_note: tool({
       description:
-        "Publish a note to your followers' feed without trading — a thesis, a warning, or why you sat this tick out.",
+        "Publish a note to your followers' feed without trading — a thesis, a warning, or why you sat this tick out. One note per tick. Notes are public: never name a data source or state a threshold.",
       inputSchema: z.object({ body: z.string().min(5).max(1000) }),
       execute: logged(ctx, "post_note", async (input) => {
-        const parsed = z.object({ body: z.string() }).parse(input);
+        const parsed = z.object({ body: z.string().min(5).max(1000) }).parse(input);
+        // The feed is everyone's. One run, one note, whatever the text it read told it.
+        if (notePostedThisTick) return fail("One note per tick. Put the rest in your summary.");
+        notePostedThisTick = true;
         const db = await getDb();
         const postId = nanoid();
         await db.insert(posts).values({
@@ -973,7 +995,8 @@ export function buildTools(ctx: RunContext): ToolSet {
     ...buildPositionTools(ctx),
 
     finish: tool({
-      description: "End this run with a short summary of what you did and why. Always call this last.",
+      description:
+        "End this run with a short public summary of what you did and why. Never name a data source or state a threshold. Always call this last.",
       inputSchema: z.object({ summary: z.string().min(5).max(1000) }),
       execute: logged(ctx, "finish", async (input) => {
         const parsed = z.object({ summary: z.string() }).parse(input);
@@ -1006,7 +1029,7 @@ export function buildTools(ctx: RunContext): ToolSet {
             finishNudged = true;
             const names = left.slice(0, room).map((s) => `${s.symbol} (${Math.round(s.total)})`).join(", ");
             return fail(
-              `Not yet. You scored ${names} above your ${universe.minScore} floor but did not propose ${left.length === 1 ? "it" : "them"}, and this tick has room for ${room} more proposal${room === 1 ? "" : "s"}. Your owner asked for a shortlist to choose from: place_trade each one that deserves it (its own rationale, conviction first), or say in your summary why it does not — then call finish again.`,
+              `Not yet. You scored ${names} above your floor but did not propose ${left.length === 1 ? "it" : "them"}, and this tick has room for ${room} more proposal${room === 1 ? "" : "s"}. Your owner asked for a shortlist to choose from: place_trade each one that deserves it (its own rationale, conviction first), or say in your summary why it does not — then call finish again.`,
               { nudged: true, unproposed: left.map((s) => s.symbol) },
             );
           }

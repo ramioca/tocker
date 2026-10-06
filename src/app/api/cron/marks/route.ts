@@ -17,7 +17,7 @@
  * exactly the moment they decided something was wrong.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { tickMarks } from "@/lib/agent/scheduler";
+import { MARKS_MAX_AGENTS, tickMarks } from "@/lib/agent/scheduler";
 import { authorizeCron } from "@/lib/security/cron";
 import { RATE_LIMITS, clientKey, limiter, rateLimitHeaders } from "@/lib/security/rate-limit";
 
@@ -37,15 +37,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const limitParam = Number(req.nextUrl.searchParams.get("limit"));
-  // Same batch knob as `/api/cron/tick`: every guarded agent is processed inside this
-  // one invocation, so a deploy that had to shrink the tick batch has to shrink this
-  // one too or the pass runs past the function's duration cap and the exits at the end
-  // of the list are never reached. Note the trade-off `CRON_MAX_AGENTS` buys: agents
-  // past the cap do not get a guardian pass this time round, and `findGuardableAgents`
-  // orders by agent id, so raise it as soon as the deploy holds more books than the cap.
-  const configured = Number(process.env.CRON_MAX_AGENTS);
-  const fallback = Number.isFinite(configured) && configured > 0 ? Math.min(configured, 200) : 100;
-  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : fallback;
+  // Not `CRON_MAX_AGENTS`: that knob sizes the tick's batch of LLM runs and is small on
+  // purpose. Sharing it meant only that many agents ever got an exit check. A marks
+  // pass has no model in it, and `findGuardableAgents` takes books first and live books
+  // before paper, so the cap can only ever trim flat agents.
+  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, MARKS_MAX_AGENTS) : MARKS_MAX_AGENTS;
 
   try {
     const result = await tickMarks(limit);

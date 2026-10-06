@@ -57,6 +57,7 @@ import {
   visibleConfig,
   visibleError,
   visibleExitDistances,
+  visibleRationale,
   visibleSteps,
 } from "./visibility";
 
@@ -521,7 +522,9 @@ async function summarizeRuns(rows: Array<typeof agentRuns.$inferSelect>, isOwner
     status: r.status,
     startedAt: iso(r.startedAt),
     finishedAt: iso(r.finishedAt),
-    summary: r.summary,
+    // Public, like a rationale, and model-written like one: a summary can name the
+    // sources it bought from or the thresholds it holds. Same redaction for a visitor.
+    summary: visibleRationale(r.summary, { isOwner }),
     error: r.error,
     dataSpendUsd: toNum(r.dataSpendUsd),
     inputTokens: r.inputTokens,

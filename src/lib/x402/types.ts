@@ -117,6 +117,24 @@ export class X402BudgetError extends Error {
   }
 }
 
+/**
+ * A daily ceiling was reached: this owner's, or the platform's (`daily-budget.ts`). A
+ * budget error like the per-run one, so every caller that already treats "out of data
+ * budget" as a soft outcome treats this the same way; only the sentence differs.
+ */
+export class X402DailyBudgetError extends X402BudgetError {
+  readonly scope: "owner" | "platform";
+  constructor(priceUsd: number, scope: "owner" | "platform") {
+    super(priceUsd, 0);
+    this.name = "X402DailyBudgetError";
+    this.scope = scope;
+    this.message =
+      scope === "owner"
+        ? "Data spend cap reached: your agents have used today's paid-data allowance. Carry on with the free signals; it resets over the next 24 hours."
+        : "Paid data is unavailable right now. Carry on with the free signals and try again later.";
+  }
+}
+
 /** Thrown when a paid call cannot be made (no wallet, unsupported network, upstream error). */
 export class X402RequestError extends Error {
   readonly status: number | null;

@@ -34,10 +34,11 @@ import { createNonce, securityHeaders } from "@/lib/security/headers";
 import { clientKey, isCrossOrigin, limitForPath, limiter, rateLimitHeaders } from "@/lib/security/rate-limit";
 
 export const config = {
-  // Everything except Next's own static output and the files in public/. Without
-  // this the CSP would also be computed for every chunk and image, which is waste,
-  // and a nonce on a static asset means nothing.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png|.*\\.(?:png|jpg|svg|ico|webp)$).*)"],
+  // Everything except Next's own build output. Files in public/ go through here too:
+  // excluding "anything that ends in .png" also excluded every app path that merely
+  // ends that way, which was then served with no policy at all, and a header on an
+  // image costs nothing.
+  matcher: ["/((?!_next/static|_next/image).*)"],
 };
 
 export function proxy(request: NextRequest): NextResponse {

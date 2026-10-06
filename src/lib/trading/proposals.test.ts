@@ -245,6 +245,30 @@ describe("decideProposal", () => {
     expect(held).toHaveLength(0);
   });
 
+  it("does not fill a paper proposal after the agent has gone live", async () => {
+    // The card for this row says "simulated" and takes one tap. Approved now, it would
+    // be executed by whatever the agent has become.
+    const { agentId, userId, tradeId } = await proposeOnce();
+    await db.update(schema.agents).set({ mode: "live" }).where(eq(schema.agents.id, agentId));
+
+    const decision = await decideProposal({ tradeId, ownerId: userId, decision: "approve" });
+
+    expect(decision.ok).toBe(false);
+    if (decision.ok) return;
+    expect(decision.status).toBe("expired");
+    expect(decision.error).toMatch(/proposed while the agent was on paper, and it is live now/);
+    const [row] = await db.select().from(schema.trades).where(eq(schema.trades.id, tradeId));
+    expect(row?.status).toBe("expired");
+    expect(row?.filledAt).toBeNull();
+    expect(await db.select().from(schema.positions).where(eq(schema.positions.agentId, agentId))).toHaveLength(0);
+
+    // Rejecting such a card is still just a rejection.
+    const again = await proposeOnce();
+    await db.update(schema.agents).set({ mode: "live" }).where(eq(schema.agents.id, again.agentId));
+    const declined = await decideProposal({ tradeId: again.tradeId, ownerId: again.userId, decision: "reject" });
+    expect(declined.ok).toBe(true);
+  });
+
   it("fills once when the owner double-taps approve", async () => {
     const { agentId, userId, tradeId } = await proposeOnce();
 

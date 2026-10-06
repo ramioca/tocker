@@ -9,6 +9,9 @@ import { MAX_DATA_SPEND_PER_RUN_USD } from "@/lib/x402/types";
 
 export const chainSchema = z.enum(["solana", "base"]);
 
+/** The shortest schedule an agent may run on, in minutes. */
+export const MIN_SCHEDULE_MINUTES = 5;
+
 /**
  * Source ids that used to be in the registry and are still in saved configs. They are
  * dropped on parse, and the live checklist ignores them, so an agent that names one is
@@ -89,7 +92,17 @@ export const agentConfigSchema = z.object({
     mode: z.enum(["auto", "approve"]),
     proposalTtlMinutes: z.number().int().min(5).max(24 * 60),
   }),
-  schedule: z.object({ intervalMinutes: z.number().int().min(0).max(10_080) }),
+  schedule: z.object({
+    // 0 is "only when I press Run". Otherwise never more often than the cron that wakes
+    // agents (every five minutes): a shorter interval only meant one agent took a slot in
+    // every pass, ahead of everyone else's. The builder's shortest choice is five.
+    intervalMinutes: z
+      .number()
+      .int()
+      .min(0)
+      .max(10_080)
+      .transform((minutes) => (minutes > 0 && minutes < MIN_SCHEDULE_MINUTES ? MIN_SCHEDULE_MINUTES : minutes)),
+  }),
   llm: z.object({
     provider: llmProviderSchema,
     model: z.string().min(1),

@@ -53,7 +53,7 @@ export function GoLiveCard({ agent, isAdmin = false }: { agent: AgentDetail; isA
       toast.error("Mode not changed", { description: result.error });
       return;
     }
-    toast.success("Back on paper", { description: "Fills are simulated again. Positions carry over." });
+    toast.success("Back on paper", { description: "Fills are simulated from here." });
     router.refresh();
   };
 
@@ -69,8 +69,8 @@ export function GoLiveCard({ agent, isAdmin = false }: { agent: AgentDetail; isA
         <>
           <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
             This agent is spending real money, up to {formatUsd(agent.config?.risk.maxTradeUsd ?? 0)} a trade.
-            Switching back to paper stops that immediately; open positions stay on the books and are marked at
-            live prices. To stop every agent you own at once, use the kill switch in{" "}
+            To stop it now, pause the agent; its stop loss keeps working. You can switch back to paper once
+            its live positions are sold. To stop every agent you own at once, use the kill switch in{" "}
             <Link href="/settings/security" className="text-foreground underline underline-offset-2">
               Settings → Security
             </Link>

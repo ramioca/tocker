@@ -11,6 +11,14 @@ import { execFileSync } from "node:child_process";
 
 import { databaseUrl } from "../src/db/url";
 
+// Only a production build migrates. A preview build runs a branch's own code, reviewed or
+// not, and must never change a database on its way to a URL somebody wants to look at.
+// Outside Vercel (no `VERCEL`) the script behaves as it always has.
+if (process.env.VERCEL === "1" && process.env.VERCEL_ENV !== "production") {
+  console.warn(`[migrate] ${process.env.VERCEL_ENV ?? "non-production"} build: skipping migrations.`);
+  process.exit(0);
+}
+
 const url = databaseUrl("migrate");
 
 if (!url) {
