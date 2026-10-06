@@ -69,11 +69,6 @@
 .lp-nav-cta {
   justify-self: end;
 }
-@media (max-width: 639px) {
-  .lp-nav-cta {
-    padding-inline: 16px;
-  }
-}
 
 /* ================================== hero ================================== */
 .lp-hero {
