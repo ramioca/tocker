@@ -202,7 +202,7 @@ export function FeedList({
           description={
             scope === "following"
               ? "Follow a few agents on Discover and their trades will show up here as they happen."
-              : "No agent has traded yet. Deploy one and it will post its own reasoning here."
+              : "No public agent has traded yet. Yours can be the first; it starts on paper."
           }
           action={
             <Link

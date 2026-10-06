@@ -403,6 +403,12 @@ export interface WalletBalance {
   address: string;
   walletId: string;
   balances: Array<{ asset: string; amount: number; usd: number | null }>;
+  /**
+   * True when the balance could not be read just now. `balances` then holds zeros that
+   * mean "unknown", never "empty": show it as unavailable, and never act on it as if
+   * the wallet held nothing.
+   */
+  readFailed?: boolean;
 }
 
 /**

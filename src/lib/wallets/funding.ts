@@ -289,9 +289,19 @@ export interface ChainCash {
   nativeUsd: number | null;
   /** Derived from the user's own balance when both sides are known; null otherwise. */
   nativePriceUsd: number | null;
+  /**
+   * True when this wallet's balance could not be read just now. The figures above are
+   * then zeros that mean "unknown": show the chain as unavailable, never as empty, and
+   * do not plan a transfer or offer a deposit on the strength of them.
+   */
+  readFailed?: boolean;
 }
 
-/** What one of the user's live agents is worth: its cash (net of fees it owes) plus its open positions at their marks. */
+/**
+ * What one of the user's agents holds of their money. A live agent: its cash (net of
+ * fees it owes) plus its open positions at their marks. An agent that is funded but not
+ * live yet (`parked`): the USDC waiting in its wallet.
+ */
 export interface AgentCash {
   id: string;
   slug: string;
@@ -300,6 +310,12 @@ export interface AgentCash {
   equityUsd: number;
   cashUsd: number;
   positionsUsd: number;
+  /**
+   * True for an agent that is not live: real USDC was moved into its wallet and it is
+   * still on paper. The money is the owner's and counts, and comes back out through
+   * that agent's Withdraw. An agent is either live or parked, so no dollar is in both.
+   */
+  parked?: boolean;
 }
 
 export interface UnifiedCash {
@@ -308,11 +324,21 @@ export interface UnifiedCash {
   /** Leftover native assets (ETH, SOL), in dollars. Never counted as cash, never asked for. */
   gasUsd: number;
   perChain: ChainCash[];
-  /** The user's live agents' equity — cash plus open positions — in dollars. Theirs, but working. */
+  /**
+   * What the user's agents hold, in dollars: live agents' equity (cash plus open
+   * positions) and the USDC parked in funded agents that are not live yet. Theirs, but
+   * not in their own wallets.
+   */
   inAgentsUsd: number;
   agents: AgentCash[];
   /** Own wallets plus agents: the number the top bar shows. */
   allUsd: number;
+  /**
+   * True when something that belongs in these totals could not be read: one of the
+   * user's wallets, or an agent's (which is then left out of `agents` rather than listed
+   * at zero). The totals are a floor, not the answer, and are not shown as one.
+   */
+  partial?: boolean;
 }
 
 function balanceOf(wallet: WalletBalance, asset: string) {
@@ -335,6 +361,7 @@ export function readChainCash(wallet: WalletBalance): ChainCash {
     native,
     nativeUsd,
     nativePriceUsd: nativeUsd !== null && native > 0 ? nativeUsd / native : null,
+    ...(wallet.readFailed ? { readFailed: true } : {}),
   };
 }
 
@@ -355,14 +382,24 @@ export function emptyChainCash(chain: Chain): ChainCash {
  * Collapse every embedded wallet into one cash number plus a per-chain
  * breakdown. Chains the user has no wallet for still appear, at zero — a
  * missing row reads as a bug, a zero row reads as "deposit here".
+ *
+ * `agents` are the ones that could be read. `agentsUnread` says some could not: they
+ * are absent from the list, and the result is marked `partial` so nothing prints the
+ * totals as the whole of it. A wallet of the user's own that could not be read marks it
+ * the same way.
  */
-export function unifiedCash(wallets: WalletBalance[], agents: AgentCash[] = []): UnifiedCash {
+export function unifiedCash(
+  wallets: WalletBalance[],
+  agents: AgentCash[] = [],
+  options: { agentsUnread?: boolean } = {},
+): UnifiedCash {
   const perChain = CHAINS.map((chain) => {
     const wallet = wallets.find((w) => w.chain === chain);
     return wallet ? readChainCash(wallet) : emptyChainCash(chain);
   });
   const totalUsd = round(perChain.reduce((sum, c) => sum + c.usdcUsd, 0), 2);
   const inAgentsUsd = round(agents.reduce((sum, a) => sum + a.equityUsd, 0), 2);
+  const partial = options.agentsUnread === true || perChain.some((c) => c.readFailed === true);
   return {
     totalUsd,
     gasUsd: round(perChain.reduce((sum, c) => sum + (c.nativeUsd ?? 0), 0), 2),
@@ -370,7 +407,16 @@ export function unifiedCash(wallets: WalletBalance[], agents: AgentCash[] = []):
     inAgentsUsd,
     agents,
     allUsd: round(totalUsd + inAgentsUsd, 2),
+    ...(partial ? { partial: true } : {}),
   };
+}
+
+/**
+ * The sentence for a chain whose balance could not be read. It says what is known (the
+ * read failed) and not what is not (that the wallet is empty).
+ */
+export function balanceUnreadSentence(chain: Chain): string {
+  return `Couldn't read your ${chainName[chain]} balance just now. Nothing has moved. Try again in a minute.`;
 }
 
 export function cashOn(cash: UnifiedCash, chain: Chain): ChainCash {
@@ -440,6 +486,8 @@ export type BlockerKind =
   | "over-available"
   | "no-wallet"
   | "chain-short-usdc"
+  /** A chain's balance could not be read. Not a shortfall: no deposit CTA, try again. */
+  | "balance-unread"
   /** A transfer failed on its network fee. Tocker's to fix, never the user's: no deposit CTA. */
   | "fee-wallet";
 
@@ -533,11 +581,19 @@ export function planFunding(request: FundingRequest): FundingPlan {
     });
   }
 
+  // A chain whose balance could not be read is not a chain with nothing on it. It blocks
+  // the plan (nothing is sent against a number nobody could read) and says so, instead of
+  // "you have $0.00, deposit more" over a wallet that may hold plenty.
+  const unread = chains.filter((chain) => cashOn(cash, chain).readFailed === true);
+  for (const chain of unread) {
+    blockers.push({ kind: "balance-unread", chain, message: balanceUnreadSentence(chain), deposit: null });
+  }
+
   const availableOnChains = round(
     chains.reduce((sum, chain) => sum + cashOn(cash, chain).usdc, 0),
     2,
   );
-  if (amountUsd > availableOnChains) {
+  if (unread.length === 0 && amountUsd > availableOnChains) {
     blockers.push({
       kind: "over-available",
       chain: null,
@@ -562,6 +618,8 @@ export function planFunding(request: FundingRequest): FundingPlan {
 
   for (const leg of legs) {
     const chainCash = cashOn(cash, leg.chain);
+    // Already blocked above, in its own words.
+    if (chainCash.readFailed) continue;
     if (!chainCash.address) {
       blockers.push({
         kind: "no-wallet",

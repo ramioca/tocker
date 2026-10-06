@@ -27,14 +27,17 @@ export interface FeedPage extends Page<FeedItem> {
   receipts: Record<string, TradeReceiptData>;
 }
 
-/** Look up receipts for the fills on one page. Never fails the page. */
-async function withReceipts(page: Page<FeedItem>): Promise<FeedPage> {
+/**
+ * Look up receipts for the fills on one page. Never fails the page. `viewerId` is the
+ * session's: `receiptsFor` hands the whole receipt only to the owner of the trade's agent.
+ */
+async function withReceipts(page: Page<FeedItem>, viewerId: string | null): Promise<FeedPage> {
   const tradeIds = page.items
     .map((item) => item.trade?.id)
     .filter((id): id is string => Boolean(id));
   if (tradeIds.length === 0) return { ...page, receipts: {} };
   try {
-    return { ...page, receipts: Object.fromEntries(await receiptsFor(tradeIds)) };
+    return { ...page, receipts: Object.fromEntries(await receiptsFor(tradeIds, viewerId)) };
   } catch {
     // A receipt is an enrichment on top of a fill. The feed still reads without one.
     return { ...page, receipts: {} };
@@ -47,7 +50,8 @@ export async function fetchFeedPage(input: {
   limit?: number;
 }): Promise<FeedPage> {
   const session = await viewerSession();
-  return withReceipts(await feedPage({ ...input, viewerId: session?.userId ?? null }));
+  const viewerId = session?.userId ?? null;
+  return withReceipts(await feedPage({ ...input, viewerId }), viewerId);
 }
 
 /**
@@ -62,9 +66,8 @@ export async function initialFeedPage(input: {
   limit?: number;
 }): Promise<FeedPage> {
   const session = await viewerSession();
-  return withReceipts(
-    await feedPage({ scope: input.scope, limit: input.limit, viewerId: session?.userId ?? null }),
-  );
+  const viewerId = session?.userId ?? null;
+  return withReceipts(await feedPage({ scope: input.scope, limit: input.limit, viewerId }), viewerId);
 }
 
 export async function fetchComments(

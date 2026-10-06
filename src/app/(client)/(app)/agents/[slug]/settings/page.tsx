@@ -26,6 +26,13 @@ import { isAdminEmail } from "@/lib/admin";
 
 type Params = { params: Promise<{ slug: string }> };
 
+// The Withdraw card and the delete in the danger zone are server actions, and they take
+// their time limit from this page (Next's route-segment-config/maxDuration). A Base
+// withdrawal waits on its transfer and is followed by the sweep of the Tocker fees the
+// agent owes, a second transfer; deleting sweeps them too. Neither may be cut off between
+// money moving and the ledger hearing about it. 300 matches the agent page.
+export const maxDuration = 300;
+
 export const metadata: Metadata = { title: "Agent settings" };
 
 export default async function AgentSettingsPage({ params }: Params) {

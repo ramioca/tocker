@@ -52,7 +52,9 @@ import {
   PREVIEW_FAILED,
   PREVIEW_PATIENCE_MS,
   PREVIEW_SLOW,
+  afterFeesLabel,
   noQuoteLine,
+  proceedsAfterFees,
   realisedOnSale,
   unpreviewedLine,
 } from "@/components/trading/sell-preview";
@@ -860,6 +862,9 @@ function PreviewPanel({
       ? formatUsd(sell.proceedsUsd)
       : `${formatUsd(sell?.fullExit && preview.positionValueUsd !== null ? preview.positionValueUsd : amountUsd)} at the last price`;
   const fees = formatPreviewFees(preview.fees);
+  // Sells only, and only with a quote: what the proceeds leave once those fees come off.
+  const afterFeesRow = sell !== null ? afterFeesLabel(preview.fees) : null;
+  const afterFees = sell !== null ? proceedsAfterFees(sell.proceedsUsd, preview.fees) : null;
 
   return (
     <div className="space-y-2.5 rounded-xl border border-border/70 bg-card/30 p-3">
@@ -885,7 +890,8 @@ function PreviewPanel({
         {preview.allowed ? (
           <>
             <Row label={side === "buy" ? "You get ≈" : "You sell ≈"} value={tokens} />
-            {side === "sell" ? <Row label="You receive ≈" value={receive} /> : null}
+            {/* The venue's gross, as in the Sell position dialog: the fees below come off it. */}
+            {side === "sell" ? <Row label="Sale proceeds ≈" value={receive} /> : null}
             {sell !== null && sell.minProceedsUsd !== null ? (
               <Row
                 label="At worst ≈"
@@ -894,6 +900,7 @@ function PreviewPanel({
               />
             ) : null}
             {fees ? <Row label="Fees" value={fees} /> : null}
+            {afterFeesRow && afterFees !== null ? <Row label={afterFeesRow} value={formatUsd(afterFees)} /> : null}
           </>
         ) : null}
         {/* Today's book, not the result of the order — said so next to post-trade figures. */}

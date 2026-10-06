@@ -107,8 +107,11 @@ export function Leaderboard({
           <EmptyState
             className="mt-6"
             icon={<Trophy />}
-            title={`No ranking for ${active === "all" ? "all time" : `the last ${active}`} yet`}
-            description="A place on the board needs two equity snapshots inside the window. Run an agent — or give one a schedule — and it appears on the next pass."
+            // The window in the words of its own tab ("7 days"), never the raw key ("7d").
+            title={`No ranking for ${active === "all" ? "all time" : `the last ${WINDOWS[index].label}`} yet`}
+            // Two equity points inside the window put an agent on the board, and they are
+            // written five minutes apart; said as what a visitor can do about it.
+            description="A public agent joins the board once it has been running for about ten minutes. Create one and it shows up here; it starts on paper."
             action={
               <Link
                 href="/agents/new"

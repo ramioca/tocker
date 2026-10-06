@@ -11,7 +11,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { getSession } from "@/lib/auth";
-import { removeSubscription, saveSubscription } from "@/lib/notifications/push";
+import {
+  MAX_PUSH_DEVICES,
+  PushDeviceLimitError,
+  isPushServiceEndpoint,
+  removeSubscription,
+  saveSubscription,
+} from "@/lib/notifications/push";
 import { RATE_LIMITS, clientKey, limiter, rateLimitHeaders } from "@/lib/security/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -25,14 +31,18 @@ export const dynamic = "force-dynamic";
  * rejected key there costs one row, not a vulnerability.
  */
 /**
- * https only. Every real push service is (the standard requires it), and it keeps a
- * signed-in user from registering `https://…`-shaped nonsense that would make the
- * server POST at an address of their choosing. Nothing of the response ever reaches
- * them, so this is hygiene rather than a hole being closed.
+ * https only, and for a registration only a browser push service's own host.
+ *
+ * An endpoint is an address this server POSTs to, signed as Tocker, each time the
+ * owner's agent raises a proposal. Left open to any https URL it let a signed-in
+ * stranger register as many "devices" as they liked at a third party's server and have
+ * every proposal fire a request at each one. `isPushServiceEndpoint` is the list.
+ *
+ * Forgetting a device keeps the loose rule on purpose: a row stored before the host
+ * rule existed must still be removable by the account it belongs to.
  */
-const pushEndpoint = z
-  .url({ protocol: /^https$/ })
-  .max(2048);
+const anyHttpsUrl = z.url({ protocol: /^https$/ }).max(2048);
+const pushEndpoint = anyHttpsUrl.refine(isPushServiceEndpoint);
 
 const subscribeSchema = z.object({
   endpoint: pushEndpoint,
@@ -44,7 +54,7 @@ const subscribeSchema = z.object({
 });
 
 const unsubscribeSchema = z.object({
-  endpoint: pushEndpoint,
+  endpoint: anyHttpsUrl,
 });
 
 async function readJson(req: NextRequest): Promise<unknown> {
@@ -82,6 +92,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       userAgent: userAgent?.slice(0, 512) ?? null,
     });
   } catch (err) {
+    if (err instanceof PushDeviceLimitError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Alerts are already on for ${MAX_PUSH_DEVICES} devices. Turn them off on one you no longer use, then try again.`,
+        },
+        { status: 409, headers: { "cache-control": "no-store" } },
+      );
+    }
     console.warn(`[push] subscribe failed: ${err instanceof Error ? err.message : String(err)}`);
     return NextResponse.json({ ok: false, error: "Could not save this device." }, { status: 500 });
   }

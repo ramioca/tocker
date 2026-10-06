@@ -24,7 +24,7 @@ import "server-only";
  * The pure parts — {@link pnlByDay}, {@link combineEquity}, {@link estimateModelSpendUsd}
  * — take plain values and are tested in `money.test.ts`.
  */
-import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import {
   agentFundingIntents,
   agentRuns,
@@ -41,7 +41,9 @@ import { getPortfolio } from "@/lib/agent/portfolio";
 import { splitPnl, toNum } from "@/lib/money";
 import { winRate } from "@/lib/pnl";
 import type { AgentMode, AgentStatus, EquityPoint } from "@/server/types";
-import { snapshotInCurrentMode } from "./_shared";
+import { fillFeeUsd, loadBookMarks, snapshotInCurrentMode, withdrawnUsdc } from "./_shared";
+
+export { withdrawnUsdc };
 
 // ---------------------------------------------------------------- model prices
 
@@ -444,21 +446,6 @@ export const EMPTY_MONEY: MoneySummary = {
 
 // ---------------------------------------------------------------- the read
 
-/**
- * USDC an audited `withdraw` row took out of an agent, or 0 when it is not an owner's
- * USDC withdrawal. The kind is shared: fee settlement and rent recycling also write it
- * (with a `reason`), and those are costs or moved no USDC, not the owner taking money
- * out. A Solana withdrawal records what was `delivered` (0 when it failed on chain); a
- * Base one records the `amount` sent.
- */
-export function withdrawnUsdc(metadata: Record<string, unknown> | null | undefined): number {
-  if (!metadata || metadata.reason !== undefined || metadata.asset !== "usdc") return 0;
-  if (metadata.status === "failed") return 0;
-  const raw = metadata.delivered ?? metadata.amount;
-  const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : Number.NaN;
-  return Number.isFinite(value) && value > 0 ? value : 0;
-}
-
 /** Snapshot window: 30 displayed days plus the day before, so day one has a delta. */
 const SNAPSHOT_WINDOW_DAYS = 31;
 
@@ -551,7 +538,7 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     fundingRows,
     depositRows,
     withdrawRows,
-    firstRows,
+    bookMarks,
   ] = await Promise.all([
     // One row per agent per 15 minutes: the last snapshot in the bucket. The bucket
     // index alone carries the timestamp (900s divides a day exactly, so a bucket never
@@ -611,6 +598,8 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
 
     // Whole filled ledger: `winRate` replays it per token, so a partial history would
     // book a sell against a basis that is not there and report a loss that never happened.
+    // With the Tocker fee charged on each fill (`platform_fees.trade_id` is unique, so the
+    // join never repeats one): a sale that lost money after fees is not a win.
     db
       .select({
         agentId: trades.agentId,
@@ -619,9 +608,11 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
         amountToken: trades.amountToken,
         priceUsd: trades.priceUsd,
         feeUsd: trades.feeUsd,
+        tockerFeeUsd: platformFees.amountUsd,
         createdAt: trades.createdAt,
       })
       .from(trades)
+      .leftJoin(platformFees, eq(platformFees.tradeId, trades.id))
       .where(and(inArray(trades.agentId, ids), eq(trades.status, "filled")))
       .orderBy(trades.createdAt),
 
@@ -666,17 +657,13 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
         ),
       ),
 
-    // A live book's basis is its first live mark, the one the agent card and agent page
-    // measure all-time P&L against. Outside the window on purpose.
-    db
-      .selectDistinctOn([equitySnapshots.agentId], {
-        agentId: equitySnapshots.agentId,
-        equityUsd: equitySnapshots.equityUsd,
-      })
-      .from(equitySnapshots)
-      .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
-      .where(and(inArray(equitySnapshots.agentId, ids), snapshotInCurrentMode()))
-      .orderBy(equitySnapshots.agentId, asc(equitySnapshots.at), asc(equitySnapshots.id)),
+    // A live book's basis is its first live mark plus what was deposited since, less what
+    // was withdrawn: the one the agent card and agent page measure all-time P&L against.
+    // Outside the window on purpose.
+    loadBookMarks(
+      db,
+      rows.filter((r) => r.mode === "live").map((r) => r.id),
+    ),
   ]);
 
   // ---- snapshots -----------------------------------------------------------
@@ -780,14 +767,21 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     });
   }
 
-  const firstEquity = new Map(firstRows.map((r) => [r.agentId, toNum(r.equityUsd)]));
-
   const build = (row: (typeof rows)[number]): MoneyAgentRow => {
     const book = books.get(row.id)!;
     // Same rule as `/home` and the agent page: the headline is equity − basis and
     // realised is whatever open does not explain, so this row matches the agent card.
     // A live book with no mark to measure from keeps the ledger's own split.
-    const basisUsd = row.mode === "paper" ? toNum(row.paperStartingUsd) : (firstEquity.get(row.id) ?? null);
+    // A book read from the wallet just now is fresher than its last mark, so a deposit or
+    // withdrawal since that mark is already in it and joins the basis; a stale book is
+    // that mark, and is measured against the mark's own basis.
+    const marks = bookMarks.get(row.id);
+    const basisUsd =
+      row.mode === "paper"
+        ? toNum(row.paperStartingUsd)
+        : marks
+          ? marks.startEquityUsd + (book.stale ? 0 : marks.flowSinceMarkUsd)
+          : null;
     const split =
       book.equityUsd !== null && basisUsd !== null
         ? splitPnl({
@@ -814,7 +808,7 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
         side: t.side,
         amountToken: toNum(t.amountToken),
         priceUsd: toNum(t.priceUsd),
-        feeUsd: toNum(t.feeUsd),
+        feeUsd: fillFeeUsd(t.feeUsd, t.tockerFeeUsd),
         status: "filled" as const,
         createdAt: t.createdAt,
       })),

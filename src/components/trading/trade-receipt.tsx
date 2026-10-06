@@ -13,6 +13,7 @@ import {
   type TradeReceiptData,
 } from "@/lib/trading/receipt-format";
 import { isTrustedExplorerUrl } from "@/lib/tokens/links";
+import { TOTAL_FEES_LABEL, feeSplitText } from "./receipt-fees";
 
 /**
  * The receipt, in two densities.
@@ -90,7 +91,7 @@ function ExplorerLink({ receipt, className }: { receipt: TradeReceiptData; class
 }
 
 /**
- * One line: venue, quoted → filled, slippage, fees, and the hash or the simulated note.
+ * One line: venue, quoted → filled, slippage, total fees, and the hash or the simulated note.
  * Wraps on narrow screens rather than scrolling, because a single line of execution
  * facts that you have to scroll is a line nobody reads. The gap separates the items,
  * not a "·", which was left dangling at the end of a line whenever the row wrapped.
@@ -121,8 +122,10 @@ export function TradeReceiptRow({
         </>
       )}
       {receipt.totalFeeUsd > 0 ? (
-        <span>
-          <span className="tnum font-mono">{formatUsd(receipt.totalFeeUsd)}</span> venue fees
+        // The total is the venue's cut, the chain's and Tocker's own fee together, so it
+        // is "fees"; the tooltip, like the full receipt behind the row, says whose.
+        <span title={feeSplitText(receipt) || undefined}>
+          <span className="tnum font-mono">{formatUsd(receipt.totalFeeUsd)}</span> {TOTAL_FEES_LABEL}
         </span>
       ) : null}
       <ExplorerLink receipt={receipt} />

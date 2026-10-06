@@ -11,11 +11,11 @@
  * Neither action is refused for a missing second factor, and nothing here fails closed
  * on Privy's MFA read.
  *
- * These two are the only ways an agent changes mode: the older, ungated mode action
- * is gone. `agent-actions.ts` still exposes the older `withdrawAction`, which the UI
- * no longer calls.
+ * These two are the only ways an agent changes mode, and `secureWithdrawAction` is the
+ * only way its money leaves: the older, ungated mode and withdraw actions are gone.
  */
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { and, eq, gt, inArray } from "drizzle-orm";
 import { agents, getDb, positions, trades, type Db } from "@/db";
 import { getSession } from "@/lib/auth";
@@ -30,6 +30,8 @@ import {
   withFirstTradePreset,
   type LiveReadiness,
 } from "@/lib/security/live-readiness";
+// Shared with the live checklist, so its row and this file's refusal count the same thing.
+import { simulatedOpenPositions } from "@/lib/security/paper-positions";
 import type { ActionResult, Chain } from "@/server/types";
 import type { AgentConfig, TradeReceiptData } from "@/db/schema";
 import { ACTION_LIMITS, slowDown, transferErrorMessage } from "./_shared";
@@ -52,42 +54,6 @@ function revalidateAgent(slug: string) {
   revalidatePath(`/agents/${slug}/settings`);
   revalidatePath(`/agents/${slug}/live`);
   revalidatePath("/agents");
-}
-
-/**
- * How many of an agent's open positions can only be simulated: held, in a token the
- * agent has no filled real-money trade in.
- *
- * `positions` has no mode column, so a row does not say whether a wallet backs it. The
- * trade rows do: a token the agent never filled a live order in cannot be in its wallet.
- * A token it has traded live is left out of the count on purpose. That position may be
- * real tokens bought before a switch back to paper, and calling those simulated would
- * send the owner to sell them in paper mode, which empties the book and leaves the
- * tokens in the wallet with no way to sell them.
- */
-async function simulatedOpenPositions(db: Db, agentId: string): Promise<number> {
-  const open = await db
-    .select({ tokenId: positions.tokenId })
-    .from(positions)
-    .where(and(eq(positions.agentId, agentId), gt(positions.amountToken, "0")));
-  if (open.length === 0) return 0;
-
-  const tradedLive = await db
-    .selectDistinct({ tokenId: trades.tokenId })
-    .from(trades)
-    .where(
-      and(
-        eq(trades.agentId, agentId),
-        eq(trades.isPaper, false),
-        eq(trades.status, "filled"),
-        inArray(
-          trades.tokenId,
-          open.map((position) => position.tokenId),
-        ),
-      ),
-    );
-  const real = new Set(tradedLive.map((trade) => trade.tokenId));
-  return open.filter((position) => !real.has(position.tokenId)).length;
 }
 
 /**
@@ -548,14 +514,20 @@ export async function secureWithdrawAction(input: {
     }
 
     // Base gas is Privy-sponsored and billed to the app, so this path gets the burst
-    // limit the Solana one enforces inside `withdrawFromAgentSolana`. The key is the
-    // older action's (`withdrawFromAgent` in wallets.ts): one bucket, whichever is called.
+    // limit the Solana one enforces inside `withdrawFromAgentSolana`.
     const { limiter } = await import("@/lib/security/rate-limit");
     const { OWNER_WITHDRAWAL_BURST_LIMIT, waitSentence } = await import("@/lib/wallets/solana-agent-transfer");
     const verdict = limiter.consume(`agent-withdraw:${input.chain}:${session.userId}`, OWNER_WITHDRAWAL_BURST_LIMIT);
     if (!verdict.ok) {
       return fail(`That's a lot of withdrawals in a short time. Try again in ${waitSentence(verdict.retryAfterSeconds)}.`);
     }
+
+    // The Solana path pays the agent's accrued Tocker fees in the withdrawal's own
+    // transaction. Here the transfer is Privy's, so the fees are held back instead (a
+    // USDC withdrawal may not take them with it) and swept straight after it.
+    const { collectFeesOwed, holdBaseFees } = await import("@/lib/platform/withdrawal-fees");
+    const hold = input.asset === "usdc" ? await holdBaseFees({ agentId: agent.id, amount: input.amount }) : null;
+    if (hold && !hold.ok) return fail(hold.error);
 
     const result = await sendWithdrawal({
       agentId: input.agentId,
@@ -573,6 +545,10 @@ export async function secureWithdrawAction(input: {
       summary: `Withdrew ${input.amount} ${input.asset === "usdc" ? "USDC" : "native"} from ${agent.name} on ${input.chain} to ${to.slice(0, 6)}…${to.slice(-4)}.`,
       metadata: { chain: input.chain, asset: input.asset, amount: input.amount, to, txHash: result.txHash },
     });
+
+    // Never throws, and never changes what the owner is told: their withdrawal is sent
+    // either way, and fees a sweep could not collect stay owed for the next pass.
+    if (hold && hold.owedUsd > 0) await collectFeesOwed(agent);
 
     revalidateAgent(agent.slug);
     return { ok: true, data: result };
@@ -644,7 +620,39 @@ export async function previewAgentWithdrawalAction(input: {
 
 // --------------------------------------------------------------- budget audit
 
-/** Called by the agent settings form when the risk caps change, so the change is on the record. */
+/**
+ * The four caps a budget note may name, as numbers and nothing else (zod refuses NaN
+ * and the infinities). Strict at both levels, so no other key gets as far as the log.
+ */
+const CAP_KEYS = ["maxTradeUsd", "maxDailyTrades", "maxPositionPct", "maxDataSpendUsdPerRun"] as const;
+const capsSchema = z.strictObject({
+  maxTradeUsd: z.number(),
+  maxDailyTrades: z.number(),
+  maxPositionPct: z.number(),
+  maxDataSpendUsdPerRun: z.number(),
+});
+const budgetChangeSchema = z.strictObject({
+  agentId: z.string().min(1).max(64),
+  before: capsSchema,
+  after: capsSchema,
+});
+
+/**
+ * How often one account may write a note into its own audit log. The two note actions
+ * below are called once per save and once per manual run; a loop of them would push the
+ * events that matter (a withdrawal, a mode change) off the first page of the log.
+ */
+const AUDIT_NOTE_LIMIT = { limit: 20, windowMs: 60_000 } as const;
+
+/**
+ * Called by the agent settings form when the risk caps change, so the change is on the record.
+ *
+ * The parameter type is erased at the wire: this is a public endpoint and `input` is
+ * whatever was sent. Its keys and values used to go into the audit sentence as they
+ * came, at any length, and the operator's dashboard prints that sentence for every
+ * user. So the input is parsed first, and the sentence is built from the four fixed
+ * names and the numbers beside them.
+ */
 export async function noteBudgetChangeAction(input: {
   agentId: string;
   before: { maxTradeUsd: number; maxDailyTrades: number; maxPositionPct: number; maxDataSpendUsdPerRun: number };
@@ -653,12 +661,16 @@ export async function noteBudgetChangeAction(input: {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
-  const { error, agent } = await ownedAgent(input.agentId, session.userId);
+  const parsed = budgetChangeSchema.safeParse(input);
+  if (!parsed.success) return fail("Nothing to record");
+  const { agentId, before, after } = parsed.data;
+  const limited = slowDown("audit-note", session.userId, AUDIT_NOTE_LIMIT);
+  if (limited) return fail(limited);
+
+  const { error, agent } = await ownedAgent(agentId, session.userId);
   if (error || !agent) return fail(error ?? "Agent not found");
 
-  const changed = (Object.keys(input.after) as Array<keyof typeof input.after>).filter(
-    (key) => input.before[key] !== input.after[key],
-  );
+  const changed = CAP_KEYS.filter((key) => before[key] !== after[key]);
   if (changed.length === 0) return { ok: true, data: undefined };
 
   await recordAudit({
@@ -667,9 +679,9 @@ export async function noteBudgetChangeAction(input: {
     agentId: agent.id,
     agentName: agent.name,
     summary: `Changed ${agent.name}'s spend caps: ${changed
-      .map((key) => `${key} ${input.before[key]} → ${input.after[key]}`)
+      .map((key) => `${key} ${before[key]} → ${after[key]}`)
       .join(", ")}.`,
-    metadata: { before: input.before, after: input.after },
+    metadata: { before, after },
   });
 
   return { ok: true, data: undefined };
@@ -699,17 +711,37 @@ export async function tradeReceiptAction(
   if (!trade) return fail("Trade not found");
 
   const { receiptsFor } = await import("@/server/queries/trading");
-  const receipts = await receiptsFor([tradeId]);
+  // The owner, checked above, so the receipt comes back whole.
+  const receipts = await receiptsFor([tradeId], session.userId);
   return { ok: true, data: receipts.get(tradeId) ?? null };
 }
 
-/** The manual "run one tick now" from the wizard, on the record like everything else. */
+/**
+ * The manual "run one tick now" from the wizard, on the record like everything else.
+ *
+ * Only for a run that exists: started by hand, on this agent. The run id used to be
+ * stored as sent, so the log could say a run happened that never did.
+ */
 export async function noteManualRunAction(agentId: string, runId: string): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
+  // A public endpoint: the arguments are whatever the caller sent.
+  if (typeof agentId !== "string" || typeof runId !== "string" || runId.length === 0 || runId.length > 64) {
+    return fail("Run not found");
+  }
+  const limited = slowDown("audit-note", session.userId, AUDIT_NOTE_LIMIT);
+  if (limited) return fail(limited);
 
-  const { error, agent } = await ownedAgent(agentId, session.userId);
+  const { error, agent, db } = await ownedAgent(agentId, session.userId);
   if (error || !agent) return fail(error ?? "Agent not found");
+
+  const { agentRuns } = await import("@/db");
+  const [run] = await db
+    .select({ id: agentRuns.id })
+    .from(agentRuns)
+    .where(and(eq(agentRuns.id, runId), eq(agentRuns.agentId, agent.id), eq(agentRuns.trigger, "manual")))
+    .limit(1);
+  if (!run) return fail("Run not found");
 
   await recordAudit({
     userId: session.userId,
@@ -717,7 +749,7 @@ export async function noteManualRunAction(agentId: string, runId: string): Promi
     agentId: agent.id,
     agentName: agent.name,
     summary: `Triggered a run of ${agent.name} by hand in ${agent.mode} mode.`,
-    metadata: { runId, mode: agent.mode },
+    metadata: { runId: run.id, mode: agent.mode },
   });
   return { ok: true, data: undefined };
 }

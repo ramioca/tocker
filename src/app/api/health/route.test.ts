@@ -101,6 +101,32 @@ describe("GET /api/health", () => {
     expect(body.live.blockers).toEqual(expect.arrayContaining(["dataPaid", "realModel"]));
   });
 
+  /**
+   * `withMock` ignores MOCK_DATA in a production build, so the pages are safe either
+   * way. The report still says the variable is set, there most of all: it is a mistake
+   * on a live project, and the operator should hear about it.
+   */
+  it("reports MOCK_DATA to the operator and counts it against live readiness", async () => {
+    vi.stubEnv("MOCK_DATA", "1");
+    vi.stubEnv("NODE_ENV", "production");
+    const body = await (await operator()).json();
+    expect(body.mocks.data).toBe(true);
+    expect(body.live.noMockData).toBe(false);
+    expect(body.live.ready).toBe(false);
+    expect(body.live.blockers).toContain("noMockData");
+  });
+
+  it("does not report MOCK_DATA when it is unset, and never to an anonymous caller", async () => {
+    vi.stubEnv("MOCK_DATA", "");
+    const body = await (await operator()).json();
+    expect(body.mocks.data).toBe(false);
+    expect(body.live.noMockData).toBe(true);
+    expect(body.live.blockers).not.toContain("noMockData");
+
+    vi.stubEnv("MOCK_DATA", "1");
+    expect(JSON.stringify(await (await anonymous()).json())).not.toMatch(/mock/i);
+  });
+
   it("treats DEV_IMPERSONATE_USER_ID as a live blocker", async () => {
     vi.stubEnv("DEV_IMPERSONATE_USER_ID", "did:privy:seed-you");
     const body = await (await operator()).json();

@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AVATAR_SEEDS, emptyDraft, type BuilderDraft } from "./types";
+import { AVATAR_SEEDS, emptyDraft, withDefaultKey, type BuilderDraft } from "./types";
+import type { LlmKeyRow } from "@/server/types";
 
 // v2: the allowlist became a universe. A v1 draft cannot be migrated honestly
 // — it has no discovery feeds and no bar — so it is simply not restored.
@@ -34,12 +35,26 @@ export function clearAllDrafts(): void {
  * The builder is seven steps long and people close tabs. The draft is restored
  * on mount and written back on every change the user makes, debounced so typing
  * in the strategy textarea does not hammer localStorage.
+ *
+ * `keys` are the account's LLM keys. A fresh, restored or cleared draft starts on one of
+ * them (`withDefaultKey`), so the key someone saved a minute ago in onboarding is already
+ * chosen. That is state set here, not an edit: it never marks the draft as touched, so
+ * an untouched form is still not saved.
  */
-export function useDraft(userId: string) {
+export function useDraft(userId: string, keys: readonly LlmKeyRow[] = []) {
   const draftKey = storageKey(userId);
-  const [draft, setDraft] = useState<BuilderDraft>(emptyDraft);
+  // The keys come with the server render, so the first paint already shows the choice
+  // and matches on hydration.
+  const [draft, setDraft] = useState<BuilderDraft>(() => withDefaultKey(emptyDraft(), keys));
   const [restored, setRestored] = useState(false);
   const timer = useRef<number | null>(null);
+  // The restore below runs once and `clear` is called from handlers; both want the keys
+  // as they are at that moment (one may have been added in the form), without the list
+  // being a reason to run the restore again.
+  const keysRef = useRef(keys);
+  useEffect(() => {
+    keysRef.current = keys;
+  }, [keys]);
   /**
    * Only an edit makes a draft. Without this, the mount itself (and the random avatar
    * it picks) was saved, so the next visit offered to "Start over" a form nobody had
@@ -52,18 +67,25 @@ export function useDraft(userId: string) {
       const raw = window.localStorage.getItem(draftKey);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<BuilderDraft>;
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage cannot be read during SSR, so restoring a saved draft is necessarily a post-mount effect
-        setDraft((current) => ({
-          ...current,
-          ...parsed,
-          config: {
-            ...current.config,
-            ...parsed.config,
-            // The universe is nested, so a shallow spread would drop any key a
-            // saved draft predates.
-            universe: { ...current.config.universe, ...parsed.config?.universe },
-          },
-        }));
+        // localStorage cannot be read during SSR, so restoring a saved draft is
+        // necessarily a post-mount effect.
+        setDraft((current) =>
+          // A saved draft can name a key that has since been removed, or none at all.
+          withDefaultKey(
+            {
+              ...current,
+              ...parsed,
+              config: {
+                ...current.config,
+                ...parsed.config,
+                // The universe is nested, so a shallow spread would drop any key a
+                // saved draft predates.
+                universe: { ...current.config.universe, ...parsed.config?.universe },
+              },
+            },
+            keysRef.current,
+          ),
+        );
         setRestored(true);
       } else {
         // Vary the starting avatar, but only after hydration — a random value in
@@ -111,7 +133,7 @@ export function useDraft(userId: string) {
     } catch {
       // ignore
     }
-    setDraft(emptyDraft());
+    setDraft(withDefaultKey(emptyDraft(), keysRef.current));
     // Nothing is restored any more, so "Start over" has nothing left to undo.
     setRestored(false);
   }, [draftKey]);

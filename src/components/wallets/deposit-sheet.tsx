@@ -26,10 +26,17 @@ import { cn } from "@/lib/utils";
 import { CashTotal, ChainBreakdown } from "./cash-summary";
 import { ONRAMP_AVAILABLE, OnrampButton } from "./onramp-button";
 import { QrCode } from "./qr-code";
-import { useSyncWallets } from "./use-cash";
+import { useSyncWallets, useUserWallets } from "./use-cash";
 import type { Chain, WalletBalance } from "@/server/types";
 
 const CHAINS: Chain[] = ["base", "solana"];
+
+/**
+ * How often the cash is re-read while the sheet is open. A deposit is sent from
+ * somewhere else (an exchange app, another wallet), so nothing in this tab knows when it
+ * lands, and the sheet tells people the number updates on its own.
+ */
+const DEPOSIT_POLL_MS = 10_000;
 
 export interface DepositSheetProps {
   open: boolean;
@@ -71,6 +78,10 @@ export function DepositSheet({
     if (open) setChain(initialChain);
   }
 
+  // Only the timer: the figures still arrive through `wallets` and `cash`, which the
+  // opener reads from this same query, so the sheet and the top bar cannot disagree.
+  useUserWallets(open, { pollMs: DEPOSIT_POLL_MS });
+
   const resolved = useMemo(() => cash ?? unifiedCash(wallets), [cash, wallets]);
   const chainCash = cashOn(resolved, chain);
   const wording = NETWORK_WORDING[chain];
@@ -93,7 +104,7 @@ export function DepositSheet({
         setSyncNote(
           result.note === "privy not configured"
             ? "Wallet sync isn’t available in this environment."
-            : "No wallet to sync yet.",
+            : "Your Tocker wallet hasn’t been created yet. Sign out and sign in again to create it.",
         );
       }
     } catch {

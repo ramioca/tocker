@@ -32,6 +32,7 @@ import {
 } from "@/lib/wallets/funding";
 import { Field, RiskSlider, StepHeading, Toggle } from "./field";
 import { parseBps } from "./parse-value";
+import { slippageMeaning } from "./slippage-copy";
 import { UniverseControls } from "./universe-controls";
 import { SimpleSelect } from "./simple-select";
 import {
@@ -40,6 +41,7 @@ import {
   LLM_BOUNDS,
   MAX_AGENT_NAME,
   MAX_TRADE_LADDER,
+  feeSharePct,
   launchRadarUsdPerRun,
   PAPER_BALANCES,
   RISK_BOUNDS,
@@ -99,7 +101,7 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
         />
       </Field>
 
-      <Field label="Avatar" hint="Deterministic from the seed — no upload, no broken image.">
+      <Field label="Avatar" hint="Generated for you. No upload needed.">
         <div className="flex flex-wrap items-center gap-2">
           {AVATAR_SEEDS.map((seed) => {
             const active = draft.avatarSeed === seed;
@@ -178,6 +180,10 @@ export const PROVIDER_LABELS: Record<LlmKeyRow["provider"], string> = {
 
 // The server refuses anything shorter (src/server/actions/users.ts), so the form does too.
 const KEY_MIN = 16;
+
+/** A link inside a sentence of help text; the same treatment as the onboarding key step's. */
+const INLINE_LINK =
+  "rounded-sm text-foreground underline decoration-muted-foreground/50 underline-offset-2 transition-colors duration-150 hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
 type KeyField = "key" | "label" | "workspace";
 
@@ -443,8 +449,14 @@ export function BrainStep({
   errors,
   llmKeys,
   onKeyAdded,
+  feeUsd = 0,
   hideHeading,
-}: StepProps & { llmKeys: LlmKeyRow[]; onKeyAdded: (key: LlmKeyRow) => void }) {
+}: StepProps & {
+  llmKeys: LlmKeyRow[];
+  onKeyAdded: (key: LlmKeyRow) => void;
+  /** Tocker's flat fee per fill, from the server; 0 when it is off. */
+  feeUsd?: number;
+}) {
   const provider = draft.config.llm.provider;
   const models = DEFAULT_MODELS[provider];
   const keysForProvider = llmKeys.filter((key) => key.provider === provider);
@@ -452,6 +464,16 @@ export function BrainStep({
   const [hintedPreset, setHintedPreset] = useState<string | null>(null);
   const pressedPreset = STRATEGY_PRESETS.find((preset) => preset.prompt === draft.config.strategyPrompt) ?? null;
   const shownPreset = STRATEGY_PRESETS.find((preset) => preset.id === hintedPreset) ?? pressedPreset;
+  // A preset that sets a small ticket also decides how much of every trade the flat fee
+  // takes, and its paper record starts that far under water. Said with the blurb, from
+  // the preset's own size and the server's fee, so neither number is written twice.
+  const presetFeeNote = (preset: StrategyPreset): string => {
+    const ticket = preset.risk?.maxTradeUsd;
+    const pct = ticket === undefined ? null : feeSharePct(ticket, feeUsd);
+    return ticket === undefined || pct === null
+      ? ""
+      : ` At ${formatUsd(ticket)} a trade, Tocker's flat ${formatUsd(feeUsd)} fee per fill is ${pct}% each way.`;
+  };
 
   const applyPreset = (preset: StrategyPreset) => {
     const before = draft.config;
@@ -513,7 +535,10 @@ export function BrainStep({
                   model: DEFAULT_MODELS[nextProvider][0].id,
                 },
               });
-              update({ llmKeyId: null });
+              // The first key this provider has, not none: with one on file the select
+              // sat on "Choose a key" and Create was refused until the only option was
+              // picked by hand. With none it stays empty, and adding one is the next step.
+              update({ llmKeyId: llmKeys.find((key) => key.provider === nextProvider)?.id ?? null });
             }}
           />
         </Field>
@@ -544,6 +569,31 @@ export function BrainStep({
               }))}
               onChange={(llmKeyId) => update({ llmKeyId })}
             />
+          ) : llmKeys.length === 0 ? (
+            // No key on the account at all: someone who skipped the key step lands here,
+            // and "No Anthropic key on file yet" said neither what a key is nor where one
+            // comes from. The same three links as the onboarding step.
+            <p className="text-xs leading-5 text-muted-foreground">
+              Your agent&rsquo;s model runs on your own account with an AI provider, and they bill you for it. No
+              key yet? The quickest is OpenRouter: create one at{" "}
+              <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className={INLINE_LINK}>
+                openrouter.ai/keys
+              </a>
+              {provider === "openrouter" ? " and paste it here. " : ", set Provider to OpenRouter above, and paste it here. "}
+              <a
+                href="https://console.anthropic.com/settings/keys"
+                target="_blank"
+                rel="noreferrer"
+                className={INLINE_LINK}
+              >
+                Anthropic
+              </a>{" "}
+              and{" "}
+              <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className={INLINE_LINK}>
+                OpenAI
+              </a>{" "}
+              keys work too.
+            </p>
           ) : (
             <p className="text-xs text-muted-foreground">
               No {PROVIDER_LABELS[provider]} key on file yet.
@@ -607,7 +657,7 @@ export function BrainStep({
         label="Strategy"
         htmlFor="strategy-prompt"
         error={errors.strategyPrompt}
-        hint="This is the system prompt. Be specific about entries, exits and what it must never do."
+        hint="These are your agent's standing instructions. Be specific about entries, exits and what it must never do."
       >
         <div className="space-y-2">
           <div className="flex flex-wrap gap-1.5" onMouseLeave={() => setHintedPreset(null)}>
@@ -642,12 +692,13 @@ export function BrainStep({
               blurb through aria-describedby, so this line stays out of their way. */}
           <p aria-hidden className="text-[11px] leading-4 text-muted-foreground">
             {shownPreset
-              ? shownPreset.blurb
+              ? `${shownPreset.blurb}${presetFeeNote(shownPreset)}`
               : "Each preset replaces the prompt below and sets what its way of trading needs. You can undo it."}
           </p>
           {STRATEGY_PRESETS.map((preset) => (
             <span key={preset.id} id={`strategy-preset-${preset.id}-blurb`} hidden>
-              {preset.blurb} Replaces the strategy prompt; you can undo it.
+              {preset.blurb}
+              {presetFeeNote(preset)} Replaces the strategy prompt; you can undo it.
             </span>
           ))}
           <Textarea
@@ -699,6 +750,19 @@ export function DataStep({
         blurb="Each source is a paid API the agent calls over x402. Tocker's own wallet pays for the call, not yours — your agent's wallet is for trading — but every source you add is a per-request cost against its data budget for the run."
         />
       )}
+
+      {/* The one-page builder drops the heading above, and with it the only sentence in
+          here about who pays: the closed card says "paid by Tocker" and the open one showed
+          a price on every source and nothing else. */}
+      {hideHeading ? (
+        <p className="text-xs leading-5 text-muted-foreground">
+          Tocker pays for these calls, not you. Each price is what one call costs; the per-run cap under Risk
+          limits is the most a run can spend.
+          {selected.size === 0
+            ? " No sources selected: the agent buys no research on individual tokens and decides on the launch radar, the free feeds and the free safety checks."
+            : ""}
+        </p>
+      ) : null}
 
       <DataSourcePicker
         sources={sources}
@@ -760,7 +824,15 @@ export function UniverseStep({ draft, updateConfig, errors, hideHeading }: StepP
 
 // ---------------------------------------------------------------------- risk
 
-export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
+export function RiskStep({
+  draft,
+  updateConfig,
+  hideHeading,
+  feeUsd = 0,
+}: StepProps & {
+  /** Tocker's flat fee per fill, from the server; 0 when it is off. */
+  feeUsd?: number;
+}) {
   const risk = draft.config.risk;
   const patch = (next: Partial<typeof risk>) => updateConfig({ risk: { ...risk, ...next } });
   // What the book will actually be worth on day one, so the caps can be checked
@@ -770,6 +842,13 @@ export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
     draft.funding.mode === "fund" ? `the ${formatUsd(fundedUsd)} you are funding` : `its ${formatUsd(fundedUsd)} paper balance`;
   const ticketSharePct = fundedUsd > 0 ? Math.ceil((risk.maxTradeUsd / fundedUsd) * 100) : 0;
   const positionCapTooLow = ticketSharePct > 0 && ticketSharePct > risk.maxPositionPct;
+  // A flat fee is invisible on a $100 ticket and a real share of a $2 one, on the way in
+  // and again on the way out. Said here, where the ticket is sized; silent from 1% down.
+  const feePct = feeSharePct(risk.maxTradeUsd, feeUsd);
+  const feeNote =
+    feePct === null
+      ? ""
+      : ` Tocker's flat ${formatUsd(feeUsd)} fee per fill is ${feePct}% of a ticket this size, each way.`;
 
   return (
     <div className="space-y-4">
@@ -790,8 +869,8 @@ export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
           format={(value) => formatUsd(value)}
           meaning={
             fundedUsd > 0 && risk.maxTradeUsd > fundedUsd
-              ? `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)} — but that is more than ${startsWith}, so every trade would be refused for lack of cash. Tap the number to type an exact amount.`
-              : `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)}, whatever the model asks for. Tap the number to type an exact amount.`
+              ? `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)} — but that is more than ${startsWith}, so every trade would be refused for lack of cash.${feeNote} Tap the number to type an exact amount.`
+              : `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)}, whatever the model asks for.${feeNote} Tap the number to type an exact amount.`
           }
           onChange={(maxTradeUsd) => patch({ maxTradeUsd })}
         />
@@ -832,7 +911,7 @@ export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
           max={5}
           step={0.05}
           format={(value) => formatUsd(value)}
-          meaning={`Once a run has paid ${formatUsd(risk.maxDataSpendUsdPerRun)} for data, further x402 calls are refused and it must decide with what it has.`}
+          meaning={`Once a run has spent ${formatUsd(risk.maxDataSpendUsdPerRun)} of Tocker's data budget, further paid calls are refused and it decides with what it has.`}
           onChange={(maxDataSpendUsdPerRun) => patch({ maxDataSpendUsdPerRun })}
         />
 
@@ -845,7 +924,7 @@ export function RiskStep({ draft, updateConfig, hideHeading }: StepProps) {
           step={10}
           format={(value) => `${Math.round(value)} bps`}
           parse={parseBps}
-          meaning={`Orders are rejected if the fill would be worse than ${(risk.slippageBps / 100).toFixed(2)}% off the quote. Launch-day memecoins usually need 300–500 bps; Jupiter picks tighter when the pool allows.`}
+          meaning={slippageMeaning(risk.slippageBps)}
           onChange={(slippageBps) => patch({ slippageBps: Math.round(slippageBps) })}
         />
       </div>
@@ -873,7 +952,16 @@ export function ScheduleStep({ draft, update, updateConfig, hideHeading }: StepP
         />
       )}
 
-      <Field label="Interval">
+      {/* The heading this replaces was the only place the builder said a run costs the
+          owner anything; the one-page builder hides it. */}
+      <Field
+        label="Interval"
+        hint={
+          hideHeading
+            ? `Every run bills model tokens to your ${PROVIDER_LABELS[draft.config.llm.provider]} key, whether or not it trades. Tocker pays for its data.`
+            : undefined
+        }
+      >
         <div className="grid gap-2 sm:grid-cols-3">
           {INTERVAL_PRESETS.map((preset) => {
             const active = draft.config.schedule.intervalMinutes === preset.minutes;

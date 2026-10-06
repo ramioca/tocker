@@ -4,7 +4,9 @@
  *  - {@link tickDueAgents} — the LLM loop. Every active agent whose `nextRunAt` is due
  *    gets a full run. Batches of 5 with `Promise.allSettled` so one slow model cannot
  *    stall the others, capped at 20 agents so a cron invocation stays inside the
- *    serverless timeout. `/api/cron/tick`, every 5 minutes.
+ *    serverless timeout. `/api/cron/tick`, every 5 minutes. When more are due than
+ *    fit, {@link findDueAgents} decides who goes: no slot for an agent that cannot
+ *    think, and one per owner before anyone's second.
  *  - {@link tickMarks} — the marks loop. No model, no tokens, no money: refresh marks,
  *    ratchet peaks, run the exit engine for every agent holding something (whatever its
  *    status: a paused agent's stop loss still has to fire), and snapshot equity for
@@ -19,6 +21,7 @@ import { agents, getDb, positions, userSecurity } from "@/db";
 import { settleFeesForAgent } from "@/lib/platform/settlement";
 import { runGuardian, type GuardianResult } from "@/lib/trading/guardian";
 import { sweepSubmittedTrades } from "@/lib/trading/settle";
+import { isLlmMock } from "./mock-model";
 import { getPortfolio, snapshotEquity } from "./portfolio";
 import { reapStaleRuns, runAgent, type RunAgentResult } from "./run";
 
@@ -41,6 +44,9 @@ async function inBatches<T, R>(items: readonly T[], fn: (item: T) => Promise<R>)
   return out;
 }
 
+/** How many due agents the pass looks at for each one it will run, so it can spread them across owners. */
+const DUE_WINDOW_FACTOR = 5;
+
 /**
  * Due agents, minus every agent whose owner has pulled the account-wide kill
  * switch (`user_security.tradingPaused`). The filter lives here rather than in
@@ -48,11 +54,25 @@ async function inBatches<T, R>(items: readonly T[], fn: (item: T) => Promise<R>)
  *
  * `tickMarks` / `findGuardableAgents` is deliberately NOT filtered: exits must
  * keep running while trading is paused.
+ *
+ * Two more rules, because a pass has only `limit` slots and every agent on the
+ * platform shares them:
+ *
+ *  - An agent with no LLM key is not due. Its run can only fail, and a run that fails
+ *    in a millisecond still took a slot from an agent that would have traded.
+ *  - Within the oldest `limit × DUE_WINDOW_FACTOR` due agents, each owner gets one slot
+ *    before anyone gets a second. Oldest first decides who is first; what is left over
+ *    is filled in the same order. One account's many agents then wait behind each
+ *    other, not in front of everybody else's. The overall oldest is always taken, so
+ *    nothing waits forever.
+ *
+ * Deliberately not live-before-paper: five due live agents would then starve every
+ * paper agent, and paper is where a new account starts.
  */
 export async function findDueAgents(limit = 20, now: Date = new Date()): Promise<string[]> {
   const db = await getDb();
   const rows = await db
-    .select({ id: agents.id })
+    .select({ id: agents.id, ownerId: agents.ownerId })
     .from(agents)
     .leftJoin(userSecurity, eq(userSecurity.userId, agents.ownerId))
     .where(
@@ -60,13 +80,37 @@ export async function findDueAgents(limit = 20, now: Date = new Date()): Promise
         eq(agents.status, "active"),
         isNotNull(agents.nextRunAt),
         lte(agents.nextRunAt, now),
+        // The scripted model (`LLM_MOCK=1`) thinks without a key; nothing else does.
+        ...(isLlmMock() ? [] : [isNotNull(agents.llmKeyId)]),
         // No security row means the switch was never touched, i.e. not paused.
         or(isNull(userSecurity.tradingPaused), eq(userSecurity.tradingPaused, false)),
       ),
     )
-    .orderBy(asc(agents.nextRunAt))
-    .limit(limit);
-  return rows.map((r) => r.id);
+    // The id breaks ties, so two agents due at the same instant sort the same way every pass.
+    .orderBy(asc(agents.nextRunAt), asc(agents.id))
+    .limit(limit * DUE_WINDOW_FACTOR);
+  return spreadAcrossOwners(rows, limit);
+}
+
+/**
+ * PURE. Picks up to `limit` agents from `rows` (already oldest-due first): one per owner
+ * in that order, then whatever is left in that order. See {@link findDueAgents}.
+ */
+export function spreadAcrossOwners(rows: ReadonlyArray<{ id: string; ownerId: string }>, limit: number): string[] {
+  const picked = new Set<string>();
+  const owners = new Set<string>();
+  for (const row of rows) {
+    if (picked.size >= limit) break;
+    if (owners.has(row.ownerId)) continue;
+    owners.add(row.ownerId);
+    picked.add(row.id);
+  }
+  for (const row of rows) {
+    if (picked.size >= limit) break;
+    picked.add(row.id);
+  }
+  // A Set keeps insertion order: every owner's first, then the fill.
+  return [...picked];
 }
 
 /**

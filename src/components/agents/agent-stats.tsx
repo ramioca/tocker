@@ -75,7 +75,7 @@ export function AgentStats({ agent }: { agent: AgentDetail }) {
       value: agent.stats.dataSpendUsd,
       format: (value) => formatUsd(value),
       goodWhen: "down",
-      caption: "lifetime x402",
+      caption: "paid by Tocker, all time",
     },
   ];
 

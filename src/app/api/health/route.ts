@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { getDb, isPglite } from "@/db";
+import { mockDataRequested } from "@/lib/data";
 import { authorizeCron } from "@/lib/security/cron";
 import { encryptionConfigured } from "@/lib/security/llm-keys";
 
@@ -66,6 +67,9 @@ export async function GET(request: Request) {
     llm: process.env.LLM_MOCK === "1",
     x402: process.env.X402_MOCK === "1",
     tokens: process.env.TOKENS_MOCK === "1",
+    // Whether the variable is set, not whether it takes effect: `withMock` ignores it
+    // in a production build, and a live project that has it set is still misconfigured.
+    data: mockDataRequested(),
   };
 
   const privyConfigured = Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID && process.env.PRIVY_APP_SECRET);
@@ -83,9 +87,10 @@ export async function GET(request: Request) {
     appUrl: Boolean(process.env.NEXT_PUBLIC_APP_URL?.trim()),
     solanaRpc: Boolean(process.env.SOLANA_RPC_URL?.trim()),
     baseRpc: Boolean(process.env.BASE_RPC_URL?.trim()),
-    /** Real data, real model, and no auth backdoor. */
+    /** Real data, real model, real pages, and no auth backdoor. */
     dataPaid: !mocks.x402,
     realModel: !mocks.llm,
+    noMockData: !mocks.data,
     noImpersonation: !impersonation,
   };
 

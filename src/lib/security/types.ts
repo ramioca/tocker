@@ -65,7 +65,9 @@ export type ReadinessStepId =
   | "budget"
   | "risk"
   | "data"
-  | "killswitch";
+  | "killswitch"
+  /** Does the agent still hold a simulated position? `goLiveAction` refuses on the same count. */
+  | "paperPositions";
 
 export interface ReadinessStep {
   id: ReadinessStepId;

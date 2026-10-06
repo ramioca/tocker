@@ -112,5 +112,7 @@ export async function GET(
     trades: tradeList,
   };
 
-  return NextResponse.json(detail);
+  // What is in `detail` depends on who asked (the owner's carries the transcript), so no
+  // cache may keep it: not a shared one, and not the browser's.
+  return NextResponse.json(detail, { headers: { "cache-control": "private, no-store" } });
 }

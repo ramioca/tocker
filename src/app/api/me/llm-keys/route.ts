@@ -13,17 +13,17 @@ import { withMock } from "@/lib/data";
 import { mockLlmKeys, mockSession } from "@/mocks/social";
 import type { LlmKeyRow } from "@/server/types";
 
+/** Key metadata is the owner's: no shared cache, and none in the browser. */
+const PRIVATE = { "cache-control": "private, no-store" } as const;
+
 export async function GET() {
   const session = await withMock(getSession, mockSession);
-  if (!session) return NextResponse.json({ keys: [] as LlmKeyRow[] }, { status: 401 });
+  if (!session) return NextResponse.json({ keys: [] as LlmKeyRow[] }, { status: 401, headers: PRIVATE });
 
   const keys = await withMock(
     () => getMyLlmKeys(session.userId),
     () => mockLlmKeys(),
   );
 
-  return NextResponse.json(
-    { keys },
-    { headers: { "cache-control": "no-store" } },
-  );
+  return NextResponse.json({ keys }, { headers: PRIVATE });
 }

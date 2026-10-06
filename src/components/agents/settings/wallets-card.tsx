@@ -10,14 +10,13 @@ import { fetchWalletBalances } from "@/components/agents/agent-actions";
 import { NATIVE_SYMBOL, chainLabelFor } from "@/lib/wallets/funding";
 import { getFundingIntents, type FundingIntentRow } from "@/server/actions/wallets";
 import { FundAgentDrawer } from "./fund-agent-drawer";
+import { unfinishedFundingAdvice, unfinishedIntentText } from "./funding-intent-copy";
+import { fundingIntentsKey, walletBalancesKey } from "./wallet-query-keys";
 import type { WalletBalance } from "@/server/types";
 
-/**
- * One key per agent, exported so whatever moves money out of the agent can invalidate it:
- * the query ignores new `initialData` after mount, so a server refresh alone leaves the
- * Money strip and this card on the balance from before the withdrawal.
- */
-export const walletBalancesKey = (agentId: string) => ["wallet-balances", agentId] as const;
+// The key lives in `wallet-query-keys` (the Fund drawer needs it and this card renders
+// the drawer); re-exported for the callers that already import it from here.
+export { walletBalancesKey };
 
 export function useWalletBalances(agentId: string, initial?: WalletBalance[]) {
   return useQuery({
@@ -30,7 +29,7 @@ export function useWalletBalances(agentId: string, initial?: WalletBalance[]) {
 
 function useFundingIntents(agentId: string) {
   return useQuery({
-    queryKey: ["funding-intents", agentId],
+    queryKey: fundingIntentsKey(agentId),
     queryFn: async () => {
       const result = await getFundingIntents(agentId);
       return result.ok ? result.data : [];
@@ -49,6 +48,10 @@ function intentLabel(intent: FundingIntentRow): string {
  * been rejected in the wallet popup. The agent still exists — it is simply
  * unfunded, and saying so is the whole job of this block. The Fund drawer above
  * finishes it.
+ *
+ * A transfer with no answer on record is worded as exactly that (see
+ * `funding-intent-copy`): it may have landed, so the block points at the balance
+ * before it points at Fund.
  */
 function UnfinishedFunding({ intents }: { intents: FundingIntentRow[] }) {
   const unfinished = intents.filter((i) => i.status !== "sent");
@@ -64,19 +67,14 @@ function UnfinishedFunding({ intents }: { intents: FundingIntentRow[] }) {
         {unfinished.map((intent) => (
           <li key={intent.id} className="text-[11px] leading-relaxed text-muted-foreground">
             <span className="tnum">{intentLabel(intent)}</span>
-            {intent.status === "pending"
-              ? " never reached the chain"
-              : intent.status === "cancelled"
-                ? " was not attempted"
-                : " was rejected"}
+            {intent.status === "sent" ? null : unfinishedIntentText(intent.status)}
             {intent.error ? ` — ${intent.error}` : "."}{" "}
             <RelativeTime iso={intent.createdAt} />
           </li>
         ))}
       </ul>
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        The agent exists and is safe; it just has less than you meant it to. Use Fund above to send
-        the rest.
+        {unfinishedFundingAdvice(unfinished.map((intent) => intent.status))}
       </p>
     </div>
   );
@@ -152,12 +150,19 @@ export function WalletsCard({
         </div>
       ) : (
         <>
-          <p className="tnum mt-3 text-sm">
-            <span className="font-medium">{formatUsd(cashUsd)}</span>{" "}
-            <span className="text-xs text-muted-foreground">
-              {cashUsd > 0 ? "of USDC across its wallets" : "— this agent is not funded yet"}
-            </span>
-          </p>
+          {wallets.some((wallet) => wallet.readFailed) ? (
+            // A wallet that could not be read is not an unfunded one: no "$0.00" over it.
+            <p className="mt-3 text-sm text-muted-foreground">
+              Balance unavailable right now. Nothing has moved; it shows again once the wallet can be read.
+            </p>
+          ) : (
+            <p className="tnum mt-3 text-sm">
+              <span className="font-medium">{formatUsd(cashUsd)}</span>{" "}
+              <span className="text-xs text-muted-foreground">
+                {cashUsd > 0 ? "of USDC across its wallets" : "— this agent is not funded yet"}
+              </span>
+            </p>
+          )}
 
           <ul className="mt-3 space-y-2">
             {wallets.map((wallet) => (
@@ -170,7 +175,10 @@ export function WalletsCard({
                   {wallet.balances.map((balance) => (
                     <li key={balance.asset} className="text-xs">
                       <span className="uppercase text-muted-foreground">{balance.asset}</span>{" "}
-                      <span className="tnum font-mono">{formatTokenAmount(balance.amount)}</span>
+                      {/* The address stays; the amount of a wallet nobody could read does not read 0. */}
+                      <span className="tnum font-mono">
+                        {wallet.readFailed ? "unavailable" : formatTokenAmount(balance.amount)}
+                      </span>
                       {balance.usd !== null ? (
                         <span className="tnum ml-1.5 text-muted-foreground">
                           ({formatUsd(balance.usd)})

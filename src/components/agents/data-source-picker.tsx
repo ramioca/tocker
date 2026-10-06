@@ -101,17 +101,22 @@ export function DataSourcePicker({
               </span>
               <span className="text-xs leading-relaxed text-muted-foreground">{source.summary ?? source.description}</span>
               <span className="flex flex-wrap items-center gap-1.5">
-                <span
-                  className={cn(
-                    "rounded border px-1.5 py-px text-[10px]",
-                    paysOnAgentChain
-                      ? "border-border bg-muted/40 text-muted-foreground"
-                      : "border-primary/40 bg-primary/8 text-foreground",
-                  )}
-                >
-                  paid on {paysOn}
-                  {isAdmin && !paysOnAgentChain ? " — needs that platform wallet funded" : ""}
-                </span>
+                {/* Admins only: which chain pays decides which of Tocker's wallets must be
+                    funded. To an owner, "paid on Solana" beside a price read as a charge on
+                    their own wallet there. */}
+                {isAdmin ? (
+                  <span
+                    className={cn(
+                      "rounded border px-1.5 py-px text-[10px]",
+                      paysOnAgentChain
+                        ? "border-border bg-muted/40 text-muted-foreground"
+                        : "border-primary/40 bg-primary/8 text-foreground",
+                    )}
+                  >
+                    paid on {paysOn}
+                    {!paysOnAgentChain ? " — needs that platform wallet funded" : ""}
+                  </span>
+                ) : null}
                 <span className="rounded border border-border bg-muted/40 px-1.5 py-px text-[10px] capitalize text-muted-foreground">
                   {source.category}
                 </span>

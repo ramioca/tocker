@@ -54,3 +54,16 @@ export const DEFAULT_ROWS: ReadonlyArray<readonly [string, string]> = [
   ["Min liquidity", `$${d.minLiquidityUsd / 1000}k`],
   ["Min age", `${d.minAgeMinutes} min`],
 ];
+
+/**
+ * What Tocker charges, as the FAQ says it. The amount is handed in from the server's
+ * `platformFeeUsd()`, so the page never quotes a fee the product does not charge; with
+ * the fee off the sentence is not there at all. Leads with a space: it closes the
+ * answer about what data costs.
+ */
+export function feeSentence(feeUsd: number): string {
+  if (!(feeUsd > 0)) return "";
+  // Cents when it is a whole number of cents; a sub-cent fee is printed as it is set.
+  const amount = Math.round(feeUsd * 100) / 100 === feeUsd ? feeUsd.toFixed(2) : String(feeUsd);
+  return ` What Tocker charges is a flat $${amount} per filled trade, buy or sell, never a percentage of its size.`;
+}

@@ -201,8 +201,15 @@ async function notify(
   await db.insert(notifications).values(rows.map((r) => ({ id: nanoid(), ...r })));
 }
 
+/**
+ * Who an exit is reported to besides the owner. Nobody, for a private agent: one taken
+ * private after it was followed keeps its follows and stops telling them its trades
+ * (`notifyAgentFollowers` in proposals.ts applies the same rule to every other fill).
+ */
 async function followerIds(agentId: string): Promise<string[]> {
   const db = await getDb();
+  const [agent] = await db.select({ isPublic: agents.isPublic }).from(agents).where(eq(agents.id, agentId)).limit(1);
+  if (!agent?.isPublic) return [];
   const rows = await db
     .select({ followerId: follows.followerId })
     .from(follows)

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import { Suspense } from "react";
 import { ChartEmpty, ChartSkeleton } from "@/components/spectrumui/charts/chart-engine";
 import { ModeBadge } from "@/components/common/mode-badge";
@@ -32,9 +32,10 @@ import {
   getTokenTrade,
   myAgentsForBlocklist,
 } from "@/server/queries/tokens";
+import { tokenIdSpellings } from "@/server/queries/token-address";
 import { myTokenMarkers, receiptsFor, tokenActivityCount, type TokenMarker } from "@/server/queries/trading";
 import type { Chain, TokenPage } from "@/server/types";
-import { isTokenAddress } from "./address";
+import { canonicalTokenPath, isTokenAddress } from "./address";
 
 /**
  * `/tokens/[chain]/[address]` — the public record on one token.
@@ -50,15 +51,25 @@ import { isTokenAddress } from "./address";
  * provider calls.
  */
 
-type Params = { params: Promise<{ chain: string; address: string }> };
-type Props = Params & { searchParams: Promise<{ trade?: string | string[] }> };
+type SearchParams = Record<string, string | string[] | undefined>;
+type Props = {
+  params: Promise<{ chain: string; address: string }>;
+  searchParams: Promise<SearchParams>;
+};
 
 function parseChain(value: string): Chain | null {
   return value === "solana" || value === "base" ? value : null;
 }
 
-/** The chain and address, or null when the URL cannot name a token (→ 404). */
-async function parseParams(params: Params["params"]): Promise<{ chain: Chain; address: string } | null> {
+/**
+ * The chain and address, or null when the URL cannot name a token (→ 404).
+ *
+ * A Base address in any spelling but its checksum gets one permanent redirect to the
+ * checksum one (the query string kept), so a contract has a single page: the lowercase
+ * link Discover renders and the checksummed one from a positions table used to be two,
+ * with different scores and holders. See `canonicalTokenPath`.
+ */
+async function parseParams({ params, searchParams }: Props): Promise<{ chain: Chain; address: string } | null> {
   const { chain: rawChain, address: rawAddress } = await params;
   const chain = parseChain(rawChain);
   if (!chain) return null;
@@ -68,11 +79,14 @@ async function parseParams(params: Params["params"]): Promise<{ chain: Chain; ad
   } catch {
     return null;
   }
-  return isTokenAddress(chain, address) ? { chain, address } : null;
+  if (!isTokenAddress(chain, address)) return null;
+  const canonical = canonicalTokenPath(chain, address, await searchParams);
+  if (canonical) permanentRedirect(canonical);
+  return { chain, address };
 }
 
-export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const parsed = await parseParams(params);
+export async function generateMetadata(props: Props): Promise<Metadata> {
+  const parsed = await parseParams(props);
   if (!parsed) return { title: "Token not found" };
   const { chain, address } = parsed;
   const page = await getTokenPage(chain, address);
@@ -86,8 +100,9 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   };
 }
 
-export default async function TokenPageRoute({ params, searchParams }: Props) {
-  const parsed = await parseParams(params);
+export default async function TokenPageRoute(props: Props) {
+  const { searchParams } = props;
+  const parsed = await parseParams(props);
   if (!parsed) notFound();
   const { chain, address } = parsed;
 
@@ -111,14 +126,26 @@ export default async function TokenPageRoute({ params, searchParams }: Props) {
   const focus = focusInWindow ?? focusOlder;
   const trades = focusOlder ? [...page.recentTrades, focusOlder] : page.recentTrades;
 
+  // One id for a Solana mint. A Base contract's fills can sit under more than one stored
+  // spelling of its address, and the chart is about the contract.
+  const tokenIds = [...new Set([page.token.id, ...tokenIdSpellings(chain, address)])];
+
   const [targets, agents, markers, agentCount, receipts] = await Promise.all([
     viewerId ? myAgentsForBlocklist(viewerId, chain, address) : Promise.resolve([]),
     agentRefs(trades.map((trade) => trade.agentId)),
     // Owner-only by construction: `myTokenMarkers` filters on agents.ownerId in SQL and
     // returns [] for an anonymous viewer. Nobody else's entries land on this chart.
-    myTokenMarkers(page.token.id, viewerId),
-    tokenActivityCount(page.token.id),
-    receiptsFor(trades.map((trade) => trade.id)),
+    Promise.all(tokenIds.map((id) => myTokenMarkers(id, viewerId))).then((found) =>
+      found.length === 1 ? found[0] : found.flat().sort((a, b) => a.at.localeCompare(b.at)),
+    ),
+    // The largest, not the sum: an agent with fills under two spellings is one agent.
+    Promise.all(tokenIds.map((id) => tokenActivityCount(id))).then((counts) => Math.max(...counts)),
+    // Whole for the viewer's own agents' fills; everyone else's come without the
+    // score rows a paid source produced.
+    receiptsFor(
+      trades.map((trade) => trade.id),
+      viewerId,
+    ),
   ]);
 
   // An agent that doesn't trade this chain has nothing to block here (the menu still
@@ -134,9 +161,12 @@ export default async function TokenPageRoute({ params, searchParams }: Props) {
     <BlockMenu chain={chain} address={address} symbol={page.token.symbol} agents={blockTargets} />
   ) : null;
   // "native" is the gas asset's bookkeeping name, not something a swap can target.
+  // The token's stored address, not the URL's: an order resolves its token by exact
+  // address, so the checksum spelling of a contract the book knows in lowercase would
+  // open a second token row for it, and a sell would find no position to sell.
   const tradeMenu =
     address === "native" ? null : (
-      <TradeMenu chain={chain} address={address} symbol={page.token.symbol} agents={blockTargets} />
+      <TradeMenu chain={chain} address={page.token.address} symbol={page.token.symbol} agents={blockTargets} />
     );
   const actions =
     tradeMenu || blockMenu ? (

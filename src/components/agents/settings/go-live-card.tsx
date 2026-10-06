@@ -20,7 +20,7 @@ const MIN_USDC = 5;
  * Mode, from the settings page.
  *
  * Going live is deliberately NOT a button here any more. It is one link into
- * `/agents/[slug]/live`, where ten preconditions are checked on the server
+ * `/agents/[slug]/live`, where the preconditions are checked on the server
  * behind a second factor and the switch refuses while any is red. A
  * hold-to-confirm sitting next to a funding number was the entire ceremony for
  * the most consequential switch in the product; now the ceremony is a checklist
@@ -110,9 +110,9 @@ export function GoLiveCard({ agent, isAdmin = false }: { agent: AgentDetail; isA
                 your balance.
               </>
             )}{" "}
-            Either way it is not a toggle: the checklist walks ten preconditions — database, wallet infrastructure,
-            your second factor, real wallets, funding, network fees, spend caps, risk, data sources and the kill
-            switch — and refuses while any of them is red.
+            Either way it is not a toggle: the checklist walks its preconditions — database, wallet infrastructure,
+            your second factor, real wallets, funding, network fees, spend caps, risk, data sources, the kill
+            switch and any paper positions still open — and refuses while any of them is red.
           </p>
 
           <dl className="mt-3 space-y-1.5">

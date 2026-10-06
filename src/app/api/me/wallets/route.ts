@@ -1,41 +1,13 @@
 import { NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
-import { agents, getDb } from "@/db";
 import { getSession } from "@/lib/auth";
 import { getUserWalletBalances, syncUserEmbeddedWallets } from "@/lib/wallets";
-import { CHAINS, unifiedCash, type AgentCash } from "@/lib/wallets/funding";
-
-/**
- * What the user's live agents are worth — cash plus open positions at their marks —
- * one entry per agent whose wallet could be read. Money the user moved into an agent
- * is still theirs, whether it sits as USDC or as a position; a top bar that dropped it
- * the moment it was funded (or the moment it was invested) read as a loss.
- */
-async function liveAgentCash(userId: string): Promise<AgentCash[]> {
-  const db = await getDb();
-  const rows = await db
-    .select({ id: agents.id, slug: agents.slug, name: agents.name })
-    .from(agents)
-    .where(and(eq(agents.ownerId, userId), eq(agents.mode, "live")));
-  if (rows.length === 0) return [];
-  const { getPortfolio } = await import("@/lib/agent/portfolio");
-  const read = await Promise.all(
-    rows.map(async (row): Promise<AgentCash | null> => {
-      try {
-        const portfolio = await getPortfolio(row.id);
-        if (portfolio.cashReadFailed) return null;
-        const cashUsd = Math.max(0, portfolio.cashUsd);
-        const positionsUsd = Math.max(0, portfolio.equityUsd - portfolio.cashUsd);
-        return { id: row.id, slug: row.slug, name: row.name, equityUsd: cashUsd + positionsUsd, cashUsd, positionsUsd };
-      } catch {
-        return null;
-      }
-    }),
-  );
-  return read.filter((a): a is AgentCash => a !== null);
-}
+import { readAgentCash } from "@/lib/wallets/agent-cash";
+import { CHAINS, unifiedCash } from "@/lib/wallets/funding";
 
 export const dynamic = "force-dynamic";
+
+/** Addresses and balances are the owner's: no shared cache, and none in the browser. */
+const PRIVATE = { "cache-control": "private, no-store" } as const;
 
 /**
  * The signed-in user's embedded wallets with live balances — what the top-bar
@@ -46,10 +18,18 @@ export const dynamic = "force-dynamic";
  * `cash` is the product's one number (USDC across every chain) plus the
  * breakdown behind it; `cashUsd` is kept as the same number at the top level so
  * older callers do not have to change.
+ *
+ * `cash.agents` is what the user's agents hold of their money: live agents' equity, and
+ * the USDC in funded agents that are not live yet (see `readAgentCash`).
+ *
+ * `partial` is true when a wallet or an agent could not be read. The answer is still a
+ * 200 with everything that could: the wallets carry `readFailed`, an unread agent is
+ * left out, and `cash.partial` tells every reader that the totals are missing something
+ * and must not be printed as the balance.
  */
 export async function GET() {
   const session = await getSession();
-  if (!session) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "unauthenticated" }, { status: 401, headers: PRIVATE });
 
   let wallets = await getUserWalletBalances(session.userId);
 
@@ -64,6 +44,10 @@ export async function GET() {
     if (recorded.length > wallets.length) wallets = await getUserWalletBalances(session.userId);
   }
 
-  const cash = unifiedCash(wallets, await liveAgentCash(session.userId));
-  return NextResponse.json({ wallets, cash, cashUsd: cash.totalUsd });
+  const inAgents = await readAgentCash(session.userId);
+  const cash = unifiedCash(wallets, inAgents.agents, { agentsUnread: inAgents.unread });
+  return NextResponse.json(
+    { wallets, cash, cashUsd: cash.totalUsd, partial: cash.partial === true },
+    { headers: PRIVATE },
+  );
 }

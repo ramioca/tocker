@@ -51,12 +51,13 @@ function spanDate(iso: string): string {
 }
 
 export function PortfolioHero({ overview }: { overview: HomeOverview }) {
-  const { cashUsd, allocatedUsd, cashByWallet, hasWallets, counts, paper } = overview;
+  const { cashUsd, cashUnavailable, allocatedUsd, cashByWallet, hasWallets, counts, paper } = overview;
 
   // Real money and paper are never added together. An account with nothing real yet —
   // no live agent, no cash — leads with its paper book, labelled as such, rather than a
   // bare $0.00; everyone else leads with real money and sees paper in its own well.
-  const paperOnly = counts.live === 0 && cashUsd === 0 && counts.paper > 0;
+  // A wallet that could not be read is not "no cash": that account leads with real money.
+  const paperOnly = counts.live === 0 && cashUsd === 0 && !cashUnavailable && counts.paper > 0;
   const book = paperOnly
     ? paper
     : {
@@ -106,6 +107,13 @@ export function PortfolioHero({ overview }: { overview: HomeOverview }) {
           <p className="tnum mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
             {formatUsd(book.equityUsd)}
           </p>
+          {/* The total is cash plus agents, and the cash could not be read: the number
+              above is short by whatever the wallet holds, so it says what it leaves out. */}
+          {!paperOnly && cashUnavailable ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Not counting your cash: your wallet balance is unavailable right now.
+            </p>
+          ) : null}
           <p className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <PnlText usd={book.pnlUsd} pct={book.pnlPct} size="sm" />
             <span className="text-xs text-muted-foreground">
@@ -161,16 +169,19 @@ export function PortfolioHero({ overview }: { overview: HomeOverview }) {
           icon={Wallet}
           label="Cash"
           footnote={
-            hasWallets
-              ? cashByWallet.map((row) => (
-                  <span key={row.address} className="mr-2 inline-block">
-                    {row.chain} {truncateAddress(row.address, 4, 4)}
-                  </span>
-                ))
-              : "No wallet synced yet"
+            cashUnavailable
+              ? "Wallet balance unavailable right now"
+              : hasWallets
+                ? cashByWallet.map((row) => (
+                    <span key={row.address} className="mr-2 inline-block">
+                      {row.chain} {truncateAddress(row.address, 4, 4)}
+                    </span>
+                  ))
+                : "No wallet synced yet"
           }
         >
-          {formatUsd(cashUsd)}
+          {/* A read that failed is not a balance of zero. */}
+          {cashUnavailable ? <span className="text-muted-foreground">—</span> : formatUsd(cashUsd)}
         </Well>
 
         <Well

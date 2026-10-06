@@ -65,6 +65,36 @@ export function thinPoolLine(pct: number): string {
   return `That is ${shown}% under the last price: this pool is thin. Smaller slices may sell better.`;
 }
 
+/** The fees a preview carries: Tocker's flat fee, and the venue's when it quoted one. */
+type PreviewFees = { tockerUsd: number; venueUsd: number | null };
+
+/**
+ * The label of the row under Fees, or null when the preview knows of no fee to take off
+ * (the proceeds line is then already the whole answer). A venue that did not quote its
+ * fee is not counted, and the label says so rather than calling the figure "after fees".
+ */
+export function afterFeesLabel(fees: PreviewFees | null | undefined): string | null {
+  if (!fees) return null;
+  const tocker = fees.tockerUsd > 0;
+  const venue = fees.venueUsd !== null && fees.venueUsd > 0;
+  if (!tocker && !venue) return null;
+  return tocker && fees.venueUsd === null ? "After the Tocker fee ≈" : "After fees ≈";
+}
+
+/**
+ * What a quoted sale leaves once those fees are taken off, the way the book counts a
+ * sell (`applyFillToPosition`, `realisedOnSale`): proceeds less the venue's fee and
+ * Tocker's. The fees are the preview's own figures, never a constant. Null without a
+ * quote. Can go below zero, and should: selling a few cents of dust costs more than it
+ * brings in, and that is worth seeing before confirming.
+ */
+export function proceedsAfterFees(proceedsUsd: number | null | undefined, fees: PreviewFees): number | null {
+  if (typeof proceedsUsd !== "number" || !Number.isFinite(proceedsUsd)) return null;
+  const tocker = fees.tockerUsd > 0 ? fees.tockerUsd : 0;
+  const venue = fees.venueUsd !== null && fees.venueUsd > 0 ? fees.venueUsd : 0;
+  return proceedsUsd - tocker - venue;
+}
+
 /**
  * What one sale realised, after every fee, the way the position row books it
  * (`applyFillToPosition`): proceeds less fees, less the average cost of the tokens sold.

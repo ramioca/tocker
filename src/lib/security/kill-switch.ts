@@ -1,6 +1,7 @@
 import "server-only";
 import { and, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { agents, getDb, userSecurity } from "@/db";
+import { isLlmMock } from "@/lib/agent/mock-model";
 import type { KillSwitchState } from "./types";
 
 /**
@@ -75,6 +76,8 @@ export async function countPausedDueAgents(now: Date = new Date()): Promise<numb
         eq(agents.status, "active"),
         isNotNull(agents.nextRunAt),
         lte(agents.nextRunAt, now),
+        // Same as `findDueAgents`: an agent with no key was not going to run anyway.
+        ...(isLlmMock() ? [] : [isNotNull(agents.llmKeyId)]),
         eq(userSecurity.tradingPaused, true),
       ),
     );

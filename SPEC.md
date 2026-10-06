@@ -71,9 +71,9 @@ src/
 ```
 
 ### Auth flow
-1. Client: `PrivyProvider` (appId from env) with `embeddedWallets: { ethereum: { createOnLogin: 'users-without-wallets' }, solana: { createOnLogin: 'users-without-wallets' } }`.
+1. Client: `PrivyProvider` (appId from env) with `embeddedWallets: { ethereum: { createOnLogin: 'all-users' }, solana: { createOnLogin: 'all-users' } }` ('users-without-wallets' skips a chain once any wallet of that type is linked, which left a wallet sign-in without a Tocker wallet on its own chain).
 2. Client sends Privy access token to server (cookie `privy-token` is set automatically by react-auth). `getSession()` verifies with `privy.utils().auth().verifyAccessToken(token)` (check exact method in `@privy-io/node` d.ts) and upserts `users`.
-3. First login: generate handle from email/wallet, create user row, record embedded wallets in `wallets` (kind `user_embedded`).
+3. First login: generate a handle (the X username when there is one, otherwise `user` + six characters of the account id; never the email or the wallet address, and never a reserved name, see `src/lib/reserved-handles.ts`), create user row, record embedded wallets in `wallets` (kind `user_embedded`).
 
 ### Agent wallets
 - On agent create: `privy.wallets().create({ chain_type: 'ethereum', owner: { user_id }, display_name })` and same with `'solana'`. Store both in `wallets` with kind `agent_server`.
@@ -162,7 +162,7 @@ Deliberately, a high score is necessary but not sufficient: the LLM still decide
 - Prices for PnL marks: Jupiter Price API v3 `GET https://api.jup.ag/price/v3?ids=` for Solana; CMC x402 or DexScreener public `https://api.dexscreener.com/tokens/v1/base/<addrs>` for Base. Cache 30s.
 - Quote asset: USDC. Solana USDC `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`, Base USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`. Native SOL mint `So11111111111111111111111111111111111111112`, Base ETH `native`/`0xEeee...`.
 
-**Trade receipts (`trade_receipts`, 2026-09-16).** Every fill — agent `place_trade`, approved proposal, guardian exit, manual trade — writes one receipt keyed by `tradeId`: venue, tx hash + explorer URL (or `"simulated"`), quoted vs filled price, slippage bps signed from the trader's view, fees, the score at entry with its top reasons, timestamps. It is a separate table on purpose: a receipt exists only for a fill, is read whole, and its key set is closed by test so a receipt can never carry strategy. Public on the feed and token page; the strategy stays private.
+**Trade receipts (`trade_receipts`, 2026-09-16).** Every fill — agent `place_trade`, approved proposal, guardian exit, manual trade — writes one receipt keyed by `tradeId`: venue, tx hash + explorer URL (or `"simulated"`), quoted vs filled price, slippage bps signed from the trader's view, fees, the score at entry with its top reasons, timestamps. It is a separate table on purpose: a receipt exists only for a fill, is read whole, and its key set is closed by test so a receipt can never carry strategy. Public on the feed and token page; the strategy stays private. One part is the owner's: a top reason that came from a paid source (`sentiment`, `smartMoney`) is shown only to the agent's owner, as on the trade row; `receiptsFor(tradeIds, viewerId)` drops it for everyone else and for a caller that names no viewer.
 
 ### The platform's own money (`platform_wallets`, `platform_fees`, 2026-09-16)
 

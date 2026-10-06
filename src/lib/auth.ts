@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { verifyAccessToken } from "@privy-io/node";
 import { getDb, users } from "@/db";
 import { isPrivyConfigured, privy } from "@/lib/privy";
+import { isReservedHandle, isStaffLikeName } from "@/lib/reserved-handles";
 import type { Session } from "@/server/types";
 
 /** Cookie react-auth sets on the client after login. */
@@ -88,7 +89,17 @@ function sanitizeHandle(raw: string): string {
   return cleaned.length >= 2 ? cleaned : "";
 }
 
-/** Handle from an email local-part, twitter/google name, or short wallet address. */
+/**
+ * The handle a new account starts with: its X username when it signed in with one,
+ * otherwise `user` and six characters of its account id.
+ *
+ * A handle is public from the first second: it is the address of `/u/<handle>` and the
+ * name on every post. So only a name the person already made public is reused. The email
+ * local part and the wallet address are not: the first is often a real name and, for a
+ * distinctive address, let anyone holding a list of emails test which ones had an
+ * account; the second tied the profile to a wallet. `email` and `walletAddress` stay in
+ * the signature because the caller spreads the whole Privy profile in; neither is read.
+ */
 export function handleCandidate(input: {
   email?: string | null;
   username?: string | null;
@@ -97,23 +108,21 @@ export function handleCandidate(input: {
 }): string {
   const fromUsername = input.username ? sanitizeHandle(input.username) : "";
   if (fromUsername) return fromUsername;
-  const local = input.email?.split("@")[0];
-  const fromEmail = local ? sanitizeHandle(local) : "";
-  if (fromEmail) return fromEmail;
-  const addr = input.walletAddress;
-  if (addr) {
-    const short = addr.startsWith("0x") ? addr.slice(2, 8) : addr.slice(0, 6);
-    const fromAddr = sanitizeHandle(short);
-    if (fromAddr) return `${fromAddr}${addr.slice(-4).toLowerCase().replace(/[^a-z0-9]/g, "")}`.slice(0, 20);
-  }
   const tail = (input.userId ?? "").replace(/[^a-zA-Z0-9]/g, "").slice(-6).toLowerCase();
   return tail ? `user${tail}` : `user${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Append a numeric suffix until the handle is free. */
+/**
+ * Append a numeric suffix until the handle is free. A reserved name (`support`,
+ * `tocker…`, the founder's) is never the root, whatever the X username was.
+ */
 export async function uniqueHandle(base: string): Promise<string> {
   const db = await getDb();
-  const root = sanitizeHandle(base) || "trader";
+  const clean = sanitizeHandle(base);
+  // Checked whole and as the 17 characters a suffix leaves of it, so cutting a long
+  // root to make room for the number cannot leave a reserved word behind.
+  const usable = clean && !isReservedHandle(clean) && !isReservedHandle(clean.slice(0, 17));
+  const root = usable ? clean : "trader";
   for (let i = 0; i < 60; i++) {
     const candidate = i === 0 ? root : `${root.slice(0, 17)}${i}`;
     const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.handle, candidate)).limit(1);
@@ -170,7 +179,9 @@ async function upsertUser(userId: string): Promise<Session> {
     .values({
       id: userId,
       handle,
-      displayName: profile.displayName ?? null,
+      // The name on an X or Google account is whatever its owner typed there, so one
+      // that reads as staff ("Tocker Support") is dropped, as `updateProfile` refuses it.
+      displayName: profile.displayName && !isStaffLikeName(profile.displayName) ? profile.displayName : null,
       avatarUrl: profile.avatarUrl ?? null,
       email: profile.email ?? null,
     })

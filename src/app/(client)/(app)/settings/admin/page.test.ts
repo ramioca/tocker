@@ -122,3 +122,41 @@ describe("GET /settings/admin", () => {
     expect(listAdminSlotRequests).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * The 404 has to look like any other. The body is `notFound()`'s; the tab title is the
+ * metadata's, and a page that says "Admin" over a not-found message has answered the
+ * question the 404 was there to refuse.
+ */
+describe("the page title of /settings/admin", () => {
+  it("is not set for an anonymous visitor, a non-admin, or anyone when ADMIN_EMAILS is unset", async () => {
+    const { generateMetadata } = await import("./page");
+
+    vi.stubEnv("ADMIN_EMAILS", "admin@example.com");
+    getSession.mockResolvedValue(null);
+    expect(await generateMetadata()).toEqual({});
+
+    getSession.mockResolvedValue({ ...ADMIN, userId: "did:privy:someone", email: "someone@example.com" });
+    expect(await generateMetadata()).toEqual({});
+
+    // A wallet-only account has no email, and must not match an empty entry.
+    getSession.mockResolvedValue({ ...ADMIN, email: null });
+    expect(await generateMetadata()).toEqual({});
+
+    vi.stubEnv("ADMIN_EMAILS", undefined);
+    getSession.mockResolvedValue(ADMIN);
+    expect(await generateMetadata()).toEqual({});
+  });
+
+  it("is Admin for an admin", async () => {
+    vi.stubEnv("ADMIN_EMAILS", "admin@example.com");
+    getSession.mockResolvedValue(ADMIN);
+
+    const { generateMetadata } = await import("./page");
+    expect(await generateMetadata()).toEqual({ title: "Admin" });
+  });
+
+  it("is not a static export, which would be sent with the 404", async () => {
+    expect(await import("./page")).not.toHaveProperty("metadata");
+  });
+});

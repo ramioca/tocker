@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/hooks/use-session";
 import type { PendingProposalsSummary, RunDetail } from "@/server/types";
+import { queryKeysStaleAfterRun } from "./run-settled";
 
 export interface WatchedRun {
   runId: string;
@@ -170,18 +171,36 @@ export function RunStatusProvider({ children }: { children: ReactNode }) {
   const unreadNotifications =
     typeof proposalsQuery.data?.unreadNotifications === "number" ? proposalsQuery.data.unreadNotifications : null;
 
+  const router = useRouter();
+
   // A run that just settled is what writes fill and exit notifications (and, in approve
   // mode, proposals): re-read both counts then rather than up to 15s later.
+  //
+  // It also changed the agent itself (its last run, its counts, its trades, cash and
+  // positions) and nothing else tells the page: `triggerRun` revalidates when the run
+  // starts, not when it ends. So the island said "Run finished" over a page still reading
+  // "Never run", which looks like nothing happened and invites a second Run now.
   const settledRunId = watched !== null && detail !== null && !isRunning ? watched.runId : null;
+  const settledAgentId = settledRunId !== null && watched !== null ? watched.agentId : null;
+  // Once per run, whatever else re-runs the effect: a refresh that re-triggered itself
+  // would never stop.
+  const refreshedRunRef = useRef<string | null>(null);
   useEffect(() => {
-    if (settledRunId) refreshProposals();
-  }, [settledRunId, refreshProposals]);
+    if (settledRunId === null || settledAgentId === null) return;
+    if (refreshedRunRef.current === settledRunId) return;
+    refreshedRunRef.current = settledRunId;
+    refreshProposals();
+    for (const queryKey of queryKeysStaleAfterRun(settledAgentId)) {
+      void queryClient.invalidateQueries({ queryKey });
+    }
+    // The server-rendered half: whichever page is open re-reads its own data.
+    router.refresh();
+  }, [settledRunId, settledAgentId, refreshProposals, queryClient, router]);
 
   // A proposal is worth interrupting someone for: it expires, and the whole point of
   // approval mode on a five-minute tick is that the answer comes in minutes. Only a
   // *rise* in the count fires — the first poll of a session never does, so opening the
   // app with three already pending is silent.
-  const router = useRouter();
   const lastCountRef = useRef<number | null>(null);
   // Nothing is compared until the first real payload: the placeholder is a count of
   // zero, and treating it as a baseline would alert for proposals that were already

@@ -24,6 +24,7 @@ import { useTransfer } from "@/components/wallets/use-transfer";
 import { destinationProblemForChain, normalizeAddressForChain } from "@/lib/wallet-address";
 import {
   NETWORK_WORDING,
+  balanceUnreadSentence,
   cashOn,
   chainLabelFor,
   preferredDepositChain,
@@ -289,7 +290,11 @@ export function WithdrawModal({
   // what the reader needs to know to enter one (`amountHelp`).
   let amountHint: ReactNode = null;
   let amountHelp: ReactNode;
-  if (belowMinimum) {
+  if (chainCash.readFailed) {
+    // The balance on this chain could not be read. That is not "$0.00", and no amount
+    // can be checked against it: say so, and send nothing.
+    amountHelp = balanceUnreadSentence(chain);
+  } else if (belowMinimum) {
     // The reason, not just the rule, and the same sentence whatever was typed: with this
     // balance every amount is either under the minimum or over what is there.
     const reason = `${
@@ -316,7 +321,9 @@ export function WithdrawModal({
     amountHelp = `${formatUsd(sendable)} on ${chainLabelFor(chain)} · ${formatUsd(shownCashTotal(cash))} across your wallets`;
   }
 
-  const empty = cash.totalUsd === 0;
+  // A wallet that could not be read is not an empty one: the form stays, and says which
+  // balance is unavailable, rather than "Nothing to withdraw yet".
+  const empty = cash.totalUsd === 0 && !cash.perChain.some((c) => c.readFailed);
   // Agents holding nothing are not somewhere to send the reader.
   const fundedAgents = cash.agents.filter((agent) => agent.equityUsd > 0);
   const close = () => onOpenChange(false);
@@ -354,18 +361,23 @@ export function WithdrawModal({
         /* min-w-0: a grid item's floor is its content, so one long unbreakable child
            would otherwise widen the whole form past the dialog's padding. */
         <div className="min-w-0 space-y-3">
+          {/* Every id here carries "cash-": this dialog opens from the top bar on any page,
+              the agent settings page included, whose own Withdraw card has a chain and an
+              amount field too. A shared id sends the label's `for` to the card behind. */}
           <div>
-            <label htmlFor="withdraw-chain" className="mb-1 block text-xs text-muted-foreground">
+            <label htmlFor="cash-withdraw-chain" className="mb-1 block text-xs text-muted-foreground">
               Chain
             </label>
             <SimpleSelect
-              id="withdraw-chain"
+              id="cash-withdraw-chain"
               value={chain}
               options={(wallets.length ? wallets : [{ chain: "base" as Chain }]).map((entry) => ({
                 value: entry.chain,
                 label: chainLabelFor(entry.chain),
                 // What can leave from there, so the pick is made with the number in view.
-                hint: `${formatUsd(floorCents(cashOn(cash, entry.chain).usdc))} USDC`,
+                hint: cashOn(cash, entry.chain).readFailed
+                  ? "balance unavailable"
+                  : `${formatUsd(floorCents(cashOn(cash, entry.chain).usdc))} USDC`,
               }))}
               // Nothing the hold agreed to can change under a send in flight.
               disabled={pending}
@@ -384,7 +396,7 @@ export function WithdrawModal({
           </div>
 
           <div>
-            <label htmlFor="withdraw-amount" className="mb-1 block text-xs text-muted-foreground">
+            <label htmlFor="cash-withdraw-amount" className="mb-1 block text-xs text-muted-foreground">
               Amount (USDC)
             </label>
             {/* The unit on both sides, as the builder and manual trade show it: a bare field
@@ -397,12 +409,12 @@ export function WithdrawModal({
                 $
               </span>
               <Input
-                id="withdraw-amount"
+                id="cash-withdraw-amount"
                 value={fieldAmount}
                 disabled={pending}
                 // No role="alert" on the hint: it would announce on every keystroke.
                 aria-invalid={amountHint ? true : undefined}
-                aria-describedby={amountHint ? "withdraw-amount-error" : "withdraw-amount-help"}
+                aria-describedby={amountHint ? "cash-withdraw-amount-error" : "cash-withdraw-amount-help"}
                 inputMode="decimal"
                 placeholder="0.00"
                 onChange={(event) => {
@@ -426,7 +438,7 @@ export function WithdrawModal({
                     key={chip.label}
                     type="button"
                     // No fraction of a balance under the minimum can be sent.
-                    disabled={pending || belowMinimum}
+                    disabled={pending || belowMinimum || chainCash.readFailed === true}
                     aria-pressed={isMax ? maxed : undefined}
                     onClick={() => {
                       setMaxed(isMax);
@@ -448,11 +460,11 @@ export function WithdrawModal({
               })}
             </div>
             {amountHint ? (
-              <p id="withdraw-amount-error" className="tnum mt-2 text-xs text-destructive">
+              <p id="cash-withdraw-amount-error" className="tnum mt-2 text-xs text-destructive">
                 {amountHint}
               </p>
             ) : (
-              <p id="withdraw-amount-help" className="tnum mt-2 text-xs text-muted-foreground">
+              <p id="cash-withdraw-amount-help" className="tnum mt-2 text-xs text-muted-foreground">
                 {amountHelp}
               </p>
             )}
@@ -474,13 +486,13 @@ export function WithdrawModal({
 
           <div>
             <label
-              htmlFor="withdraw-destination"
+              htmlFor="cash-withdraw-destination"
               className="mb-1 block text-xs text-muted-foreground"
             >
               Destination address
             </label>
             <Input
-              id="withdraw-destination"
+              id="cash-withdraw-destination"
               value={destination}
               disabled={pending}
               placeholder={chain === "base" ? "0x…" : "Solana address"}
@@ -492,13 +504,13 @@ export function WithdrawModal({
               autoCapitalize="off"
               spellCheck={false}
               aria-invalid={target && addressProblem ? true : undefined}
-              aria-describedby={target && addressProblem ? "withdraw-destination-error" : undefined}
+              aria-describedby={target && addressProblem ? "cash-withdraw-destination-error" : undefined}
               // The primitive's size, not "text-xs": 16px on phones, where iOS zooms into
               // any focused field smaller than that.
               className="font-mono"
             />
             {target && addressProblem ? (
-              <p id="withdraw-destination-error" className="mt-1 text-[11px] text-destructive">
+              <p id="cash-withdraw-destination-error" className="mt-1 text-[11px] text-destructive">
                 {addressProblem}
               </p>
             ) : null}

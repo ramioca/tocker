@@ -27,6 +27,16 @@ export const RETIRED_DATA_SOURCE_IDS: readonly string[] = ["bazaar"];
 export const MAX_AGENT_NAME = 60;
 
 /**
+ * The model id is printed on every public card, so it is bounded and has to look like an
+ * id: letters, digits and `. _ : / -`, which covers every provider's ("gpt-5-mini",
+ * "claude-haiku-4-5-20251001", "nousresearch/hermes-4-405b", an OpenRouter ":free"
+ * variant). Free text there could carry a megabyte, or a sentence beside the agent's name.
+ */
+export const MAX_MODEL_ID = 100;
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/;
+const NOT_A_MODEL_ID = "That does not look like a model id";
+
+/**
  * How big a ticket is. Optional, because every config written before sizing existed
  * has no such block and must keep behaving exactly as it did — `readSizing()` in
  * `src/lib/trading/sizing.ts` turns an absent block into plain `fixed_usd`.
@@ -45,10 +55,15 @@ export { DEFAULT_MODELS } from "./models";
 export const agentConfigSchema = z.object({
   strategyPrompt: z.string().min(20, "Describe the strategy in at least a sentence.").max(8000),
   dataSources: z
-    .array(z.string())
+    .array(z.string().max(64))
     .max(12)
     .transform((ids) => ids.filter((id) => !RETIRED_DATA_SOURCE_IDS.includes(id))),
-  chains: z.array(chainSchema).min(1, "Pick at least one chain"),
+  // A chain named twice is the same list. Everything downstream works per chain (a
+  // wallet each, a discovery sweep each), so a repeat must not make any of it run twice.
+  chains: z
+    .array(chainSchema)
+    .min(1, "Pick at least one chain")
+    .transform((chains) => [...new Set(chains)]),
   universe: z.object({
     // `paid_launches` is the only feed that costs money; it runs a paid launch radar
     // per chain per sweep and is skipped when the run has no wallet or no budget.
@@ -65,7 +80,7 @@ export const agentConfigSchema = z.object({
     requireMintRevoked: z.boolean(),
     requireFreezeRevoked: z.boolean(),
     blocklist: z
-      .array(z.object({ chain: chainSchema, address: z.string().min(3), symbol: z.string().min(1).max(16) }))
+      .array(z.object({ chain: chainSchema, address: z.string().min(3).max(64), symbol: z.string().min(1).max(16) }))
       .max(200),
   }),
   risk: z.object({
@@ -105,7 +120,7 @@ export const agentConfigSchema = z.object({
   }),
   llm: z.object({
     provider: llmProviderSchema,
-    model: z.string().min(1),
+    model: z.string().min(1).max(MAX_MODEL_ID, NOT_A_MODEL_ID).regex(MODEL_ID, NOT_A_MODEL_ID),
     temperature: z.number().min(0).max(2),
     maxSteps: z.number().int().min(2).max(40),
   }),

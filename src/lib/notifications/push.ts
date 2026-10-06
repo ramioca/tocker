@@ -1,6 +1,6 @@
 import "server-only";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull } from "drizzle-orm";
 import { getDb, pushSubscriptions } from "@/db";
 
 /**
@@ -42,6 +42,14 @@ import { getDb, pushSubscriptions } from "@/db";
  * subscription rotated). Those two statuses — and only those two — set `disabledAt`,
  * so the next proposal does not pay a round trip for a phone that no longer exists. A
  * 429 or a 500 is the push service having a bad minute and changes nothing.
+ *
+ * **5. Where a push goes is not the subscriber's to choose.** A subscription's endpoint
+ * is a URL this server will POST to, signed as Tocker, every time that owner's agent
+ * raises a proposal. So an endpoint has to be a browser push service's address
+ * (`isPushServiceEndpoint`), an account has at most `MAX_PUSH_DEVICES` of them, and the
+ * send applies both rules again to whatever is stored, for rows older than the rules.
+ * The whole fan-out also has a deadline: it is awaited inside the run loop, which other
+ * owners' agents share, and nothing a push service does may hold that open.
  */
 
 // --------------------------------------------------------------- configuration
@@ -72,6 +80,49 @@ function vapidDetails(): VapidDetails | null {
   // document and what the health check should look for.
   if (!subject.startsWith("mailto:") && !subject.startsWith("https://")) return null;
   return { subject, publicKey, privateKey };
+}
+
+// --------------------------------------------------------------- endpoints
+
+/** The most devices one account can have alerts on. Also the most one proposal ever fans out to. */
+export const MAX_PUSH_DEVICES = 10;
+
+/** Thrown by `saveSubscription` when the account already has `MAX_PUSH_DEVICES` devices on. */
+export class PushDeviceLimitError extends Error {
+  constructor() {
+    super(`push device limit reached (${MAX_PUSH_DEVICES})`);
+    this.name = "PushDeviceLimitError";
+  }
+}
+
+/**
+ * Chrome and the browsers built on it (FCM; `jmt17.google.com` is the second host
+ * Chrome hands out), and Firefox.
+ */
+const PUSH_HOSTS: ReadonlySet<string> = new Set([
+  "fcm.googleapis.com",
+  "jmt17.google.com",
+  "updates.push.services.mozilla.com",
+]);
+/** Safari (`web.push.apple.com`), Edge (`*.notify.windows.com`), and Firefox's other hosts. */
+const PUSH_HOST_SUFFIXES = [".push.apple.com", ".notify.windows.com", ".push.services.mozilla.com"] as const;
+
+/**
+ * Is this the address of a real browser push service?
+ *
+ * https on the default port with no credentials in it, on a host one of the browser
+ * vendors runs. Anything else (a third party's server, a loopback or internal address)
+ * is a place a signed-in stranger wanted this server to send requests, not a device.
+ */
+export function isPushServiceEndpoint(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.port !== "" || url.username || url.password) return false;
+    const host = url.hostname.toLowerCase();
+    return PUSH_HOSTS.has(host) || PUSH_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
+  } catch {
+    return false;
+  }
 }
 
 // --------------------------------------------------------------- decision tokens
@@ -351,14 +402,35 @@ function topicFor(tradeId: string): string | undefined {
 }
 
 /**
+ * How long one request to a push service may sit idle, and how long the whole fan-out is
+ * waited for. A push service answers in well under a second; these are for the day one
+ * does not. The second is the one the proposal path feels: `createProposal` awaits this
+ * function inside the run loop, so past the deadline it stops waiting and reports what
+ * was delivered so far. A request still in flight then is left to finish or time out on
+ * its own; nothing reads its result.
+ */
+const PUSH_SOCKET_TIMEOUT_MS = 4_000;
+const PUSH_DEADLINE_MS = 5_000;
+
+/**
  * Tell every device this owner has registered that a proposal is waiting.
  *
  * Never throws and never rejects: it is called from the proposal path, and a push that
  * fails must leave a perfectly good proposal behind. Returns how many devices accepted
  * the message, which is `0` for a deployment with no VAPID keys, an owner with no
  * devices, or a total failure — all three being the same thing from the caller's side.
+ *
+ * Sends to at most `MAX_PUSH_DEVICES` endpoints, newest first, and only to push
+ * services: the same two rules registration applies, applied again here because rows
+ * stored before those rules existed are still in the table.
+ *
+ * @param opts.deadlineMs how long to wait for the fan-out; a test passes a short one.
  */
-export async function sendProposalPush(ownerId: string, proposal: ProposalPushInput): Promise<number> {
+export async function sendProposalPush(
+  ownerId: string,
+  proposal: ProposalPushInput,
+  opts: { deadlineMs?: number } = {},
+): Promise<number> {
   const vapid = vapidDetails();
   if (!vapid) return 0;
 
@@ -372,8 +444,10 @@ export async function sendProposalPush(ownerId: string, proposal: ProposalPushIn
         auth: pushSubscriptions.auth,
       })
       .from(pushSubscriptions)
-      .where(and(eq(pushSubscriptions.userId, ownerId), isNull(pushSubscriptions.disabledAt)));
-    if (subs.length === 0) return 0;
+      .where(and(eq(pushSubscriptions.userId, ownerId), isNull(pushSubscriptions.disabledAt)))
+      .orderBy(desc(pushSubscriptions.createdAt));
+    const targets = subs.filter((sub) => isPushServiceEndpoint(sub.endpoint)).slice(0, MAX_PUSH_DEVICES);
+    if (targets.length === 0) return 0;
 
     const now = new Date();
     const payload = JSON.stringify(buildProposalPayload(ownerId, proposal));
@@ -383,7 +457,7 @@ export async function sendProposalPush(ownerId: string, proposal: ProposalPushIn
       topic: topicFor(proposal.tradeId),
       vapidDetails: vapid,
       // A push service that hangs must not hold a run loop open.
-      timeout: 10_000,
+      timeout: PUSH_SOCKET_TIMEOUT_MS,
     };
 
     const { sendNotification } = await import("web-push");
@@ -391,8 +465,8 @@ export async function sendProposalPush(ownerId: string, proposal: ProposalPushIn
     const delivered: string[] = [];
     const gone: string[] = [];
 
-    await Promise.all(
-      subs.map(async (sub) => {
+    const fanOut = Promise.all(
+      targets.map(async (sub) => {
         try {
           await sendNotification(
             { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
@@ -416,20 +490,35 @@ export async function sendProposalPush(ownerId: string, proposal: ProposalPushIn
       }),
     );
 
-    if (delivered.length > 0) {
+    // Wait for the sends, but not past the deadline. The timer is cleared either way so
+    // it never outlives the call.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<"deadline">((resolve) => {
+      timer = setTimeout(() => resolve("deadline"), opts.deadlineMs ?? PUSH_DEADLINE_MS);
+    });
+    const outcome = await Promise.race([fanOut.then(() => "sent" as const), deadline]);
+    clearTimeout(timer);
+    if (outcome === "deadline") {
+      console.warn(`[push] deadline passed with sends still in flight for ${ownerId}: ${delivered.length} of ${targets.length} delivered`);
+    }
+
+    // Copied here: a send that finishes after the deadline still appends to the arrays.
+    const deliveredIds = [...delivered];
+    const goneIds = [...gone];
+    if (deliveredIds.length > 0) {
       await db
         .update(pushSubscriptions)
         .set({ lastUsedAt: now })
-        .where(inArray(pushSubscriptions.id, delivered));
+        .where(inArray(pushSubscriptions.id, deliveredIds));
     }
-    if (gone.length > 0) {
+    if (goneIds.length > 0) {
       await db
         .update(pushSubscriptions)
         .set({ disabledAt: now })
-        .where(inArray(pushSubscriptions.id, gone));
+        .where(inArray(pushSubscriptions.id, goneIds));
     }
 
-    return delivered.length;
+    return deliveredIds.length;
   } catch (err) {
     console.warn(`[push] proposal push failed: ${err instanceof Error ? err.message : String(err)}`);
     return 0;
@@ -454,9 +543,28 @@ export interface PushSubscriptionInput {
  * a browser profile handed to a different Tocker account keeps its endpoint, and the
  * device belongs to whoever most recently asked for alerts on it. `disabledAt` is
  * cleared, because a fresh subscribe is proof the device is back.
+ *
+ * An account has at most `MAX_PUSH_DEVICES` devices on. Refreshing a device that is
+ * already on for this account is always allowed; anything that would turn one more on
+ * (a new endpoint, a disabled one coming back, one moving over from another account)
+ * needs a free place, and throws `PushDeviceLimitError` when there is none. Two
+ * registrations racing at nine can both get in; the send is bounded on its own.
  */
 export async function saveSubscription(userId: string, input: PushSubscriptionInput): Promise<void> {
   const db = await getDb();
+  const [existing] = await db
+    .select({ userId: pushSubscriptions.userId, disabledAt: pushSubscriptions.disabledAt })
+    .from(pushSubscriptions)
+    .where(eq(pushSubscriptions.endpoint, input.endpoint))
+    .limit(1);
+  const alreadyOn = existing !== undefined && existing.userId === userId && existing.disabledAt === null;
+  if (!alreadyOn) {
+    const [row] = await db
+      .select({ n: count() })
+      .from(pushSubscriptions)
+      .where(and(eq(pushSubscriptions.userId, userId), isNull(pushSubscriptions.disabledAt)));
+    if (Number(row?.n ?? 0) >= MAX_PUSH_DEVICES) throw new PushDeviceLimitError();
+  }
   await db
     .insert(pushSubscriptions)
     .values({

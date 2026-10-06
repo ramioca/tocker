@@ -139,6 +139,9 @@ export async function readStrandedHoldings(agentId: string): Promise<StrandedRea
         continue;
       }
       const read = await readWalletBalances(w);
+      // That reader answers a failed lookup with zeros so the wallet card still renders.
+      // Here zeros would say "nothing to strand" about a wallet nobody could read.
+      if (read.readFailed) throw new Error(`could not read the ${w.chain} wallet's balance`);
       const amountOf = (asset: string) =>
         read.balances.find((b) => b.asset.toLowerCase() === asset)?.amount ?? 0;
       wallets.push({ chain: w.chain, usdc: amountOf("usdc"), native: amountOf(NATIVE_ASSET[w.chain]) });

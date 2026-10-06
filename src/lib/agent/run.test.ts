@@ -5,7 +5,7 @@ import * as schema from "@/db/schema";
 import { seedKnownTokens } from "@/lib/trading/tokens";
 import { ABANDONED_RUN_ERROR, reapStaleRuns, runAgent, startRun } from "./run";
 import { seedAgent, setupTestDb } from "./test-support";
-import { DEFAULT_AGENT_CONFIG } from "./config";
+import { DEFAULT_AGENT_CONFIG, MIN_SCHEDULE_MINUTES, parseAgentConfig } from "./config";
 
 let db: Db;
 
@@ -367,5 +367,33 @@ describe("stale run reaping", () => {
       .where(eq(schema.agentRuns.id, `abandoned-${agentId}`));
     expect(abandoned?.status).toBe("failed");
     expect(abandoned?.error).toBe(ABANDONED_RUN_ERROR);
+  });
+});
+
+/**
+ * `executeRun` runs a row as stored when its config no longer parses: the schema has
+ * tightened since it was saved, and one field the schema now refuses must not stop the
+ * agent. The schedule floor is the one rewrite the schema makes that scheduling
+ * depends on, so it has to hold on that path too.
+ */
+describe("a stored config the schema no longer accepts", () => {
+  it("still runs, and is never rescheduled sooner than the shortest schedule allows", async () => {
+    const { agentId } = await seedAgent(db, {
+      config: {
+        dataSources: ["sentimentalpha"],
+        chains: ["solana"],
+        schedule: { intervalMinutes: 1 },
+        // Text where a model id belongs: refused on write since the id became public.
+        llm: { ...DEFAULT_AGENT_CONFIG.llm, model: "not a model id" },
+      },
+    });
+    expect(() => parseAgentConfig({ ...DEFAULT_AGENT_CONFIG, llm: { ...DEFAULT_AGENT_CONFIG.llm, model: "not a model id" } })).toThrow();
+
+    const result = await runAgent({ agentId, trigger: "schedule" });
+    expect(result.status).toBe("succeeded");
+
+    const [agent] = await db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
+    const waitMs = (agent?.nextRunAt?.getTime() ?? 0) - (agent?.lastRunAt?.getTime() ?? 0);
+    expect(waitMs).toBe(MIN_SCHEDULE_MINUTES * 60_000);
   });
 });

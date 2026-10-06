@@ -46,8 +46,12 @@ export function MoneyStrip({
     .filter((balance) => balance.asset === "usdc")
     .reduce((sum, balance) => sum + balance.amount, 0);
 
+  // A wallet that could not be read contributed a zero that means "unknown". The strip
+  // says so instead of "$0.00", and leaves Withdraw reachable: there may be money there.
+  const unread = wallets.some((wallet) => agent.chains.includes(wallet.chain) && wallet.readFailed);
+
   const live = agent.mode === "live";
-  const canWithdraw = usdc > 0;
+  const canWithdraw = usdc > 0 || unread;
 
   return (
     <section
@@ -63,9 +67,11 @@ export function MoneyStrip({
         <div className="flex items-baseline gap-2">
           <Wallet aria-hidden className="size-4 shrink-0 translate-y-0.5 text-muted-foreground" />
           <div>
-            <p className="tnum font-mono text-xl leading-none font-medium tracking-tight">{formatUsd(usdc)}</p>
+            <p className="tnum font-mono text-xl leading-none font-medium tracking-tight">
+              {unread ? <span className="text-muted-foreground">—</span> : formatUsd(usdc)}
+            </p>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              USDC in {agent.name}&rsquo;s wallets
+              {unread ? "Balance unavailable right now" : <>USDC in {agent.name}&rsquo;s wallets</>}
             </p>
           </div>
           <ModeBadge mode={agent.mode} className="ml-1 self-center" />

@@ -2,7 +2,7 @@
   "mcpServers": {
     "spectrum-ui": {
       "command": "npx",
-      "args": ["-y", "@spectrumui/mcp"]
+      "args": ["-y", "@spectrumui/mcp@0.1.1"]
     }
   }
 }

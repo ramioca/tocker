@@ -3,7 +3,9 @@ import { applyFillToPosition } from "@/lib/trading/positions";
 import {
   PREVIEW_FAILED,
   PREVIEW_SLOW,
+  afterFeesLabel,
   noQuoteLine,
+  proceedsAfterFees,
   realisedOnSale,
   sellVenueLine,
   thinPoolLine,
@@ -124,5 +126,64 @@ describe("realisedOnSale", () => {
   it("has no percentage when there is no cost to measure against", () => {
     expect(realisedOnSale({ amountUsd: 5, amountToken: 10, totalFeeUsd: 0.1, heldToken: 10, avgCostUsd: 0 }).pct).toBeNull();
     expect(realisedOnSale({ amountUsd: 5, amountToken: 10, totalFeeUsd: 0.1, heldToken: 0, avgCostUsd: 0.2 }).pct).toBeNull();
+  });
+});
+
+describe("proceedsAfterFees", () => {
+  it("takes Tocker's fee and the venue's off the quoted proceeds", () => {
+    // The $1 paper sell that read "You receive ≈ $1.00" while cash went up by about $0.90.
+    expect(proceedsAfterFees(1, { tockerUsd: 0.1, venueUsd: 0.00301 })).toBeCloseTo(0.89699, 9);
+  });
+
+  it("uses the fees the preview carries, not a constant", () => {
+    expect(proceedsAfterFees(100, { tockerUsd: 0.25, venueUsd: 0.3 })).toBeCloseTo(99.45, 9);
+    expect(proceedsAfterFees(100, { tockerUsd: 0, venueUsd: 0.3 })).toBeCloseTo(99.7, 9);
+  });
+
+  it("is the proceeds the position books for the same fill", () => {
+    const fees = { tockerUsd: 0.1, venueUsd: 0.09 };
+    const before = { amountToken: 1_000, avgCostUsd: 0.02, realizedPnlUsd: 0 };
+    const after = applyFillToPosition(before, {
+      side: "sell",
+      amountToken: 1_000,
+      amountUsd: 30,
+      feeUsd: fees.tockerUsd + fees.venueUsd,
+    });
+    // Realised is what was left after fees, less what the tokens cost.
+    expect(proceedsAfterFees(30, fees)! - 1_000 * 0.02).toBeCloseTo(after.realizedPnlUsd, 9);
+  });
+
+  it("counts only Tocker's fee when the venue did not quote one", () => {
+    expect(proceedsAfterFees(50, { tockerUsd: 0.1, venueUsd: null })).toBeCloseTo(49.9, 9);
+  });
+
+  it("goes below zero when the sale is smaller than its fees", () => {
+    expect(proceedsAfterFees(0.05, { tockerUsd: 0.1, venueUsd: 0.00015 })).toBeCloseTo(-0.05015, 9);
+  });
+
+  it("has nothing to say without a quote", () => {
+    expect(proceedsAfterFees(null, { tockerUsd: 0.1, venueUsd: 0.03 })).toBeNull();
+    expect(proceedsAfterFees(undefined, { tockerUsd: 0.1, venueUsd: 0.03 })).toBeNull();
+    expect(proceedsAfterFees(Number.NaN, { tockerUsd: 0.1, venueUsd: 0.03 })).toBeNull();
+  });
+});
+
+describe("afterFeesLabel", () => {
+  it("says fees when both are counted", () => {
+    expect(afterFeesLabel({ tockerUsd: 0.1, venueUsd: 0.03 })).toBe("After fees ≈");
+    expect(afterFeesLabel({ tockerUsd: 0, venueUsd: 0.03 })).toBe("After fees ≈");
+    // A venue that quoted a fee of nothing was still counted.
+    expect(afterFeesLabel({ tockerUsd: 0.1, venueUsd: 0 })).toBe("After fees ≈");
+  });
+
+  it("does not call it after fees when the venue's fee was never quoted", () => {
+    expect(afterFeesLabel({ tockerUsd: 0.1, venueUsd: null })).toBe("After the Tocker fee ≈");
+  });
+
+  it("leaves the row out when there is no fee to take off", () => {
+    expect(afterFeesLabel({ tockerUsd: 0, venueUsd: null })).toBeNull();
+    expect(afterFeesLabel({ tockerUsd: 0, venueUsd: 0 })).toBeNull();
+    expect(afterFeesLabel(null)).toBeNull();
+    expect(afterFeesLabel(undefined)).toBeNull();
   });
 });

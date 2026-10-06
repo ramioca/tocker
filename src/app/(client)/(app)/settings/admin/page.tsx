@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { requireAdmin } from "@/lib/admin";
+import { isAdminEmail, requireAdmin } from "@/lib/admin";
+import { getSession } from "@/lib/auth";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { PlatformCard } from "@/components/settings/platform-card";
@@ -30,7 +31,19 @@ import {
   type AdminBalancesSnapshot,
 } from "@/server/queries/admin";
 
-export const metadata: Metadata = { title: "Admin" }; // the root layout appends " · Tocker"
+/**
+ * The title is "Admin" for an admin and nothing at all for anyone else.
+ *
+ * A static title went out with the 404: the page answered "not found" under a tab that
+ * said "Admin · Tocker", which told a stranger the route is real. With no title of its
+ * own the page takes the root layout's default, the same one an address that matches no
+ * route gets, so the gate below and the title above give the same answer.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const session = await getSession();
+  if (!session || !isAdminEmail(session.email)) return {};
+  return { title: "Admin" }; // the root layout appends " · Tocker"
+}
 
 /**
  * The admin dashboard: the whole platform in one page, for the people in `ADMIN_EMAILS`.

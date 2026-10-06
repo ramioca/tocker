@@ -70,7 +70,9 @@ const noSubscribe = () => () => {};
 
 function assetAmount(balances: WalletBalance[], chain: Chain, asset: Asset): number | null {
   const wallet = balances.find((w) => w.chain === chain);
-  if (!wallet) return null;
+  // A wallet that could not be read is unknown, like one not loaded yet: no Max is
+  // worked out from its zeros, and the server checks whatever amount is typed.
+  if (!wallet || wallet.readFailed) return null;
   // By symbol, not "whatever is not USDC": a wallet row list can carry other tokens, and
   // the first of those is not the chain's native asset.
   const symbol = asset === "usdc" ? "usdc" : NATIVE_SYMBOL[chain].toLowerCase();
@@ -518,7 +520,9 @@ export function WithdrawForm({
                   value: wallet.chain,
                   label: chainLabelFor(wallet.chain),
                   // What can leave from there, so the pick is made with the number in view.
-                  hint: `${balanceText(assetAmount(balances, wallet.chain, "usdc") ?? 0, "usdc")} USDC`,
+                  hint: balances.find((w) => w.chain === wallet.chain)?.readFailed
+                    ? "balance unavailable"
+                    : `${balanceText(assetAmount(balances, wallet.chain, "usdc") ?? 0, "usdc")} USDC`,
                 }))}
                 onChange={(next) => {
                   setChain(next as Chain);

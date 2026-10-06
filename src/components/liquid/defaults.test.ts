@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AGENT_CONFIG as C } from "@/lib/agent/config";
-import { DEFAULT_ROWS, LANDING_DEFAULTS, MODE_WORDS } from "./defaults";
+import { DEFAULT_PLATFORM_FEE_USD } from "@/lib/platform/fee";
+import { DEFAULT_ROWS, LANDING_DEFAULTS, MODE_WORDS, feeSentence } from "./defaults";
 
 /** The Guardrails card quotes a new agent's defaults; the agent config is the truth. */
 describe("the landing's defaults card", () => {
@@ -36,5 +37,24 @@ describe("the landing's defaults card", () => {
     const chains = DEFAULT_ROWS.find(([k]) => k === "Chains")?.[1] ?? "";
     expect(chains.startsWith("Solana")).toBe(true);
     expect(chains).toContain("(Base opt‑in)");
+  });
+});
+
+/** The FAQ said "a flat fee" and no amount; the amount is the fee module's, not the page's. */
+describe("the landing's fee sentence", () => {
+  it("states the fee the product charges, to the cent", () => {
+    expect(feeSentence(DEFAULT_PLATFORM_FEE_USD)).toBe(
+      ` What Tocker charges is a flat $${DEFAULT_PLATFORM_FEE_USD.toFixed(2)} per filled trade, buy or sell, never a percentage of its size.`,
+    );
+    expect(feeSentence(0.1)).toContain("a flat $0.10 per filled trade");
+    expect(feeSentence(0.25)).toContain("a flat $0.25 per filled trade");
+  });
+
+  it("prints a sub-cent fee as it is set rather than rounding it to nothing", () => {
+    expect(feeSentence(0.001)).toContain("a flat $0.001 per filled trade");
+  });
+
+  it("says nothing about a fee when there is none", () => {
+    expect(feeSentence(0)).toBe("");
   });
 });

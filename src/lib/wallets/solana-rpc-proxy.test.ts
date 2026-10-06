@@ -38,6 +38,15 @@ describe("checkSolanaRpcRequest", () => {
     expect(checkSolanaRpcRequest(batch).ok).toBe(false);
   });
 
+  /**
+   * The ceiling stays at twenty so a legitimate wallet batch passes; what bounds the
+   * cost of one is the per-call limit in the route, which charges it twenty units.
+   */
+  it("still accepts a batch at the ceiling", () => {
+    const batch = Array.from({ length: 20 }, (_, i) => ({ jsonrpc: "2.0", id: i, method: "getSlot" }));
+    expect(checkSolanaRpcRequest(batch)).toEqual({ ok: true });
+  });
+
   it("never allows the write-ish methods a public proxy must not expose", () => {
     for (const method of ["requestAirdrop", "getProgramAccounts", "getBlock", "getBlocks", "getSupply"]) {
       expect(ALLOWED_SOLANA_RPC_METHODS.has(method)).toBe(false);

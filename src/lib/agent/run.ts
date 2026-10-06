@@ -29,7 +29,7 @@ import { generateText, stepCountIs, type LanguageModel } from "ai";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { agentRuns, agents, getDb, llmKeys, notifications, tokens, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
-import { parseAgentConfig } from "@/lib/agent/config";
+import { MIN_SCHEDULE_MINUTES, parseAgentConfig } from "@/lib/agent/config";
 import { decryptSecret } from "@/lib/crypto";
 import { resolveDataSources } from "@/lib/data-sources/registry";
 import { newBudget, type X402Context } from "@/lib/x402/types";
@@ -150,7 +150,11 @@ async function loadRecentTrades(agentId: string, limit = 10): Promise<RecentTrad
 
 function nextRunAt(config: AgentConfig, from: Date): Date | null {
   if (config.schedule.intervalMinutes <= 0) return null;
-  return new Date(from.getTime() + config.schedule.intervalMinutes * 60_000);
+  // The schema applies the same floor, but `executeRun` falls back to the config as
+  // stored when a row no longer parses (the schema has tightened since it was saved),
+  // and a row like that must not be the one agent that is due again every minute.
+  const minutes = Math.max(config.schedule.intervalMinutes, MIN_SCHEDULE_MINUTES);
+  return new Date(from.getTime() + minutes * 60_000);
 }
 
 /**

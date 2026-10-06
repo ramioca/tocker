@@ -1,13 +1,20 @@
 import "server-only";
-import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
-import { agents, equitySnapshots, getDb, trades, x402Payments } from "@/db";
+import { cache } from "react";
+import { and, asc, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
+import { agents, equitySnapshots, getDb, trades, x402Payments, type Db } from "@/db";
 import { DATA_SOURCES } from "@/lib/data-sources/registry";
 import { toNum } from "@/lib/money";
 import { pnlOverWindow, windowSparkline, WINDOW_DAYS } from "@/lib/pnl";
-import type { DataSourceInfo, LeaderboardRow, LeaderboardWindow, TokenScore } from "@/server/types";
+import type { AgentCard, DataSourceInfo, LeaderboardRow, LeaderboardWindow, TokenScore } from "@/server/types";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import { discoverCandidates, getTokenScore } from "@/lib/tokens";
-import { buildAgentCards, followedAgentIds, snapshotInCurrentMode } from "./_shared";
+import {
+  buildAgentCards,
+  followedAgentIds,
+  loadAgentAggregates,
+  loadMoneyFlows,
+  snapshotInCurrentMode,
+} from "./_shared";
 
 /**
  * Agent ids the viewer follows directly, so the leaderboard can say "Following" where
@@ -21,31 +28,182 @@ export async function viewerFollowedAgentIds(viewerId: string | null): Promise<s
   return agentIds;
 }
 
+const DAY_MS = 86_400_000;
+const LEADERBOARD_WINDOWS: readonly LeaderboardWindow[] = ["7d", "30d", "all"];
+
+/** A snapshot reduced to what a window's PnL is measured between. */
+interface Mark {
+  id: string;
+  at: Date;
+  equityUsd: number;
+}
+
+/**
+ * The two marks a window's PnL can start from, per agent, without reading the series:
+ * the last snapshot in the baseline days before the window opens (`before`), and the
+ * first one inside it (`first`). Where a window ends is the agent's latest mark, which
+ * the card aggregates already hold. `pnlOverWindow` reads these three rows and no
+ * others, so handing it just them gives the number the whole series would.
+ */
+async function loadWindowStarts(
+  db: Db,
+  ids: string[],
+  since: Date,
+  cutoff: Date,
+): Promise<{ before: Map<string, Mark>; first: Map<string, Mark> }> {
+  const pick = (side: "before" | "first") =>
+    db
+      .selectDistinctOn([equitySnapshots.agentId], {
+        agentId: equitySnapshots.agentId,
+        id: equitySnapshots.id,
+        at: equitySnapshots.at,
+        equityUsd: equitySnapshots.equityUsd,
+      })
+      .from(equitySnapshots)
+      .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+      // Current mode only. Without this an agent that went live yesterday shows up on the
+      // public leaderboard at roughly −99.9%, which is a change of units, not a loss.
+      .where(
+        and(
+          inArray(equitySnapshots.agentId, ids),
+          snapshotInCurrentMode(),
+          side === "before"
+            ? and(gte(equitySnapshots.at, since), lt(equitySnapshots.at, cutoff))
+            : gte(equitySnapshots.at, cutoff),
+        ),
+      )
+      .orderBy(
+        equitySnapshots.agentId,
+        side === "before" ? desc(equitySnapshots.at) : asc(equitySnapshots.at),
+        side === "before" ? desc(equitySnapshots.id) : asc(equitySnapshots.id),
+      );
+  const [beforeRows, firstRows] = await Promise.all([pick("before"), pick("first")]);
+  const toMap = (rows: typeof beforeRows) =>
+    new Map(rows.map((r) => [r.agentId, { id: r.id, at: r.at, equityUsd: toNum(r.equityUsd) }]));
+  return { before: toMap(beforeRows), first: toMap(firstRows) };
+}
+
 /**
  * Leaderboard per SPEC: PnL% = (latest − snapshot at window start) / snapshot at
- * window start, over public + active agents, ties broken by trade count.
+ * window start, over public + active agents, ties broken by trade count. All three
+ * windows from one load.
+ *
+ * A live book's PnL is net of the deposits and withdrawals on record between its two
+ * marks, and its percent is taken on the starting mark plus what was deposited: money
+ * moved is not a track record. What Tocker has no record of cannot be netted (USDC sent
+ * to an agent's address from outside), and still reads as a gain.
+ *
+ * What it reads is bounded by the rows it shows, not by how many agents are public. The
+ * ranking needs three marks per agent and window (see {@link loadWindowStarts}); only
+ * the rows that made the cut have their series read, for the line drawn beside them.
+ * The cards are built once for the three windows.
  */
-export async function getLeaderboard(window: LeaderboardWindow, limit = 25): Promise<LeaderboardRow[]> {
+export async function getLeaderboards(limit = 25): Promise<Record<LeaderboardWindow, LeaderboardRow[]>> {
+  const empty: Record<LeaderboardWindow, LeaderboardRow[]> = { "7d": [], "30d": [], all: [] };
   const db = await getDb();
   const agentRows = await db
     .select()
     .from(agents)
     .where(and(eq(agents.isPublic, true), eq(agents.status, "active")));
-  if (agentRows.length === 0) return [];
+  if (agentRows.length === 0) return empty;
 
   const ids = agentRows.map((a) => a.id);
-  const days = WINDOW_DAYS[window];
-  // one extra day of history so the "snapshot at window start" baseline exists
-  const since = days === null ? null : new Date(Date.now() - (days + 2) * 86_400_000);
-  const snapshots = await db
-    .select({ agentId: equitySnapshots.agentId, at: equitySnapshots.at, equityUsd: equitySnapshots.equityUsd })
-    .from(equitySnapshots)
-    .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
-    // Current mode only. Without this an agent that went live yesterday shows up on the
-    // public leaderboard at roughly −99.9%, which is a change of units, not a loss.
-    .where(and(inArray(equitySnapshots.agentId, ids), snapshotInCurrentMode(), since ? gte(equitySnapshots.at, since) : undefined))
-    .orderBy(asc(equitySnapshots.at));
+  const now = Date.now();
+  const cutoffOf = (days: number) => new Date(now - days * DAY_MS);
+  // Two extra days of history so the "snapshot at window start" baseline exists.
+  const sinceOf = (days: number) => new Date(now - (days + 2) * DAY_MS);
 
+  const flowsLoading = loadMoneyFlows(db, ids);
+  const [aggregates, flows, starts7, starts30, windowTrades] = await Promise.all([
+    loadAgentAggregates(db, ids, flowsLoading),
+    flowsLoading,
+    loadWindowStarts(db, ids, sinceOf(7), cutoffOf(7)),
+    loadWindowStarts(db, ids, sinceOf(30), cutoffOf(30)),
+    // Trades inside the window itself — not `since`, which carries the extra baseline
+    // days. The card's count is lifetime, and printing it under "7 days" made every
+    // window show the same number.
+    db
+      .select({
+        agentId: trades.agentId,
+        d7: sql<number>`(count(*) filter (where coalesce(${trades.filledAt}, ${trades.createdAt}) >= ${cutoffOf(7).toISOString()}))::int`,
+        d30: sql<number>`count(*)::int`,
+      })
+      .from(trades)
+      .where(
+        and(
+          inArray(trades.agentId, ids),
+          eq(trades.status, "filled"),
+          sql`coalesce(${trades.filledAt}, ${trades.createdAt}) >= ${cutoffOf(30).toISOString()}`,
+        ),
+      )
+      .groupBy(trades.agentId),
+  ]);
+  const cards = await buildAgentCards(db, agentRows, aggregates);
+  const cardById = new Map(cards.map((c) => [c.id, c]));
+  const windowCount = {
+    "7d": new Map(windowTrades.map((r) => [r.agentId, Number(r.d7 ?? 0)])),
+    "30d": new Map(windowTrades.map((r) => [r.agentId, Number(r.d30 ?? 0)])),
+  };
+  const starts = { "7d": starts7, "30d": starts30 };
+
+  type Scored = { card: AgentCard; pnlPct: number; pnlUsd: number; tradeCount: number };
+  const rank = (window: LeaderboardWindow): Scored[] => {
+    const scored = agentRows.flatMap((a): Scored[] => {
+      const card = cardById.get(a.id);
+      const agg = aggregates.get(a.id);
+      if (!card || !agg) return [];
+      if (window === "all") {
+        // All time is the number the agent's card prints further down the same page (a
+        // paper book measured from its notional, not its first mark), so take it from
+        // there. A book with a single mark has no window to rank.
+        if (!agg.hasWindow || card.pnlPct === null || card.pnlUsd === null) return [];
+        return [{ card, pnlPct: card.pnlPct, pnlUsd: card.pnlUsd, tradeCount: card.tradeCount }];
+      }
+      const days = WINDOW_DAYS[window] ?? 0;
+      const cutoff = cutoffOf(days).getTime();
+      // Nothing marked inside the window is nothing to rank.
+      if (!agg.markId || !agg.markedAt || agg.equityUsd === null || agg.markedAt.getTime() < cutoff) return [];
+      const before = starts[window].before.get(a.id);
+      const first = starts[window].first.get(a.id);
+      const points: Mark[] = [];
+      if (before) points.push(before);
+      if (first) points.push(first);
+      if (!first || first.id !== agg.markId) points.push({ id: agg.markId, at: agg.markedAt, equityUsd: agg.equityUsd });
+      const pnl = pnlOverWindow(points, window, new Date(now), flows.get(a.id) ?? []);
+      if (!pnl) return [];
+      return [{ card, pnlPct: pnl.pnlPct, pnlUsd: pnl.pnlUsd, tradeCount: windowCount[window].get(a.id) ?? 0 }];
+    });
+    scored.sort((a, b) => b.pnlPct - a.pnlPct || b.tradeCount - a.tradeCount);
+    return scored.slice(0, limit);
+  };
+  const ranked = { "7d": rank("7d"), "30d": rank("30d"), all: rank("all") };
+
+  // The line beside each row: the same series the whole table used to read, for the
+  // rows on it only. All time needs a row's full history; the two windows need their
+  // days plus the baseline's.
+  const allIds = ranked.all.map((r) => r.card.id);
+  const windowIds = [...new Set([...ranked["7d"], ...ranked["30d"]].map((r) => r.card.id))].filter(
+    (id) => !allIds.includes(id),
+  );
+  const shown = [...allIds, ...windowIds];
+  const snapshots = shown.length
+    ? await db
+        .select({ agentId: equitySnapshots.agentId, at: equitySnapshots.at, equityUsd: equitySnapshots.equityUsd })
+        .from(equitySnapshots)
+        .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+        .where(
+          and(
+            snapshotInCurrentMode(),
+            or(
+              allIds.length ? inArray(equitySnapshots.agentId, allIds) : undefined,
+              windowIds.length
+                ? and(inArray(equitySnapshots.agentId, windowIds), gte(equitySnapshots.at, sinceOf(30)))
+                : undefined,
+            ),
+          ),
+        )
+        .orderBy(asc(equitySnapshots.at))
+    : [];
   const series = new Map<string, Array<{ at: Date; equityUsd: number }>>();
   for (const s of snapshots) {
     const list = series.get(s.agentId) ?? [];
@@ -53,56 +211,37 @@ export async function getLeaderboard(window: LeaderboardWindow, limit = 25): Pro
     series.set(s.agentId, list);
   }
 
-  const [cards, windowTrades] = await Promise.all([
-    buildAgentCards(db, agentRows),
-    // Trades inside the window itself — not `since`, which carries the extra baseline
-    // days. The card's count is lifetime, and printing it under "7 days" made every
-    // window show the same number.
-    days === null
-      ? Promise.resolve([])
-      : db
-          .select({ agentId: trades.agentId, n: sql<number>`count(*)::int` })
-          .from(trades)
-          .where(
-            and(
-              inArray(trades.agentId, ids),
-              eq(trades.status, "filled"),
-              sql`coalesce(${trades.filledAt}, ${trades.createdAt}) >= ${new Date(Date.now() - days * 86_400_000).toISOString()}`,
-            ),
-          )
-          .groupBy(trades.agentId),
-  ]);
-  const cardById = new Map(cards.map((c) => [c.id, c]));
-  const windowCount = new Map(windowTrades.map((r) => [r.agentId, Number(r.n ?? 0)]));
+  const out = { ...empty };
+  for (const window of LEADERBOARD_WINDOWS) {
+    const days = WINDOW_DAYS[window];
+    const since = days === null ? null : sinceOf(days).getTime();
+    out[window] = ranked[window].map((row, i) => {
+      const all = series.get(row.card.id) ?? [];
+      const points = since === null ? all : all.filter((p) => p.at.getTime() >= since);
+      return {
+        rank: i + 1,
+        agent: row.card,
+        pnlPct: row.pnlPct,
+        pnlUsd: row.pnlUsd,
+        tradeCount: row.tradeCount,
+        // The card's sparkline is its last month; this one is the window the row is ranked
+        // on, so the line and the PnL beside it (and the colour it takes) agree.
+        sparkline: windowSparkline(points, window, new Date(now)),
+      };
+    });
+  }
+  return out;
+}
 
-  const scored = agentRows.flatMap((a) => {
-    const points = series.get(a.id) ?? [];
-    const pnl = pnlOverWindow(points, window);
-    const card = cardById.get(a.id);
-    if (!pnl || !card) return [];
-    // The card's sparkline is its last month; this one is the window the row is ranked
-    // on, so the line and the PnL beside it (and the colour it takes) agree.
-    const sparkline = windowSparkline(points, window);
-    if (days === null) {
-      // All time is the number the agent's card prints further down the same page (a
-      // paper book measured from its notional, not its first mark), so take it from there.
-      return [
-        { card, pnlPct: card.pnlPct ?? pnl.pnlPct, pnlUsd: card.pnlUsd ?? pnl.pnlUsd, tradeCount: card.tradeCount, sparkline },
-      ];
-    }
-    return [{ card, pnlPct: pnl.pnlPct, pnlUsd: pnl.pnlUsd, tradeCount: windowCount.get(a.id) ?? 0, sparkline }];
-  });
+/**
+ * One load per request, however many windows a page asks for: Discover renders all
+ * three at once. Outside a server render this is a plain call.
+ */
+const leaderboardsForRequest = cache((limit: number) => getLeaderboards(limit));
 
-  scored.sort((a, b) => b.pnlPct - a.pnlPct || b.tradeCount - a.tradeCount);
-
-  return scored.slice(0, limit).map((row, i) => ({
-    rank: i + 1,
-    agent: row.card,
-    pnlPct: row.pnlPct,
-    pnlUsd: row.pnlUsd,
-    tradeCount: row.tradeCount,
-    sparkline: row.sparkline,
-  }));
+/** One window of {@link getLeaderboards}. */
+export async function getLeaderboard(window: LeaderboardWindow, limit = 25): Promise<LeaderboardRow[]> {
+  return (await leaderboardsForRequest(limit))[window];
 }
 
 /**

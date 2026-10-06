@@ -9,6 +9,7 @@ import { updateProfile } from "@/server/actions/users";
 import type { Session } from "@/server/types";
 import { AgentAvatar } from "@/components/social-common/agent-avatar";
 import { SESSION_QUERY_KEY } from "@/hooks/use-session";
+import { HANDLE_RESERVED, isReservedHandle } from "@/lib/reserved-handles";
 import { MORPH_FOCUS, enterSubmits, useMorphAction } from "./use-morph-action";
 import { cleanHandle, removedNote } from "./handle-filter";
 
@@ -50,6 +51,12 @@ export function ProfileForm({ session, bio: initialBio }: { session: Session; bi
     if (!HANDLE_RE.test(handle)) {
       setError({ field: "handle", message: "Handles are 2–20 characters: letters, numbers and underscores." });
       throw new Error("invalid handle");
+    }
+    // The same rule and the same sentence as `updateProfile`, before the round trip.
+    // Only a change is refused, so a handle the account already holds still saves.
+    if (handle !== saved.handle && isReservedHandle(handle)) {
+      setError({ field: "handle", message: HANDLE_RESERVED });
+      throw new Error("reserved handle");
     }
     try {
       const result = await updateProfile({ handle, displayName, bio });

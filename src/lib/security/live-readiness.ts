@@ -1,6 +1,6 @@
 import "server-only";
 import { desc, eq, sql } from "drizzle-orm";
-import { agentFundingIntents, getDb, isPglite, users } from "@/db";
+import { agentFundingIntents, agents, getDb, isPglite, users } from "@/db";
 import { isPrivyConfigured } from "@/lib/privy";
 import { getAgentWalletBalances, isPaperWallet } from "@/lib/wallets";
 // Constants and the pure helper only — the effectful half of `gas.ts` is workstream A's.
@@ -12,6 +12,7 @@ import { dataChainsFor, getDataSource } from "@/lib/data-sources/registry";
 import { isMockMode } from "@/lib/x402/paidFetch";
 import { UNAVAILABLE_TO_USERS, getMfaStatus } from "./mfa";
 import { getKillSwitch } from "./kill-switch";
+import { listSimulatedOpenPositions } from "./paper-positions";
 import type { AgentConfig, WalletBudget } from "@/db/schema";
 import type { Chain } from "@/server/types";
 
@@ -240,13 +241,14 @@ export async function evaluateLiveReadiness(input: ReadinessInput): Promise<Live
   // var names, Tocker's own wallets) are for an admin; everyone else gets the outcome.
   const viewerIsAdmin = await ownerIsAdmin(input.ownerId);
 
-  const [database, privy, mfa, wallets, killSwitch, data] = await Promise.all([
+  const [database, privy, mfa, wallets, killSwitch, data, paperPositions] = await Promise.all([
     checkDatabase(viewerIsAdmin),
     Promise.resolve(checkPrivy(viewerIsAdmin)),
     checkMfa(input.ownerId),
     checkWallets(input.agentId, input.config.chains, settings),
     getKillSwitch(input.ownerId),
     checkData(input.config, settings, viewerIsAdmin),
+    checkPaperPositions(input.agentId, input.slug),
   ]);
 
   // The risk step is the only one that has to wait for a balance, because the whole
@@ -275,6 +277,7 @@ export async function evaluateLiveReadiness(input: ReadinessInput): Promise<Live
         : "Your account-wide kill switch is off, so scheduled runs will happen.",
       fix: killSwitch.paused ? { label: "Settings → Security", href: "/settings/security" } : null,
     },
+    paperPositions,
   ];
 
   return {
@@ -446,6 +449,12 @@ async function checkWallets(
   }
 
   const relevant = balances.filter((w) => chains.includes(w.chain));
+  // A balance that could not be read comes back as zeros, flagged. That is the same
+  // "unreadable" as a throw: the row says so rather than "0.00 USDC, fund this agent".
+  const unread = relevant.filter((w) => w.readFailed);
+  if (!error && unread.length > 0) {
+    error = `the ${chainNames(unread.map((w) => w.chain))} balance could not be read just now. Try again in a minute.`;
+  }
   const paper = relevant.filter((w) => isPaperWallet(w.walletId));
   const missing = chains.filter((c) => !relevant.some((w) => w.chain === c));
 
@@ -721,6 +730,86 @@ async function checkGas(config: AgentConfig, viewerIsAdmin: boolean): Promise<Re
   }
 
   return gasStep({ chains: config.chains, platform: { sol, address, error }, refuel, viewerIsAdmin });
+}
+
+export interface PaperPositionsStepInput {
+  slug: string;
+  /** Already live: the switch this row guards has been made. */
+  live: boolean;
+  /**
+   * One entry per simulated position still open: its symbol, or null when the token has
+   * none on record. `null` for the whole list when the book could not be read.
+   */
+  symbols: Array<string | null> | null;
+}
+
+/** " (WIF, JUP, BONK and 2 more)", or nothing when no symbol is on record. */
+function namedSymbols(symbols: Array<string | null>): string {
+  // A symbol is whatever the token's creator typed, so it is trimmed and kept short.
+  const known = symbols.flatMap((symbol) => (symbol?.trim() ? [symbol.trim().slice(0, 12)] : []));
+  if (known.length === 0) return "";
+  const shown = known.slice(0, 3);
+  const rest = symbols.length - shown.length;
+  return ` (${shown.join(", ")}${rest > 0 ? ` and ${rest} more` : ""})`;
+}
+
+/**
+ * Pure: the "No paper positions open" row.
+ *
+ * `goLiveAction` refuses the switch while the agent holds a simulated position, and it
+ * used to be the only thing that said so: in a toast, after the owner had funded the
+ * agent, cleared every row here and held the button. This row says it first, from the
+ * same count the action refuses on (`./paper-positions.ts`), and links to where the
+ * positions are sold. The action's own refusal stays as the last line of defence.
+ */
+export function paperPositionsStep(input: PaperPositionsStepInput): ReadinessStep {
+  const base = { id: "paperPositions" as const, title: "No paper positions open" };
+  if (input.live) {
+    return { ...base, state: "pass", detail: "Already live. This check only guards the switch from paper.", fix: null };
+  }
+  if (input.symbols === null) {
+    return {
+      ...base,
+      state: "fail",
+      detail:
+        "Could not read this agent's open positions, so there is no telling whether a paper one would be carried into the live book. Re-check in a moment.",
+      fix: null,
+    };
+  }
+  const count = input.symbols.length;
+  if (count === 0) {
+    return {
+      ...base,
+      state: "pass",
+      detail: "Nothing simulated is on the book, so the live book starts clean.",
+      fix: null,
+    };
+  }
+  const one = count === 1;
+  return {
+    ...base,
+    state: "fail",
+    detail:
+      `${count} paper position${one ? " is" : "s are"} still open${namedSymbols(input.symbols)}. ` +
+      `${one ? "It is" : "They are"} simulated, so ${one ? "it" : "they"} cannot follow the agent into a live book. ` +
+      `Sell ${one ? "it" : "them"} on the agent page first; on paper that costs nothing real.`,
+    fix: { label: `Sell ${one ? "it" : "them"} on the agent page`, href: `/agents/${input.slug}#positions` },
+  };
+}
+
+/** Read the book and hand it to {@link paperPositionsStep}. An agent already live has no switch left to guard. */
+async function checkPaperPositions(agentId: string, slug: string): Promise<ReadinessStep> {
+  try {
+    const db = await getDb();
+    const [agent] = await db.select({ mode: agents.mode }).from(agents).where(eq(agents.id, agentId)).limit(1);
+    if (agent?.mode === "live") return paperPositionsStep({ slug, live: true, symbols: [] });
+    const held = await listSimulatedOpenPositions(db, agentId);
+    return paperPositionsStep({ slug, live: false, symbols: held.map((position) => position.symbol) });
+  } catch (err) {
+    // As with the database row: the driver's words go to the server log, not the checklist.
+    console.error("[live-readiness] paper positions", err instanceof Error ? err.message : err);
+    return paperPositionsStep({ slug, live: false, symbols: null });
+  }
 }
 
 function sumAsset(

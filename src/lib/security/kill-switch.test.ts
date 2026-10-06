@@ -9,6 +9,9 @@ import { countPausedDueAgents, getKillSwitch, isTradingPaused, setTradingPaused 
 let db: Db;
 
 beforeAll(async () => {
+  // Seeded agents have no LLM key, and outside mock mode an agent without one is never
+  // due. That rule is covered in scheduler.test.ts; here it would only hide the switch.
+  process.env.LLM_MOCK = "1";
   db = await setupTestDb();
 });
 

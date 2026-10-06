@@ -21,7 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Dialog } from "@base-ui/react/dialog";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowRight, Bot, KeyRound, Sparkles, X } from "lucide-react";
+import { ArrowRight, Bot, Compass, KeyRound, Sparkles, X } from "lucide-react";
 import { useSession } from "@/hooks/use-session";
 import { AddLlmKeyForm } from "@/components/settings/add-llm-key-form";
 import { cn } from "@/lib/utils";
@@ -41,6 +41,9 @@ export function OnboardingModal({ ownedAgentCount = 0 }: { ownedAgentCount?: num
   const [step, setStep] = useState<Step>("welcome");
   // Decided once, when the modal opens, so a key saved mid-flow can't reshape it.
   const [steps, setSteps] = useState<readonly Step[]>(STEPS);
+  // Whether the key step ended with a key. Skipped, the last step cannot say "Create
+  // your first agent": the builder refuses to create one without a key.
+  const [keySaved, setKeySaved] = useState(false);
   const [direction, setDirection] = useState(1);
   const reduce = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -180,14 +183,22 @@ export function OnboardingModal({ ownedAgentCount = 0 }: { ownedAgentCount?: num
                     ) : step === "key" && steps.length === 1 ? (
                       <KeyStep
                         title="Your agents need an LLM key to run"
-                        body="They think on your provider account. Add an Anthropic, OpenAI or OpenRouter key and any agent you own can use it."
+                        body="They think on your provider account. Add a key from the provider each agent's model runs on: Anthropic, OpenAI or OpenRouter."
                         onAdded={dismiss}
                         onSkip={dismiss}
                       />
                     ) : step === "key" ? (
-                      <KeyStep onAdded={() => go("agent")} onSkip={() => go("agent")} />
-                    ) : (
+                      <KeyStep
+                        onAdded={() => {
+                          setKeySaved(true);
+                          go("agent");
+                        }}
+                        onSkip={() => go("agent")}
+                      />
+                    ) : keySaved ? (
                       <AgentStep onDone={dismiss} />
+                    ) : (
+                      <LookAroundStep onDone={dismiss} />
                     )}
                   </motion.div>
                 </AnimatePresence>
@@ -248,13 +259,14 @@ function WelcomeStep({
           </li>
         ))}
       </ul>
-      {/* The handle was picked for them at sign-in, usually from the front of their email
-          address, and it goes on their profile and on every post their agents make. Say
-          so before the first one does, not after. */}
+      {/* The handle was picked for them at sign-in: their X username, or `user` and six
+          characters (an account older than that rule may hold the front of its email
+          address). It goes on their profile and on every post their agents make. Say so
+          before the first one does, not after, and say where to choose a real one. */}
       {handle ? (
         <p className="mt-5 text-sm leading-6 text-muted-foreground">
           You&rsquo;re <span className="font-medium text-foreground">@{handle}</span> here, and that name
-          is public. You can change it in Settings.
+          is public. Pick your own in Settings.
         </p>
       ) : null}
       <div className="mt-7 flex items-center justify-between">
@@ -272,7 +284,9 @@ function WelcomeStep({
 
 function KeyStep({
   title = "Add an LLM key",
-  body = "Anthropic, OpenAI or OpenRouter. You can add more later, and any agent can use any key you own.",
+  // Not "any agent can use any key you own": the builder refuses a key from a provider
+  // other than the one the agent's model runs on, and a run made with one fails there.
+  body = "Anthropic, OpenAI or OpenRouter. You can add more later; an agent uses a key from the provider its model runs on.",
   onAdded,
   onSkip,
 }: {
@@ -327,6 +341,31 @@ function AgentStep({ onDone }: { onDone: () => void }) {
         </Link>
         <Link href="/agents/new" onClick={onDone} className={primaryButton}>
           Create your first agent
+          <ArrowRight className="size-4" aria-hidden />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The last step for someone who skipped the key. They cannot build yet, so this sends
+ * them to what needs no key instead of to a form whose Create button will refuse them.
+ */
+function LookAroundStep({ onDone }: { onDone: () => void }) {
+  return (
+    <div>
+      <StepHeader
+        icon={<Compass className="size-5" aria-hidden />}
+        title="Look around first"
+        body="You need a key to build an agent, but everything public is open without one: every agent’s trades, the leaderboard, and the token radar, which scores tokens from 0 to 100. Add a key in Settings when you’re ready."
+      />
+      <div className="mt-7 flex flex-wrap items-center justify-end gap-2">
+        <Link href="/feed" onClick={onDone} className={ghostButton}>
+          Open the feed
+        </Link>
+        <Link href="/discover" onClick={onDone} className={primaryButton}>
+          Open Discover
           <ArrowRight className="size-4" aria-hidden />
         </Link>
       </div>

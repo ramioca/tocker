@@ -134,6 +134,21 @@ export function netLiveCashUsd(walletUsdc: number, accruedUnsettledUsd: number):
 }
 
 /**
+ * The most USDC an owner may take out of a wallet that still owes fees: the balance less
+ * what is owed, floored to a cent, never negative. The fees stay behind so the sweep that
+ * follows the withdrawal has something to collect.
+ *
+ * Worked in whole micro-USDC before the floor: 10 − 0.3 is 9.699999… in floating point,
+ * and flooring that to cents would answer $9.69 for a wallet that can spare $9.70.
+ */
+export function withdrawableAfterFees(walletUsdc: number, owedUsd: number): number {
+  const wallet = Number.isFinite(walletUsdc) && walletUsdc > 0 ? walletUsdc : 0;
+  const owed = Number.isFinite(owedUsd) && owedUsd > 0 ? owedUsd : 0;
+  const micros = Math.round((wallet - owed) * 1e6);
+  return micros > 0 ? Math.floor(micros / 1e4) / 100 : 0;
+}
+
+/**
  * What a buy actually costs the agent: the notional plus the fee that will be charged
  * the moment it fills. The risk guard checks *this* against cash, so an agent can never
  * spend its last dollar and owe a dime it cannot pay.

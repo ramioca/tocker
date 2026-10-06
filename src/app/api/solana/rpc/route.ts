@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { RATE_LIMITS, clientKey, limiter, rateLimitHeaders } from "@/lib/security/rate-limit";
 import { MAX_SOLANA_RPC_BODY_BYTES, checkSolanaRpcRequest } from "@/lib/wallets/solana-rpc-proxy";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +14,9 @@ export const dynamic = "force-dynamic";
  * after checking that every method is on the allowlist in
  * `src/lib/wallets/solana-rpc-proxy.ts`. Public data and a signed transaction are the
  * only things that pass through; nothing here signs, and nothing here is cached.
+ *
+ * Two limits, both per client: `src/proxy.ts` counts requests (and refuses another
+ * site's Origin) before this runs, and this counts the calls inside them.
  */
 export async function POST(req: Request): Promise<NextResponse> {
   const upstream = process.env.SOLANA_RPC_URL?.trim() || "https://api.mainnet-beta.solana.com";
@@ -30,6 +34,20 @@ export async function POST(req: Request): Promise<NextResponse> {
   const check = checkSolanaRpcRequest(body);
   if (!check.ok) {
     return NextResponse.json({ error: check.reason }, { status: 403, headers: { "cache-control": "no-store" } });
+  }
+
+  // The proxy has already counted this request; a batch is one request and many calls,
+  // and it is calls that spend credits upstream. One unit each, and a batch that runs
+  // past the limit is refused whole: half a batch is a response nobody can correlate.
+  const calls = Array.isArray(body) ? body.length : 1;
+  const key = clientKey(req.headers, "solana-rpc-calls");
+  let verdict = limiter.consume(key, RATE_LIMITS.solanaRpcCalls);
+  for (let i = 1; i < calls && verdict.ok; i += 1) verdict = limiter.consume(key, RATE_LIMITS.solanaRpcCalls);
+  if (!verdict.ok) {
+    return NextResponse.json(
+      { error: "rate limited", retryAfterSeconds: verdict.retryAfterSeconds },
+      { status: 429, headers: { ...rateLimitHeaders(verdict), "cache-control": "no-store" } },
+    );
   }
 
   try {

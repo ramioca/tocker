@@ -25,11 +25,15 @@ const loadPost = cache(async (postId: string): Promise<FeedItem | null> => {
   return withMock(() => getPost(postId, session?.userId ?? null), () => mockPost(postId));
 });
 
-/** The fill's execution receipt, the same join the feed does. Never fails the page. */
+/**
+ * The fill's execution receipt, the same join the feed does. Never fails the page. The
+ * viewer is the session's, as above: only the agent's owner gets the whole receipt.
+ */
 async function receiptFor(item: FeedItem): Promise<TradeReceiptData | null> {
   if (!item.trade) return null;
   try {
-    return (await receiptsFor([item.trade.id])).get(item.trade.id) ?? null;
+    const session = await viewerSession();
+    return (await receiptsFor([item.trade.id], session?.userId ?? null)).get(item.trade.id) ?? null;
   } catch {
     return null;
   }

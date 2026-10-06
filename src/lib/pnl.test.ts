@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { applyFill, computeEquity, pnlOverWindow, replayTrades, unrealized, winRate, windowSparkline, EMPTY_POSITION } from "./pnl";
+import {
+  applyFill,
+  computeEquity,
+  flowsBetween,
+  pnlNetOfFlows,
+  pnlOverWindow,
+  replayTrades,
+  unrealized,
+  winRate,
+  windowSparkline,
+  EMPTY_POSITION,
+} from "./pnl";
 
 const T = "solana:BONK";
 
@@ -240,5 +251,84 @@ describe("windowSparkline", () => {
   it("is empty when there are not two points in the window", () => {
     expect(windowSparkline([], "7d", now)).toEqual([]);
     expect(windowSparkline([at(1, 100)], "7d", now)).toEqual([]);
+  });
+});
+
+describe("money moved is not money made", () => {
+  const now = new Date("2026-02-01T00:00:00Z");
+  const at = (daysAgo: number) => new Date(now.getTime() - daysAgo * 86_400_000);
+  const mark = (daysAgo: number, equityUsd: number) => ({ at: at(daysAgo), equityUsd });
+  const deposit = (daysAgo: number, amountUsd: number) => ({ at: at(daysAgo), amountUsd });
+  const withdrawal = (daysAgo: number, amountUsd: number) => ({ at: at(daysAgo), amountUsd: -amountUsd });
+
+  it("funded with 25, 25 more deposited, worth 50: no gain", () => {
+    const book = pnlNetOfFlows(25, 50, flowsBetween([deposit(2, 25)], at(5)));
+    expect(book.pnlUsd).toBe(0);
+    expect(book.pnlPct).toBe(0);
+    expect(book.basisUsd).toBe(50);
+  });
+
+  it("funded with 25, 20 withdrawn, 5 left: no loss", () => {
+    const book = pnlNetOfFlows(25, 5, flowsBetween([withdrawal(2, 20)], at(5)));
+    expect(book.pnlUsd).toBe(0);
+    expect(book.pnlPct).toBe(0);
+    expect(book.basisUsd).toBe(5);
+  });
+
+  it("takes the percent on what was put in, so a withdrawal cannot raise it", () => {
+    // $1,000 in, $50 made, $1,045 taken out. Against the $5 left that would read as a
+    // thousand percent; it was 5% on $1,000 and still is.
+    const book = pnlNetOfFlows(1_000, 5, flowsBetween([withdrawal(1, 1_045)], at(5)));
+    expect(book.pnlUsd).toBe(50);
+    expect(book.capitalUsd).toBe(1_000);
+    expect(book.pnlPct).toBeCloseTo(5, 9);
+    // And a deposit only ever lowers it: $5 made on $5, then $1,000 added.
+    const diluted = pnlNetOfFlows(5, 1_010, flowsBetween([deposit(1, 1_000)], at(5)));
+    expect(diluted.pnlUsd).toBe(5);
+    expect(diluted.pnlPct).toBeCloseTo((5 / 1_005) * 100, 9);
+  });
+
+  it("is the plain change in equity when nothing moved", () => {
+    expect(pnlNetOfFlows(100, 112)).toEqual({ basisUsd: 100, capitalUsd: 100, pnlUsd: 12, pnlPct: 12 });
+    expect(pnlNetOfFlows(0, 10).pnlPct).toBe(0);
+  });
+
+  it("counts a flow only between the two marks it is measured across", () => {
+    const flows = [deposit(6, 100), deposit(3, 40), withdrawal(2, 10), deposit(0.5, 7)];
+    // After the first mark (5 days ago) and up to the last (1 day ago): +40 and −10.
+    expect(flowsBetween(flows, at(5), at(1))).toEqual({ netUsd: 30, inUsd: 40 });
+    // A flow at the first mark's own instant is already inside it; one at the last counts.
+    expect(flowsBetween([deposit(5, 9), deposit(1, 4)], at(5), at(1))).toEqual({ netUsd: 4, inUsd: 4 });
+    // No upper bound: everything since.
+    expect(flowsBetween(flows, at(5))).toEqual({ netUsd: 37, inUsd: 47 });
+    expect(flowsBetween(null, at(5))).toEqual({ netUsd: 0, inUsd: 0 });
+  });
+
+  it("nets a deposit made inside a leaderboard window out of that window's PnL", () => {
+    // Flat at $100 all week, then $500 deposited two days ago. Unnetted that is +500%.
+    const series = [mark(10, 100), mark(3, 100), mark(0, 600)];
+    const raw = pnlOverWindow(series, "7d", now)!;
+    expect(raw.pnlUsd).toBe(500);
+    expect(raw.pnlPct).toBeCloseTo(500);
+
+    const netted = pnlOverWindow(series, "7d", now, [deposit(2, 500)])!;
+    expect(netted.pnlUsd).toBe(0);
+    expect(netted.pnlPct).toBe(0);
+    expect(netted.flowUsd).toBe(500);
+    // The marks themselves are reported as they were.
+    expect(netted.startEquityUsd).toBe(100);
+    expect(netted.endEquityUsd).toBe(600);
+  });
+
+  it("leaves a deposit from before the window's baseline out of that window", () => {
+    // Deposited 9 days ago, baseline 8 days ago already holds it.
+    const series = [mark(12, 100), mark(8, 600), mark(0, 630)];
+    const week = pnlOverWindow(series, "7d", now, [deposit(9, 500)])!;
+    expect(week.pnlUsd).toBe(30);
+    expect(week.pnlPct).toBeCloseTo(5);
+    // All time starts before it, so there it is netted.
+    const all = pnlOverWindow(series, "all", now, [deposit(9, 500)])!;
+    expect(all.pnlUsd).toBe(30);
+    expect(all.pnlPct).toBeCloseTo(5);
   });
 });

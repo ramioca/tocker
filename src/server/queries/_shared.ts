@@ -2,11 +2,14 @@ import "server-only";
 import { and, asc, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
+  agentFundingIntents,
   agents,
   agentRuns,
+  auditEvents,
   equitySnapshots,
   follows,
   getDb,
+  platformFees,
   tokens,
   trades,
   users,
@@ -15,6 +18,7 @@ import {
 import type { TradeScoreSnapshot } from "@/db/schema";
 import { closedSells, type AnalyticsFill } from "@/lib/analytics";
 import { toNum, toNumOrNull } from "@/lib/money";
+import { flowsBetween, pnlNetOfFlows, type MoneyFlow } from "@/lib/pnl";
 import type {
   AgentCard,
   Chain,
@@ -46,10 +50,19 @@ export function slugify(input: string): string {
   return base || "agent";
 }
 
+/**
+ * Slugs that are routes. `/agents/new` is the builder, and a static segment wins over
+ * `/agents/[slug]`: an agent called "New" got the slug `new`, so its page could never
+ * be opened and every link to it opened the empty builder instead. Anything added
+ * beside `[slug]` under `app/.../agents/` belongs in this set.
+ */
+const RESERVED_AGENT_SLUGS: ReadonlySet<string> = new Set(["new"]);
+
 /** Globally unique agent slug (`agents.slug` is unique) — appends -2, -3, … */
 export async function uniqueSlug(name: string, db?: Db): Promise<string> {
   const database = db ?? (await getDb());
-  const root = slugify(name);
+  const base = slugify(name);
+  const root = RESERVED_AGENT_SLUGS.has(base) ? `${base}-agent` : base;
   for (let i = 1; i <= 50; i++) {
     const candidate = i === 1 ? root : `${root}-${i}`;
     const [taken] = await database.select({ id: agents.id }).from(agents).where(eq(agents.slug, candidate)).limit(1);
@@ -130,6 +143,12 @@ function numberOrUndefined(value: number | null | undefined): number | undefined
  */
 export function toTradeScore(snapshot: TradeScoreSnapshot | null | undefined): TradeScore | null {
   if (!snapshot || typeof snapshot.total !== "number") return null;
+  // A reading no provider answered, frozen onto a fill before trades stopped storing
+  // those (`toTradeScore` in `@/lib/tokens`): zero, no pool, and the scorer's own
+  // `low_confidence`. It says the token was not read, so it is shown as not scored
+  // rather than as "0 · Avoid".
+  const unread = snapshot.total === 0 && (snapshot.liquidityUsd ?? null) === null;
+  if (unread && (snapshot.warnings ?? []).includes("low_confidence")) return null;
   const raw = snapshot.components ?? {};
   const components: Partial<ScoreComponents> = {
     safety: numberOrUndefined(raw.safety),
@@ -186,7 +205,7 @@ export function toTradeRow(
     proposedAt: iso(row.proposedAt),
     decidedAt: iso(row.decidedAt),
     decidedBy: row.decidedBy,
-    entryScore: typeof row.scoreSnapshot?.total === "number" ? row.scoreSnapshot.total : null,
+    entryScore: toTradeScore(row.scoreSnapshot)?.total ?? null,
     isPaper: row.isPaper,
     txHash: row.txHash,
     rationale: visibleRationale(row.rationale, {
@@ -204,9 +223,21 @@ export function toTradeRow(
 }
 
 /**
+ * What a fill cost in fees, as the position ledger booked it: the venue's fee on the
+ * trade row plus the Tocker fee charged on that fill (`platform_fees`, one row per
+ * trade). Every replay of fills into realised P&L or a win rate uses this, so a sale
+ * reads the same after fees on the feed, on Home, on the Performance tab and in the
+ * Sold dialog.
+ */
+export function fillFeeUsd(venueFeeUsd: string | number | null, tockerFeeUsd: string | number | null): number {
+  return toNum(venueFeeUsd) + toNum(tockerFeeUsd);
+}
+
+/**
  * Fill in what each filled sell booked, on the same average-cost replay (`closedSells`)
  * that /money and the agent's stat cards read, so a feed card cannot disagree with
- * them. Paper and live fills are separate books. Everything else keeps its nulls.
+ * them. After fees, the Tocker fee included ({@link fillFeeUsd}). Paper and live fills
+ * are separate books. Everything else keeps its nulls.
  */
 export async function attachRealizedPnl<T extends TradeRow>(db: Db, rows: T[]): Promise<T[]> {
   const agentIds = [
@@ -215,12 +246,14 @@ export async function attachRealizedPnl<T extends TradeRow>(db: Db, rows: T[]): 
   if (agentIds.length === 0) return rows;
 
   const fills = await db
-    .select()
+    .select({ trade: trades, tockerFeeUsd: platformFees.amountUsd })
     .from(trades)
+    // `platform_fees.trade_id` is unique, so this never repeats a fill.
+    .leftJoin(platformFees, eq(platformFees.tradeId, trades.id))
     .where(and(inArray(trades.agentId, agentIds), eq(trades.status, "filled")));
 
   const books = new Map<string, AnalyticsFill[]>();
-  for (const row of fills) {
+  for (const { trade: row, tockerFeeUsd } of fills) {
     const key = `${row.agentId}:${row.isPaper ? "paper" : "live"}`;
     const list = books.get(key) ?? [];
     list.push({
@@ -231,7 +264,7 @@ export async function attachRealizedPnl<T extends TradeRow>(db: Db, rows: T[]): 
       amountToken: toNum(row.amountToken),
       amountUsd: toNum(row.amountUsd),
       priceUsd: toNum(row.priceUsd),
-      feeUsd: toNum(row.feeUsd),
+      feeUsd: fillFeeUsd(row.feeUsd, tockerFeeUsd),
       status: row.status,
       origin: row.origin,
       exitReason: (row.exitReason as TradeRow["exitReason"]) ?? null,
@@ -274,12 +307,23 @@ export type AgentRow = typeof agents.$inferSelect;
 export interface AgentAggregates {
   equityUsd: number | null;
   /**
-   * What the current book started with: a paper agent's notional, or a live agent's
-   * first live mark. All-time PnL is measured against it, here and on the agent page.
+   * What the current book is measured against: a paper agent's notional, or a live
+   * agent's first live mark plus what has been deposited since, less what has been
+   * withdrawn. All-time PnL is equity less this, here and on the agent page.
    */
   startEquityUsd: number | null;
+  /** What all-time PnL is a percent of: the same, without the withdrawals. */
+  capitalUsd: number | null;
   pnlUsd: number | null;
   pnlPct: number | null;
+  /** See {@link BookMarks}: what moved after the latest mark, for a reader with a fresher equity. */
+  flowSinceMarkUsd: number;
+  depositsSinceMarkUsd: number;
+  /** True when the book has two marks to measure between. */
+  hasWindow: boolean;
+  /** The latest mark's row and time; null when the book has never been marked. */
+  markId: string | null;
+  markedAt: Date | null;
   sparkline: number[];
   tradeCount: number;
   followerCount: number;
@@ -289,8 +333,14 @@ export interface AgentAggregates {
 const EMPTY_AGG: AgentAggregates = {
   equityUsd: null,
   startEquityUsd: null,
+  capitalUsd: null,
   pnlUsd: null,
   pnlPct: null,
+  flowSinceMarkUsd: 0,
+  depositsSinceMarkUsd: 0,
+  hasWindow: false,
+  markId: null,
+  markedAt: null,
   sparkline: [],
   tradeCount: 0,
   followerCount: 0,
@@ -363,19 +413,139 @@ export async function loadDailyCloses(db: Db, agentIds: string[], since: Date): 
   return out;
 }
 
-/** How far back a card's sparkline reaches, in daily closes. */
-const SPARKLINE_DAYS = 30;
+// ---------- money moved in and out of a live book ----------
 
 /**
- * Batch-load the numbers every agent card needs. One query per aggregate rather
- * than one per agent, and never the whole snapshot history: the first and latest
- * snapshot per agent carry the PnL, and the sparkline is daily closes.
+ * USDC an audited `withdraw` row took out of an agent, or 0 when it is not an owner's
+ * USDC withdrawal. The kind is shared: fee settlement and rent recycling also write it
+ * (with a `reason`), and those are costs or moved no USDC, not the owner taking money
+ * out. A Solana withdrawal records what was `delivered` (0 when it failed on chain); a
+ * Base one records the `amount` sent.
  */
-export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<Map<string, AgentAggregates>> {
-  const out = new Map<string, AgentAggregates>();
+export function withdrawnUsdc(metadata: Record<string, unknown> | null | undefined): number {
+  if (!metadata || metadata.reason !== undefined || metadata.asset !== "usdc") return 0;
+  if (metadata.status === "failed") return 0;
+  const raw = metadata.delivered ?? metadata.amount;
+  const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : Number.NaN;
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * Every deposit into and withdrawal out of these agents' wallets that Tocker has a
+ * record of, per agent: funding transfers that were sent (`agent_funding_intents`) and
+ * the owner's audited USDC withdrawals. Live agents only. A paper book is measured from
+ * its notional and holds no real money to move, so it gets no entry.
+ *
+ * These are what every live P&L nets out, the same two sources `/money`'s daily table
+ * reads. What is not here cannot be netted: USDC sent to an agent's address from outside
+ * Tocker has no funding row, and still reads as a gain.
+ */
+export async function loadMoneyFlows(db: Db, agentIds: string[]): Promise<Map<string, MoneyFlow[]>> {
+  const out = new Map<string, MoneyFlow[]>();
   const ids = [...new Set(agentIds)].filter(Boolean);
   if (ids.length === 0) return out;
-  for (const id of ids) out.set(id, { ...EMPTY_AGG, sparkline: [] });
+
+  const [deposits, withdrawals] = await Promise.all([
+    db
+      .select({
+        agentId: agentFundingIntents.agentId,
+        // Epoch seconds, not the timestamp: a raw `coalesce` is not column-mapped, and
+        // Postgres prints a timestamptz as "… +00", which `Date` cannot parse.
+        at: sql<number | string>`extract(epoch from coalesce(${agentFundingIntents.settledAt}, ${agentFundingIntents.createdAt}))::float8`,
+        amount: agentFundingIntents.amount,
+      })
+      .from(agentFundingIntents)
+      .innerJoin(agents, eq(agents.id, agentFundingIntents.agentId))
+      .where(
+        and(
+          inArray(agentFundingIntents.agentId, ids),
+          eq(agents.mode, "live"),
+          eq(agentFundingIntents.status, "sent"),
+          sql`lower(${agentFundingIntents.asset}) = 'usdc'`,
+        ),
+      ),
+    db
+      .select({ agentId: auditEvents.agentId, at: auditEvents.createdAt, metadata: auditEvents.metadata })
+      .from(auditEvents)
+      .innerJoin(agents, eq(agents.id, auditEvents.agentId))
+      .where(
+        and(
+          inArray(auditEvents.agentId, ids),
+          eq(agents.mode, "live"),
+          eq(auditEvents.kind, "withdraw"),
+          // Fee sweeps and rent recycles share the kind and carry a reason; there is one
+          // of those per sweep, so they are left in the database. `withdrawnUsdc` is
+          // still what decides.
+          sql`(${auditEvents.metadata} ->> 'reason') is null`,
+        ),
+      ),
+  ]);
+
+  const add = (agentId: string, flow: MoneyFlow) => {
+    const list = out.get(agentId) ?? [];
+    list.push(flow);
+    out.set(agentId, list);
+  };
+  for (const row of deposits) {
+    const ms = epochMs(row.at);
+    const amountUsd = toNum(row.amount);
+    if (Number.isFinite(ms) && amountUsd > 0) add(row.agentId, { at: ms, amountUsd });
+  }
+  for (const row of withdrawals) {
+    const usdc = withdrawnUsdc(row.metadata);
+    if (row.agentId && usdc > 0) add(row.agentId, { at: row.at, amountUsd: -usdc });
+  }
+  return out;
+}
+
+/**
+ * Where an agent's current book stands against where it started: its latest mark, and
+ * the all-time P&L measured to it.
+ */
+export interface BookMarks {
+  mode: AgentRow["mode"];
+  /** The latest snapshot. */
+  markId: string;
+  markedAt: Date;
+  equityUsd: number;
+  cashUsd: number;
+  /** True when the book has a first and a latest mark that are not the same row. */
+  hasWindow: boolean;
+  /**
+   * What `equityUsd` is measured against: a paper agent's notional, or a live agent's
+   * first live mark plus what was deposited, less what was withdrawn, up to the latest
+   * mark.
+   */
+  startEquityUsd: number;
+  /** What the percent is taken on: the same, without the withdrawals. */
+  capitalUsd: number;
+  /** Null for a live book with a single mark: one snapshot is no window at all. */
+  pnlUsd: number | null;
+  pnlPct: number | null;
+  /**
+   * Deposits less withdrawals since the latest mark, and the deposits alone. A reader
+   * holding an equity fresher than that mark (the wallet, read now) adds these to the
+   * basis and the capital, or a deposit made a minute ago reads as a gain until the next
+   * marks pass. Always 0 for a paper book.
+   */
+  flowSinceMarkUsd: number;
+  depositsSinceMarkUsd: number;
+}
+
+/**
+ * The first and latest snapshot of each agent's current book, with the money that moved
+ * in between taken out of the P&L. Agents with no snapshot in their current mode get no
+ * entry. Two `distinct on` reads and the flows: never the snapshot history. A caller
+ * that needs the flows for itself loads them once and hands them over.
+ */
+export async function loadBookMarks(
+  db: Db,
+  agentIds: string[],
+  loadedFlows?: Promise<Map<string, MoneyFlow[]>>,
+): Promise<Map<string, BookMarks>> {
+  const out = new Map<string, BookMarks>();
+  const ids = [...new Set(agentIds)].filter(Boolean);
+  if (ids.length === 0) return out;
 
   const edge = (order: "first" | "latest") =>
     db
@@ -397,9 +567,82 @@ export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<M
         order === "first" ? asc(equitySnapshots.id) : desc(equitySnapshots.id),
       );
 
-  const [firstRows, latestRows, closes, tradeCounts, followerCounts] = await Promise.all([
+  const [firstRows, latestRows, flows] = await Promise.all([
     edge("first"),
     edge("latest"),
+    loadedFlows ?? loadMoneyFlows(db, ids),
+  ]);
+
+  const firstByAgent = new Map(firstRows.map((r) => [r.agentId, r]));
+  for (const latest of latestRows) {
+    const lastEquity = toNum(latest.equityUsd);
+    const first = firstByAgent.get(latest.agentId);
+    const marks = {
+      mode: latest.mode,
+      markId: latest.id,
+      markedAt: latest.at,
+      equityUsd: lastEquity,
+      cashUsd: toNum(latest.cashUsd),
+      hasWindow: Boolean(first) && first?.id !== latest.id,
+    };
+    // A paper book started at its notional, not at its first mark — that mark can land
+    // after the first fill's fee, and then the card, the agent header and the chart
+    // (which is drawn against the notional) each printed a different all-time PnL.
+    if (latest.mode === "paper") {
+      const start = toNum(latest.paperStartingUsd);
+      const pnlUsd = lastEquity - start;
+      out.set(latest.agentId, {
+        ...marks,
+        startEquityUsd: start,
+        capitalUsd: start,
+        pnlUsd,
+        pnlPct: start === 0 ? 0 : (pnlUsd / Math.abs(start)) * 100,
+        flowSinceMarkUsd: 0,
+        depositsSinceMarkUsd: 0,
+      });
+      continue;
+    }
+    // Live: first mark to latest, as `pnlOverWindow(series, "all")` reads it, less what
+    // was deposited or withdrawn between the two. A flow after the latest mark is not in
+    // that mark's equity yet, so it is kept apart rather than netted against it.
+    const start = first ?? latest;
+    const agentFlows = flows.get(latest.agentId);
+    const book = pnlNetOfFlows(toNum(start.equityUsd), lastEquity, flowsBetween(agentFlows, start.at, latest.at));
+    const sinceMark = flowsBetween(agentFlows, latest.at);
+    out.set(latest.agentId, {
+      ...marks,
+      startEquityUsd: book.basisUsd,
+      capitalUsd: book.capitalUsd,
+      // One snapshot is no window at all.
+      pnlUsd: marks.hasWindow ? book.pnlUsd : null,
+      pnlPct: marks.hasWindow ? book.pnlPct : null,
+      flowSinceMarkUsd: sinceMark.netUsd,
+      depositsSinceMarkUsd: sinceMark.inUsd,
+    });
+  }
+  return out;
+}
+
+/** How far back a card's sparkline reaches, in daily closes. */
+const SPARKLINE_DAYS = 30;
+
+/**
+ * Batch-load the numbers every agent card needs. One query per aggregate rather
+ * than one per agent, and never the whole snapshot history: the first and latest
+ * snapshot per agent carry the PnL, and the sparkline is daily closes.
+ */
+export async function loadAgentAggregates(
+  db: Db,
+  agentIds: string[],
+  loadedFlows?: Promise<Map<string, MoneyFlow[]>>,
+): Promise<Map<string, AgentAggregates>> {
+  const out = new Map<string, AgentAggregates>();
+  const ids = [...new Set(agentIds)].filter(Boolean);
+  if (ids.length === 0) return out;
+  for (const id of ids) out.set(id, { ...EMPTY_AGG, sparkline: [] });
+
+  const [marks, closes, tradeCounts, followerCounts] = await Promise.all([
+    loadBookMarks(db, ids, loadedFlows),
     loadDailyCloses(db, ids, new Date(Date.now() - SPARKLINE_DAYS * 86_400_000)),
     db
       .select({ agentId: trades.agentId, n: sql<number>`count(*)::int` })
@@ -413,36 +656,21 @@ export async function loadAgentAggregates(db: Db, agentIds: string[]): Promise<M
       .groupBy(follows.targetId),
   ]);
 
-  const firstByAgent = new Map(firstRows.map((r) => [r.agentId, r]));
-  for (const latest of latestRows) {
-    const agg = out.get(latest.agentId);
+  for (const [agentId, book] of marks) {
+    const agg = out.get(agentId);
     if (!agg) continue;
-    const lastEquity = toNum(latest.equityUsd);
-    agg.equityUsd = lastEquity;
-    agg.cashUsd = toNum(latest.cashUsd);
-    agg.sparkline = (closes.get(latest.agentId) ?? []).map((p) => p.equityUsd);
-    // A paper book started at its notional, not at its first mark — that mark can land
-    // after the first fill's fee, and then the card, the agent header and the chart
-    // (which is drawn against the notional) each printed a different all-time PnL.
-    if (latest.mode === "paper") {
-      const start = toNum(latest.paperStartingUsd);
-      agg.startEquityUsd = start;
-      agg.pnlUsd = lastEquity - start;
-      agg.pnlPct = start === 0 ? 0 : (agg.pnlUsd / Math.abs(start)) * 100;
-      continue;
-    }
-    // Live: first mark to latest, as `pnlOverWindow(series, "all")` reads it. One
-    // snapshot is no window at all.
-    const first = firstByAgent.get(latest.agentId);
-    agg.startEquityUsd = first ? toNum(first.equityUsd) : null;
-    if (!first || first.id === latest.id) {
-      agg.pnlUsd = null;
-      agg.pnlPct = null;
-      continue;
-    }
-    const start = toNum(first.equityUsd);
-    agg.pnlUsd = lastEquity - start;
-    agg.pnlPct = start === 0 ? 0 : (agg.pnlUsd / Math.abs(start)) * 100;
+    agg.equityUsd = book.equityUsd;
+    agg.cashUsd = book.cashUsd;
+    agg.sparkline = (closes.get(agentId) ?? []).map((p) => p.equityUsd);
+    agg.startEquityUsd = book.startEquityUsd;
+    agg.capitalUsd = book.capitalUsd;
+    agg.pnlUsd = book.pnlUsd;
+    agg.pnlPct = book.pnlPct;
+    agg.flowSinceMarkUsd = book.flowSinceMarkUsd;
+    agg.depositsSinceMarkUsd = book.depositsSinceMarkUsd;
+    agg.hasWindow = book.hasWindow;
+    agg.markId = book.markId;
+    agg.markedAt = book.markedAt;
   }
 
   for (const row of tradeCounts) {
@@ -482,8 +710,15 @@ export function toAgentCard(agent: AgentRow, owner: UserCard, agg: AgentAggregat
   };
 }
 
-/** Agents → AgentCards, loading owners and aggregates in bulk. */
-export async function buildAgentCards(db: Db, rows: AgentRow[]): Promise<AgentCard[]> {
+/**
+ * Agents → AgentCards, loading owners and aggregates in bulk. A caller that already
+ * holds the aggregates for these agents passes them in rather than have them read twice.
+ */
+export async function buildAgentCards(
+  db: Db,
+  rows: AgentRow[],
+  loaded?: Map<string, AgentAggregates>,
+): Promise<AgentCard[]> {
   if (rows.length === 0) return [];
   const ownerIds = [...new Set(rows.map((r) => r.ownerId))];
   const [owners, aggregates] = await Promise.all([
@@ -491,10 +726,11 @@ export async function buildAgentCards(db: Db, rows: AgentRow[]): Promise<AgentCa
       .select({ id: users.id, handle: users.handle, displayName: users.displayName, avatarUrl: users.avatarUrl })
       .from(users)
       .where(inArray(users.id, ownerIds)),
-    loadAgentAggregates(
-      db,
-      rows.map((r) => r.id),
-    ),
+    loaded ??
+      loadAgentAggregates(
+        db,
+        rows.map((r) => r.id),
+      ),
   ]);
   const ownerById = new Map(owners.map((o) => [o.id, toUserCard(o)]));
   const fallbackOwner = (id: string): UserCard => ({ id, handle: "unknown", displayName: null, avatarUrl: null });

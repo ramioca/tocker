@@ -2,10 +2,11 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AgentBuilder } from "@/components/agents/builder/agent-builder";
 import { dataSources, llmKeys, viewerSession } from "@/components/common/data-access";
+import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
 
 export const metadata: Metadata = {
   title: "New agent",
-  description: "Identity, brain, data, universe, risk, schedule — then it trades on its own.",
+  description: "A name, a key and a strategy. It starts on paper and asks before each trade.",
 };
 
 export default async function NewAgentPage() {
@@ -13,5 +14,14 @@ export default async function NewAgentPage() {
   if (!session) redirect(`/login?next=${encodeURIComponent("/agents/new")}`);
   const [sources, keys] = await Promise.all([dataSources(), llmKeys(session.userId)]);
 
-  return <AgentBuilder userId={session.userId} sources={sources} initialKeys={keys} />;
+  // The fee is read here, on the server, and handed down: the builder states it before
+  // the first fill, and a figure typed into a component would outlive a change to it.
+  return (
+    <AgentBuilder
+      userId={session.userId}
+      sources={sources}
+      initialKeys={keys}
+      feeUsd={feeEnabled() ? platformFeeUsd() : 0}
+    />
+  );
 }

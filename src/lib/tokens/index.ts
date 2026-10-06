@@ -485,8 +485,21 @@ export async function getTokenScore(input: GetTokenScoreInput): Promise<TokenSco
   return score;
 }
 
-/** The compact form frozen onto `trades.scoreSnapshot`. */
-export function toTradeScore(score: TokenScore): TradeScore {
+/**
+ * The compact form frozen onto `trades.scoreSnapshot`, or null when there is nothing to
+ * freeze.
+ *
+ * A reading no provider answered ({@link isNoData}) is an outage, not a verdict. It is
+ * kept out of the cache and the history for that reason, and the trade row is the one
+ * place it would be permanent and public: a stop loss that fired while the free
+ * providers were rate-limited used to be published as "0 · Avoid at exit". Such a fill
+ * is stored with no score instead, which every reader already shows as "not scored".
+ *
+ * Only the record changes. What the caller does with the reading is the caller's: a buy
+ * is still refused on it, and an exit rule still ignores a `low_confidence` score.
+ */
+export function toTradeScore(score: TokenScore): TradeScore | null {
+  if (isNoData(score)) return null;
   return {
     total: score.total,
     verdict: score.verdict,

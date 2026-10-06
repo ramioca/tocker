@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { cache, Suspense } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { canonicalSlug } from "@/app/(client)/(app)/agents/[slug]/canonical-slug";
@@ -50,10 +50,18 @@ type Params = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
+/**
+ * The agent as this viewer may see it. `cache` so the metadata and the page share one
+ * load: the detail read is some twenty queries and, for a live agent, a wallet read over
+ * RPC, and it used to run twice for every view. Keyed on the slug and the viewer, which
+ * are all the read depends on.
+ */
+const loadAgent = cache((slug: string, viewerId: string | null) => agentBySlug(slug, viewerId));
+
 export async function generateMetadata({ params, searchParams }: Params): Promise<Metadata> {
   const slug = await canonicalSlug(params, "", searchParams);
   const session = await viewerSession();
-  const agent = await agentBySlug(slug, session?.userId ?? null);
+  const agent = await loadAgent(slug, session?.userId ?? null);
   if (!agent) return { title: "Agent not found" };
   return {
     title: agent.name,
@@ -64,7 +72,7 @@ export async function generateMetadata({ params, searchParams }: Params): Promis
 export default async function AgentPage({ params, searchParams }: Params) {
   const slug = await canonicalSlug(params, "", searchParams);
   const session = await viewerSession();
-  const agent = await agentBySlug(slug, session?.userId ?? null);
+  const agent = await loadAgent(slug, session?.userId ?? null);
   if (!agent) notFound();
 
   const [equity, analytics, proposals, status, paused] = await Promise.all([
@@ -130,7 +138,8 @@ export default async function AgentPage({ params, searchParams }: Params) {
                 />
               </section>
 
-              <section>
+              {/* The id is the target of the live checklist's "sell them on the agent page" link. */}
+              <section id="positions">
                 <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                   Positions
                 </h2>

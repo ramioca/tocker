@@ -7,7 +7,7 @@ import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { universeKey } from "@/lib/tokens";
 import { recordScore } from "@/lib/tokens/history";
 import type { TokenScore } from "@/server/types";
-import { getTokenPage, myAgentsForBlocklist, searchTokens } from "./tokens";
+import { getTokenPage, getTokenTrade, myAgentsForBlocklist, searchTokens } from "./tokens";
 
 const ADDRESS = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
 const TOKEN_ID = `solana:${ADDRESS}`;
@@ -420,5 +420,216 @@ describe("myAgentsForBlocklist", () => {
   it("never returns someone else's agents", async () => {
     const rows = await myAgentsForBlocklist(privateAgent.userId, "solana", ADDRESS);
     expect(rows.map((r) => r.id)).toEqual([privateAgent.agentId]);
+  });
+});
+
+/**
+ * One Base contract, one page. Every row about a token is keyed by `chain:address` as
+ * its writer spelled the address: discovery lowercases, the known-token list and a
+ * trade from a block explorer's link use the checksum. An EVM address means the same in
+ * any case, so the page reads all of them, and says the same thing whatever the URL.
+ *
+ * Last in the file on purpose: these rows would otherwise show up in `searchTokens`.
+ */
+describe("getTokenPage for a Base contract, in any letter-case", () => {
+  const CHECKSUM = "0x940181a94A35A4569E4529A3CDfB74e38FD98631";
+  const LOWER = CHECKSUM.toLowerCase();
+  const UPPER = `0x${CHECKSUM.slice(2).toUpperCase()}`;
+  const SPELLINGS = [CHECKSUM, LOWER, UPPER];
+  const publicKey = universeKey(DEFAULT_AGENT_CONFIG.universe);
+
+  // A second contract whose rows are split across two stored spellings.
+  const SPLIT = "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed";
+  const SPLIT_LOWER = SPLIT.toLowerCase();
+
+  async function insertBaseToken(address: string, symbol: string, price: string | null) {
+    await db.insert(schema.tokens).values({
+      id: `base:${address}`,
+      chain: "base",
+      address,
+      symbol,
+      name: symbol,
+      decimals: 18,
+      lastPriceUsd: price,
+      priceUpdatedAt: price === null ? null : new Date(NOW),
+    });
+  }
+
+  async function insertBaseTrade(over: {
+    id: string;
+    tokenId: string;
+    agentId: string;
+    ownerId: string;
+    side: "buy" | "sell";
+    amountUsd: string;
+    createdAt: Date;
+  }) {
+    await db.insert(schema.trades).values({
+      id: over.id,
+      agentId: over.agentId,
+      ownerId: over.ownerId,
+      chain: "base",
+      side: over.side,
+      tokenId: over.tokenId,
+      quoteTokenId: USDC_ID,
+      amountToken: "100.000000000000",
+      amountUsd: over.amountUsd,
+      priceUsd: "0.500000000000",
+      feeUsd: "0.000000",
+      status: "filled",
+      isPaper: true,
+      rationale: "because the score held up",
+      scoreSnapshot: null,
+      createdAt: over.createdAt,
+      filledAt: over.createdAt,
+    });
+  }
+
+  beforeAll(async () => {
+    // The book knows AERO by its checksum spelling: one holder, one fill.
+    await insertBaseToken(CHECKSUM, "AERO", "1.000000");
+    await db.insert(schema.positions).values({
+      agentId: publicAgent.agentId,
+      tokenId: `base:${CHECKSUM}`,
+      amountToken: "100.000000000000",
+      avgCostUsd: "0.500000000000",
+      realizedPnlUsd: "0.000000",
+      openedAt: new Date(NOW - 2 * DAY),
+    });
+    await insertBaseTrade({
+      id: "trade_aero_buy",
+      tokenId: `base:${CHECKSUM}`,
+      agentId: publicAgent.agentId,
+      ownerId: publicAgent.userId,
+      side: "buy",
+      amountUsd: "50.000000",
+      createdAt: new Date(NOW - 2 * DAY),
+    });
+    // Discovery scored it under the lowercase spelling, as it does for every Base token.
+    const discovered = score({
+      tokenId: `base:${LOWER}`,
+      chain: "base",
+      address: LOWER,
+      symbol: "AERO",
+      total: 79,
+      scoredAt: new Date(NOW - 5 * 60_000).toISOString(),
+    });
+    await writeScoreRow(discovered, publicKey);
+    await recordScore({ ...discovered, total: 72, scoredAt: new Date(NOW - 1 * DAY).toISOString() }, publicKey);
+    await recordScore(discovered, publicKey);
+
+    // DEGEN: a row under each spelling, the same agent holding and trading under both.
+    await insertBaseToken(SPLIT, "DEGEN", null);
+    await insertBaseToken(SPLIT_LOWER, "DEGEN", "2.000000");
+    await db.insert(schema.positions).values([
+      {
+        agentId: publicAgent.agentId,
+        tokenId: `base:${SPLIT}`,
+        amountToken: "10.000000000000",
+        avgCostUsd: "1.000000000000",
+        realizedPnlUsd: "0.000000",
+        openedAt: new Date(NOW - 3 * DAY),
+      },
+      {
+        agentId: publicAgent.agentId,
+        tokenId: `base:${SPLIT_LOWER}`,
+        amountToken: "30.000000000000",
+        avgCostUsd: "2.000000000000",
+        realizedPnlUsd: "0.000000",
+        openedAt: new Date(NOW - 1 * DAY),
+      },
+    ]);
+    await insertBaseTrade({
+      id: "trade_degen_checksum",
+      tokenId: `base:${SPLIT}`,
+      agentId: publicAgent.agentId,
+      ownerId: publicAgent.userId,
+      side: "buy",
+      amountUsd: "10.000000",
+      createdAt: new Date(NOW - 3 * DAY),
+    });
+    await insertBaseTrade({
+      id: "trade_degen_lower",
+      tokenId: `base:${SPLIT_LOWER}`,
+      agentId: publicAgent.agentId,
+      ownerId: publicAgent.userId,
+      side: "buy",
+      amountUsd: "60.000000",
+      createdAt: new Date(NOW - 1 * DAY),
+    });
+    // Two public readings, one per spelling: the newer one is the token's score.
+    await writeScoreRow(
+      score({ tokenId: `base:${SPLIT}`, chain: "base", address: SPLIT, symbol: "DEGEN", total: 70, scoredAt: new Date(NOW - 2 * DAY).toISOString() }),
+      publicKey,
+    );
+    await writeScoreRow(
+      score({ tokenId: `base:${SPLIT_LOWER}`, chain: "base", address: SPLIT_LOWER, symbol: "DEGEN", total: 64, scoredAt: new Date(NOW - 60_000).toISOString() }),
+      publicKey,
+    );
+  });
+
+  it("is the same page for the checksum, lowercase and uppercase spellings", async () => {
+    for (const spelling of SPELLINGS) {
+      const page = await getTokenPage("base", spelling);
+      // The stored row, not a placeholder built from the URL.
+      expect(page!.token).toMatchObject({ id: `base:${CHECKSUM}`, address: CHECKSUM, symbol: "AERO" });
+      expect(page!.holders.map((h) => h.agent.id)).toEqual([publicAgent.agentId]);
+      // 100 tokens at cost 0.50, marked at 1.00.
+      expect(page!.holders[0].valueUsd).toBeCloseTo(100, 6);
+      expect(page!.holders[0].unrealizedPnlPct).toBeCloseTo(100, 6);
+      expect(page!.recentTrades.map((t) => t.id)).toEqual(["trade_aero_buy"]);
+      expect(page!.stats).toEqual({ agentBuys30d: 1, agentSells30d: 0, netFlowUsd30d: 50 });
+    }
+  });
+
+  it("shows the score discovery wrote under lowercase on the checksummed page too", async () => {
+    // The page that read "Not scored yet" for a token agents held.
+    for (const spelling of SPELLINGS) {
+      const page = await getTokenPage("base", spelling);
+      expect(page!.score?.total).toBeCloseTo(79, 2);
+      expect(page!.history.map((p) => p.total)).toEqual([72, 79]);
+      expect(page!.marketFacts?.liquidityUsd).toBe(1_250_000);
+    }
+  });
+
+  it("reads a contract stored under two spellings as one token", async () => {
+    for (const spelling of [SPLIT, SPLIT_LOWER]) {
+      const page = await getTokenPage("base", spelling);
+      // The checksum row names the token, whichever spelling asked.
+      expect(page!.token.id).toBe(`base:${SPLIT}`);
+      // One line for the agent: 10 at $1 and 30 at $2 is 40 tokens costing $70, and the
+      // only mark on record ($2, on the lowercase row) values them at $80.
+      expect(page!.holders).toHaveLength(1);
+      expect(page!.holders[0].valueUsd).toBeCloseTo(80, 6);
+      expect(page!.holders[0].unrealizedPnlPct).toBeCloseTo((10 / 70) * 100, 6);
+      expect(page!.recentTrades.map((t) => t.id)).toEqual(["trade_degen_lower", "trade_degen_checksum"]);
+      expect(page!.stats).toEqual({ agentBuys30d: 2, agentSells30d: 0, netFlowUsd30d: 70 });
+      // The newer of the two public readings, not whichever the URL happened to match.
+      expect(page!.score?.total).toBeCloseTo(64, 2);
+    }
+  });
+
+  it("finds a fill linked by id under either spelling of its token", async () => {
+    const page = await getTokenPage("base", SPLIT);
+    const found = await getTokenTrade("trade_degen_lower", page!.token, null);
+    expect(found?.id).toBe("trade_degen_lower");
+    // Still only this token's fills.
+    expect(await getTokenTrade("trade_aero_buy", page!.token, null)).toBeNull();
+  });
+
+  it("keeps a Solana mint exact: base58 is case-sensitive", async () => {
+    const page = await getTokenPage("solana", ADDRESS.toLowerCase());
+    expect(page!.token.id).toBe(`solana:${ADDRESS.toLowerCase()}`);
+    expect(page!.holders).toEqual([]);
+    expect(page!.recentTrades).toEqual([]);
+    expect(page!.score).toBeNull();
+  });
+
+  it("still builds a page for a Base contract nobody has seen", async () => {
+    const unseen = "0x1111111111111111111111111111111111111111";
+    const page = await getTokenPage("base", unseen);
+    expect(page!.token).toMatchObject({ id: `base:${unseen}`, chain: "base" });
+    expect(page!.score).toBeNull();
+    expect(page!.holders).toEqual([]);
   });
 });

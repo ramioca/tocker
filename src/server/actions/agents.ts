@@ -5,12 +5,14 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import { agentRuns, agents, getDb, llmKeys, posts, wallets } from "@/db";
 import { MAX_AGENT_NAME, agentConfigSchema, type AgentConfigInput } from "@/lib/agent/config";
 import { isLlmMock } from "@/lib/agent/mock-model";
+import { RUN_REFUSED_WHILE_PAUSED } from "@/lib/agent/run-gate";
 import { getSession } from "@/lib/auth";
-import { applyAgentBudgetPolicy, createAgentWallets } from "@/lib/wallets";
-import { describeStranded } from "@/lib/wallets/funding";
+import { isTradingPaused } from "@/lib/security/kill-switch";
+import { applyAgentBudgetPolicy, createAgentWallets, getAgentWallets } from "@/lib/wallets";
+import { chainLabelFor, describeStranded } from "@/lib/wallets/funding";
 import { readStrandedHoldings } from "@/lib/wallets/stranded";
 import { newId, uniqueSlug } from "@/server/queries/_shared";
-import type { ActionResult, AgentStatus } from "@/server/types";
+import type { ActionResult, AgentStatus, Chain } from "@/server/types";
 import { slowDown } from "./_shared";
 
 /** The same constant as the `maxLength` on the builder's and the settings form's inputs. */
@@ -26,7 +28,12 @@ const MAX_PAPER_STARTING_USD = 10_000_000;
 /** What an owner may set by hand; `error` is only ever set by the run loop. */
 const SETTABLE_STATUSES: ReadonlySet<string> = new Set(["draft", "active", "paused"]);
 
-/** Shared by create and update, so the two paths cannot drift apart on a bound. */
+/**
+ * Checked once, in `createAgent`, which is the only place the balance is set.
+ * `updateAgent` does not take it: paper cash is the starting balance minus net buys, so
+ * rewriting it on an agent that has traded rewrites its public PnL and its place on the
+ * leaderboard.
+ */
 function checkPaperStartingUsd(value: unknown): string | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return "Paper starting balance must be positive";
@@ -106,10 +113,6 @@ function revalidateAgent(slug?: string, handle?: string) {
 export async function createAgent(input: CreateAgentInput): Promise<ActionResult<{ id: string; slug: string }>> {
   const session = await getSession();
   if (!session) return fail("Sign in to create an agent");
-  // Every agent gets real wallets and a USDC account the platform pays rent for.
-  if (!limiter.consume(`agent:create:${session.userId}`, RATE_LIMITS.agentCreate).ok) {
-    return fail("That's a lot of new agents in an hour — try again in a little while.");
-  }
 
   const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!name || name.length < 2) return fail("Give your agent a name");
@@ -135,7 +138,7 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
     return fail(`You have ${MAX_AGENTS_PER_USER} agents, the most one account can hold. Delete one to make room.`);
   }
 
-  // The durable limit. The hourly one above lives in this process's memory and the cap
+  // The durable limit. The hourly one below lives in this process's memory and the cap
   // on agents held is reset by deleting one; this counts the wallets creations left
   // behind, which no delete removes.
   const [recent] = await db
@@ -168,6 +171,21 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
   const paperProblem = checkPaperStartingUsd(paperStartingUsd);
   if (paperProblem) return fail(paperProblem);
 
+  // The hourly allowance, taken last: every agent gets real wallets and a USDC account
+  // the platform pays rent for, so what counts is a request about to make them, not one
+  // the form was always going to refuse. It is also the only thing in front of a burst:
+  // the daily count above cannot see a creation whose wallet rows are not written yet.
+  const hourlyKey = `agent:create:${session.userId}`;
+  const hourly = limiter.consume(hourlyKey, RATE_LIMITS.agentCreate);
+  if (!hourly.ok) {
+    const minutes = Math.ceil(hourly.retryAfterSeconds / 60);
+    return fail(
+      `You've tried to create an agent ${RATE_LIMITS.agentCreate.limit} times this hour. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
+    );
+  }
+
+  // Once the wallets exist the attempt has cost something, and the daily count has it.
+  let walletsMade = false;
   try {
     await db.insert(agents).values({
       id,
@@ -186,6 +204,7 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
     });
 
     await createAgentWallets({ agentId: id, userId: session.userId, name, chains: config.chains });
+    walletsMade = true;
 
     // Wallet-layer budget, defaulted to the app-level trade cap: even a compromised
     // run loop cannot move more USDC per transaction than the policy allows. Failure
@@ -210,6 +229,9 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
       body: input.tagline?.trim() || `Deployed ${name}.`,
     });
   } catch (err) {
+    // The sentence below asks for another try, so an attempt that made no wallets is
+    // handed back: retrying through an outage, as told, must not use up the hour.
+    if (!walletsMade) limiter.refund(hourlyKey);
     await db.delete(agents).where(eq(agents.id, id));
     // The raw text is a Postgres or Privy error; it belongs in the log, not a toast.
     console.error("[createAgent]", err);
@@ -218,6 +240,43 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
 
   revalidateAgent(slug, session.handle);
   return { ok: true, data: { id, slug } };
+}
+
+/**
+ * Makes the wallet for any chain a saved config names that the agent has none on.
+ *
+ * `createAgent` makes one wallet per chain the agent starts with, and nothing made one
+ * for a chain switched on later: the live checklist then failed on "No wallet on Base"
+ * with a fix link that led nowhere, and an agent already live failed every run for it.
+ * It also mends an agent already in that state, the next time its settings are saved.
+ *
+ * Bounded three ways. A chain that has a wallet row is never given another, so an agent
+ * ends with at most one per chain however often a chain is toggled. One attempt a minute
+ * per agent in this process. And `existingAgent` hands Privy an idempotency key, so two
+ * saves that both get past the first check are given the same wallet, not one each.
+ */
+async function ensureChainWallets(input: {
+  agentId: string;
+  userId: string;
+  name: string;
+  chains: Chain[];
+}): Promise<{ ok: true; created: boolean } | { ok: false; error: string }> {
+  const existing = await getAgentWallets(input.agentId);
+  const missing = [...new Set(input.chains)].filter((chain) => !existing.some((w) => w.chain === chain));
+  if (missing.length === 0) return { ok: true, created: false };
+
+  const refusal = `Could not create the ${missing.map(chainLabelFor).join(" and ")} wallet${missing.length === 1 ? "" : "s"}, so the change was not saved. Try again in a minute.`;
+  if (!limiter.consume(`agent:wallet-add:${input.agentId}`, RATE_LIMITS.agentWalletAdd).ok) {
+    return { ok: false, error: refusal };
+  }
+  try {
+    await createAgentWallets({ ...input, chains: missing, existingAgent: true });
+    return { ok: true, created: true };
+  } catch (err) {
+    // A Privy or Postgres error: for the log, like the one in `createAgent`.
+    console.error("[updateAgent] could not create a wallet", err);
+    return { ok: false, error: refusal };
+  }
 }
 
 export async function updateAgent(id: string, input: Partial<CreateAgentInput>): Promise<ActionResult> {
@@ -248,11 +307,7 @@ export async function updateAgent(id: string, input: Partial<CreateAgentInput>):
     patch.avatarSeed = seed || null;
   }
   if (input.isPublic !== undefined) patch.isPublic = input.isPublic === true;
-  if (input.paperStartingUsd !== undefined) {
-    const paperProblem = checkPaperStartingUsd(input.paperStartingUsd);
-    if (paperProblem) return fail(paperProblem);
-    patch.paperStartingUsd = input.paperStartingUsd.toFixed(2);
-  }
+  // `input.paperStartingUsd` is not read: see `checkPaperStartingUsd`. No form sends it.
   if (input.llmKeyId !== undefined) {
     if (input.llmKeyId) {
       const [key] = await db
@@ -275,11 +330,25 @@ export async function updateAgent(id: string, input: Partial<CreateAgentInput>):
     }
   }
 
+  // After every check and before the save, so a chain is never on without its wallet.
+  let walletAdded = false;
+  if (patch.config) {
+    const wallet = await ensureChainWallets({
+      agentId: id,
+      userId: agent.ownerId,
+      name: patch.name ?? agent.name,
+      chains: patch.config.chains,
+    });
+    if (!wallet.ok) return fail(wallet.error);
+    walletAdded = wallet.created;
+  }
+
   await db.update(agents).set(patch).where(eq(agents.id, id));
 
   // Keep the wallet-layer cap from drifting below the app-level trade cap when the
-  // owner raises it. Best-effort: the app-level risk guard still holds if Privy fails.
-  if (patch.config && patch.config.risk.maxTradeUsd !== agent.walletBudget?.perTxUsd) {
+  // owner raises it, and put the same cap on a wallet that was just made. Best-effort:
+  // the app-level risk guard still holds if Privy fails.
+  if (patch.config && (walletAdded || patch.config.risk.maxTradeUsd !== agent.walletBudget?.perTxUsd)) {
     try {
       const walletBudget = await applyAgentBudgetPolicy({
         agentId: id,
@@ -325,6 +394,13 @@ export async function deleteAgent(id: string): Promise<ActionResult> {
   const [agent] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
   if (!agent) return fail("Agent not found");
   if (agent.ownerId !== session.userId) return fail("You do not own this agent");
+
+  // Its fee rows are deleted with it, so what it owes Tocker is collected now: the
+  // ordinary sweep, whatever the batch threshold. Best effort (it never throws) and
+  // never a refusal: fees the sweep cannot reach are let go rather than leave an agent
+  // that can be neither emptied nor deleted.
+  const { collectFeesOwed } = await import("@/lib/platform/withdrawal-fees");
+  await collectFeesOwed(agent);
 
   // Deletion is irreversible and there is no in-app path to a deleted agent's
   // wallet, so refuse while it still holds anything the owner can take out first —
@@ -375,6 +451,9 @@ export async function triggerRun(id: string): Promise<ActionResult<{ runId: stri
   if (!agent) return fail("Agent not found");
   if (agent.ownerId !== session.userId) return fail("You do not own this agent");
   if (agent.status === "draft") return fail("Activate the agent before running it");
+  // The kill switch covers a run started by hand too: it could place no buy, so all it
+  // would do is spend the owner's model tokens. Exits do not wait for a run.
+  if (await isTradingPaused(agent.ownerId)) return fail(RUN_REFUSED_WHILE_PAUSED);
   // The page disables Run now without a key, but a stale page or a direct call would
   // otherwise start a run that can only fail.
   if (!agent.llmKeyId && !isLlmMock()) return fail("Attach an LLM key before running this agent");

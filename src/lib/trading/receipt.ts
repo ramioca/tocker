@@ -18,8 +18,14 @@
  *    and has nowhere to put, the strategy prompt, the universe thresholds, the
  *    data-source list or the transcript. That is a property of the *shape*, not of
  *    the callers' discipline: see the test.
+ *  - **One part of it is the owner's.** A component the agent paid for (`sentiment`,
+ *    `smartMoney`) is stored when it carried the score, because the owner's receipt
+ *    should say why the entry scored what it did. Anyone else is handed
+ *    {@link publicReceipt}, which leaves those rows out, exactly as the public trade
+ *    row nulls them. `receiptsFor` (src/server/queries/trading.ts) is the one reader
+ *    and applies it unless the viewer owns the agent.
  *
- * Everything except {@link saveReceipt} is pure.
+ * Everything except {@link saveReceipt} and the two readers is pure.
  */
 import { eq, inArray } from "drizzle-orm";
 import { getDb, tradeReceipts } from "@/db";
@@ -81,10 +87,12 @@ const COMPONENT_LABELS: Record<string, string> = {
 /**
  * The two or three components that carried the score, strongest first.
  *
- * Components only — never a threshold, never a gate, never which sources were bought.
- * "Safety 92, Liquidity 88" is a fact about the token; "above your liquidity floor of
- * $15,000" is a fact about the operator's strategy and does not belong on a public
- * document.
+ * Components only — never a threshold, never a gate. "Safety 92, Liquidity 88" is a
+ * fact about the token; "above your liquidity floor of $15,000" is a fact about the
+ * operator's strategy and does not belong on a public document.
+ *
+ * A paid component can be one of them, and that row does say a source was bought, so
+ * this list is the owner's view. Everyone else reads it through {@link publicReceipt}.
  */
 export function scoreReasons(
   components: Partial<ScoreComponents> | null | undefined,
@@ -99,6 +107,24 @@ export function scoreReasons(
     )
     .sort((a, b) => b.value - a.value)
     .slice(0, Math.max(0, limit));
+}
+
+/**
+ * Score components that are non-null only because the agent bought that source. The same
+ * two `visibleScore` (src/server/queries/visibility.ts) nulls on the public trade row.
+ */
+const PAID_REASON_KEYS: ReadonlySet<string> = new Set(["sentiment", "smartMoney"]);
+
+/**
+ * The receipt as anyone but the trade's owner may read it: the same document without the
+ * score rows a paid source produced. Which sources an operator buys is theirs, and
+ * "Smart money 91" on a public receipt says one was bought.
+ *
+ * Reads the list as stored JSON that could be missing, so one odd row cannot fail a page.
+ */
+export function publicReceipt(receipt: TradeReceiptData): TradeReceiptData {
+  const reasons = Array.isArray(receipt.scoreReasons) ? receipt.scoreReasons : [];
+  return { ...receipt, scoreReasons: reasons.filter((reason) => !PAID_REASON_KEYS.has(reason.key)) };
 }
 
 export interface BuildReceiptInput {
@@ -200,7 +226,10 @@ export async function saveReceipt(tradeId: string, agentId: string, receipt: Tra
   }
 }
 
-/** One receipt by trade id. Null when the trade was never filled (or predates receipts). */
+/**
+ * One receipt by trade id, as stored: paid score components included. Null when the trade
+ * was never filled (or predates receipts). Not for a response; see {@link publicReceipt}.
+ */
 export async function getReceipt(tradeId: string): Promise<TradeReceiptData | null> {
   try {
     const db = await getDb();
@@ -211,7 +240,11 @@ export async function getReceipt(tradeId: string): Promise<TradeReceiptData | nu
   }
 }
 
-/** Receipts for a set of trades, keyed by trade id. Missing ids are simply absent. */
+/**
+ * Receipts for a set of trades, keyed by trade id, as stored: paid score components
+ * included. Missing ids are simply absent. `receiptsFor` is what a page calls; it decides
+ * per trade whether the viewer gets this or {@link publicReceipt}.
+ */
 export async function getReceipts(tradeIds: readonly string[]): Promise<Map<string, TradeReceiptData>> {
   const unique = [...new Set(tradeIds)].filter(Boolean);
   const out = new Map<string, TradeReceiptData>();

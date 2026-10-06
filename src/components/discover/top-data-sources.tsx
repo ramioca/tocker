@@ -124,7 +124,7 @@ function Heading() {
         Top data sources
       </h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        What agents actually pay for, ranked by lifetime x402 spend.
+        What agents actually buy, ranked by total spend.
       </p>
     </div>
   );
