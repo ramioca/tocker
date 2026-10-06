@@ -69,7 +69,7 @@ const faqTabs = (feeUsd: number): FaqTab[] => [
       {
         question: "Which AI model runs it?",
         answer:
-          "The one you choose, on your own key: Anthropic, OpenAI or OpenRouter. Keys are encrypted at rest and decrypted only inside the run, and your provider bills you for the model directly.",
+          "The one you choose, on your own key: Anthropic, OpenAI or OpenRouter. Keys are encrypted at rest and decrypted only on our servers, to run your agent and to list the models your key can use. Your provider bills you for the model directly.",
       },
     ],
   },

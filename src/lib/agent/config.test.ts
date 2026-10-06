@@ -57,6 +57,11 @@ const withModel = (model: string) => ({ ...DEFAULT_AGENT_CONFIG, llm: { ...DEFAU
 
 /** The model id is printed on every public card: it is an id, not a place for text. */
 describe("llm.model", () => {
+  /** New agents start on the current Sonnet; existing ones keep what they have stored. */
+  it("starts a new agent on Claude Sonnet 5.5", () => {
+    expect(DEFAULT_AGENT_CONFIG.llm).toMatchObject({ provider: "anthropic", model: "claude-sonnet-5-5" });
+  });
+
   it("accepts every id the builder offers, and the default", () => {
     const offered = Object.values(DEFAULT_MODELS).flat();
     expect(offered.length).toBeGreaterThan(0);

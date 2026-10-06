@@ -44,7 +44,7 @@ Default mode is **paper**. Live mode requires a funded agent wallet and an expli
 - Drizzle + Postgres (`docker compose up -d`, port 5433). Schema: `src/db/schema.ts` (the contract).
 - Privy: `@privy-io/react-auth` client, `@privy-io/node` server.
 - x402: `@x402/fetch`, and `createX402Client` from `@privy-io/node/x402`.
-- LLM: Vercel AI SDK `ai` v7 with `@ai-sdk/anthropic`, `@ai-sdk/openai`, `@openrouter/ai-sdk-provider`. Default model `claude-sonnet-5`.
+- LLM: Vercel AI SDK `ai` v7 with `@ai-sdk/anthropic`, `@ai-sdk/openai`, `@openrouter/ai-sdk-provider`. Default model `claude-sonnet-5-5`.
 - Validation: zod v4. IDs: `nanoid`. Toasts: sonner. Data fetching in client components: `@tanstack/react-query`.
 
 ## Architecture

@@ -168,9 +168,12 @@ they decided something was wrong.
 
 **LLM keys at rest** — verified, not assumed: `addLlmKey` stores `encryptSecret(key)` from
 `src/lib/crypto.ts` (AES-256-GCM, `base64(iv|tag|ciphertext)`, keyed by `ENCRYPTION_KEY`).
-`decryptSecret` is called in exactly one place in the app — `resolveModel` in
-`src/lib/agent/run.ts`, inside the run loop. The plaintext never reaches a server component,
-an action result, a run transcript or the browser. Only the last four characters are ever
+`decryptSecret` is called for two purposes: in `src/lib/agent/run.ts`, inside the run loop
+(`resolveModel`, and the workspace lookup beside it), and in `listKeyModels`
+(`src/server/actions/users.ts`), which asks Anthropic or OpenAI which models a key can use
+when its owner opens the model picker. That action is owner-only, rate limited, and returns
+model ids and names. The plaintext never reaches a server component, an action result, a run
+transcript or the browser. Only the last four characters are ever
 rendered. Rotation keeps the key's id so agents pointed at it never lose a tick, and
 overwrites the old ciphertext in place.
 

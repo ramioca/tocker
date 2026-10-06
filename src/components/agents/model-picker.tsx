@@ -16,25 +16,33 @@ import {
   type ModelOption,
 } from "@/lib/agent/models";
 import { cn } from "@/lib/utils";
+import { listKeyModels } from "@/server/actions/users";
 
 /**
  * Which model the agent thinks on.
  *
  * A search box over the provider's list rather than a plain select, for two reasons. The
- * lists are long now (OpenRouter's runs to hundreds and is read live), and a provider
- * ships a model faster than a list is edited, so whatever is typed can be used as an id
- * as it stands: nobody waits on a release of this app to try a model their key already
- * reaches. The provider decides whether the id exists; a wrong one fails the first run
- * with the provider's own message.
+ * lists are long now (OpenRouter's runs to hundreds), and a provider ships a model faster
+ * than a list is edited, so whatever is typed can be used as an id as it stands. The
+ * provider decides whether the id exists; a wrong one fails the first run with the
+ * provider's own message.
+ *
+ * Where the list comes from: with a key selected, Anthropic and OpenAI are asked which
+ * models that key can use (`listKeyModels`, on the server; the key never comes here).
+ * OpenRouter's catalogue is public and is read live whatever the key. Without a key, or
+ * when the provider cannot be asked, the built-in list stands in and says so.
  */
 export function ModelPicker({
   id,
   provider,
+  keyId,
   value,
   onChange,
 }: {
   id?: string;
   provider: LlmProvider;
+  /** The saved key the agent will use, when one is chosen: its provider is asked for the list. */
+  keyId?: string | null;
   value: string;
   onChange: (model: string) => void;
 }) {
@@ -59,10 +67,28 @@ export function ModelPicker({
     retry: 1,
   });
 
+  // Anthropic and OpenAI: what this key can use, asked the first time the picker opens
+  // with it. A refusal is an answer too (the built-in list is shown), so it is not retried.
+  const byKey = useQuery({
+    queryKey: ["models", "key", keyId, provider],
+    queryFn: async (): Promise<{ models: ModelOption[] | null; error: string | null }> => {
+      const result = await listKeyModels(keyId ?? "");
+      // A key for another provider (one picked a moment before the provider changed) has
+      // nothing to say about this one's models.
+      return result.ok && result.data.provider === provider && result.data.models.length > 0
+        ? { models: result.data.models, error: null }
+        : { models: null, error: result.ok ? null : result.error };
+    },
+    enabled: open && provider !== "openrouter" && Boolean(keyId),
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+  const keyModels = provider !== "openrouter" && keyId ? (byKey.data?.models ?? null) : null;
+
   const models: readonly ModelOption[] =
     provider === "openrouter"
       ? featuredFirst(openRouter.data?.models ?? DEFAULT_MODELS.openrouter, DEFAULT_MODELS.openrouter)
-      : DEFAULT_MODELS[provider];
+      : (keyModels ?? DEFAULT_MODELS[provider]);
   const rows = filterModels(models, query);
   const typed = typedModelId(models, query);
   const rowCount = rows.length + (typed ? 1 : 0);
@@ -94,7 +120,13 @@ export function ModelPicker({
         : openRouter.data?.live
           ? `${models.length} models that can run an agent, from OpenRouter's own list.`
           : "Couldn't reach OpenRouter's list, so this is a short one. Any model id can be typed."
-      : `Not listed? Type its id exactly as ${PROVIDER_LABELS[provider]} names it.`;
+      : !keyId
+        ? `Pick a key to see every model it can use. Until then this is the built-in list; any model id can be typed.`
+        : byKey.isPending && open
+          ? `Asking ${PROVIDER_LABELS[provider]} what this key can use…`
+          : keyModels
+            ? `${keyModels.length} models this key can use, from ${PROVIDER_LABELS[provider]}.`
+            : `${byKey.data?.error ?? `Couldn't get the list from ${PROVIDER_LABELS[provider]} just now.`} This is the built-in list; any model id can be typed.`;
 
   return (
     <Popover

@@ -412,6 +412,7 @@ function SettingsForm({
             <ModelPicker
               id="settings-llm-model"
               provider={config.llm.provider}
+              keyId={llmKeyId}
               value={config.llm.model}
               onChange={(model) => setConfig((current) => ({ ...current, llm: { ...current.llm, model } }))}
             />

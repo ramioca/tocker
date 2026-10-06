@@ -385,7 +385,8 @@ export function AddKeyInline({
         </div>
       ) : null}
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        Encrypted at rest and decrypted only inside the run loop. It never reaches the browser again.
+        Encrypted at rest. Decrypted only on our servers, when the agent runs and when its model list is
+        loaded. It never reaches the browser again.
         {provider === "anthropic"
           ? " Leave the workspace empty: an organization-level Anthropic key gets its workspace detected automatically."
           : ""}
@@ -547,6 +548,7 @@ export function BrainStep({
           <ModelPicker
             id="llm-model"
             provider={provider}
+            keyId={draft.llmKeyId}
             value={draft.config.llm.model}
             onChange={(model) => updateConfig({ llm: { ...draft.config.llm, model } })}
           />

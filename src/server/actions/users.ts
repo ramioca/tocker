@@ -1,20 +1,22 @@
 "use server";
 import { discoverAnthropicWorkspace, needsWorkspaceHeader } from "@/lib/agent/anthropic-workspace";
+import { listModelsForKey } from "@/lib/agent/key-models";
 import { probeLlmKey } from "@/lib/agent/key-probe";
-import { providerLabel } from "@/lib/agent/models";
+import { providerLabel, type ModelOption } from "@/lib/agent/models";
 import { revalidatePath } from "next/cache";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { agents, getDb, llmKeys, notifications, users } from "@/db";
 import { getSession } from "@/lib/auth";
 import { isAdminEmail } from "@/lib/admin";
 import { DISPLAY_NAME_RESERVED, HANDLE_RESERVED, isReservedHandle, isStaffLikeName } from "@/lib/reserved-handles";
-import { encryptSecret, last4 } from "@/lib/crypto";
+import { decryptSecret, encryptSecret, last4 } from "@/lib/crypto";
 import { recordAudit } from "@/lib/security/audit";
 import { newId } from "@/server/queries/_shared";
 import { countKeylessAgents } from "@/server/queries/users";
 import { mismatchedProvider, wrongProviderOnAdd, wrongProviderOnRotate } from "@/lib/agent/key-prefix";
 import { sanitizePrefs, type NotificationPrefs } from "@/lib/notifications/prefs";
 import type { ActionResult } from "@/server/types";
+import { slowDown } from "./_shared";
 
 /** "an OpenAI", "a Groq": the audit log is read, so it gets the article right. */
 function withArticle(word: string): string {
@@ -177,6 +179,72 @@ export async function addLlmKey(input: {
  * ended with a working key and every agent stopped — fixable only agent by agent. Only
  * agents with no key at all are touched; one already pointed at another key keeps it.
  */
+/** How often one account may ask a provider for a model list. The picker caches it too. */
+const KEY_MODELS_LIMIT = { limit: 20, windowMs: 60_000 } as const;
+/** How long one key's list is served before its provider is asked again. */
+const KEY_MODELS_TTL_MS = 10 * 60_000;
+const KEY_MODELS_CACHE_MAX = 500;
+/** Model lists only, by key id and its last four (so a rotated key is asked afresh). Never a key. */
+const keyModelsCache = new Map<string, { at: number; models: ModelOption[] }>();
+
+/**
+ * The models one of the caller's own keys can use, asked of Anthropic or OpenAI.
+ *
+ * This is the one place outside the run loop where a stored key is decrypted. The
+ * plaintext lives for the length of the provider request inside this function; what
+ * goes back to the browser is model ids, names and list prices. The key is looked up by
+ * id *and* owner, so nobody learns anything through a key that is not theirs, including
+ * whether it exists.
+ */
+export async function listKeyModels(
+  keyId: string,
+): Promise<ActionResult<{ provider: "anthropic" | "openai"; models: ModelOption[] }>> {
+  const session = await getSession();
+  if (!session) return fail("Sign in first");
+  // A public endpoint: the argument is whatever the caller sent.
+  if (typeof keyId !== "string" || keyId.length === 0 || keyId.length > 64) return fail("Key not found");
+  const limited = slowDown("key-models", session.userId, KEY_MODELS_LIMIT);
+  if (limited) return fail(limited);
+
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(llmKeys)
+    .where(and(eq(llmKeys.id, keyId), eq(llmKeys.userId, session.userId)))
+    .limit(1);
+  if (!row) return fail("Key not found");
+  if (row.provider === "openrouter") return fail("OpenRouter's list does not depend on the key");
+
+  const cacheKey = `${row.id}:${row.last4}`;
+  const cached = keyModelsCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < KEY_MODELS_TTL_MS) {
+    return { ok: true, data: { provider: row.provider, models: cached.models } };
+  }
+
+  let result;
+  try {
+    result = await listModelsForKey(row.provider, decryptSecret(row.encryptedKey), row.workspaceId);
+  } catch (err) {
+    // Decryption failed (a missing or changed ENCRYPTION_KEY). Message only, never the blob.
+    console.error("[listKeyModels]", err instanceof Error ? err.message : String(err));
+    return fail("Could not read this key. The built-in list is shown instead.");
+  }
+  if (!result.ok) {
+    return fail(
+      result.reason === "rejected"
+        ? `${providerLabel(row.provider)} no longer accepts this key. Replace it under Settings, LLM API keys.`
+        : `Couldn't get the model list from ${providerLabel(row.provider)} just now.`,
+    );
+  }
+
+  if (keyModelsCache.size >= KEY_MODELS_CACHE_MAX) {
+    const oldest = keyModelsCache.keys().next().value;
+    if (oldest !== undefined) keyModelsCache.delete(oldest);
+  }
+  keyModelsCache.set(cacheKey, { at: Date.now(), models: result.models });
+  return { ok: true, data: { provider: row.provider, models: result.models } };
+}
+
 export async function attachKeyToKeylessAgents(keyId: string): Promise<ActionResult<{ attached: number }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
