@@ -1,6 +1,6 @@
 import { ChevronDown, Cpu, Database, Receipt } from "lucide-react";
 import { formatUsd } from "@/components/common/format";
-import { MODEL_PRICES } from "@/server/queries/money";
+import { resolveModelPrice } from "@/server/queries/money";
 import type { MoneySummary } from "@/server/queries/money";
 import type { CostTotals } from "./cost-totals";
 
@@ -72,6 +72,15 @@ export function CostsNote({
 }) {
   const { live } = summary;
   const paper = scope === "paper";
+  // One row per priced model the agents on this page run, in the order they appear.
+  const pricesInUse = [
+    ...new Map(
+      (paper ? summary.paper : live)
+        .map((agent) => resolveModelPrice(agent.model))
+        .filter((price) => price !== null)
+        .map((price) => [price.label, price] as const),
+    ).values(),
+  ];
   const totals: CostTotals = override ?? {
     feesUsd: summary.totals.feesUsd,
     dataSpendUsd: summary.totals.dataSpendUsd,
@@ -161,14 +170,18 @@ export function CostsNote({
                 hits, so a real invoice is usually lower — and a run taken last week on a different model is priced
                 at today&rsquo;s choice.
               </p>
-              <ul className="tnum flex flex-wrap gap-x-4 gap-y-1 pt-0.5 text-[11px]">
-                {Object.entries(MODEL_PRICES).map(([id, price]) => (
-                  <li key={id}>
-                    {price.label} <span className="text-foreground/70">${price.inputPerMTok}</span> /{" "}
-                    <span className="text-foreground/70">${price.outputPerMTok}</span> per M
-                  </li>
-                ))}
-              </ul>
+              {/* The rates behind this total: the models these agents run, not the whole
+                  price list, which runs to dozens of rows now. */}
+              {pricesInUse.length > 0 ? (
+                <ul className="tnum flex flex-wrap gap-x-4 gap-y-1 pt-0.5 text-[11px]">
+                  {pricesInUse.map((price) => (
+                    <li key={price.label}>
+                      {price.label} <span className="text-foreground/70">${price.inputPerMTok}</span> /{" "}
+                      <span className="text-foreground/70">${price.outputPerMTok}</span> per M
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           </details>
           {totals.unpricedAgents > 0 ? (

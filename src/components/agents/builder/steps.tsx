@@ -3,7 +3,8 @@
 import { useId, useMemo, useState, useTransition } from "react";
 import { AlertTriangle, KeyRound, Plus, Shuffle, X } from "lucide-react";
 import { toast } from "sonner";
-import { DEFAULT_MODELS } from "@/lib/agent/config";
+import { DEFAULT_MODEL_ID } from "@/lib/agent/config";
+import { ModelPicker } from "@/components/agents/model-picker";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { AgentAvatar } from "@/components/common/agent-avatar";
@@ -458,7 +459,6 @@ export function BrainStep({
   feeUsd?: number;
 }) {
   const provider = draft.config.llm.provider;
-  const models = DEFAULT_MODELS[provider];
   const keysForProvider = llmKeys.filter((key) => key.provider === provider);
   /** The chip under the pointer or focus, whose blurb the line under the row shows. */
   const [hintedPreset, setHintedPreset] = useState<string | null>(null);
@@ -532,7 +532,7 @@ export function BrainStep({
                 llm: {
                   ...draft.config.llm,
                   provider: nextProvider,
-                  model: DEFAULT_MODELS[nextProvider][0].id,
+                  model: DEFAULT_MODEL_ID[nextProvider],
                 },
               });
               // The first key this provider has, not none: with one on file the select
@@ -544,10 +544,10 @@ export function BrainStep({
         </Field>
 
         <Field label="Model" htmlFor="llm-model">
-          <SimpleSelect
+          <ModelPicker
             id="llm-model"
+            provider={provider}
             value={draft.config.llm.model}
-            options={models.map((model) => ({ value: model.id, label: model.label }))}
             onChange={(model) => updateConfig({ llm: { ...draft.config.llm, model } })}
           />
         </Field>

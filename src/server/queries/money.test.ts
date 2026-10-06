@@ -217,12 +217,24 @@ describe("combineEquity", () => {
 describe("model pricing", () => {
   it("prices the models the builder offers", () => {
     expect(resolveModelPrice("claude-sonnet-5")).toEqual(MODEL_PRICES["claude-sonnet-5"]);
-    expect(resolveModelPrice("claude-opus-5")?.outputPerMTok).toBe(75);
+    expect(resolveModelPrice("claude-sonnet-5")).toMatchObject({ inputPerMTok: 2, outputPerMTok: 10 });
+    expect(resolveModelPrice("claude-opus-5")?.outputPerMTok).toBe(25);
     expect(resolveModelPrice("gpt-5")?.inputPerMTok).toBe(1.25);
   });
 
+  /** One version is not another at a different price: the old prefix match read 5.5 as 5. */
+  it("prices each version as itself", () => {
+    expect(resolveModelPrice("claude-opus-5-5")).toMatchObject({ label: "Claude Opus 5.5", inputPerMTok: 4, outputPerMTok: 20 });
+    expect(resolveModelPrice("claude-sonnet-5-5")).toMatchObject({ label: "Claude Sonnet 5.5", inputPerMTok: 2, outputPerMTok: 10 });
+    expect(resolveModelPrice("anthropic/claude-opus-5.5")?.inputPerMTok).toBe(4);
+    expect(resolveModelPrice("gpt-5-mini")?.inputPerMTok).toBe(0.25);
+    expect(resolveModelPrice("claude-opus-5-9")).toBeNull();
+  });
+
   it("looks through an OpenRouter vendor prefix", () => {
-    expect(resolveModelPrice("anthropic/claude-sonnet-5")).toEqual(MODEL_PRICES["claude-sonnet-5"]);
+    // OpenRouter resells at the same list price; only the label says where it came from.
+    expect(resolveModelPrice("anthropic/claude-sonnet-5")).toMatchObject({ inputPerMTok: 2, outputPerMTok: 10 });
+    expect(resolveModelPrice("openai/gpt-5")).toEqual(MODEL_PRICES["gpt-5"]);
   });
 
   it("matches a dated snapshot either way round", () => {
@@ -238,16 +250,16 @@ describe("model pricing", () => {
   });
 
   it("charges input and output at their own rates, per million tokens", () => {
-    // 2M in at $3, 0.5M out at $15 → $6 + $7.50.
+    // 2M in at $2, 0.5M out at $10 → $4 + $5.
     expect(estimateModelSpendUsd("claude-sonnet-5", { inputTokens: 2_000_000, outputTokens: 500_000 })).toBeCloseTo(
-      13.5,
+      9,
       10,
     );
     expect(estimateModelSpendUsd("claude-opus-5", { inputTokens: 0, outputTokens: 0 })).toBe(0);
   });
 
   it("never turns a negative count into a credit", () => {
-    expect(estimateModelSpendUsd("claude-sonnet-5", { inputTokens: -5_000_000, outputTokens: 1_000_000 })).toBe(15);
+    expect(estimateModelSpendUsd("claude-sonnet-5", { inputTokens: -5_000_000, outputTokens: 1_000_000 })).toBe(10);
   });
 });
 

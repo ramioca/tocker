@@ -6,11 +6,14 @@ describe("modelLabel", () => {
     expect(modelLabel("claude-haiku-4-5-20251001")).toBe("Claude Haiku 4.5");
     expect(modelLabel("gpt-5")).toBe("GPT-5");
     expect(modelLabel("gpt-5-mini")).toBe("GPT-5 mini");
-    expect(modelLabel("deepseek/deepseek-v4")).toBe("DeepSeek V4");
+    expect(modelLabel("claude-sonnet-5-5")).toBe("Claude Sonnet 5.5");
+    expect(modelLabel("deepseek/deepseek-v4.1-flash")).toBe("DeepSeek V4.1 Flash");
   });
 
-  it("drops the OpenRouter routing note on the chip", () => {
+  it("drops the vendor OpenRouter puts in front of the name", () => {
     expect(modelLabel("anthropic/claude-sonnet-5")).toBe("Claude Sonnet 5");
+    expect(modelLabel("anthropic/claude-opus-5.5")).toBe("Claude Opus 5.5");
+    expect(modelLabel("openai/gpt-6.1-sol")).toBe("GPT-6.1 Sol");
   });
 
   it("still prettifies an id the builder does not offer", () => {
