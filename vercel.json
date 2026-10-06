@@ -7,6 +7,9 @@
     "src/app/api/cron/marks/route.ts": {
       "maxDuration": 300
     },
+    "src/app/api/cron/inference/route.ts": {
+      "maxDuration": 300
+    },
     "src/app/api/agents/[id]/run/route.ts": {
       "maxDuration": 300
     }
@@ -19,6 +22,10 @@
     {
       "path": "/api/cron/tick",
       "schedule": "2-59/5 * * * *"
+    },
+    {
+      "path": "/api/cron/inference",
+      "schedule": "1-59/5 * * * *"
     }
   ]
 }

@@ -16,6 +16,8 @@ Vercel's fair use guidelines restrict Hobby to **non-commercial personal use**. 
 
 Every due agent runs inside the cron invocation that picked it up. With a real model and several tool calls a single run can take tens of seconds, so on a 60s function the batch has to stay small. `CRON_MAX_AGENTS` controls it and defaults to **5**; set it to `2` on Hobby if runs are timing out, and raise `maxDuration` back to 300 in `vercel.json` and the three route files once you are on Pro. Past a few dozen active agents this belongs in a queue rather than a serverless function either way.
 
+A **pay-per-use** run (section 5) is a different size: every model step is a quote, a signature and a paid request, and a run is not started at all unless 250 seconds of its invocation remain. On a 60s function it therefore never starts; it simply stays due. Pay-per-use needs Pro, Fluid compute and the 300s `maxDuration` that `vercel.json` already names.
+
 ## 1. Database
 
 Create a Postgres database and copy its pooled connection string. On Neon: New Project → Connection string → **Pooled connection** (the `-pooler` host), and append `?sslmode=require`.
@@ -55,6 +57,11 @@ key. If you want working previews, give Preview its own database and its own Pri
 | `JUPITER_API_KEY` | Optional, raises Jupiter rate limits |
 | `PLATFORM_FEE_USD` | What each executed fill is charged. Default `0.10`; `0` switches the fee off entirely. A malformed value falls back to the default rather than going free. |
 | `PLATFORM_FEE_SETTLE_MIN_USD` | How much an agent must owe before the guardian sweeps its fees on-chain. Default `1.00`. Lower means more transfers for the same money. |
+| `INFERENCE_USDC` | Pay-per-use thinking (section 5). Unset, empty or anything unrecognised is **off**, and the app behaves exactly as it did before the feature existed. `owner` admits the people in `ADMIN_EMAILS` and the ids in the next row; `on` admits everyone. Do not set it before reading section 5. |
+| `INFERENCE_USDC_USER_IDS` | With `INFERENCE_USDC=owner`: more accounts to admit, comma-separated user ids (`did:privy:…`). Default empty. |
+| `INFERENCE_MAX_STEP_USD` | The most one model step may cost. Default `0.25`, which is also the ceiling: a larger value is read as `0.25`. |
+| `INFERENCE_OWNER_DAILY_USD` | The most one account's agents may spend on thinking in a UTC day. Default `25`. Counted in `inference_budget_days`, so it holds across instances. |
+| `INFERENCE_PLATFORM_DAILY_USD` | The most all agents together may spend on thinking in a UTC day. Default `2`, small on purpose; `0` refuses every payment. This is not Tocker's money (each agent's own wallet pays), it is the ceiling on what a fault could cost every user together in a day. |
 | `ADMIN_EMAILS` | Who may open **Settings → Admin**: a comma-separated list of email addresses, trimmed and matched case-insensitively against the address on the user's row. Unset or blank means **nobody** — there is no bootstrap admin and no "first user wins", so `/settings/admin` 404s for everyone including you until this is set. The address must be one Privy actually linked at signup (a wallet-only account has no email and can never match). Admins see every user's counts, balances, fills and audit events; they do **not** see any strategy, universe rule, data-source list or run transcript, and there is no admin view that reaches one. |
 
 Every one of these is checked by `pnpm preflight` and reported (as booleans only) under
@@ -169,6 +176,12 @@ resets it to zero. This is a speed bump, not a quota — it stops a runaway clie
 the cost of guessing `CRON_SECRET`; it does not stop a distributed attacker. Move the
 buckets to Redis/Upstash behind the same `consume()` signature in
 `src/lib/security/rate-limit.ts` before this matters.
+
+The limits that guard money do not live there. The daily data ceilings are counted from
+`x402_payments`, and every pay-per-use limit (per step, per run, per agent, per account,
+the whole platform, runs started by hand) is a row in `inference_budget_days` or the
+ledger itself, updated inside one transaction before anything is signed. Those hold
+across instances and survive a cold start.
 
 **Audit log** — every sensitive action writes an append-only `audit_events` row with an IP
 and user agent: withdrawals, spend-cap changes, live/paper switches, agent pauses, LLM key
@@ -391,6 +404,272 @@ Test a cron endpoint by hand before trusting the schedule:
 curl -H "Authorization: Bearer $CRON_SECRET" https://your-app.vercel.app/api/cron/marks
 ```
 
+## 5. Pay-per-use thinking (ships switched off)
+
+Read this whole section before setting `INFERENCE_USDC`. The feature was built without
+making a single real payment: everything up to the signature is proven by tests and by
+real unpaid quotes, and nothing after it is. You make the first paid run, by hand, in the
+stages below.
+
+### What it is, and who pays whom
+
+An agent normally thinks on its owner's own LLM key, and the provider bills the owner.
+That is unchanged, it is the default, and it is what the builder recommends.
+
+An agent whose owner picks **Pay per use in USDC** (`config.llm.source = "usdc"`) has no
+key. Each model step is one request to BlockRun, an OpenAI-compatible gateway
+(`https://sol.blockrun.ai/api/v1/chat/completions`). The gateway answers `402` with a
+price; the **agent's own Solana wallet** signs one USDC transfer of exactly that price to
+BlockRun's treasury; BlockRun's fee payer pays the network fee and puts it on chain; the
+answer comes back.
+
+- **The agent's wallet pays BlockRun, directly.** Tocker's platform wallets are not in
+  this path. Tocker fronts nothing, holds nothing, forwards nothing and adds no margin,
+  so nobody ever owes Tocker for thinking and there is no float to fund.
+- **What it costs Tocker** is one Privy signature per step, plus the unpaid quote request
+  each step sends. What Privy charges for a signature, and whether it limits them, is one
+  of the things stage 2 is for.
+- **Solana only.** An agent with no Solana wallet is told to add Solana or use a key.
+- **Paper and live agents alike.** A paper agent trades a notional and still pays for
+  thinking in real USDC from its real wallet.
+- **Privacy.** In this mode the agent's strategy and transcript are sent to BlockRun and
+  the model provider it uses, and the unpaid quote request carries them too. The builder
+  says so where the mode is chosen.
+- **No refunds.** BlockRun's Solana gateway says of itself that non-streaming chat
+  settles optimistically: the payment fires in parallel with the model call, so a `5xx`
+  or an upstream parameter rejection after that point **is charged**. Tocker's runs are
+  non-streaming. When that happens the run stops rather than pay again, and the step is
+  listed for the owner under **Money → Costs → Thinking (pay per use)**, with its
+  transaction. BlockRun's terms: "Payments are non-refundable once settled on-chain".
+
+Where it shows:
+
+- **Money.** An exact "Thinking (pay per use)" line and a per-agent column, read from the
+  ledger; the steps that were paid for and not answered; and, for comparison, what the
+  same tokens would have cost at list price on the owner's own key. None of it appears
+  for an owner who has never paid for a step.
+- **P&L.** What a live agent paid for thinking is a money flow out of its book, like a
+  withdrawal, so its P&L and its place on the leaderboard do not read it as a trading
+  loss. Only payments the ledger holds as paid are netted (`settled`, `paid_no_answer`).
+  One still being checked reads as a few cents of loss until the chain has answered,
+  never as a gain.
+- **Admin.** Settings → Admin → Pay-per-use thinking: today's counters against each cap,
+  the rows still open, what the breakers see, the halt, and the signature test.
+
+### What stands between a fault and a wallet
+
+In the order one step runs (`src/lib/x402/inference-fetch.ts`, reached only through
+`paidFetch.ts`):
+
+1. The request is checked: the one pinned URL, `POST`, the agent's own model, no
+   streaming, `max_tokens` forced to 2048.
+2. One unpaid request fetches the price. Nothing has been signed, so a failure here
+   costs nothing.
+3. The price is checked against **pins that are in code, never taken from the 402**:
+   scheme `exact`, Solana mainnet, real USDC, BlockRun's published treasury
+   (`AQqnMFBwGZEoti85aTVRy8XYpKrho7GaMDx9ZB3CEeKA`), a fee payer that is not the agent.
+   `upto` and `batch-settlement`, which the live 402s also offer, are never selected.
+4. The amount is reserved in the ledger against every cap, in one transaction. A refusal
+   means nothing is signed.
+5. Privy signs. The signed bytes are decoded and checked **before sending**: one USDC
+   transfer of the quoted amount to the pinned account, one memo, nothing else.
+6. The paid request is sent **once**. Whatever happens after that, no second payment is
+   made for the step.
+7. Every five minutes `/api/cron/inference` looks for each unresolved payment on chain by
+   its memo, through `SOLANA_RPC_URL`, and settles the row one way or the other.
+
+### Every switch and cap
+
+| What | Where it is set | Default | Notes |
+|---|---|---|---|
+| `INFERENCE_USDC` | environment | unset = **off** | `off`, `owner` (admins and invited ids), `on` (everyone). A deploy. |
+| `INFERENCE_USDC_USER_IDS` | environment | empty | Read at `owner` only. |
+| `INFERENCE_MAX_STEP_USD` | environment | `0.25` | Also the hard ceiling; a larger value is read as `0.25`. |
+| `INFERENCE_OWNER_DAILY_USD` | environment | `25` | One account, one UTC day. |
+| `INFERENCE_PLATFORM_DAILY_USD` | environment | `2` | Every agent together, one UTC day. `0` refuses everything. |
+| **Admin halt** | database, from Settings → Admin | off | Read before every signature. No deploy. |
+| Breaker pause | database, automatic | none | 3 steps paid (or maybe paid) with no answer, from 2 or more agents, in 15 minutes: 30 minutes. 5 gateway failures or 5 signature failures in 10 minutes: 15 minutes. Any pin mismatch: 30 minutes. Clears itself; an admin can end it early. |
+| Per-step ceiling | code | the lower of the step cap and 2 × Tocker's own estimate + $0.002 | The estimate is made from the model's list price, not from the quote. |
+| Per-run limit | the owner, per agent | what the builder suggests: about twice a typical run on the chosen model (`$0.15` on the default model, `$0.45` on Claude Haiku 4.5) | Range $0.05 to $2. |
+| Per-day limit | the owner, per agent | what the builder suggests: every scheduled run with a quarter to spare, and at least `$3` | Range $0.50 to $50. The builder refuses a schedule whose estimate exceeds it. |
+| Requests per agent per day | code | 600 | |
+| Runs started by hand, per account per day | code | 20 | Counted in the database. |
+| Steps per run | code | the agent's own step limit, at most 20, plus one to wrap up | |
+| Wallet floor | code | `$0.25` | A run does not start unless the wallet's Solana USDC, read from the chain, covers the run limit plus this plus the Tocker fees it owes. On a live agent the run limit plus this floor is also held back from buys, so a trade cannot spend the next run's thinking. It still counts in the agent's cash and equity. |
+| Time | code | no new step after 150 s; no signature with under 75 s left; 15 s for a quote (two free retries), 10 s for the signature, 60 s for the paid request | The paid request has its own clock and is never cut off by the run's. |
+| Schedule a new pay-per-use agent starts on | code | 60 minutes | Every step costs money. |
+
+It also depends on things section 2 already asks for: `SOLANA_RPC_URL` set to a real
+provider (without it nothing is signed, because nothing could be checked), `X402_MOCK`
+unset, the Privy authorization key, and an agent whose **wallet policy has been applied**
+(Wallet budget card in the agent's settings): an agent with no policy is not allowed to
+pay.
+
+The schema is one additive migration, `drizzle/0010_tearful_monster_badoon.sql`: three
+new tables (`inference_payments`, `inference_budget_days`, `inference_control`) and new
+nullable columns on `agents` and `agent_runs`. It runs on deploy like the others. Ledger
+rows have no foreign keys and are never deleted: the record of what a wallet paid
+outlives the agent, the run and the account.
+
+`vercel.json` adds a third cron, `/api/cron/inference` at `1-59/5 * * * *`, protected by
+`CRON_SECRET` like the other two. **The fallback scheduler (`.github/workflows/cron.yml`)
+and `pnpm tick` do not call it.** If either is what actually drives your deployment, add
+the call before stage 2, or unresolved payments are never reconciled.
+
+### Switching it on, in stages
+
+Do not skip a stage, and do not move to the next one with an open question from the last.
+
+**Stage 0. Merged, off.** `INFERENCE_USDC` is unset. Check that Settings → Admin →
+Pay-per-use thinking reads "Switched off", that the builder offers no pay-per-use card,
+and that `curl -H "Authorization: Bearer $CRON_SECRET" https://your-app/api/cron/inference`
+answers `"ok": true` with nothing to do. Nothing else about the app has changed.
+
+**Stage 1. No money.** Still off.
+
+1. `pnpm tsx scripts/inference-quote.ts <your agent's Solana wallet address>`. One unpaid
+   request per model, each quote checked against the pins and against its cap. It cannot
+   pay: it imports no wallet and no signer. Exit code 1 if any model fails.
+2. Settings → Admin → Pay-per-use thinking → **Test a signature (nothing is sent)**, on
+   the Solana wallet of one of **your own** agents. Use an unfunded one: what Privy signs
+   is a real payment until its blockhash expires about a minute later, and an empty
+   wallet cannot pay it whatever happens. Apply its wallet policy first (Wallet budget
+   card), so the signature is made under the policy a paid run will meet. The test
+   fetches a real quote, has Privy sign the payment, checks the signed bytes, and throws
+   the result away. Expect six lines ending in "nothing was sent". This is the first
+   time Privy is asked to sign an x402 payment for an agent wallet: if the policy
+   refuses, stop here.
+3. Do both again some hours later. Two things will differ and both are expected: the fee
+   payer alternates between two gateway addresses, and the same request is quoted a few
+   micro-dollars apart.
+
+Go on only when every model passes and the signature test passes.
+
+**Stage 2. Owner only, a few dollars.**
+
+1. Set `INFERENCE_USDC=owner`. Leave `INFERENCE_PLATFORM_DAILY_USD` at its default of
+   `$2` (or set it to `2` so it is written down) and `INFERENCE_USDC_USER_IDS` empty.
+   Optionally `INFERENCE_MAX_STEP_USD=0.05` for this stage. Redeploy.
+2. On **one** agent of your own: choose Pay per use, keep the default model (Gemini 2.5
+   Flash: about $0.07 a typical run by Tocker's estimate) and the two limits the builder
+   suggests, and set execution mode to `approve`. Send its Solana wallet a few dollars of
+   USDC ($3 is plenty).
+3. Start **one run by hand**. Then wait ten minutes, so the reconciler has passed twice.
+4. Check the ledger against the chain, to the micro-dollar:
+
+   ```bash
+   tsx --env-file-if-exists=.env scripts/inference-audit.ts <agent slug> --hours 24
+   ```
+
+   with `DATABASE_URL` pointing at production and `SOLANA_RPC_URL` set. It is read-only.
+   Exit code 0 means the ledger equals the chain; 1 means it printed a difference; 2
+   means it could not tell. Also compare, by eye, the wallet's USDC on Solscan with the
+   Thinking figure on the Money page. A `settled` row with no transaction hash is one the
+   gateway answered without a receipt: the audit finds it by memo, and it is not proven
+   until it does.
+5. **Write down**, because no code can know these until a payment has been made:
+   - the **receipt header**: which of `PAYMENT-RESPONSE`, `X-Payment-Response` and
+     `X-Payment-Receipt` arrive on a paid answer, and what is in them;
+   - the **settle order**: whether the USDC moves before the answer, alongside it or
+     after (compare the transaction's time with the step's);
+   - the **reroute headers** on an ordinary answer: `X-Fallback-Used`,
+     `X-Fallback-Model`, `x-health-reroute`, `x-served-model`, `x-original-model`,
+     `X-Settlement-Skipped`, and how the body's `model` is spelled. The rule that discards
+     a rerouted answer reads these headers and has never seen a paid one;
+   - **latencies**: quote, signature and paid request per step, and how many steps fit
+     before the 150-second mark;
+   - **Privy**: whether signatures are rate-limited, and what one costs on the invoice;
+   - any `429` on the unpaid quote requests.
+6. Two drills, while only your money is at stake. Throw the admin halt during a run: the
+   next step must stop with nothing signed, and the agent must show "Pay-per-use is
+   paused". Then empty the wallet: the agent must be held with "Add USDC to keep
+   thinking" and you must be told once, not on every tick.
+7. Put the agent on an hourly schedule for 24 hours and run the audit again.
+
+Go on only with zero differences between ledger and chain, nothing stuck open on the
+admin card, and every item in step 5 written down.
+
+**Stage 3. A few invited owners.** Add their ids to `INFERENCE_USDC_USER_IDS` and raise
+`INFERENCE_PLATFORM_DAILY_USD` to `25`. One week. Audit a few wallets every day. Before
+this stage: correct the reroute rule if stage 2 showed the headers arrive differently
+from BlockRun's documentation, pin exact versions of `@x402/core`, `@x402/svm`,
+`@solana/kit`, `@solana/web3.js` and `@privy-io/node` (the pay path depends on their
+transaction layout, and its tests refuse every payment if that changes), and run the
+ledger's concurrency test against a real Postgres
+(`src/lib/x402/inference-ledger.concurrency.test.ts`, with
+`INFERENCE_CONCURRENCY_DATABASE_URL` set; it builds its own schema and drops it). Go on
+only with zero ledger-and-chain differences across the week and unconfirmed payments
+under 1%.
+
+**Stage 4. Everyone.** `INFERENCE_USDC=on`, and raise `INFERENCE_PLATFORM_DAILY_USD` by
+hand (`250` to begin with). At `on` the landing page's FAQ changes two answers ("Which AI
+model runs it?" and "What do I need to start?") to say an agent can pay per use: read
+them in `src/components/liquid/defaults.ts` first. The Money page's Costs heading still
+says "Three different bills"; with pay-per-use there are four.
+
+### How to stop it
+
+1. **The admin halt, first.** Settings → Admin → Pay-per-use thinking: type why, press
+   **Halt pay-per-use**. It is one database row read before every signature, so it stops
+   the next step on every server at once, with no deploy. A payment already signed
+   finishes and is recorded. Agents show "Pay-per-use is paused" and look again by
+   themselves every 15 minutes; agents on a key are not touched.
+2. **Then the environment switch.** Unset `INFERENCE_USDC` (or set it to `off`) and
+   redeploy. This is second because a running function keeps the environment it was
+   built with: until the new deployment is live, only the halt stops anything.
+   `INFERENCE_PLATFORM_DAILY_USD=0` also refuses every payment, and is also a deploy.
+3. **Leave the cron running.** `/api/cron/inference` pays for nothing; it is what
+   settles the payments that were in flight when you stopped.
+4. If the admin page itself is down, the halt is one statement:
+
+   ```sql
+   insert into inference_control (id, halted, halt_reason, updated_by)
+   values ('global', true, 'halted by hand', 'sql')
+   on conflict (id) do update
+     set halted = true, halt_reason = excluded.halt_reason,
+         updated_by = excluded.updated_by, updated_at = now();
+   ```
+
+Stopping refunds nothing, and nothing should be deleted: the ledger is the only record
+of what each wallet paid. Clearing the halt is what lets payments move again, so clear it
+only after the audit script agrees with the chain for the wallet you were worried about.
+
+### What is NOT proven until real funds move
+
+- **The paid round trip.** No payment has ever been made. Everything after the signature
+  (the receipt headers, when settlement happens, what a paid answer looks like) comes
+  from BlockRun's documentation and SDK source. Its documented test host did not answer
+  on the day this was built, so there was no way to prove it without real funds.
+- **What the gateway does with a payment when the model fails.** By its own
+  documentation the Solana gateway can charge for a step that then fails (a `5xx`, or an
+  upstream parameter rejection on non-streaming chat). Tocker treats every failure after
+  the paid request left as "paid, or in doubt", never pays twice for it, and lets the
+  chain decide. None of that has been seen happen.
+- **Tool calling on the paid models.** A run is many tool-calling steps. Not one of the
+  five offered models has been run with tools through this gateway, because that needs a
+  payment; two of the five had no measured traffic on the gateway the day they were
+  chosen.
+- **Privy accepting the payment under the live wallet policy.** The policy denies a USDC
+  transfer above the agent's cap and allows the rest, so a payment of a cent should
+  pass. The stage 1 signature test is the first evidence; whether Privy rate-limits or
+  bills per signature is unknown.
+- **The reroute rule.** It discards an answer when the gateway's fallback headers say
+  another model served it. Those headers are documented; none has been seen on a paid
+  answer.
+- **The reconciler against a real chain**, in particular its "not charged" verdict,
+  which gives a cap back and is deliberately strict.
+- **The reserve under real concurrency.** The test that runs twenty reservations at once
+  against a real Postgres is written and has never been executed.
+- **How many steps fit.** Each step adds a quote, a signature and a settlement to the
+  model's own time. A run that reaches its time limit ends cleanly, but it may end
+  before the model is done.
+- **BlockRun's limit on unpaid quotes** from one address, with every agent's steps
+  leaving from Tocker's servers.
+- **BlockRun itself.** Its terms promise no uptime, allow prices to change and wallets to
+  be blocked, and cap its liability at 30 days of what was paid. The company was
+  incorporated in January 2026. If it goes away, every pay-per-use agent is held and its
+  owner is told to switch to a key; nothing is lost but the service.
+
 ## Notes
 
 - Agent runs happen inside the request that triggers them. This is fine at demo scale. Past a few dozen active agents, move the run loop to a queue or a worker rather than a serverless function.
@@ -409,6 +688,7 @@ used to say "gas is sponsored" for all of them. It is not one answer.
 | Withdrawal **from an agent wallet**, and the platform's fee sweep | The agent's own wallet, which is the fee payer on its outgoing transfer. A USDC-only agent holds no SOL, so `withdrawFromAgent` drips from the platform Solana wallet first and waits for it to confirm (`ensureAgentGas`). A platform wallet that cannot drip fails the withdrawal with its own sentence, and leaves fees accrued for the next sweep |
 | The agent's **Solana swap** | Jupiter Ultra goes gasless when the taker holds under ~0.01 SOL and the order is not in manual-slippage mode. When it does not, the **platform Solana wallet** drips `GAS_DRIP_SOL` to the agent and the order is re-fetched (`ensureAgentGas`, `src/lib/wallets/gas.ts`). Privy's `sponsor: true` is not an option here: it only exists on `signAndSendTransaction`, which bypasses Jupiter's `/execute` |
 | The agent's **Base swap** | Privy's swap API |
+| A **pay-per-use thinking payment** (section 5) | The gateway's fee payer, named in its 402. The agent's Solana wallet signs a USDC transfer and needs USDC only, no SOL. A payment whose fee payer is the agent itself is refused before it is signed |
 | An **x402 data payment** | Nobody on our side. Every Solana 402 probed for W7 carries `extra.feePayer` — the facilitator pays — and Base EIP-3009 authorizations are settled by the facilitator too. The platform wallets need USDC, not gas |
 | Opening the agent's USDC **token account** on Solana | The platform Solana wallet, pre-created at `createAgentWallets` so your funding transfer never pays the ~0.00204 SOL rent |
 

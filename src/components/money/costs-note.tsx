@@ -1,7 +1,9 @@
-import { ChevronDown, Cpu, Database, Receipt } from "lucide-react";
-import { formatUsd } from "@/components/common/format";
+import Link from "next/link";
+import { ChevronDown, Cpu, Database, Receipt, Zap } from "lucide-react";
+import { formatCount, formatUsd } from "@/components/common/format";
+import { txExplorerUrl } from "@/lib/tokens/links";
 import { resolveModelPrice } from "@/server/queries/money";
-import type { MoneySummary } from "@/server/queries/money";
+import type { MoneySummary, ThinkingStepRow, ThinkingSummary } from "@/server/queries/money";
 import type { CostTotals } from "./cost-totals";
 
 /**
@@ -15,6 +17,11 @@ import type { CostTotals } from "./cost-totals";
  *
  * The model number is the one estimate on the page and it is labelled as one every time
  * it appears.
+ *
+ * A fourth line, "Thinking (pay per use)", exists only for an owner whose agents have
+ * paid for their own thinking. It is not ours either: the agent's own wallet pays the
+ * model provider directly. It is exact, from the ledger, and it is where a step that
+ * was paid for and never answered is listed, plainly, with its transaction.
  */
 
 function Item({
@@ -47,6 +54,147 @@ function Item({
         <div className="mt-1 space-y-1.5 text-[13px] leading-5 text-muted-foreground">{children}</div>
       </div>
     </li>
+  );
+}
+
+/** "Oct 6, 14:02 UTC". Rendered on the server, so it names its zone instead of guessing the reader's. */
+const stepTime = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "UTC",
+});
+
+function stepWhen(iso: string): string {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? "" : `${stepTime.format(at)} UTC`;
+}
+
+/**
+ * What happened to one step, in our words. The provider's own text is never shown here:
+ * it is a third party's sentence, and this page prints only what the ledger knows.
+ */
+function stepOutcome(step: ThinkingStepRow): string {
+  if (step.state === "checking") return "being checked against the chain";
+  return step.httpStatus ? `paid, no answer (the provider returned ${step.httpStatus})` : "paid, no answer";
+}
+
+function UnansweredSteps({ thinking }: { thinking: ThinkingSummary }) {
+  const total = thinking.unansweredSteps + thinking.checkingSteps;
+  if (thinking.unanswered.length === 0) return null;
+  return (
+    <div className="space-y-1.5">
+      <p className="text-foreground/80">Steps that were paid for and not answered</p>
+      <ul className="tnum space-y-1 text-[12px] leading-5">
+        {thinking.unanswered.map((step) => {
+          const explorer = txExplorerUrl("solana", step.txHash);
+          return (
+            <li key={step.id} className="flex flex-wrap items-baseline gap-x-2">
+              <span className="whitespace-nowrap">{stepWhen(step.at)}</span>
+              {step.agentSlug && step.agentName ? (
+                <Link href={`/agents/${step.agentSlug}`} className="focus-ring rounded text-foreground/80 hover:underline">
+                  {step.agentName}
+                </Link>
+              ) : (
+                <span>a deleted agent</span>
+              )}
+              <span className="font-mono text-[11px]">{step.model}</span>
+              <span className="text-foreground/80">{formatUsd(step.usd)}</span>
+              <span>{stepOutcome(step)}</span>
+              {explorer ? (
+                <a
+                  href={explorer}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="focus-ring rounded text-foreground/80 underline underline-offset-2"
+                >
+                  transaction
+                </a>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      {total > thinking.unanswered.length ? (
+        <p>
+          The {formatCount(thinking.unanswered.length)} most recent of {formatCount(total)}. The amounts above count all
+          of them.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The pay-per-use line. `scopeUsd` is the figure for the agents this note is about (the
+ * live ones, or the paper ones for an account with nothing live), so the four lines add
+ * up to the Costs figure in the headline. What the rest of the account paid is said in
+ * a sentence, not folded into that number.
+ */
+function ThinkingItem({
+  thinking,
+  scopeUsd,
+  paper,
+}: {
+  thinking: ThinkingSummary;
+  scopeUsd: number;
+  paper: boolean;
+}) {
+  const elsewhere = paper ? 0 : thinking.paperUsd;
+  const compare = thinking.ownKey;
+  return (
+    <Item icon={Zap} title="Thinking (pay per use)" amount={formatUsd(scopeUsd)}>
+      <p>
+        What your agents paid for their own model steps: USDC, from each agent&rsquo;s own Solana wallet, straight
+        to BlockRun, the provider that sells them. Tocker does not collect it and adds nothing to it. The figure is
+        exact, every payment the ledger holds as paid, and it is a cost here rather than a loss in the P&amp;L
+        above.
+        {paper ? " Unlike the rest of a paper agent’s book, this is real USDC from its real wallet." : ""}
+      </p>
+      {thinking.unansweredUsd > 0 ? (
+        <p className="tnum">
+          {formatUsd(thinking.unansweredUsd)} of what was paid bought {formatCount(thinking.unansweredSteps)} step
+          {thinking.unansweredSteps === 1 ? "" : "s"} that got no answer. A step that is paid for and then fails is
+          not refunded, and the run stops rather than pay for it twice.
+        </p>
+      ) : null}
+      {thinking.checkingUsd > 0 ? (
+        <p className="tnum">
+          {formatUsd(thinking.checkingUsd)} more was signed for {formatCount(thinking.checkingSteps)} step
+          {thinking.checkingSteps === 1 ? "" : "s"} whose request failed. Whether that money moved is being checked
+          against the chain; it joins the total only if it did.
+        </p>
+      ) : null}
+      <UnansweredSteps thinking={thinking} />
+      {elsewhere > 0 ? (
+        <p className="tnum">
+          Your paper agents paid {formatUsd(elsewhere)} more. A paper agent trades a notional and still pays for
+          its thinking in real USDC, so that amount is on its row in the Paper table and in no total above.
+        </p>
+      ) : null}
+      {thinking.formerAgentsUsd > 0 ? (
+        <p className="tnum">Agents you have since deleted paid {formatUsd(thinking.formerAgentsUsd)} more.</p>
+      ) : null}
+      {thinking.simulatedUsd > 0 ? (
+        <p className="tnum">
+          {formatUsd(thinking.simulatedUsd)} more was simulated and moved no money. It is counted in nothing.
+        </p>
+      ) : null}
+      {compare ? (
+        <p className="tnum">
+          For comparison: the {formatCount(compare.steps)} answered step{compare.steps === 1 ? "" : "s"} that
+          reported {compare.steps === 1 ? "its" : "their"} usage read {formatCount(compare.inputTokens)} tokens and
+          wrote {formatCount(compare.outputTokens)}. At list price on your own API key that is about{" "}
+          {formatUsd(compare.ownKeyUsd)}; paid per use, the same steps cost {formatUsd(compare.paidUsd)}. The first
+          figure is an estimate, made the same way as the model line above.
+          {compare.unpricedSteps > 0
+            ? ` ${formatCount(compare.unpricedSteps)} more step${compare.unpricedSteps === 1 ? "" : "s"} ran on a model with no list price here and ${compare.unpricedSteps === 1 ? "is" : "are"} in neither figure.`
+            : ""}
+        </p>
+      ) : null}
+    </Item>
   );
 }
 
@@ -87,7 +235,10 @@ export function CostsNote({
     dataSpendSimulatedUsd: live.reduce((sum, agent) => sum + agent.dataSpendSimulatedUsd, 0),
     modelSpendUsd: summary.totals.modelSpendUsd,
     unpricedAgents: summary.totals.unpricedAgents,
+    thinkingUsd: summary.totals.thinkingUsd,
   };
+  // Null for an owner who has never paid for a step: nothing about pay-per-use is drawn.
+  const thinking = summary.thinking;
   // Owed fees only exist in a real wallet. A paper book has no cash to deduct them from.
   const accrued = paper ? 0 : live.reduce((sum, agent) => sum + agent.feesAccruedUsd, 0);
   const simulated = totals.dataSpendSimulatedUsd;
@@ -150,9 +301,11 @@ export function CostsNote({
 
         <Item icon={Cpu} title="Model tokens (estimate)" amount={formatUsd(totals.modelSpendUsd)}>
           <p>
-            You bring your own key, so this charge lands on your own Anthropic or OpenAI account and never passes
-            through Tocker. The figure is an <strong>estimate</strong>: each run&rsquo;s recorded input and output
-            tokens at list price, for the model the agent is configured with today.
+            {thinking
+              ? "For the runs that used your own key: the charge lands on your own Anthropic or OpenAI account and never passes through Tocker. "
+              : "You bring your own key, so this charge lands on your own Anthropic or OpenAI account and never passes through Tocker. "}
+            The figure is an <strong>estimate</strong>: each run&rsquo;s recorded input and output tokens at list
+            price, for the model the agent is configured with today.
           </p>
           {/* The method and the price list are for the reader who doubts the number. Native
               <details>, so it costs no client JS and the card stays one screen on a phone. */}
@@ -193,6 +346,8 @@ export function CostsNote({
             </p>
           ) : null}
         </Item>
+
+        {thinking ? <ThinkingItem thinking={thinking} scopeUsd={totals.thinkingUsd} paper={paper} /> : null}
       </ul>
     </div>
   );

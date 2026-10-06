@@ -17,11 +17,13 @@ import { AdminAgentsTable } from "@/components/admin/agents-table";
 import { AdminTradesTable } from "@/components/admin/trades-table";
 import { AdminAuditTable } from "@/components/admin/audit-table";
 import { AdminBalancesTable } from "@/components/admin/balances-table";
+import { InferenceCard } from "@/components/admin/inference-card";
 import { fmtUsd } from "@/lib/money";
 import { formatCount } from "@/components/common/format";
 import {
   getAdminBalances,
   getAdminHeadline,
+  getAdminInference,
   getAdminSeries,
   listAdminAgents,
   listAdminAuditEvents,
@@ -29,6 +31,7 @@ import {
   listAdminTrades,
   listAdminUsers,
   type AdminBalancesSnapshot,
+  type AdminInference,
 } from "@/server/queries/admin";
 
 /**
@@ -81,7 +84,7 @@ export default async function AdminSettingsPage() {
     balanceError = err instanceof Error ? err.message : "Could not read the agent wallets.";
   }
 
-  const [headline, series, requestRows, userRows, agentRows, tradeRows, auditRows, platformHasWallets, mfa] = await Promise.all([
+  const [headline, series, requestRows, userRows, agentRows, tradeRows, auditRows, platformHasWallets, mfa, inference] = await Promise.all([
     getAdminHeadline(),
     getAdminSeries(),
     listAdminSlotRequests(),
@@ -93,6 +96,12 @@ export default async function AdminSettingsPage() {
       .then((rows) => rows.length > 0)
       .catch(() => false),
     getMfaStatus(session.userId),
+    // The pay-per-use card must not take the page down with it either: its tables are new,
+    // and a deployment that has not run their migration yet still has an admin to serve.
+    getAdminInference().then(
+      (data): { data: AdminInference | null } => ({ data }),
+      (): { data: AdminInference | null } => ({ data: null }),
+    ),
   ]);
   const encryptionOk = encryptionConfigured();
 
@@ -105,7 +114,7 @@ export default async function AdminSettingsPage() {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         <p className="mt-1.5 max-w-3xl text-sm text-muted-foreground">
-          Everything on the platform, read-only. You are seeing this because{" "}
+          Everything on the platform. You are seeing this because{" "}
           <span className="font-mono text-foreground">{session.email}</span> is in{" "}
           <span className="font-mono text-foreground">ADMIN_EMAILS</span>. No strategy, universe rule or run transcript
           appears on this page — an admin is not an owner.
@@ -164,6 +173,27 @@ export default async function AdminSettingsPage() {
             </p>
           ) : (
             <AdminBalancesTable snapshot={balances} />
+          )}
+        </SettingsSection>
+
+        {/*
+          Pay-per-use thinking: the one section on this page with a switch that acts at
+          once. Its halt only ever stops payments; switching the feature on is a deploy.
+        */}
+        <SettingsSection
+          id="thinking"
+          title="Pay-per-use thinking"
+          description="Agents with no LLM key buy each model step from BlockRun, in USDC, from their own Solana wallet. Tocker never holds that money. This is what has been spent today against each cap, what is still open, and the switch that stops it."
+          className="min-w-0"
+        >
+          {inference.data === null ? (
+            <p className="rounded-lg border border-destructive/25 bg-destructive/[0.06] px-3 py-4 text-sm text-muted-foreground">
+              Could not read the pay-per-use ledger. If this deployment has not run its latest migration, that is
+              why. To stop payments without this page, set <span className="font-mono text-foreground">INFERENCE_USDC</span>{" "}
+              to <span className="font-mono text-foreground">off</span> and redeploy.
+            </p>
+          ) : (
+            <InferenceCard data={inference.data} />
           )}
         </SettingsSection>
 

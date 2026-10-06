@@ -23,6 +23,7 @@ import { BudgetCard } from "@/components/agents/settings/budget-card";
 import { HashScroll } from "@/components/agents/settings/hash-scroll";
 import { MoneyStrip } from "@/components/agents/settings/money-strip";
 import { isAdminEmail } from "@/lib/admin";
+import { payPerUseAllowedFor } from "@/server/queries/agents";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -68,12 +69,14 @@ export default async function AgentSettingsPage({ params }: Params) {
   // rendering an editor over someone else's strategy.
   if (!agent.config) notFound();
 
-  const [balances, walletBudget, sources, keys, paused] = await Promise.all([
+  const [balances, walletBudget, sources, keys, paused, payPerUseAllowed] = await Promise.all([
     walletBalances(agent.id),
     agentWalletBudget(agent.id),
     dataSources(),
     llmKeys(session.userId),
     accountPaused(session.userId),
+    // The switch is the server's to read; the form only ever sees the answer.
+    payPerUseAllowedFor(session),
   ]);
   const isAdmin = isAdminEmail(session.email);
   const hasRealWallets = balances.some((wallet) => !wallet.walletId.startsWith("paper_"));
@@ -121,6 +124,7 @@ export default async function AgentSettingsPage({ params }: Params) {
           llmKeys={keys}
           accountPaused={paused}
           isAdmin={isAdmin}
+          payPerUseAllowed={payPerUseAllowed}
         />
 
         <div id="wallets" className="scroll-mt-20">

@@ -32,6 +32,7 @@ import { agentRunSteps, agentRuns, agents, getDb, trades, users } from "@/db";
 import type { AgentConfig } from "@/db/schema";
 import { redactSecrets } from "@/lib/security/redact";
 import { isWorkspaceScopeError } from "@/lib/agent/anthropic-workspace";
+import { thinkSource, thinkingModel } from "@/lib/agent/inference";
 import { isLlmMock } from "@/lib/agent/mock-model";
 import { narrateRun, tradeRefusals, type NarratableStep } from "@/lib/agent/narrate";
 import { getPortfolio } from "@/lib/agent/portfolio";
@@ -39,6 +40,7 @@ import { getPlatformWallet, platformUsdcBalances } from "@/lib/platform/wallets"
 import { proposalExpiresAt } from "@/lib/trading/proposals";
 import { MIN_PLATFORM_SOL } from "@/lib/wallets/gas";
 import { getSolBalance } from "@/lib/wallets/solana-rpc";
+import { payPerUseModelLabel, stopFix, stopWords } from "@/components/agents/thinking";
 import type { Db } from "@/db";
 
 // ------------------------------------------------------------------ the shape
@@ -46,6 +48,7 @@ import type { Db } from "@/db";
 export type AgentStatusKind =
   | "pending_proposals"
   | "run_failed"
+  | "thinking_hold"
   | "no_llm_key"
   | "daily_limit"
   | "paused"
@@ -76,6 +79,11 @@ export interface AgentStatusItem {
   /** The sentence under it: the consequence, the provider's own words, or the address. */
   detail: string;
   action?: AgentStatusAction;
+  /**
+   * A second way out, beside the fix. Only a pay-per-use hold has one: whatever stopped
+   * the agent paying for its thinking, its owner's own key is always the other answer.
+   */
+  secondaryAction?: AgentStatusAction;
 }
 
 /** Past this a banner stops being read. */
@@ -208,6 +216,23 @@ export interface StatusRun {
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
   error: string | null;
   summary: string | null;
+  /** Why a pay-per-use run ended early (`agent_runs.stop_reason`). Absent or null on a key run. */
+  stopReason?: string | null;
+}
+
+/** A pay-per-use agent's thinking, as the banner needs it. A key agent has none of this. */
+export interface StatusThinking {
+  /** The model it pays for, by its list name. */
+  model: string;
+  /** The owner's two limits, USD, for the sentences that quote them. */
+  runCapUsd?: number;
+  dayCapUsd?: number;
+  /**
+   * Why it is not being run (`agents.inference_hold`) and when it is looked at again.
+   * Null while it runs normally. The reason is kept as stored: one this build does not
+   * know still shows as a hold.
+   */
+  hold: { reason: string; until: Date | null } | null;
 }
 
 export interface StatusQuietRun {
@@ -230,6 +255,11 @@ export interface StatusInputs {
   status: "draft" | "active" | "paused" | "error";
   mode: "paper" | "live";
   hasLlmKey: boolean;
+  /**
+   * Set for an agent that pays for its own thinking (`config.llm.source` is `"usdc"`);
+   * absent or null for a key agent, whose status is then exactly what it was.
+   */
+  thinking?: StatusThinking | null;
   maxDailyTrades: number;
   maxTradeUsd: number;
   /** `config.universe.maxAgeHours` — null means no ceiling. */
@@ -280,9 +310,28 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
     });
   }
 
+  // ---- block: a pay-per-use agent that is not being run. One row says why, when Tocker
+  // looks again, and the two ways out: the fix for that reason, and the owner's own key.
+  const thinking = input.thinking ?? null;
+  if (thinking?.hold) push(holdItem(thinking, thinking.hold, input.slug, input.now));
+
   // ---- block: the last run failed. A failure for want of a key is dropped when the
   // key is genuinely missing — the no-key row below says the same thing, with the fix.
-  const failure = input.lastRun?.status === "failed" ? classifyRunError(input.lastRun.error) : null;
+  // A pay-per-use run that stopped for a named reason says so in that reason's own
+  // words, and says nothing at all while the hold row above is already saying it.
+  const failedRun = input.lastRun?.status === "failed" ? input.lastRun : null;
+  const stopped = thinking && failedRun?.stopReason ? failedRun.stopReason : null;
+  const failure = failedRun && !stopped ? classifyRunError(failedRun.error) : null;
+  if (failedRun && stopped && thinking && !thinking.hold) {
+    const words = stopWords(stopped, thinkingContext(thinking));
+    push({
+      kind: "run_failed",
+      severity: "block",
+      title: words.title,
+      detail: words.detail,
+      action: { label: "Open the run", href: `/agents/${input.slug}/runs/${failedRun.id}` },
+    });
+  }
   if (failure && !(failure.kind === "no_llm_key" && !input.hasLlmKey)) {
     push({
       kind: "run_failed",
@@ -293,8 +342,9 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
     });
   }
 
-  // ---- block: nothing to think with.
-  if (!input.hasLlmKey) {
+  // ---- block: nothing to think with. Never for a pay-per-use agent: it has no key on
+  // purpose, and telling its owner to attach one would be telling them it is broken.
+  if (!input.hasLlmKey && !thinking) {
     push({
       kind: "no_llm_key",
       severity: "block",
@@ -413,6 +463,65 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
   return items.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]).slice(0, MAX_ITEMS);
 }
 
+/** What the sentences about a stop may quote: the owner's own limits and the model's name. */
+function thinkingContext(thinking: StatusThinking): { runCapUsd?: number; dayCapUsd?: number; model?: string } {
+  return {
+    ...(thinking.runCapUsd === undefined ? {} : { runCapUsd: thinking.runCapUsd }),
+    ...(thinking.dayCapUsd === undefined ? {} : { dayCapUsd: thinking.dayCapUsd }),
+    ...(thinking.model ? { model: thinking.model } : {}),
+  };
+}
+
+/**
+ * The reasons an owner can clear themselves, right now. For these the row adds that a
+ * run started by hand checks again at once; for the rest (a day limit that only midnight
+ * resets, a pause that is Tocker's) pressing Run now would only be told the same thing.
+ */
+const FIXABLE_NOW: ReadonlySet<string> = new Set([
+  "needs_funds",
+  "agent_day_cap",
+  "no_wallet",
+  "no_policy",
+  "model_unavailable",
+]);
+
+/** The scheduler's hold check runs with the cron, every five minutes. */
+const HOLD_CHECK_EVERY = "five minutes";
+
+/**
+ * Pure: the row for a pay-per-use agent that is on hold.
+ *
+ * The title and the first sentence are `describeInferenceStop`'s, the same words the
+ * notification and the run row use. What this adds is the clock (when the agent is
+ * looked at again) and the two actions.
+ */
+export function holdItem(
+  thinking: StatusThinking,
+  hold: NonNullable<StatusThinking["hold"]>,
+  slug: string,
+  now: Date,
+): AgentStatusItem {
+  const words = stopWords(hold.reason, thinkingContext(thinking));
+  const settings = (hash: string) => `/agents/${slug}/settings${hash}`;
+  const fix = words.reason ? stopFix(words.reason) : { label: "Open settings", hash: "#thinking" };
+
+  const wait = hold.until ? hold.until.getTime() - now.getTime() : 0;
+  const again =
+    wait > 0
+      ? `Tocker checks again in ${humanDuration(wait)}.`
+      : `Tocker checks again on its next pass, within ${HOLD_CHECK_EVERY}.`;
+  const byHand = words.reason && FIXABLE_NOW.has(words.reason) ? " Once it is fixed, Run now starts it straight away." : "";
+
+  return {
+    kind: "thinking_hold",
+    severity: "block",
+    title: words.title,
+    detail: `${words.detail} ${again}${byHand}`,
+    action: { label: fix.label, href: "hash" in fix ? settings(fix.hash) : fix.path },
+    secondaryAction: { label: "Use my own key", href: settings("#brain") },
+  };
+}
+
 /**
  * What each refusal label means to an owner, and the Settings section that changes it.
  * No `hash` means no setting fixes it (a bad quote, a provider outage): the run is the
@@ -517,6 +626,7 @@ async function readRuns(db: Db, agentId: string): Promise<{ last: StatusRun | nu
       status: agentRuns.status,
       error: agentRuns.error,
       summary: agentRuns.summary,
+      stopReason: agentRuns.stopReason,
     })
     .from(agentRuns)
     .where(eq(agentRuns.agentId, agentId))
@@ -643,6 +753,9 @@ export async function getAgentStatus(agentId: string, viewerId?: string | null):
         : Promise.resolve(null),
     ]);
 
+    // The mode is the config's own word (`thinkSource`), never a guess from a missing key.
+    const payPerUse = thinkSource(config) === "usdc";
+
     return deriveStatus({
       now,
       slug: agent.slug,
@@ -650,6 +763,14 @@ export async function getAgentStatus(agentId: string, viewerId?: string | null):
       mode: agent.mode,
       // Mock mode runs without a key, so the banner must not say one is missing.
       hasLlmKey: agent.llmKeyId !== null || isLlmMock(),
+      thinking: payPerUse
+        ? {
+            model: payPerUseModelLabel(thinkingModel(config)),
+            runCapUsd: config.llm.usdc?.maxUsdPerRun,
+            dayCapUsd: config.llm.usdc?.maxUsdPerDay,
+            hold: agent.inferenceHold ? { reason: agent.inferenceHold, until: agent.inferenceHoldUntil } : null,
+          }
+        : null,
       maxDailyTrades: config.risk.maxDailyTrades,
       maxTradeUsd: config.risk.maxTradeUsd,
       maxAgeHours: config.universe.maxAgeHours,

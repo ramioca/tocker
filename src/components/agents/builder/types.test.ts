@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AGENT_CONFIG, DEFAULT_MODEL_ID } from "@/lib/agent/config";
 import { DEFAULT_PLATFORM_FEE_USD } from "@/lib/platform/fee";
+import { chooseSource, defaultUsdc, usdcEstimate } from "@/components/agents/thinking";
+import { DEFAULT_PAY_PER_USE_MODEL, PAY_PER_USE_MODELS, USDC_DEFAULT_INTERVAL_MINUTES } from "@/lib/x402/inference-types";
 import {
   INTERVAL_PRESETS,
   MAX_TRADE_LADDER,
@@ -8,6 +10,7 @@ import {
   STRATEGY_PRESETS,
   emptyDraft,
   feeSharePct,
+  intervalHint,
   ladderStops,
   nearestStopIndex,
   withDefaultKey,
@@ -87,6 +90,56 @@ describe("withDefaultKey", () => {
   });
 });
 
+/**
+ * A draft set to pay per use has no key on purpose. Before this rule a restored one was
+ * moved onto the account's first key, which undid the choice without a word.
+ */
+describe("withDefaultKey and a pay-per-use draft", () => {
+  const anthropic = { id: "key_a", provider: "anthropic" as const };
+  const payPerUseDraft = () => {
+    const draft = emptyDraft();
+    return { ...draft, config: chooseSource(draft.config, "usdc").config };
+  };
+
+  it("leaves it exactly as it is while the viewer may pay per use, keys or no keys", () => {
+    const draft = payPerUseDraft();
+    expect(withDefaultKey(draft, [], { payPerUseAllowed: true })).toBe(draft);
+    expect(withDefaultKey(draft, [anthropic], { payPerUseAllowed: true })).toBe(draft);
+    expect(draft.llmKeyId).toBeNull();
+  });
+
+  it("turns it back into a key draft for a viewer who may not, and then picks their key", () => {
+    const next = withDefaultKey(payPerUseDraft(), [anthropic]);
+    expect(next.config.llm.source).toBeUndefined();
+    expect(next.config.llm.usdc).toBeUndefined();
+    expect(next.llmKeyId).toBe("key_a");
+    // The same with the option spelled out, and with no key to pick.
+    const keyless = withDefaultKey(payPerUseDraft(), [], { payPerUseAllowed: false });
+    expect(keyless.config.llm.source).toBeUndefined();
+    expect(keyless.llmKeyId).toBeNull();
+  });
+
+  it("gives a draft that names the mode without its limits the defaults", () => {
+    const draft = emptyDraft();
+    const bare = { ...draft, config: { ...draft.config, llm: { ...draft.config.llm, source: "usdc" as const } } };
+    const next = withDefaultKey(bare, [], { payPerUseAllowed: true });
+    expect(next.config.llm.usdc).toEqual(defaultUsdc(USDC_DEFAULT_INTERVAL_MINUTES));
+  });
+
+  /** The feature ships switched off: a key draft is defaulted the same way either way. */
+  it("treats a key draft the same whether or not the viewer may pay per use", () => {
+    const openrouter = { id: "key_or", provider: "openrouter" as const };
+    for (const keys of [[], [anthropic], [openrouter], [openrouter, anthropic]]) {
+      for (const llmKeyId of [null, "key_a", "gone"]) {
+        const draft = { ...emptyDraft(), llmKeyId };
+        const off = withDefaultKey(draft, keys);
+        expect(withDefaultKey(draft, keys, { payPerUseAllowed: true })).toEqual(off);
+        expect(withDefaultKey(draft, keys, { payPerUseAllowed: false })).toEqual(off);
+      }
+    }
+  });
+});
+
 describe("feeSharePct", () => {
   it("is the flat fee as a whole percent of the ticket", () => {
     expect(feeSharePct(2, 0.1)).toBe(5);
@@ -132,5 +185,42 @@ describe("interval hints", () => {
     const hourly = INTERVAL_PRESETS.find((preset) => preset.minutes === 60);
     expect(hourly?.hint).toContain("a quarter of the default's model bill");
     expect(60 / DEFAULT_AGENT_CONFIG.schedule.intervalMinutes).toBe(4);
+  });
+});
+
+/** On pay per use the cost of a schedule is a number, so the hint under each choice is that number. */
+describe("interval hints on pay per use", () => {
+  it("are the fixed key hints when the agent thinks on a key", () => {
+    for (const preset of INTERVAL_PRESETS) {
+      expect(intervalHint(preset)).toBe(preset.hint);
+      expect(intervalHint(preset, null)).toBe(preset.hint);
+    }
+  });
+
+  it("state the runs a day and the day's thinking, from the same estimate as the panel", () => {
+    for (const model of PAY_PER_USE_MODELS) {
+      for (const preset of INTERVAL_PRESETS) {
+        const hint = intervalHint(preset, model.id);
+        if (preset.minutes === 0) {
+          expect(hint).toBe("Only runs when you press Run now. Nothing is spent until then.");
+          continue;
+        }
+        const estimate = usdcEstimate(model.id, preset.minutes);
+        expect(hint, `${model.id} ${preset.label}`).toContain(`About ${estimate.runsPerDay} run`);
+        expect(hint).toContain(`$${estimate.dayUsd.toFixed(2)} of thinking`);
+        // Never the key wording: nothing on this schedule is billed to a key.
+        expect(hint).not.toContain("on your key");
+      }
+    }
+  });
+
+  it("says one run, not one runs, for a daily schedule", () => {
+    const daily = INTERVAL_PRESETS.find((preset) => preset.minutes === 1_440)!;
+    expect(intervalHint(daily, DEFAULT_PAY_PER_USE_MODEL)).toMatch(/^About 1 run a day, about \$\d+\.\d{2} of thinking\.$/);
+  });
+
+  it("quotes no price for a model that is not offered, and never the key wording", () => {
+    const hourly = INTERVAL_PRESETS.find((preset) => preset.minutes === 60)!;
+    expect(intervalHint(hourly, "vendor/unknown")).toBe("Every run pays for its own thinking.");
   });
 });

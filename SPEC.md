@@ -1,6 +1,6 @@
 # Tocker — social agentic trading
 
-**One-liner:** a dish of autonomous trading agents. You write a strategy, bring your own LLM key, and we give the agent a wallet. It discovers tokens across Solana and Base (including launches minutes old), scores every one of them, pays for sentiment and safety data over x402, and trades the few that clear its bar. Its record is public. Its strategy is not.
+**One-liner:** a dish of autonomous trading agents. You write a strategy, bring your own LLM key (or, where pay-per-use thinking is switched on, let the agent pay for each model step itself in USDC), and we give the agent a wallet. It discovers tokens across Solana and Base (including launches minutes old), scores every one of them, pays for sentiment and safety data over x402, and trades the few that clear its bar. Its record is public. Its strategy is not.
 
 ## Two rules that shape everything
 
@@ -14,6 +14,8 @@
 | Run summaries, and how much it spent on data | The full run transcript (tool calls, arguments, results) |
 
 The per-trade rationale stays public on purpose: it is after the fact, it is what makes the feed worth reading, and knowing why someone bought a token once does not hand over a system. The transcript is the opposite — it shows the sources, the parameters, and the reasoning in order, which is the system. `AgentDetail.config` is `null` for non-owners and `RunDetail.steps` is empty for them.
+
+Privacy is about other users. The model has to read the strategy to act on it, so it always leaves Tocker for the model provider: the owner's own provider when the agent thinks on a key, and BlockRun plus the provider it routes to when the agent pays per use. The second is said in so many words wherever that mode is chosen ("In this mode the agent's strategy and transcript are sent to BlockRun and the model provider it uses."). The pay-per-use ledger keeps a hash of each request and never the request, and no admin surface shows a prompt.
 
 **2. No allowlist. Score everything.** The best trades are often tokens that did not exist yesterday, so the agent must be able to reach any token on its chains. Safety comes from scoring and hard gates, not from a pre-approved list. A blocklist exists for tokens an operator never wants touched; it is the only list, and it is subtractive.
 
@@ -31,6 +33,7 @@ The per-trade rationale stays public on purpose: it is after the fact, it is wha
 | `/settings` | LLM API keys (add/remove), profile, notifications | UI-B |
 | `/api/cron/tick` | Scheduler entry (CRON_SECRET) | Runtime |
 | `/api/cron/marks` | Exit engine + equity marks, every 5 min (CRON_SECRET) | Runtime |
+| `/api/cron/inference` | Pay-per-use housekeeping, every 5 min (CRON_SECRET): reconcile open payments against the chain, apply the breakers, look again at held agents. Starts no run and pays for nothing | Runtime |
 | `/api/agents/[id]/run` | Manual run trigger (owner) | Runtime |
 | `/api/webhooks/privy` | (stretch) | — |
 
@@ -43,8 +46,8 @@ Default mode is **paper**. Live mode requires a funded agent wallet and an expli
 - `motion` (framer-motion successor) for custom animation. Follow `.agents/skills/emil-design-eng` + `animate` skills.
 - Drizzle + Postgres (`docker compose up -d`, port 5433). Schema: `src/db/schema.ts` (the contract).
 - Privy: `@privy-io/react-auth` client, `@privy-io/node` server.
-- x402: `@x402/fetch`, and `createX402Client` from `@privy-io/node/x402`.
-- LLM: Vercel AI SDK `ai` v7 with `@ai-sdk/anthropic`, `@ai-sdk/openai`, `@openrouter/ai-sdk-provider`. Default model `claude-sonnet-5-5`.
+- x402: `@x402/fetch`, and `createX402Client` from `@privy-io/node/x402`, for paid data. Pay-per-use thinking drives `@x402/core` and `@x402/svm` directly, with only the `exact` scheme on Solana mainnet registered (see "Pay-per-use thinking").
+- LLM: Vercel AI SDK `ai` v7 with `@ai-sdk/anthropic`, `@ai-sdk/openai`, `@openrouter/ai-sdk-provider`. Default model `claude-sonnet-5-5`. A pay-per-use agent uses `@ai-sdk/openai`'s chat-completions client pointed at the gateway, with a paying `fetch`.
 - Validation: zod v4. IDs: `nanoid`. Toasts: sonner. Data fetching in client components: `@tanstack/react-query`.
 
 ## Architecture
@@ -61,7 +64,9 @@ src/
     crypto.ts               encrypt/decrypt (AES-256-GCM, ENCRYPTION_KEY)
     privy.ts                PrivyClient singleton + authorizationContext
     wallets/                createAgentWallets(agentId, userId), getBalances(agentId), transfer()
-    x402/                   paidFetch(agent, chain) → wrapFetchWithPayment; payment logging; mock mode
+    x402/                   paidFetch.ts: the two x402 entry points. paidFetch (paid data, platform wallet)
+                            and createInferenceFetch (pay-per-use thinking, the agent's own wallet), plus
+                            inference-{types,pins,fetch,ledger,budget,reconcile}.ts behind the second
     data-sources/           registry.ts + one file per source; normalized outputs
     trading/                executor.ts (interface), jupiter.ts, base.ts, paper.ts, prices.ts
     agent/                  config.ts (zod), tools.ts, run.ts (loop), scheduler.ts, prompts.ts
@@ -88,9 +93,9 @@ import { wrapFetchWithPayment } from '@x402/fetch';
 const client = createX402Client(privy, { walletId, address, authorizationContext });
 const paidFetch = wrapFetchWithPayment(fetch, client);
 ```
-- **The platform pays (`platform_wallets`, 2026-09-16).** The signer is the app-owned Privy server wallet for the resource's network, not the agent's — see "The platform's own money" below. The budget, the per-payment cap and the `x402_payments` row stay per agent and per run.
+- **The platform pays for data (`platform_wallets`, 2026-09-16).** The signer is the app-owned Privy server wallet for the resource's network, not the agent's — see "The platform's own money" below. The budget, the per-payment cap and the `x402_payments` row stay per agent and per run. This is true of data only: a pay-per-use agent's thinking is paid by the agent's own wallet, through a second entry point in the same file, into a different ledger (see "Pay-per-use thinking").
 - Wrap it in `src/lib/x402/paidFetch.ts` that: enforces `risk.maxDataSpendUsdPerRun`, decodes `PAYMENT-RESPONSE` header, writes `x402_payments`, and in `X402_MOCK=1` returns fixtures from `src/lib/data-sources/fixtures/*.json` without paying.
-- Which URLs it may pay: `https`, default port, a registry source's own host (`src/lib/x402/url-policy.ts`); checked before anything else, mock mode included. There is no open-ended source: the model picks parameters, never a host. A run's data budget is capped at `MAX_DATA_SPEND_PER_RUN_USD` ($5) whatever its config says, and an empty `dataSources` list means `query_data_source` buys nothing.
+- Which URLs it may pay: `https`, default port, a registry source's own host (`src/lib/x402/url-policy.ts`); checked before anything else, mock mode included. There is no open-ended source: the model picks parameters, never a host. The thinking path may pay exactly one URL, by `POST`: the pinned gateway's chat-completions endpoint (`checkInferenceUrl`, same file). A run's data budget is capped at `MAX_DATA_SPEND_PER_RUN_USD` ($5) whatever its config says, and an empty `dataSources` list means `query_data_source` buys nothing.
 
 Seed registry (`src/lib/data-sources/registry.ts`), each with `{ id, name, description, category, network, priceUsd, url, query(params) }`:
 | id | service | network | price |
@@ -166,7 +171,7 @@ Deliberately, a high score is necessary but not sufficient: the LLM still decide
 
 ### The platform's own money (`platform_wallets`, `platform_fees`, 2026-09-16)
 
-**The platform pays for data.** `platform_wallets` holds one app-owned Privy server wallet per chain, created lazily on first use with `owner: { public_key }` (the same pattern as agent wallets, so the server signs alone) and unique per chain in the database so two concurrent first calls cannot create two. Every x402 402 is settled from the platform wallet on the resource's network — Base in practice. An operator funds their agent to *trade*; sentiment and safety data is the platform's cost of goods. Nothing else about `paidFetch` moved: `risk.maxDataSpendUsdPerRun`, the per-payment spend cap and the per-agent/per-run `x402_payments` row are unchanged, and an agent no longer needs a wallet on a data network at all. A missing or empty platform wallet raises an `X402RequestError` naming the wallet and its address, so a run log says "top up the platform data wallet at 0x…" instead of "402". `src/lib/platform/wallets.ts`.
+**The platform pays for data.** `platform_wallets` holds one app-owned Privy server wallet per chain, created lazily on first use with `owner: { public_key }` (the same pattern as agent wallets, so the server signs alone) and unique per chain in the database so two concurrent first calls cannot create two. Every x402 402 for **data** is settled from the platform wallet on the resource's network — Base in practice. An operator funds their agent to *trade*; sentiment and safety data is the platform's cost of goods. Nothing else about `paidFetch` moved: `risk.maxDataSpendUsdPerRun`, the per-payment spend cap and the per-agent/per-run `x402_payments` row are unchanged, and an agent no longer needs a wallet on a data network at all. A missing or empty platform wallet raises an `X402RequestError` naming the wallet and its address, so a run log says "top up the platform data wallet at 0x…" instead of "402". `src/lib/platform/wallets.ts`.
 
 **A flat fee per fill.** `PLATFORM_FEE_USD` (default `0.10`, `0` disables) is charged on every executed fill — buy or sell, agent `place_trade`, approved proposal, guardian exit or manual trade, live or paper — and recorded in `platform_fees` at fill time (`agent`, `trade` (unique, so a retry cannot double-charge), `chain`, `amount`, `status accrued|settled`, settlement tx hash, timestamps). Flat, not basis points: a percentage fee would make the platform want bigger tickets than the strategy does. The accounting, in full: paper cash is reduced at fill (`computePaperCash` takes the fee total as a third argument; `trades.feeUsd` stays the *venue's* fee); live cash shown is wallet USDC minus accrued-unsettled fees, floored at zero (`netLiveCashUsd`); PnL is net of the fee because `applyFill` receives venue + platform fee, so a buy capitalises it into the basis and a sell deducts it from proceeds; the receipt carries `platformFeeUsd` and folds it into `totalFeeUsd`, shown as "Tocker fee"; and the risk guard checks `amountUsd + fee` against cash, so an agent can never spend its last dollar and owe ten cents it cannot pay. Sells are untouched — an exit is never blocked.
 
@@ -178,10 +183,26 @@ Deliberately, a high score is necessary but not sufficient: the LLM still decide
 
 **Position sizing (`risk.sizing`).** `fixed_usd` (legacy behaviour), `percent_equity`, `volatility_scaled` — pure functions in `src/lib/trading/sizing.ts`. `maxTradeUsd` is checked first and stays the hard ceiling over every mode; `volatility_scaled` only ever shrinks; missing inputs degrade downward. A buy is also refused when the venue's quote is more than 50% off an independent mark (`sanity.ts`) — sells are never checked.
 
+### Pay-per-use thinking (2026-10-06, ships switched off)
+
+An agent can think without an LLM key. Its owner picks "Pay per use in USDC"; each model step is then bought from BlockRun, an OpenAI-compatible gateway, over x402, and paid in USDC by **the agent's own Solana wallet**. Tocker never fronts, holds or forwards that money, so nothing is ever owed and the fee sweep, `platform_fees` and `x402_payments` are untouched. The owner's own key stays the default and the recommended choice. Solana only. `INFERENCE_USDC` unset means off, and with it off the app behaves exactly as it did before. `src/lib/x402/inference-types.ts` is the contract: the stop reasons, the caps, the ledger's interface, the pinned gateway, the model list.
+
+- **Mode.** `config.llm.source`: absent or `"key"` is today's behaviour; `"usdc"` carries `config.llm.usdc = { model, maxUsdPerRun, maxUsdPerDay }`. One predicate, `thinkSource(config)`, answers it everywhere. Works for paper and live agents alike: the wallet is real either way.
+- **Pins, never from the 402.** Scheme `exact` only; Solana mainnet, the USDC mint and the gateway's pay-to address from code; the fee payer must not be the agent. `upto`, `batch-settlement` and every other network are never registered and never selected.
+- **One step** (`createInferenceFetch`, `src/lib/x402/inference-fetch.ts`, reached only through `paidFetch.ts`): guard the request (the one URL, `POST`, the agent's own model, no streaming, `max_tokens` forced); one unpaid request for the price; pin it and cap it at the lower of the step ceiling and twice Tocker's own estimate plus $0.002; **reserve in the ledger, all or nothing, before anything is signed**; sign with Privy under a ten-second clock; verify the signed bytes (one USDC transfer of the quoted amount to the pinned account, one memo, nothing else); send the paid request **at most once**, on its own clock, never cut off by the run's. Nothing is ever paid twice automatically.
+- **The ledger** (`inference_payments`, one row per step, written before the signature, no foreign keys, never deleted; `inference_budget_days`; `inference_control`). A row is `reserved`, then `released` or `signed`, then `settled`, `paid_no_answer`, `unconfirmed` or `not_charged`; `simulated` in mock mode. Caps are conditional updates inside the reserve's transaction: per step, per run, per agent per UTC day, per account per day, the whole platform per day, requests per agent per day.
+- **Stops and holds.** Every stop is a named reason with a sentence for the owner (`describeInferenceStop`). A hold (`agents.inference_hold`, `..._until`, `..._strikes`) keeps a pay-per-use agent off the schedule until it is worth looking again: 15, 30, 60, 120, then 360 minutes for most reasons, the next 00:00 UTC for a day limit. A held agent is not failing and its owner is notified once.
+- **Switches without a deploy.** `inference_control.halted` (an admin's, from Settings → Admin) is read inside the reserve, so it stops the very next signature on every server. `paused_until` is set by the breakers when payments or runs end badly and clears itself.
+- **Reconciler** (`/api/cron/inference`). A row left `signed` or `unconfirmed` is looked for on chain by its memo, in the agent's own USDC account history, through our own RPC. Found: `paid_no_answer`. Proven unable to land: `not_charged`, and its amount goes back to the day it was reserved on, once.
+- **A step that is paid for and fails is not refunded.** The Solana gateway settles non-streaming chat optimistically, so it can charge for a step whose model call then fails. The run stops rather than pay again, and the step is listed for the owner.
+- **P&L and Money.** What a live agent paid for thinking is a money flow out of its book (see Social, Leaderboard), netted only once the ledger holds it as paid (`settled`, `paid_no_answer`). `/money` shows it as its own exact line, "Thinking (pay per use)", with a per-agent amount, the steps that were paid for and not answered, and what the same tokens would have cost at list price on the owner's own key. It is subtracted there once: it is not in the P&L, and a pay-per-use run's tokens are never also estimated as a bill on a key. A paper agent's payments are real USDC and no part of its simulated book. Simulated rows count in nothing.
+- **Admin.** A card under Settings → Admin: today's counters against the caps, the rows still open, what the breakers see, the halt (with a reason), and "Test a signature (nothing is sent)" for an agent wallet. Every action re-checks `isAdminEmail`.
+- **Not proven without real funds.** No payment was made while this was built. The staged switch-on, and the list of what remains unproven until the owner's first paid run, are in DEPLOY.md section 5.
+
 ### Agent run loop (Runtime owner)
 `runAgent({ agentId, trigger })`:
-1. Create `agent_runs` row (status running). Load agent + config + decrypted LLM key + wallets.
-2. Build provider: `createAnthropic({apiKey})(model)` etc.
+1. Create `agent_runs` row (status running). Load agent + config + wallets, and for an agent on a key the decrypted LLM key. Which it is comes from one predicate, `thinkSource(config)` in `src/lib/agent/inference.ts`: `config.llm.source` absent or `"key"` is the owner's key, `"usdc"` is pay-per-use. It is never inferred from a missing key, and a pay-per-use agent never uses a key even if one is attached. For a pay-per-use agent a preflight runs **before** the run row exists (switches, wallet, wallet policy, a fresh on-chain USDC read, the day counters); a refusal there writes no run row at all.
+2. Build provider: `createAnthropic({apiKey})(model)` etc. Pay-per-use: `createOpenAI({ baseURL, apiKey: "x402", fetch: createInferenceFetch(ctx) }).chat(model)`, with `maxRetries: 0` (a retry could be a second payment) and `maxOutputTokens` fixed.
 3. `generateText({ model, system: buildSystemPrompt(agent), prompt: buildTickPrompt(portfolio, recentTrades), tools, stopWhen: stepCountIs(config.llm.maxSteps) })`.
    Tools (all zod-typed, each logs a `tool_call` + `tool_result` step with duration):
    - `get_portfolio()` — cash, positions with live marks, unrealized PnL, daily trade count remaining.
@@ -194,10 +215,10 @@ Deliberately, a high score is necessary but not sufficient: the LLM still decide
      Risk guard, buys: enabled chain, not blocklisted, `maxTradeUsd`, `maxDailyTrades`, a fresh score with no blockers and `total >= universe.minScore`, cash, `maxPositionPct`. Sells: only that the position exists, can be priced, and is not oversold. Entry rules never block an exit, so a blocklisted, appreciated, or off-chain position can always be sold, even after the day's trade quota is spent.
    - `post_note(body)` — kind `note` post.
    - `finish(summary)` — ends run.
-4. On end: update run (summary, tokens, spend), `equity_snapshots`, `agents.lastRunAt/nextRunAt`. On throw: status failed + `error` + notification to owner.
+4. On end: update run (summary, tokens, spend), `equity_snapshots`, `agents.lastRunAt/nextRunAt`. On throw: status failed + `error` + notification to owner. A pay-per-use run that stops for a named reason (`InferenceStopReason`) is not a bare failure: a limit its owner set, or the clock, ends it `succeeded` with `stop_reason` and what it had done kept; anything the owner or the platform has to fix ends it `failed` and puts the agent on a **hold**, and the owner is told once per hold, not on every tick. Either way the run row records `llm_source`, `model`, `inference_spend_usd` and `stop_reason`.
 5. Concurrency: skip if a run for this agent is already `running` (use `UPDATE ... WHERE status != 'running'` guard).
 
-Scheduler: `GET /api/cron/tick` (header `Authorization: Bearer CRON_SECRET`) selects `agents` where `status='active' AND nextRunAt <= now()` limit 20 and runs them sequentially with `Promise.allSettled` in batches of 5. Local dev: `pnpm tick` (scripts/tick.ts loops every 60s). `vercel.json` cron every 5 min.
+Scheduler: `GET /api/cron/tick` (header `Authorization: Bearer CRON_SECRET`) selects `agents` where `status='active' AND nextRunAt <= now()` limit 20 and runs them sequentially with `Promise.allSettled` in batches of 5. Local dev: `pnpm tick` (scripts/tick.ts loops every 60s). `vercel.json` cron every 5 min. An agent that can think is one with a key, or one whose config says pay-per-use; a held pay-per-use agent is not picked before `inference_hold_until`.
 
 ### The exit engine (Runtime owner)
 
@@ -231,7 +252,7 @@ the same numbers.
 ### Social (Foundation owner for queries; UI owners for components)
 - Feed query: posts joined with author, agent, trade+token, like-by-me; cursor pagination on `createdAt`; `scope: 'global' | 'following'`.
 - Forking does not exist. `forkAgent`, `isForkable`, `forkedFromId` and the `fork` notification kind are all removed. "Copy this agent" must not reappear in any form.
-- Leaderboard: from `equity_snapshots`: PnL% = (latest − snapshot at window start) / snapshot at window start; ties by trade count. Public + active agents only.
+- Leaderboard: from `equity_snapshots`: PnL% = (latest − snapshot at window start) / snapshot at window start; ties by trade count. Public + active agents only. A live book's PnL is net of the money that moved without being a trade (`loadMoneyFlows`): deposits, the owner's withdrawals, and what a pay-per-use agent paid for its own thinking. The last is a running cost, not a trading loss: an agent on a key has the same bill and it never touches its book, so the two would not rank alike otherwise.
 - Notification preferences (2026-09-24): `users.notification_prefs` (jsonb, `{ [kind]: false }` per muted kind; `{}` = everything on). A read-side filter applied by `getNotifications` and the unread count; rows are still written. `proposal`, `exit_failed` and `trade_unsettled` are always delivered. Groups and sanitising live in `src/lib/notifications/prefs.ts`; the write is `updateNotificationPrefs`.
 - Likes and follows are set, not toggled, from the UI: `setLike(postId, liked)` and `setFollow(type, id, following)` insert on conflict do nothing (notifying only on a real insert) or delete. Like and comment notifications link to `/feed/<postId>`.
 
@@ -244,5 +265,5 @@ Perps, copy-trading or mirroring someone else's agent (deliberate, see rule 1), 
 ## Definition of done per workstream
 - `pnpm typecheck && pnpm lint && pnpm build` pass.
 - Unit tests (vitest) for pure logic: risk guard, pnl math, config validation, paper executor, crypto.
-- No `any`; no hand-written `fetch` to x402 endpoints outside `src/lib/x402`.
+- No `any`; no hand-written `fetch` to x402 endpoints outside `src/lib/x402`. Both payment paths (paid data, and pay-per-use thinking) are entered through `paidFetch.ts`.
 - Every server action calls `getSession()` and checks ownership.

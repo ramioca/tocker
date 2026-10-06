@@ -14,12 +14,18 @@
  * are not affected: they run from `/api/cron/marks`, which is deliberately not
  * filtered, because a kill switch that froze stop losses would trap the operator
  * in every open position.
+ *
+ * Time: the moment this invocation began is handed to the scheduler. The platform ends
+ * the function at `maxDuration` whatever is in flight, so a pay-per-use run, which signs
+ * payments, is only started with enough of the invocation left to finish, and stops
+ * paying before the limit. An agent whose run would not fit simply stays due.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { tickDueAgents } from "@/lib/agent/scheduler";
 import { authorizeCron } from "@/lib/security/cron";
 import { countPausedDueAgents } from "@/lib/security/kill-switch";
 import { RATE_LIMITS, clientKey, limiter, rateLimitHeaders } from "@/lib/security/rate-limit";
+import { dbErrorForLog } from "@/lib/security/redact";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -28,6 +34,8 @@ export const maxDuration = 300;
 // cap is what froze a run mid-tick and left its `agent_runs` row `running` forever.
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
+  // Taken first: everything below, the checks included, comes out of the same 300 s.
+  const invocationStartedAt = Date.now();
   // Rate limit before the secret check: an attacker guessing the secret must not
   // get unlimited attempts, and a correct caller hits this twice a minute at most.
   const verdict = limiter.consume(clientKey(req.headers, "cron:tick"), RATE_LIMITS.cron);
@@ -49,13 +57,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Counted before the tick: once `runAgent` has rescheduled its agents, the
     // "would have been due" set no longer exists to be counted.
     const pausedSkipped = await countPausedDueAgents();
-    const result = await tickDueAgents(limit);
+    const result = await tickDueAgents(limit, new Date(), { invocationStartedAt });
     return NextResponse.json({ ok: true, ...result, pausedSkipped });
   } catch (err) {
-    return NextResponse.json(
-      { ok: false, error: err instanceof Error ? err.message : "tick failed" },
-      { status: 500 },
-    );
+    // What throws here is a database error, and its own message is the statement with
+    // every bound parameter. The body of a cron route ends up in logs.
+    return NextResponse.json({ ok: false, error: dbErrorForLog(err) }, { status: 500 });
   }
 }
 

@@ -6,7 +6,7 @@
  *    stall the others, capped at 20 agents so a cron invocation stays inside the
  *    serverless timeout. `/api/cron/tick`, every 5 minutes. When more are due than
  *    fit, {@link findDueAgents} decides who goes: no slot for an agent that cannot
- *    think, and one per owner before anyone's second.
+ *    think or is waiting out a hold, and one per owner before anyone's second.
  *  - {@link tickMarks} — the marks loop. No model, no tokens, no money: refresh marks,
  *    ratchet peaks, run the exit engine for every agent holding something (whatever its
  *    status: a paused agent's stop loss still has to fire), and snapshot equity for
@@ -19,9 +19,10 @@
 import { and, asc, desc, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { agents, getDb, positions, userSecurity } from "@/db";
 import { settleFeesForAgent } from "@/lib/platform/settlement";
+import { dbErrorForLog } from "@/lib/security/redact";
 import { runGuardian, type GuardianResult } from "@/lib/trading/guardian";
 import { sweepSubmittedTrades } from "@/lib/trading/settle";
-import { isLlmMock } from "./mock-model";
+import { canThinkSql, paysPerUseSql, recheckInferenceHolds } from "./inference-gate";
 import { getPortfolio, snapshotEquity } from "./portfolio";
 import { reapStaleRuns, runAgent, type RunAgentResult } from "./run";
 
@@ -30,6 +31,8 @@ export interface TickResult {
   results: Array<RunAgentResult & { agentId: string }>;
   /** `agent_runs` rows presumed dead and marked `failed` before this pass (W7 B3). */
   reaped: number;
+  /** Held pay-per-use agents whose hold was lifted at the start of this pass. */
+  holdsCleared: number;
 }
 
 const BATCH_SIZE = 5;
@@ -58,8 +61,10 @@ const DUE_WINDOW_FACTOR = 5;
  * Two more rules, because a pass has only `limit` slots and every agent on the
  * platform shares them:
  *
- *  - An agent with no LLM key is not due. Its run can only fail, and a run that fails
- *    in a millisecond still took a slot from an agent that would have traded.
+ *  - An agent with nothing to think on is not due (`canThinkSql`): a key agent with no
+ *    key, whose run can only fail, and a pay-per-use agent waiting out a hold, whose run
+ *    would not be started. A run that fails in a millisecond still took a slot from an
+ *    agent that would have traded.
  *  - Within the oldest `limit × DUE_WINDOW_FACTOR` due agents, each owner gets one slot
  *    before anyone gets a second. Oldest first decides who is first; what is left over
  *    is filled in the same order. One account's many agents then wait behind each
@@ -70,9 +75,14 @@ const DUE_WINDOW_FACTOR = 5;
  * paper agent, and paper is where a new account starts.
  */
 export async function findDueAgents(limit = 20, now: Date = new Date()): Promise<string[]> {
+  return (await findDue(limit, now)).map((agent) => agent.id);
+}
+
+/** {@link findDueAgents}, with whether each agent pays per use: the pass runs those first. */
+async function findDue(limit: number, now: Date): Promise<Array<{ id: string; paysPerUse: boolean }>> {
   const db = await getDb();
   const rows = await db
-    .select({ id: agents.id, ownerId: agents.ownerId })
+    .select({ id: agents.id, ownerId: agents.ownerId, paysPerUse: paysPerUseSql() })
     .from(agents)
     .leftJoin(userSecurity, eq(userSecurity.userId, agents.ownerId))
     .where(
@@ -80,8 +90,9 @@ export async function findDueAgents(limit = 20, now: Date = new Date()): Promise
         eq(agents.status, "active"),
         isNotNull(agents.nextRunAt),
         lte(agents.nextRunAt, now),
-        // The scripted model (`LLM_MOCK=1`) thinks without a key; nothing else does.
-        ...(isLlmMock() ? [] : [isNotNull(agents.llmKeyId)]),
+        // A key agent needs a key (the scripted model, `LLM_MOCK=1`, thinks without one);
+        // a pay-per-use agent needs none, and is skipped while a hold has time to run.
+        canThinkSql(now),
         // No security row means the switch was never touched, i.e. not paused.
         or(isNull(userSecurity.tradingPaused), eq(userSecurity.tradingPaused, false)),
       ),
@@ -89,7 +100,8 @@ export async function findDueAgents(limit = 20, now: Date = new Date()): Promise
     // The id breaks ties, so two agents due at the same instant sort the same way every pass.
     .orderBy(asc(agents.nextRunAt), asc(agents.id))
     .limit(limit * DUE_WINDOW_FACTOR);
-  return spreadAcrossOwners(rows, limit);
+  const flags = new Map(rows.map((row) => [row.id, row.paysPerUse === true]));
+  return spreadAcrossOwners(rows, limit).map((id) => ({ id, paysPerUse: flags.get(id) === true }));
 }
 
 /**
@@ -113,6 +125,29 @@ export function spreadAcrossOwners(rows: ReadonlyArray<{ id: string; ownerId: st
   return [...picked];
 }
 
+/** How many holds one tick pass looks at before it picks agents. The rest wait for the next pass. */
+const HOLDS_PER_TICK = 10;
+/**
+ * And for how long. Each look may ask the chain for a balance, and the runs of this pass
+ * are waiting behind it: a pay-per-use run is only started in the first fifty seconds of
+ * its invocation, so a slow node must not be allowed to use them up.
+ */
+const HOLDS_BUDGET_MS = 8_000;
+
+/**
+ * Held pay-per-use agents whose time has come are looked at again before the pass picks
+ * who runs, so one whose wallet was funded runs in this pass and not the next. It takes
+ * no run slot and never throws. With no held agent it is one query that finds nothing.
+ */
+async function liftDueHolds(now: Date): Promise<number> {
+  try {
+    return (await recheckInferenceHolds(HOLDS_PER_TICK, now, { budgetMs: HOLDS_BUDGET_MS })).cleared;
+  } catch (err) {
+    console.error(`[tick] holds could not be re-checked: ${dbErrorForLog(err)}`);
+    return 0;
+  }
+}
+
 /**
  * Runs every due agent. Never throws: a failed agent shows up in `results`.
  *
@@ -120,15 +155,29 @@ export function spreadAcrossOwners(rows: ReadonlyArray<{ id: string; ownerId: st
  * and `claimRun` refuses to start anything while one exists — so without a sweep on the
  * loop that actually runs every five minutes, one timeout would be the last tick that
  * agent ever took.
+ *
+ * `invocationStartedAt` is when the serverless invocation doing this pass began (the cron
+ * route passes it). Batches run one after another inside that one invocation, so a
+ * pay-per-use agent in a late batch may not have the time a paid run needs: such a run is
+ * not started and the agent stays due. That is also why pay-per-use agents go first.
  */
-export async function tickDueAgents(limit = 20, now: Date = new Date()): Promise<TickResult> {
+export async function tickDueAgents(
+  limit = 20,
+  now: Date = new Date(),
+  options: { invocationStartedAt?: number } = {},
+): Promise<TickResult> {
+  const invocationStartedAt = options.invocationStartedAt ?? Date.now();
   const reaped = await reapStaleRuns(undefined, now);
-  const due = await findDueAgents(limit, now);
+  const holdsCleared = await liftDueHolds(now);
+  const picked = await findDue(limit, now);
+  // Who runs was decided above, oldest first and one per owner. This only decides the
+  // order inside the pass, and keeps it otherwise as it was.
+  const due = [...picked.filter((agent) => agent.paysPerUse), ...picked.filter((agent) => !agent.paysPerUse)].map((agent) => agent.id);
   const results: Array<RunAgentResult & { agentId: string }> = [];
 
   for (let i = 0; i < due.length; i += BATCH_SIZE) {
     const batch = due.slice(i, i + BATCH_SIZE);
-    const settled = await Promise.allSettled(batch.map((agentId) => runAgent({ agentId, trigger: "schedule" })));
+    const settled = await Promise.allSettled(batch.map((agentId) => runAgent({ agentId, trigger: "schedule", invocationStartedAt })));
     settled.forEach((outcome, idx) => {
       const agentId = batch[idx] as string;
       if (outcome.status === "fulfilled") {
@@ -144,7 +193,7 @@ export async function tickDueAgents(limit = 20, now: Date = new Date()): Promise
     });
   }
 
-  return { due: due.length, results, reaped };
+  return { due: due.length, results, reaped, holdsCleared };
 }
 
 export interface MarksTickResult {

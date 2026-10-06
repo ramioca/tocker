@@ -9,6 +9,7 @@ import {
   equitySnapshots,
   follows,
   getDb,
+  inferencePayments,
   platformFees,
   tokens,
   trades,
@@ -16,9 +17,11 @@ import {
   type Db,
 } from "@/db";
 import type { TradeScoreSnapshot } from "@/db/schema";
+import { thinkingModel } from "@/lib/agent/inference";
 import { closedSells, type AnalyticsFill } from "@/lib/analytics";
 import { toNum, toNumOrNull } from "@/lib/money";
 import { flowsBetween, pnlNetOfFlows, type MoneyFlow } from "@/lib/pnl";
+import type { InferencePaymentStatus } from "@/lib/x402/inference-types";
 import type {
   AgentCard,
   Chain,
@@ -431,21 +434,120 @@ export function withdrawnUsdc(metadata: Record<string, unknown> | null | undefin
 }
 
 /**
- * Every deposit into and withdrawal out of these agents' wallets that Tocker has a
- * record of, per agent: funding transfers that were sent (`agent_funding_intents`) and
- * the owner's audited USDC withdrawals. Live agents only. A paper book is measured from
- * its notional and holds no real money to move, so it gets no entry.
+ * The ledger statuses in which a pay-per-use payment is known to have left the wallet:
+ * paid and answered, and paid with no answer. The Money page's "Thinking" figure and the
+ * flow taken out of P&L are both made from exactly these, so they cannot disagree.
  *
- * These are what every live P&L nets out, the same two sources `/money`'s daily table
- * reads. What is not here cannot be netted: USDC sent to an agent's address from outside
- * Tocker has no funding row, and still reads as a gain.
+ * Left out on purpose: `signed` and `unconfirmed` (signed, and whether the money moved is
+ * not yet known; the reconciler turns each into `paid_no_answer` or `not_charged` within
+ * minutes), `reserved`, `released` and `not_charged` (nothing left the wallet), and
+ * `simulated` (mock mode, no money). An amount that is only maybe gone is not taken out
+ * of a public P&L: until it is settled it reads as a few cents of loss, never as a gain.
+ */
+export const THINKING_PAID_STATUSES = ["settled", "paid_no_answer"] as const satisfies readonly InferencePaymentStatus[];
+
+/** What one ledger row took from the wallet: the settled amount, or the quote when the gateway named none. */
+export function thinkingPaidUsdSql() {
+  return sql<string>`coalesce(${inferencePayments.settledUsd}, ${inferencePayments.quotedUsd})`;
+}
+
+/**
+ * What each live agent paid for its own thinking, as one row per run: the run's total,
+ * at the time of its last payment.
+ *
+ * Per run and not per step because a run pays for up to twenty-one steps inside a few
+ * minutes and marks are five minutes apart, so the run's total nets the same and is a
+ * tenth of the rows. The last payment's time and not the first's, so that a mark taken
+ * in the middle of a run reads a few cents low until the next mark, never a few cents
+ * high.
+ *
+ * Payments made at or before the book's first mark are left out, and that is done here,
+ * step by step, before the steps are added up. Every reader measures from a mark at or
+ * after that one, so those payments are already inside it. Left to the reader's own cut
+ * they would be wrong for exactly one run: the one in flight when the agent went live.
+ * Its total carries its last payment's time, so its steps from before the mark would be
+ * netted as well, and the agent's all-time P&L would be too high by that much for good.
+ *
+ * The ledger has no foreign keys, so the join to `agents` is also what drops the rows of
+ * agents that no longer exist. An agent with no ledger row costs this nothing: the first
+ * marks are read only for the agents that paid.
+ */
+async function loadThinkingFlows(db: Db, ids: string[]): Promise<Array<{ agentId: string; at: number | string; usd: string }>> {
+  const paid = db.$with("thinking_paid").as(
+    db
+      .select({
+        agentId: sql<string>`${agents.id}`.as("thinking_agent_id"),
+        runKey: sql<string>`coalesce(${inferencePayments.runId}, ${inferencePayments.id})`.as("thinking_run_key"),
+        at: sql<Date>`coalesce(${inferencePayments.signedAt}, ${inferencePayments.createdAt})`.as("thinking_paid_at"),
+        usd: thinkingPaidUsdSql().as("thinking_usd"),
+      })
+      .from(inferencePayments)
+      .innerJoin(agents, eq(agents.id, inferencePayments.agentId))
+      .where(
+        and(
+          inArray(inferencePayments.agentId, ids),
+          eq(agents.mode, "live"),
+          inArray(inferencePayments.status, [...THINKING_PAID_STATUSES]),
+        ),
+      ),
+  );
+  // The first snapshot of the book the agent is running now: the same row
+  // `loadBookMarks` measures all-time P&L from.
+  const firstMark = db.$with("thinking_first_mark").as(
+    db
+      .select({
+        agentId: sql<string>`${equitySnapshots.agentId}`.as("mark_agent_id"),
+        firstAt: sql<Date>`min(${equitySnapshots.at})`.as("mark_first_at"),
+      })
+      .from(equitySnapshots)
+      .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+      .where(and(inArray(equitySnapshots.agentId, db.select({ agentId: paid.agentId }).from(paid)), snapshotInCurrentMode()))
+      .groupBy(equitySnapshots.agentId),
+  );
+  return db
+    .with(paid, firstMark)
+    .select({
+      agentId: paid.agentId,
+      // Epoch seconds, not the timestamp: a raw aggregate is not column-mapped, and
+      // Postgres prints a timestamptz as "… +00", which `Date` cannot parse.
+      at: sql<number | string>`extract(epoch from max(${paid.at}))::float8`,
+      usd: sql<string>`coalesce(sum(${paid.usd}), 0)`,
+    })
+    .from(paid)
+    .innerJoin(firstMark, eq(firstMark.agentId, paid.agentId))
+    .where(sql`${paid.at} > ${firstMark.firstAt}`)
+    .groupBy(paid.agentId, paid.runKey);
+}
+
+/**
+ * Every movement of money into or out of these agents' wallets that Tocker has a record
+ * of and that is not a trade, per agent:
+ *
+ *  - funding transfers that were sent (`agent_funding_intents`), in;
+ *  - the owner's audited USDC withdrawals, out;
+ *  - what the agent paid for its own thinking (`inference_payments`, pay-per-use only),
+ *    out. It is a running cost paid from the trading wallet, not a trading loss: an agent
+ *    on its owner's key has the same bill and it never touches its book, so the two would
+ *    not rank alike on the leaderboard if this one counted against it. The Money page
+ *    shows the amount as its own line and subtracts it there, once.
+ *
+ * Live agents only. A paper book is measured from its notional and its equity is not its
+ * wallet, so real money moving through that wallet (a deposit, or a paper agent paying
+ * for its thinking) changes nothing in it and gets no entry.
+ *
+ * Thinking arrives one flow per run, and only for payments after the book's first mark
+ * (`loadThinkingFlows`), so an agent that has never been marked has none.
+ *
+ * These are what every live P&L nets out, the same sources `/money`'s daily table reads.
+ * What is not here cannot be netted: USDC sent to an agent's address from outside Tocker
+ * has no funding row, and still reads as a gain.
  */
 export async function loadMoneyFlows(db: Db, agentIds: string[]): Promise<Map<string, MoneyFlow[]>> {
   const out = new Map<string, MoneyFlow[]>();
   const ids = [...new Set(agentIds)].filter(Boolean);
   if (ids.length === 0) return out;
 
-  const [deposits, withdrawals] = await Promise.all([
+  const [deposits, withdrawals, thinking] = await Promise.all([
     db
       .select({
         agentId: agentFundingIntents.agentId,
@@ -479,6 +581,7 @@ export async function loadMoneyFlows(db: Db, agentIds: string[]): Promise<Map<st
           sql`(${auditEvents.metadata} ->> 'reason') is null`,
         ),
       ),
+    loadThinkingFlows(db, ids),
   ]);
 
   const add = (agentId: string, flow: MoneyFlow) => {
@@ -494,6 +597,11 @@ export async function loadMoneyFlows(db: Db, agentIds: string[]): Promise<Map<st
   for (const row of withdrawals) {
     const usdc = withdrawnUsdc(row.metadata);
     if (row.agentId && usdc > 0) add(row.agentId, { at: row.at, amountUsd: -usdc });
+  }
+  for (const row of thinking) {
+    const ms = epochMs(row.at);
+    const paidUsd = toNum(row.usd);
+    if (Number.isFinite(ms) && paidUsd > 0) add(row.agentId, { at: ms, amountUsd: -paidUsd, kind: "thinking" });
   }
   return out;
 }
@@ -697,8 +805,11 @@ export function toAgentCard(agent: AgentRow, owner: UserCard, agg: AgentAggregat
     isPublic: agent.isPublic,
     owner,
     // Chains and model are public (the card advertises them); the rest of `config` is not.
+    // The model is the one the agent thinks on: a pay-per-use agent's own, not the key
+    // model its config still carries from before it was switched. Read as defensively as
+    // before: a stored config with no `llm` block prints no model rather than throwing.
     chains: (agent.config?.chains ?? []) as Chain[],
-    model: agent.config?.llm?.model ?? "",
+    model: (agent.config?.llm ? thinkingModel({ llm: agent.config.llm }) : "") ?? "",
     pnlUsd: agg.pnlUsd,
     pnlPct: agg.pnlPct,
     equityUsd: agg.equityUsd ?? (agent.mode === "paper" ? toNum(agent.paperStartingUsd) : null),

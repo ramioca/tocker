@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FIRST_TRADE_PRESET,
+  checkBudget,
   checkDataSources,
   databaseStep,
   evaluateFirstTradeRisk,
@@ -197,6 +198,77 @@ describe("simulateFirstTrade", () => {
     // A guard refusal for a chain the agent has enabled can never be a chain mismatch.
     expect(await simulateFirstTrade(config({ maxPositionPct: 100 }, ["base"]), 10)).toBeNull();
     expect(await simulateFirstTrade(config({ maxPositionPct: 100 }, ["solana"]), 10)).toBeNull();
+  });
+
+  /**
+   * An agent that pays for its own thinking keeps one run's worth of it, and the wallet
+   * floor, out of its trades. The checklist has to simulate against what is left, or it
+   * says green over a wallet whose first buy the guard will refuse.
+   */
+  describe("for an agent that pays per use", () => {
+    const paying = (maxUsdPerRun: number, risk: Partial<AgentConfig["risk"]> = {}): AgentConfig => {
+      const base = config({ maxTradeUsd: 2, maxPositionPct: 100, ...risk }, ["solana"]);
+      return { ...base, llm: { ...base.llm, source: "usdc", usdc: { model: "google/gemini-2.5-flash", maxUsdPerRun, maxUsdPerDay: 3 } } };
+    };
+
+    it("refuses a wallet that covers the ticket but not the ticket and the thinking, and says why", async () => {
+      // $2.50 covers a $2.00 buy and its $0.10 fee. Not once $0.55 is kept back.
+      expect(await simulateFirstTrade(config({ maxTradeUsd: 2, maxPositionPct: 100 }, ["solana"]), 2.5)).toBeNull();
+      const refusal = await simulateFirstTrade(paying(0.3), 2.5);
+      expect(refusal).toMatch(/Insufficient cash/);
+      expect(refusal).toMatch(/\$0\.55 is kept back to pay for its own thinking/);
+    });
+
+    it("passes once the wallet covers both", async () => {
+      expect(await simulateFirstTrade(paying(0.3), 2.65)).toBeNull();
+      expect(await simulateFirstTrade(paying(2), 4.35)).toBeNull();
+      expect(await simulateFirstTrade(paying(2), 4.3)).toMatch(/Insufficient cash/);
+    });
+
+    it("still measures concentration against the whole wallet: the money kept back is the agent's", async () => {
+      // $2 of $10 is 20% of equity whichever way the agent thinks.
+      expect(await simulateFirstTrade(paying(0.3, { maxPositionPct: 20 }), 10)).toBeNull();
+      expect(await simulateFirstTrade(paying(0.3, { maxPositionPct: 19 }), 10)).toMatch(/above maxPositionPct 19%/);
+    });
+
+    it("changes nothing for an agent on a key, whose config may still carry old limits", async () => {
+      const back = paying(2);
+      expect(await simulateFirstTrade({ ...back, llm: { ...back.llm, source: "key" } }, 2.5)).toBeNull();
+    });
+  });
+});
+
+/**
+ * The wallet-level budget is optional for an agent that thinks on a key. For one that
+ * pays for its own thinking it is not: a run of such an agent is not started while its
+ * Solana wallet has no policy, so going live without one is going live with an agent that
+ * never thinks.
+ */
+describe("checkBudget", () => {
+  const settings = "/agents/a/settings";
+  const key = config({ maxTradeUsd: 2 }, ["solana"]);
+  const paying: AgentConfig = { ...key, llm: { ...key.llm, source: "usdc", usdc: { model: "google/gemini-2.5-flash", maxUsdPerRun: 0.3, maxUsdPerDay: 3 } } };
+
+  it("only warns a key agent about a missing wallet budget, as before", () => {
+    expect(checkBudget(key, null, 2, settings).state).toBe("warn");
+    expect(checkBudget(key, { perTxUsd: 2, policyIds: {} }, 2, settings).state).toBe("pass");
+    expect(checkBudget(key, { perTxUsd: 50, policyIds: { solana: "pol_1" } }, 2, settings).state).toBe("warn");
+  });
+
+  it("fails an agent that pays per use until its Solana wallet has a policy", () => {
+    const none = checkBudget(paying, null, 2, settings);
+    expect(none.state).toBe("fail");
+    expect(none.detail).toMatch(/pays for its own thinking/);
+    expect(none.fix?.href).toBe(`${settings}#budget`);
+    // A policy on Base is not one on the wallet that pays.
+    expect(checkBudget(paying, { perTxUsd: 2, policyIds: { base: "pol_b" } }, 2, settings).state).toBe("fail");
+    expect(checkBudget(paying, { perTxUsd: 2, policyIds: { solana: "pol_s" } }, 2, settings).state).toBe("pass");
+  });
+
+  it("still names the per-trade cap first when that is what is wrong", () => {
+    const over = checkBudget({ ...paying, risk: { ...paying.risk, maxTradeUsd: 9 } }, null, 2, settings);
+    expect(over.state).toBe("fail");
+    expect(over.detail).toMatch(/above the \$2\.00 you entered/);
   });
 });
 

@@ -13,6 +13,8 @@ import {
   verdictForScore,
 } from "@/components/tokens";
 import { DISCOVERY_FEEDS } from "@/components/agents/builder/types";
+import { THINK_SOURCE_LABELS, payPerUseModelLabel, stepsAllowed } from "@/components/agents/thinking";
+import { thinkSource } from "@/lib/agent/inference";
 import { cn } from "@/lib/utils";
 import type { AgentConfig } from "@/db/schema";
 
@@ -99,6 +101,9 @@ export function AgentConfigSummary({
   const dataHref = edit("data");
 
   const { universe } = config;
+  // An agent that pays for its own thinking uses no key: its provider and key model are
+  // left over from before and would name a model that is not doing the thinking.
+  const usdc = thinkSource(config) === "usdc" ? (config.llm.usdc ?? null) : null;
   const verdict = verdictForScore(universe.minScore);
   const feeds = DISCOVERY_FEEDS.filter((feed) => universe.discovery.includes(feed.id));
 
@@ -218,18 +223,35 @@ export function AgentConfigSummary({
       <div className="grid gap-5 sm:grid-cols-2">
         <Section title="Brain &amp; schedule" editHref={edit("brain")}>
           <dl className="mt-1">
-            <Row label="Provider">
-              <span className="capitalize">{config.llm.provider}</span>
-            </Row>
-            {/* The name the header prints; the exact id is one hover away. */}
-            <Row label="Model">
-              <span title={config.llm.model}>{modelLabel(config.llm.model)}</span>
-            </Row>
+            {usdc ? (
+              <>
+                <Row label="Thinking">{THINK_SOURCE_LABELS.usdc}</Row>
+                <Row label="Model">
+                  <span title={usdc.model}>{payPerUseModelLabel(usdc.model)}</span>
+                </Row>
+                <Row label="Thinking limit">
+                  <span className="tnum">
+                    {formatUsd(usdc.maxUsdPerRun)} / run · {formatUsd(usdc.maxUsdPerDay)} / day
+                  </span>
+                </Row>
+              </>
+            ) : (
+              <>
+                <Row label="Provider">
+                  <span className="capitalize">{config.llm.provider}</span>
+                </Row>
+                {/* The name the header prints; the exact id is one hover away. */}
+                <Row label="Model">
+                  <span title={config.llm.model}>{modelLabel(config.llm.model)}</span>
+                </Row>
+              </>
+            )}
             <Row label="Temperature">
               <span className="tnum">{config.llm.temperature}</span>
             </Row>
             <Row label="Max steps per run">
-              <span className="tnum">{config.llm.maxSteps}</span>
+              {/* What a run is really held to: pay-per-use stops sooner than the setting allows. */}
+              <span className="tnum">{stepsAllowed(config.llm.maxSteps, usdc ? "usdc" : "key")}</span>
             </Row>
             <Row label="Schedule">{intervalLabel(config.schedule.intervalMinutes)}</Row>
           </dl>

@@ -10,6 +10,8 @@ import {
   combineEquity,
   estimateModelSpendUsd,
   getMoney,
+  ownKeyComparison,
+  ownKeyPrice,
   pnlByDay,
   resolveModelPrice,
   utcDayKey,
@@ -180,7 +182,67 @@ describe("pnlByDay", () => {
       ],
       { now: DAY0 + 12 * 3_600_000 },
     );
-    expect(days).toEqual([{ day: "2026-09-20", equityUsd: 100, pnlUsd: null, pnlPct: null, flowUsd: 0, agents: 1 }]);
+    expect(days).toEqual([
+      { day: "2026-09-20", equityUsd: 100, pnlUsd: null, pnlPct: null, flowUsd: 0, thinkingUsd: 0, agents: 1 },
+    ]);
+  });
+
+  // What a pay-per-use agent pays for its own thinking leaves its wallet, so the close
+  // falls by it. That is a cost of running the agent, not a result of its trading.
+  it("takes what was paid for thinking out of the day's P&L, and reports it apart from the flow", () => {
+    const days = pnlByDay([point("a", 0, 12, 100), point("a", 1, 20, 99.25)], {
+      now: DAY0 + DAY + 21 * 3_600_000,
+      flows: [
+        { agentId: "a", at: DAY0 + DAY + 9 * 3_600_000, amountUsd: -0.5, kind: "thinking" },
+        { agentId: "a", at: DAY0 + DAY + 10 * 3_600_000, amountUsd: -0.25, kind: "thinking" },
+      ],
+    });
+    expect(days[1]).toMatchObject({ equityUsd: 99.25, flowUsd: 0 });
+    expect(days[1].pnlUsd).toBeCloseTo(0, 10);
+    expect(days[1].thinkingUsd).toBeCloseTo(0.75, 10);
+    expect(days[1].pnlPct).toBeCloseTo(0, 10);
+  });
+
+  it("keeps thinking and a deposit on the same day apart, and nets both", () => {
+    // 100, then 500 in and 1 paid for thinking, then 9 made: 608.
+    const days = pnlByDay([point("a", 0, 12, 100), point("a", 1, 20, 608)], {
+      now: DAY0 + DAY + 21 * 3_600_000,
+      flows: [
+        { agentId: "a", at: DAY0 + DAY + 9 * 3_600_000, amountUsd: 500 },
+        { agentId: "a", at: DAY0 + DAY + 10 * 3_600_000, amountUsd: -1, kind: "thinking" },
+      ],
+    });
+    expect(days[1]).toMatchObject({ flowUsd: 500, thinkingUsd: 1 });
+    expect(days[1].pnlUsd).toBeCloseTo(9, 10);
+    // On the prior close plus what came in. Paying for thinking does not shrink the base.
+    expect(days[1].pnlPct).toBeCloseTo((9 / 600) * 100, 10);
+  });
+
+  it("does not net thinking that was paid before the agent's first point, or by an agent with no book", () => {
+    const days = pnlByDay([point("a", 0, 12, 100), point("a", 1, 12, 100)], {
+      now: DAY0 + DAY + 13 * 3_600_000,
+      flows: [
+        // Before the opening book: that mark already lacks the money.
+        { agentId: "a", at: DAY0 + 6 * 3_600_000, amountUsd: -3, kind: "thinking" },
+        { agentId: "ghost", at: DAY0 + DAY, amountUsd: -9, kind: "thinking" },
+      ],
+    });
+    expect(days[1]).toMatchObject({ pnlUsd: 0, thinkingUsd: 0, flowUsd: 0 });
+  });
+
+  it("never reads a positive amount as thinking paid", () => {
+    const days = pnlByDay([point("a", 0, 12, 100), point("a", 1, 12, 100)], {
+      now: DAY0 + DAY + 13 * 3_600_000,
+      flows: [{ agentId: "a", at: DAY0 + DAY + 3_600_000, amountUsd: 5, kind: "thinking" }],
+    });
+    // Not a payment, so nothing is added back and nothing is called a deposit.
+    expect(days[1]).toMatchObject({ pnlUsd: 0, thinkingUsd: 0, flowUsd: 0 });
+  });
+
+  it("leaves a day with no thinking exactly as it was", () => {
+    const flows = [{ agentId: "a", at: DAY0 + DAY + 9 * 3_600_000, amountUsd: -40 }];
+    const days = pnlByDay([point("a", 0, 12, 600), point("a", 1, 20, 570)], { now: DAY0 + DAY + 21 * 3_600_000, flows });
+    expect(days[1]).toMatchObject({ pnlUsd: 10, flowUsd: -40, thinkingUsd: 0 });
   });
 });
 
@@ -260,6 +322,46 @@ describe("model pricing", () => {
 
   it("never turns a negative count into a credit", () => {
     expect(estimateModelSpendUsd("claude-sonnet-5", { inputTokens: -5_000_000, outputTokens: 1_000_000 })).toBe(10);
+  });
+});
+
+describe("what the same tokens would cost on the owner's own key", () => {
+  it("prices a model the catalogue lists at the catalogue's price", () => {
+    // Haiku 4.5, in the gateway's spelling, is the catalogue's own row.
+    expect(ownKeyPrice("anthropic/claude-haiku-4.5")).toEqual(resolveModelPrice("claude-haiku-4-5"));
+    expect(ownKeyPrice("openai/gpt-4.1-mini")).toMatchObject({ inputPerMTok: 0.4, outputPerMTok: 1.6 });
+  });
+
+  it("falls back to the pay-per-use table's list rate for a model the catalogue does not carry", () => {
+    expect(resolveModelPrice("google/gemini-2.5-flash")).toBeNull();
+    expect(ownKeyPrice("google/gemini-2.5-flash")).toMatchObject({ inputPerMTok: 0.3, outputPerMTok: 2.5 });
+    expect(ownKeyPrice("some-model/nobody-lists")).toBeNull();
+    expect(ownKeyPrice(null)).toBeNull();
+  });
+
+  it("covers the same steps on both sides, and says how many it left out", () => {
+    const compare = ownKeyComparison([
+      { model: "google/gemini-2.5-flash", steps: 10, paidUsd: 0.5, inputTokens: 1_000_000, outputTokens: 20_000 },
+      { model: "anthropic/claude-haiku-4.5", steps: 2, paidUsd: 0.3, inputTokens: 100_000, outputTokens: 10_000 },
+      { model: "some-model/nobody-lists", steps: 3, paidUsd: 9, inputTokens: 5, outputTokens: 5 },
+    ])!;
+    expect(compare).toMatchObject({ steps: 12, inputTokens: 1_100_000, outputTokens: 30_000, unpricedSteps: 3 });
+    expect(compare.ownKeyUsd).toBeCloseTo(0.3 + 0.05 + 0.1 + 0.05, 10);
+    // The unpriced model's 9 dollars are in neither figure.
+    expect(compare.paidUsd).toBeCloseTo(0.8, 10);
+  });
+
+  it("has nothing to say when no step can be priced", () => {
+    expect(ownKeyComparison([])).toBeNull();
+    expect(ownKeyComparison([{ model: "some-model/nobody-lists", steps: 4, paidUsd: 1, inputTokens: 1, outputTokens: 1 }])).toBeNull();
+    expect(ownKeyComparison([{ model: "google/gemini-2.5-flash", steps: 0, paidUsd: 0, inputTokens: 0, outputTokens: 0 }])).toBeNull();
+  });
+
+  it("never turns a negative count into a credit", () => {
+    const compare = ownKeyComparison([
+      { model: "google/gemini-2.5-flash", steps: 1, paidUsd: -5, inputTokens: -1_000_000, outputTokens: -1_000_000 },
+    ])!;
+    expect(compare).toMatchObject({ ownKeyUsd: 0, paidUsd: 0, inputTokens: 0, outputTokens: 0 });
   });
 });
 

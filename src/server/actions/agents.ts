@@ -3,11 +3,14 @@ import { MAX_AGENTS_PER_USER, MAX_NEW_AGENTS_PER_DAY, RATE_LIMITS, limiter } fro
 import { revalidatePath } from "next/cache";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { agentRuns, agents, getDb, llmKeys, posts, wallets } from "@/db";
+import { isAdminEmail } from "@/lib/admin";
 import { MAX_AGENT_NAME, agentConfigSchema, type AgentConfigInput } from "@/lib/agent/config";
+import { NO_INFERENCE_HOLD, USDC_NOT_AVAILABLE, canThink, thinkSource, usdcChoiceProblem } from "@/lib/agent/inference";
 import { isLlmMock } from "@/lib/agent/mock-model";
-import { RUN_REFUSED_WHILE_PAUSED } from "@/lib/agent/run-gate";
+import { RUN_REFUSED_WHILE_PAUSED, RUN_REFUSED_WITHOUT_KEY, isRunRefused } from "@/lib/agent/run-gate";
 import { getSession } from "@/lib/auth";
 import { isTradingPaused } from "@/lib/security/kill-switch";
+import { inferenceAllowedFor, inferenceFlags } from "@/lib/x402/inference-types";
 import { SECRET_IN_PUBLIC_TEXT, looksLikeSecret } from "@/lib/security/redact";
 import { applyAgentBudgetPolicy, createAgentWallets, getAgentWallets } from "@/lib/wallets";
 import { chainLabelFor, describeStranded } from "@/lib/wallets/funding";
@@ -100,6 +103,15 @@ function firstIssue(error: { issues: Array<{ path: PropertyKey[]; message: strin
   return issue.message;
 }
 
+/**
+ * May this account choose pay-per-use thinking. The switches are the environment's
+ * (`INFERENCE_USDC`, off unless set), and the admin list is read the way the rest of the
+ * app reads it: the session's email against `ADMIN_EMAILS`.
+ */
+function mayPayPerUse(session: { userId: string; email: string | null }): boolean {
+  return inferenceAllowedFor({ id: session.userId, isAdmin: isAdminEmail(session.email) }, inferenceFlags());
+}
+
 function revalidateAgent(slug?: string, handle?: string) {
   revalidatePath("/feed");
   revalidatePath("/discover");
@@ -131,6 +143,18 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
   if (!parsed.success) return fail(firstIssue(parsed.error));
   const config = parsed.data;
 
+  // The mode is the config's own word. Asking for pay-per-use takes a complete block and
+  // an account that is allowed it; nothing here falls back to it from a missing key.
+  const paysPerUse = thinkSource(config) === "usdc";
+  if (paysPerUse) {
+    const problem = usdcChoiceProblem(config);
+    if (problem) return fail(problem);
+    if (!mayPayPerUse(session)) return fail(USDC_NOT_AVAILABLE);
+  }
+  // An agent that pays per use is made without a key: it would never use one, and a key
+  // on its row would only say otherwise.
+  const llmKeyId = paysPerUse ? null : input.llmKeyId;
+
   const db = await getDb();
 
   const [owned] = await db
@@ -158,11 +182,11 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
     return fail(`You've set up ${MAX_NEW_AGENTS_PER_DAY} agents in the last 24 hours, the most Tocker creates in a day. Try again tomorrow.`);
   }
 
-  if (input.llmKeyId) {
+  if (llmKeyId) {
     const [key] = await db
       .select({ id: llmKeys.id })
       .from(llmKeys)
-      .where(and(eq(llmKeys.id, input.llmKeyId), eq(llmKeys.userId, session.userId)))
+      .where(and(eq(llmKeys.id, llmKeyId), eq(llmKeys.userId, session.userId)))
       .limit(1);
     if (!key) return fail("That LLM key does not belong to you");
   }
@@ -200,7 +224,7 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
       mode: "paper",
       status: activate ? "active" : "draft",
       isPublic: input.isPublic,
-      llmKeyId: input.llmKeyId,
+      llmKeyId,
       config,
       paperStartingUsd: paperStartingUsd.toFixed(2),
       nextRunAt: activate && input.holdSchedule !== true ? new Date() : null,
@@ -335,14 +359,46 @@ export async function updateAgent(id: string, input: Partial<CreateAgentInput>):
     }
   }
 
+  // Where the agent's thinking comes from, after this save. It is always the config's
+  // own word (`llm.source`), never read off whether a key is attached:
+  //  - a save that carries a config says the mode itself;
+  //  - a save that only sets a key ("use my own key") on an agent that pays per use
+  //    says so too, and its source is written back to "key" here, explicitly. Left as it
+  //    was, the key would sit on the row unused while the agent went on paying.
+  // The config this save submitted, if it submitted one. The wallet steps below belong
+  // to that and to nothing else: the one-field change made here when only a key is set
+  // must not go on to create a wallet or re-apply a policy, or be refused because one failed.
+  const submitted = patch.config;
+  const before = thinkSource(agent.config);
+  if (submitted === undefined && input.llmKeyId && before === "usdc") {
+    patch.config = { ...agent.config, llm: { ...agent.config.llm, source: "key" } };
+  }
+  const after = thinkSource(patch.config ?? agent.config);
+  if (after === "usdc" && submitted) {
+    const problem = usdcChoiceProblem(submitted);
+    if (problem) return fail(problem);
+    // Asked only of a save that turns pay-per-use on. An agent already on it can still be
+    // edited while the switch is off: it cannot run until it is back on, whatever is saved.
+    if (before !== "usdc" && !mayPayPerUse(session)) return fail(USDC_NOT_AVAILABLE);
+  }
+  if (after === "key" && before === "usdc") {
+    // Back on its owner's key: whatever was holding its paid thinking no longer applies.
+    Object.assign(patch, NO_INFERENCE_HOLD);
+  } else if (after === "usdc" && submitted && agent.inferenceHold) {
+    // A held agent's settings were just saved, which is how most holds are fixed (a new
+    // model, a higher limit, a wallet policy applied below). Look again at the next pass
+    // rather than when the back-off says.
+    patch.inferenceHoldUntil = new Date();
+  }
+
   // After every check and before the save, so a chain is never on without its wallet.
   let walletAdded = false;
-  if (patch.config) {
+  if (submitted) {
     const wallet = await ensureChainWallets({
       agentId: id,
       userId: agent.ownerId,
       name: patch.name ?? agent.name,
-      chains: patch.config.chains,
+      chains: submitted.chains,
     });
     if (!wallet.ok) return fail(wallet.error);
     walletAdded = wallet.created;
@@ -353,12 +409,12 @@ export async function updateAgent(id: string, input: Partial<CreateAgentInput>):
   // Keep the wallet-layer cap from drifting below the app-level trade cap when the
   // owner raises it, and put the same cap on a wallet that was just made. Best-effort:
   // the app-level risk guard still holds if Privy fails.
-  if (patch.config && (walletAdded || patch.config.risk.maxTradeUsd !== agent.walletBudget?.perTxUsd)) {
+  if (submitted && (walletAdded || submitted.risk.maxTradeUsd !== agent.walletBudget?.perTxUsd)) {
     try {
       const walletBudget = await applyAgentBudgetPolicy({
         agentId: id,
         agentName: patch.name ?? agent.name,
-        perTxUsd: patch.config.risk.maxTradeUsd,
+        perTxUsd: submitted.risk.maxTradeUsd,
         existing: agent.walletBudget,
       });
       if (walletBudget) await db.update(agents).set({ walletBudget }).where(eq(agents.id, id));
@@ -445,6 +501,9 @@ export async function deleteAgent(id: string): Promise<ActionResult> {
  * `/api/agents/[id]/runs/[runId]` for the transcript.
  */
 export async function triggerRun(id: string): Promise<ActionResult<{ runId: string }>> {
+  // When this invocation began. A pay-per-use run stops paying before the function's
+  // time limit, and that is counted from here.
+  const invocationStartedAt = Date.now();
   const session = await getSession();
   if (!session) return fail("Sign in first");
   // Same bucket size as the `/api/agents/[id]/run` route: a run spends the owner's LLM key.
@@ -460,8 +519,9 @@ export async function triggerRun(id: string): Promise<ActionResult<{ runId: stri
   // would do is spend the owner's model tokens. Exits do not wait for a run.
   if (await isTradingPaused(agent.ownerId)) return fail(RUN_REFUSED_WHILE_PAUSED);
   // The page disables Run now without a key, but a stale page or a direct call would
-  // otherwise start a run that can only fail.
-  if (!agent.llmKeyId && !isLlmMock()) return fail("Attach an LLM key before running this agent");
+  // otherwise start a run that can only fail. An agent that pays per use needs no key;
+  // whether it may run is checked inside `startRun`, before any run row is written.
+  if (!canThink(agent, isLlmMock())) return fail(RUN_REFUSED_WITHOUT_KEY);
 
   // A run that stopped moving more than ten minutes ago was killed by the platform, not
   // by us. Reap it before looking for a live one: returning `{ok: true}` pointing at a
@@ -486,10 +546,16 @@ export async function triggerRun(id: string): Promise<ActionResult<{ runId: stri
   try {
     // startRun inserts the run row synchronously and hands the continuation to
     // `after()`, so the UI gets an id to poll immediately and the tick still completes.
-    const { runId } = await startRun({ agentId: id, trigger: "manual" });
+    const { runId } = await startRun({ agentId: id, trigger: "manual", invocationStartedAt });
     revalidatePath(`/agents/${agent.slug}`);
     return { ok: true, data: { runId } };
   } catch (err) {
+    // A pay-per-use agent that may not run just now. The message is the sentence written
+    // for the reason; the agent's page shows the same one, with what fixes it.
+    if (isRunRefused(err)) {
+      revalidatePath(`/agents/${agent.slug}`);
+      return fail(err.message);
+    }
     console.error("[triggerRun] could not start run", err);
     return fail("The agent runtime is unavailable");
   }

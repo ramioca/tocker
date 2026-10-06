@@ -11,15 +11,21 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
+import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
+import { holdUntil } from "@/lib/x402/inference-budget";
+import { INFERENCE_STOPS, describeInferenceStop, type InferenceStopReason } from "@/lib/x402/inference-types";
+import { stopFix } from "@/components/agents/thinking";
 import {
   classifyRunError,
   deriveStatus,
   describeWindow,
   firstSentence,
   getAgentStatus,
+  holdItem,
   humanDuration,
   type StatusInputs,
+  type StatusThinking,
 } from "./agent-status";
 
 const NOW = new Date("2026-09-22T17:48:00.000Z");
@@ -454,6 +460,216 @@ describe("deriveStatus", () => {
   });
 });
 
+// --------------------------------------------------------------- pay per use
+
+/**
+ * An agent that pays for its own thinking has no key on purpose, and what stops it is a
+ * hold, not a failure. Every reason a hold can carry is rendered here, because the row
+ * is the only place its owner is told what to do about it.
+ */
+describe("deriveStatus for an agent that pays for its own thinking", () => {
+  const REASONS = Object.keys(INFERENCE_STOPS) as InferenceStopReason[];
+  const CONTEXT = { runCapUsd: 0.15, dayCapUsd: 3, model: "Gemini 2.5 Flash" };
+
+  function thinking(hold: StatusThinking["hold"] = null): StatusThinking {
+    return { ...CONTEXT, hold };
+  }
+
+  it("never says a key is missing, held or not", () => {
+    expect(deriveStatus(inputs({ hasLlmKey: false, thinking: thinking() }))).toEqual([]);
+    const held = deriveStatus(
+      inputs({ hasLlmKey: false, thinking: thinking({ reason: "needs_funds", until: new Date(NOW.getTime() + 15 * MINUTE) }) }),
+    );
+    expect(held.map((item) => item.kind)).toEqual(["thinking_hold"]);
+  });
+
+  it("renders every hold reason in describeInferenceStop's words, with the fix and the owner's own key", () => {
+    for (const reason of REASONS) {
+      const until = holdUntil(reason, 1, NOW);
+      const items = deriveStatus(inputs({ hasLlmKey: false, thinking: thinking({ reason, until }) }));
+      expect(items, reason).toHaveLength(1);
+      const [item] = items;
+      const words = describeInferenceStop(reason, CONTEXT);
+      const fix = stopFix(reason);
+
+      expect(item.kind).toBe("thinking_hold");
+      expect(item.severity).toBe("block");
+      expect(item.title).toBe(words.title);
+      expect(item.detail.startsWith(words.detail), reason).toBe(true);
+      expect(item.detail).toContain("Tocker checks again");
+      expect(item.action).toEqual({
+        label: fix.label,
+        href: "hash" in fix ? `/agents/fresh-hunter/settings${fix.hash}` : fix.path,
+      });
+      expect(item.secondaryAction).toEqual({ label: "Use my own key", href: "/agents/fresh-hunter/settings#brain" });
+    }
+  });
+
+  it("says when it is looked at again: the back-off, the day's end, or the next pass", () => {
+    const at = (reason: InferenceStopReason, until: Date | null) =>
+      deriveStatus(inputs({ hasLlmKey: false, thinking: thinking({ reason, until }) }))[0].detail;
+
+    expect(at("needs_funds", holdUntil("needs_funds", 1, NOW))).toContain("Tocker checks again in 15 minutes.");
+    expect(at("needs_funds", holdUntil("needs_funds", 3, NOW))).toContain("Tocker checks again in 1 hour.");
+    // A day limit waits for 00:00 UTC, 6h 12m after the test's clock.
+    expect(at("agent_day_cap", holdUntil("agent_day_cap", 1, NOW))).toContain("Tocker checks again in 6h 12m.");
+    expect(at("paused", holdUntil("paused", 1, NOW))).toContain("Tocker checks again in 15 minutes.");
+    // Past its time, or stored without one: the cron's next pass, not "in now".
+    expect(at("needs_funds", new Date(NOW.getTime() - MINUTE))).toContain("on its next pass, within five minutes.");
+    expect(at("needs_funds", null)).toContain("on its next pass, within five minutes.");
+  });
+
+  it("quotes the owner's own limit in the daily-limit row", () => {
+    const [item] = deriveStatus(
+      inputs({ hasLlmKey: false, thinking: thinking({ reason: "agent_day_cap", until: holdUntil("agent_day_cap", 1, NOW) }) }),
+    );
+    expect(item.title).toBe("Daily thinking limit reached");
+    expect(item.detail).toContain("$3.00");
+    expect(item.action).toEqual({ label: "Raise the limit", href: "/agents/fresh-hunter/settings#thinking" });
+  });
+
+  it("offers Run now only for a reason the owner can clear themselves", () => {
+    const detail = (reason: InferenceStopReason) =>
+      deriveStatus(inputs({ hasLlmKey: false, thinking: thinking({ reason, until: holdUntil(reason, 1, NOW) }) }))[0].detail;
+    for (const reason of ["needs_funds", "agent_day_cap", "no_wallet", "no_policy", "model_unavailable"] as const) {
+      expect(detail(reason), reason).toContain("Once it is fixed, Run now starts it straight away.");
+    }
+    for (const reason of ["owner_day_cap", "request_limit", "platform_day_cap", "halted", "paused", "paid_no_answer"] as const) {
+      expect(detail(reason), reason).not.toContain("Run now");
+    }
+  });
+
+  it("still shows a hold whose stored reason this build does not know, without printing it", () => {
+    const [item] = deriveStatus(
+      inputs({ hasLlmKey: false, thinking: thinking({ reason: "a_reason_from_the_future", until: null }) }),
+    );
+    expect(item.kind).toBe("thinking_hold");
+    expect(item.title).toBe("Pay-per-use thinking is on hold");
+    expect(`${item.title} ${item.detail}`).not.toContain("a_reason_from_the_future");
+    expect(item.action).toEqual({ label: "Open settings", href: "/agents/fresh-hunter/settings#thinking" });
+    expect(item.secondaryAction?.label).toBe("Use my own key");
+  });
+
+  it("says a stop once: the hold row, not a failed-run row beside it", () => {
+    const lastRun = {
+      id: "run_7",
+      status: "failed" as const,
+      error: describeInferenceStop("needs_funds").detail,
+      summary: null,
+      stopReason: "needs_funds",
+    };
+    const held = deriveStatus(
+      inputs({ hasLlmKey: false, lastRun, thinking: thinking({ reason: "needs_funds", until: holdUntil("needs_funds", 1, NOW) }) }),
+    );
+    expect(held.map((item) => item.kind)).toEqual(["thinking_hold"]);
+  });
+
+  it("names a stopped run in the same words once the hold has cleared", () => {
+    const [item, ...rest] = deriveStatus(
+      inputs({
+        hasLlmKey: false,
+        thinking: thinking(),
+        lastRun: { id: "run_8", status: "failed", error: "anything", summary: null, stopReason: "paid_no_answer" },
+      }),
+    );
+    expect(rest).toEqual([]);
+    expect(item.kind).toBe("run_failed");
+    expect(item.title).toBe(describeInferenceStop("paid_no_answer").title);
+    expect(item.detail).toBe(describeInferenceStop("paid_no_answer", CONTEXT).detail);
+    expect(item.action).toEqual({ label: "Open the run", href: "/agents/fresh-hunter/runs/run_8" });
+    expect(item.secondaryAction).toBeUndefined();
+  });
+
+  it("says nothing about a run that stopped at one of its own limits and succeeded", () => {
+    expect(
+      deriveStatus(
+        inputs({
+          hasLlmKey: false,
+          thinking: thinking(),
+          lastRun: { id: "run_9", status: "succeeded", error: null, summary: "Stopped at its limit.", stopReason: "run_cap" },
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("still reports a failure that had nothing to do with paying", () => {
+    const [item] = deriveStatus(
+      inputs({
+        hasLlmKey: false,
+        thinking: thinking(),
+        lastRun: { id: "run_2", status: "failed", error: "Privy refused to sign.", summary: null, stopReason: null },
+      }),
+    );
+    expect(item.title).toBe("The last run failed");
+    expect(item.detail).toBe("Privy refused to sign.");
+  });
+
+  it("keeps its place among the other blocks: after a proposal on the clock, before the day's buys", () => {
+    const items = deriveStatus(
+      inputs({
+        hasLlmKey: false,
+        proposals: [{ expiresAt: new Date(NOW.getTime() + 9 * MINUTE) }],
+        portfolio: { cashUsd: 100, tradesToday: 10, cashReadFailed: false },
+        thinking: thinking({ reason: "needs_funds", until: holdUntil("needs_funds", 1, NOW) }),
+      }),
+    );
+    expect(items.map((item) => item.kind)).toEqual(["pending_proposals", "thinking_hold", "daily_limit"]);
+  });
+
+  it("builds the same row on its own as inside the derivation", () => {
+    const hold = { reason: "needs_funds", until: holdUntil("needs_funds", 1, NOW) };
+    const [item] = deriveStatus(inputs({ hasLlmKey: false, thinking: thinking(hold) }));
+    expect(holdItem(thinking(hold), hold, "fresh-hunter", NOW)).toEqual(item);
+  });
+});
+
+/**
+ * The feature ships switched off, so what matters most is what does NOT change: a key
+ * agent's rows are the ones it had before `thinking` existed, including when its row
+ * carries pay-per-use leftovers.
+ */
+describe("deriveStatus for a key agent is unchanged by pay per use", () => {
+  const cases: Array<Partial<StatusInputs>> = [
+    {},
+    { hasLlmKey: false },
+    { status: "paused" },
+    { lastRun: { id: "run_1", status: "failed", error: "Your credit balance is too low to access the Anthropic API.", summary: null } },
+    {
+      hasLlmKey: false,
+      lastRun: {
+        id: "run_3",
+        status: "failed",
+        error: "This agent has no LLM API key attached. Add one in Settings and re-select it on the agent.",
+        summary: null,
+      },
+    },
+    { mode: "live", portfolio: { cashUsd: 0.7, tradesToday: 12, cashReadFailed: false } },
+  ];
+
+  it("gives the same rows with no thinking, with null, and with a stop reason left on its last run", () => {
+    for (const overrides of cases) {
+      const before = deriveStatus(inputs(overrides));
+      expect(deriveStatus(inputs({ ...overrides, thinking: null }))).toEqual(before);
+      expect(deriveStatus(inputs({ ...overrides, thinking: undefined }))).toEqual(before);
+      // A key agent that once paid per use can have a stop reason on an old run row.
+      const lastRun = overrides.lastRun ? { ...overrides.lastRun, stopReason: "needs_funds" } : undefined;
+      if (lastRun) expect(deriveStatus(inputs({ ...overrides, lastRun }))).toEqual(before);
+      for (const item of before) expect(item.secondaryAction).toBeUndefined();
+    }
+  });
+
+  it("still tells a key agent with no key to attach one", () => {
+    const [item] = deriveStatus(inputs({ hasLlmKey: false }));
+    expect(item).toEqual({
+      kind: "no_llm_key",
+      severity: "block",
+      title: "No LLM key attached",
+      detail: "The agent cannot think without one, so every tick fails before it starts.",
+      action: { label: "Attach a key", href: "/agents/fresh-hunter/settings#brain" },
+    });
+  });
+});
+
 // ------------------------------------------------------------------- the gate
 
 describe("getAgentStatus", () => {
@@ -480,5 +696,55 @@ describe("getAgentStatus", () => {
 
     const items = await getAgentStatus(agentId, userId);
     expect(items.map((i) => i.kind)).toContain("paused");
+  });
+
+  const PAY_PER_USE_LLM = {
+    ...DEFAULT_AGENT_CONFIG.llm,
+    source: "usdc" as const,
+    usdc: { model: "google/gemini-2.5-flash", maxUsdPerRun: 0.15, maxUsdPerDay: 3 },
+  };
+
+  it("does not ask a pay-per-use agent for a key", async () => {
+    const { agentId, userId } = await seedAgent(db, { config: { llm: PAY_PER_USE_LLM } });
+    const items = await getAgentStatus(agentId, userId);
+    expect(items.map((i) => i.kind)).not.toContain("no_llm_key");
+    expect(items.map((i) => i.kind)).not.toContain("thinking_hold");
+  });
+
+  it("shows a held pay-per-use agent's hold to its owner, and to nobody else", async () => {
+    const { agentId, userId, slug } = await seedAgent(db, { config: { llm: PAY_PER_USE_LLM } });
+    await db
+      .update(schema.agents)
+      .set({
+        inferenceHold: "agent_day_cap",
+        inferenceHoldSince: new Date(),
+        inferenceHoldUntil: new Date(Date.now() + 90 * MINUTE),
+        inferenceStrikes: 1,
+      })
+      .where(eq(schema.agents.id, agentId));
+
+    const mine = await getAgentStatus(agentId, userId);
+    const hold = mine.find((i) => i.kind === "thinking_hold");
+    expect(hold?.title).toBe("Daily thinking limit reached");
+    // The owner's own limit, read from the config.
+    expect(hold?.detail).toContain("$3.00");
+    expect(hold?.action).toEqual({ label: "Raise the limit", href: `/agents/${slug}/settings#thinking` });
+    expect(hold?.secondaryAction).toEqual({ label: "Use my own key", href: `/agents/${slug}/settings#brain` });
+    expect(mine.map((i) => i.kind)).not.toContain("no_llm_key");
+
+    expect(await getAgentStatus(agentId, "did:privy:someone-else")).toEqual([]);
+  });
+
+  it("ignores a hold left on an agent that has gone back to a key", async () => {
+    const { agentId, userId } = await seedAgent(db);
+    await db
+      .update(schema.agents)
+      .set({ inferenceHold: "needs_funds", inferenceHoldUntil: new Date(Date.now() + 15 * MINUTE) })
+      .where(eq(schema.agents.id, agentId));
+
+    const items = await getAgentStatus(agentId, userId);
+    expect(items.map((i) => i.kind)).not.toContain("thinking_hold");
+    // Seeded with no key, and a key agent again: the key row is the one that applies.
+    expect(items.map((i) => i.kind)).toContain("no_llm_key");
   });
 });

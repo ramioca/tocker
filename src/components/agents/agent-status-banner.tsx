@@ -74,10 +74,30 @@ export function AgentStatusBanner({ items }: { items: AgentStatusItem[] }) {
                 <span className="sr-only">{SPOKEN[item.severity]} </span>
                 {item.title}
               </p>
-              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{item.detail}</p>
+              {/* A hold quotes dollars and a wait, so its sentence gets the tabular figures
+                  the title has. Every other row's sentence is set as it always was. */}
+              <p
+                className={cn(
+                  "mt-0.5 text-xs leading-5 text-muted-foreground",
+                  item.kind === "thinking_hold" && "tnum",
+                )}
+              >
+                {item.detail}
+              </p>
+
+              {/* Two ways out do not fit beside the text on a phone, and stacked on the
+                  right they would squeeze the sentence that explains them. So a row with
+                  two sits them under it, at every width: the fix in the row's tone, the
+                  other way out plain. */}
+              {item.action && item.secondaryAction ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <ActionLink action={item.action} className={tone.action} />
+                  <ActionLink action={item.secondaryAction} className={TONE.info.action} />
+                </div>
+              ) : null}
             </div>
 
-            {item.action ? <ActionLink action={item.action} className={tone.action} /> : null}
+            {item.action && !item.secondaryAction ? <ActionLink action={item.action} className={tone.action} /> : null}
           </div>
         );
       })}

@@ -24,6 +24,13 @@ function row(overrides: Partial<MoneyAgentRow>): MoneyAgentRow {
     modelSpendUsd: 0,
     inputTokens: 0,
     outputTokens: 0,
+    thinkSource: "key",
+    thinkingModel: null,
+    thinkingUsd: 0,
+    thinkingSteps: 0,
+    thinkingUnansweredUsd: 0,
+    thinkingCheckingUsd: 0,
+    thinkingSimulatedUsd: 0,
     runCount: 0,
     tradeCount: 0,
     winRate: null,
@@ -41,6 +48,7 @@ describe("sumCosts", () => {
       dataSpendSimulatedUsd: 0,
       modelSpendUsd: 0,
       unpricedAgents: 0,
+      thinkingUsd: 0,
     });
   });
 
@@ -54,6 +62,20 @@ describe("sumCosts", () => {
     expect(totals.dataSpendSimulatedUsd).toBeCloseTo(0.1);
     expect(totals.modelSpendUsd).toBeCloseTo(1.33);
     expect(totals.unpricedAgents).toBe(0);
+  });
+
+  it("adds what was paid per use for thinking, and only the confirmed part", () => {
+    const totals = sumCosts([
+      // Being checked and simulated are on the row for the reader, and in no total.
+      row({ thinkSource: "usdc", thinkingUsd: 0.42, thinkingCheckingUsd: 0.05, thinkingSimulatedUsd: 9 }),
+      row({ thinkSource: "usdc", thinkingUsd: 0.08, thinkingUnansweredUsd: 0.08 }),
+      row({}),
+    ]);
+    expect(totals.thinkingUsd).toBeCloseTo(0.5);
+  });
+
+  it("is zero for agents that think on their owner's key", () => {
+    expect(sumCosts([row({ modelSpendUsd: 1.5 }), row({ modelSpendUsd: 0.5 })]).thinkingUsd).toBe(0);
   });
 
   it("counts an unpriced model instead of adding it", () => {

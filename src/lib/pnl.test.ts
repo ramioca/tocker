@@ -288,6 +288,25 @@ describe("money moved is not money made", () => {
     expect(diluted.pnlPct).toBeCloseTo((5 / 1_005) * 100, 9);
   });
 
+  it("funded with 25, 1 paid for the agent's own thinking, 24 left: no loss", () => {
+    // A pay-per-use agent pays for each model step from the wallet it trades from. That
+    // is a running cost, not a trade, and it is netted exactly as a withdrawal is.
+    const thinking = (daysAgo: number, amountUsd: number) => ({ at: at(daysAgo), amountUsd: -amountUsd, kind: "thinking" as const });
+    const book = pnlNetOfFlows(25, 24, flowsBetween([thinking(3, 0.6), thinking(2, 0.4)], at(5)));
+    expect(book.pnlUsd).toBeCloseTo(0, 12);
+    expect(book.basisUsd).toBeCloseTo(24, 12);
+    // What was put in is still 25: paying for thinking does not shrink the capital.
+    expect(book.capitalUsd).toBe(25);
+
+    // 3 made trading on top of it: +3, on the 25 put in.
+    const week = pnlOverWindow([mark(5, 25), mark(0, 27)], "7d", now, [thinking(2, 1)])!;
+    expect(week.pnlUsd).toBeCloseTo(3, 12);
+    expect(week.pnlPct).toBeCloseTo(12, 12);
+    expect(week.flowUsd).toBe(-1);
+    // The kind is a label for whoever words the flow. The arithmetic never reads it.
+    expect(flowsBetween([thinking(2, 1)], at(5))).toEqual(flowsBetween([withdrawal(2, 1)], at(5)));
+  });
+
   it("is the plain change in equity when nothing moved", () => {
     expect(pnlNetOfFlows(100, 112)).toEqual({ basisUsd: 100, capitalUsd: 100, pnlUsd: 12, pnlPct: 12 });
     expect(pnlNetOfFlows(0, 10).pnlPct).toBe(0);

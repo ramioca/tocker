@@ -1,6 +1,10 @@
 import type { MoneyAgentRow } from "@/server/queries/money";
 
-/** The three bills, summed over one set of agents. What the Costs note prints. */
+/**
+ * The bills, summed over one set of agents. What the Costs note prints. Three for an
+ * owner whose agents think on their own key; a fourth, `thinkingUsd`, when any of them
+ * has paid for its own thinking.
+ */
 export interface CostTotals {
   feesUsd: number;
   dataSpendUsd: number;
@@ -9,6 +13,8 @@ export interface CostTotals {
   /** Agents with a published model price only; `unpricedAgents` says how many had none. */
   modelSpendUsd: number;
   unpricedAgents: number;
+  /** Paid per use for thinking, confirmed on the ledger. Zero without pay-per-use. */
+  thinkingUsd: number;
 }
 
 /**
@@ -26,9 +32,11 @@ export function sumCosts(rows: readonly MoneyAgentRow[]): CostTotals {
     dataSpendSimulatedUsd: 0,
     modelSpendUsd: 0,
     unpricedAgents: 0,
+    thinkingUsd: 0,
   };
   for (const row of rows) {
     totals.feesUsd += row.feesUsd;
+    totals.thinkingUsd += row.thinkingUsd;
     totals.dataSpendUsd += row.dataSpendUsd;
     totals.dataSpendSimulatedUsd += row.dataSpendSimulatedUsd;
     if (row.modelSpendUsd === null) totals.unpricedAgents += 1;

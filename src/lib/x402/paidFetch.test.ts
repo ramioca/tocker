@@ -3,7 +3,20 @@ import { eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
-import { correctEip712Domains, paidFetch, parsePaymentOptions, selectPaymentOption } from "./paidFetch";
+import { FakeLedger, payContext } from "./inference-test-support";
+import { INFERENCE_GATEWAY, InferenceStop } from "./inference-types";
+import {
+  checkInferenceUrl,
+  correctEip712Domains,
+  createInferenceFetch,
+  paidFetch,
+  parsePaymentOptions,
+  pinInferenceRequirement,
+  probeInferenceSignature,
+  selectPaymentOption,
+  simulateInferenceStep,
+  verifySignedPayment,
+} from "./paidFetch";
 import {
   chainForNetwork,
   MAX_DATA_SPEND_PER_RUN_USD,
@@ -718,5 +731,56 @@ describe("paidFetch accounting when a payment fails", () => {
       { asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", extra: { name: "USDC", version: "2" } },
     ]) as Array<{ extra: Record<string, unknown> }>;
     expect(fixed?.extra).toEqual({ name: "USD Coin", version: "2" });
+  });
+});
+
+describe("the second entry: pay-per-use thinking", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("is exported from this file, the one place x402 is paid from", () => {
+    for (const entry of [createInferenceFetch, probeInferenceSignature, simulateInferenceStep, pinInferenceRequirement, verifySignedPayment, checkInferenceUrl]) {
+      expect(typeof entry).toBe("function");
+    }
+  });
+
+  it("leaves the data path closed to the inference gateway, mock mode included", async () => {
+    // The data path is paid by the platform wallet. It must never be a way to pay the
+    // gateway: the URL rule refuses first, before the budget and before any row.
+    const c = ctx(5);
+    const request = { sourceId: "not-a-source", url: INFERENCE_GATEWAY.solana.url, method: "POST" as const, body: {}, network: INFERENCE_GATEWAY.solana.network, priceUsd: 0.01, fixture: { ok: true } };
+    await expect(paidFetch(c, request)).rejects.toThrow(X402RequestError);
+    await expect(paidFetch(c, { ...request, url: "https://blockrun.ai/api/v1/chat/completions" })).rejects.toThrow(/is not a registry source's host/);
+    expect(c.budget.spentUsd).toBe(0);
+    expect(await db.select().from(schema.x402Payments).where(eq(schema.x402Payments.agentId, agentId))).toHaveLength(0);
+  });
+
+  it("does nothing while INFERENCE_USDC is unset: no request, no signature, no ledger row", async () => {
+    // The state the feature merges in. A key agent never reaches this function; this is
+    // the proof that reaching it by mistake still moves nothing.
+    vi.stubEnv("X402_MOCK", "");
+    vi.stubEnv("INFERENCE_USDC", "");
+    vi.stubEnv("SOLANA_RPC_URL", "https://rpc.test.invalid");
+    const network = vi.fn(async () => {
+      throw new Error("no network call is expected");
+    });
+    vi.stubGlobal("fetch", network);
+    const quiet = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const ledger = new FakeLedger();
+    const pay = payContext(ledger, "AQqnMFBwGZEoti85aTVRy8XYpKrho7GaMDx9ZB3CEeKA");
+    const thinking = createInferenceFetch(pay);
+    const call = thinking(INFERENCE_GATEWAY.solana.url, {
+      method: "POST",
+      body: JSON.stringify({ model: pay.model, messages: [{ role: "user", content: "hello" }] }),
+    });
+    await expect(call).rejects.toBeInstanceOf(InferenceStop);
+    expect(pay.stop?.reason).toBe("flag_off");
+    expect(network).not.toHaveBeenCalled();
+    expect(ledger.events).toEqual([]);
+    expect(pay).toMatchObject({ spentUsd: 0, requests: 0, inFlight: null });
+    quiet.mockRestore();
   });
 });

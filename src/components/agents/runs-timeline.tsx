@@ -11,6 +11,7 @@ import { formatDuration, formatUsd } from "@/components/common/format";
 import { RunSteps } from "./run-steps";
 import { fetchAgentRuns, fetchRunDetail } from "./agent-actions";
 import { LoadMoreFailed } from "./load-more-failed";
+import { readRunThinking, thinkingUsd } from "./thinking";
 import { cn } from "@/lib/utils";
 import type { Page, RunSummary } from "@/server/types";
 
@@ -42,6 +43,9 @@ function RunRow({
   const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
   // Orders the guard or the venue turned down: why "0 trades" was not "nothing to buy".
   const refused = run.refusedCount ?? 0;
+  // Owner only, and only for a run that paid for its own thinking: the query sends
+  // nothing for a key run or to a visitor, and such a row renders as it always has.
+  const thinking = readRunThinking(run);
 
   return (
     <li>
@@ -94,6 +98,31 @@ function RunRow({
               {refused > 0 ? ` · ${refused} refused` : null} ·{" "}
               <span title="x402 data spend">{formatUsd(run.dataSpendUsd)} data</span>
             </span>
+            {/* Its own line under the summary, at every width: the figure columns on the
+                right are fixed, and a fifth would move every key run's numbers too. The
+                reason is `describeInferenceStop`'s title, the words the banner and the
+                notification use; its full sentence is the run's own summary or error. */}
+            {thinking ? (
+              <span className="tnum mt-0.5 block text-[11px] text-muted-foreground sm:truncate">
+                <span className="font-mono" title="Paid in USDC from the agent's own wallet">
+                  {thinkingUsd(thinking.spendUsd)}
+                </span>{" "}
+                thinking
+                {thinking.stop ? (
+                  <>
+                    {" · "}
+                    <span
+                      title={thinking.stop.detail}
+                      className={
+                        thinking.stop.kind === "limit" ? "text-amber-700 dark:text-amber-400" : "text-destructive/90"
+                      }
+                    >
+                      {thinking.stop.title}
+                    </span>
+                  </>
+                ) : null}
+              </span>
+            ) : null}
           </span>
           {/* Fixed columns, right-aligned, so the figures scan down the list; an
               auto-width group started each row's numbers at a different x. */}

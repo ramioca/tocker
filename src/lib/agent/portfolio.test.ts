@@ -7,7 +7,7 @@ import { DEFAULT_AGENT_CONFIG } from "./config";
 import { applyFill } from "@/lib/trading/positions";
 import * as prices from "@/lib/trading/prices";
 import { seedKnownTokens, tokenId, USDC_SOLANA } from "@/lib/trading/tokens";
-import { effectiveTicketUsd, getPortfolio, snapshotEquity, type Portfolio } from "./portfolio";
+import { describePortfolio, effectiveTicketUsd, getPortfolio, snapshotEquity, spendableCashUsd, toRiskPortfolio, type Portfolio } from "./portfolio";
 import { seedAgent, setupTestDb } from "./test-support";
 
 let db: Db;
@@ -165,5 +165,64 @@ describe("getPortfolio", () => {
     expect(book.cashUsd).toBeCloseTo(10_000 - 60, 6);
     expect(positionsValue).toBeCloseTo(60 + 12, 6);
     expect(book.equityUsd).toBeCloseTo(book.cashUsd + positionsValue, 6);
+  });
+});
+
+/**
+ * A live agent that pays for its own thinking keeps one run's worth of it, and the wallet
+ * floor, out of its trades. The money is still its own: it stays in cash and equity, and
+ * is only left out of what a buy may spend.
+ */
+describe("what is held back for thinking", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const config = { ...DEFAULT_AGENT_CONFIG, risk: { ...DEFAULT_AGENT_CONFIG.risk, maxTradeUsd: 100, maxPositionPct: 100 } };
+
+  it("is nothing for a book that holds nothing back: every figure is as it was", () => {
+    const plain = book({ mode: "live", cashUsd: 10, equityUsd: 10 });
+    expect(spendableCashUsd(plain)).toBe(10);
+    expect(toRiskPortfolio(plain).cashUsd).toBe(10);
+    expect(spendableCashUsd({ cashUsd: 10, thinkingReserveUsd: 0 })).toBe(10);
+    vi.stubEnv("PLATFORM_FEE_USD", "0.10");
+    expect(effectiveTicketUsd(plain, config)).toEqual({
+      amountUsd: 9.9,
+      reason: "cash $10.00 minus the $0.10 Tocker fee charged on the fill",
+    });
+    expect(describePortfolio(plain, config)).not.toMatch(/held back/);
+  });
+
+  it("comes out of what the risk guard may spend, and not out of equity", () => {
+    const held = book({ mode: "live", cashUsd: 10, equityUsd: 14, thinkingReserveUsd: 0.55 });
+    expect(spendableCashUsd(held)).toBeCloseTo(9.45, 6);
+    const risk = toRiskPortfolio(held);
+    expect(risk.cashUsd).toBeCloseTo(9.45, 6);
+    // The concentration cap is still measured against everything the agent owns.
+    expect(risk.equityUsd).toBe(14);
+  });
+
+  it("never leaves the guard a negative number to size against", () => {
+    expect(spendableCashUsd({ cashUsd: 0.3, thinkingReserveUsd: 0.55 })).toBe(0);
+  });
+
+  it("is in the ceiling the model is told, with the reason, so it does not go looking for the rest", () => {
+    vi.stubEnv("PLATFORM_FEE_USD", "0.10");
+    const held = book({ mode: "live", cashUsd: 10, equityUsd: 10, thinkingReserveUsd: 0.55 });
+    const ticket = effectiveTicketUsd(held, config);
+    expect(ticket.amountUsd).toBeCloseTo(9.35, 6);
+    expect(ticket.reason).toBe("cash $10.00 minus the $0.55 held back to pay for thinking and the $0.10 Tocker fee charged on the fill");
+
+    const said = describePortfolio(held, config);
+    expect(said).toMatch(/Cash: \$10\.00/);
+    expect(said).toMatch(/\$0\.55 is held back to pay for your own thinking/);
+    expect(said).toMatch(/\$9\.45 is available to trade/);
+  });
+
+  it("is not held back from a paper agent, whose cash is not what pays", async () => {
+    const paper = await seedAgent(db, {
+      config: { llm: { ...DEFAULT_AGENT_CONFIG.llm, source: "usdc", usdc: { model: "google/gemini-2.5-flash", maxUsdPerRun: 0.3, maxUsdPerDay: 3 } } },
+    });
+    const portfolio = await getPortfolio(paper.agentId);
+    expect(portfolio.thinkingReserveUsd).toBeUndefined();
+    expect(toRiskPortfolio(portfolio).cashUsd).toBe(portfolio.cashUsd);
   });
 });

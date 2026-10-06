@@ -9,17 +9,19 @@
  * nothing. The limits, the kill switch, the audit row and the database are the real code
  * against in-memory PGlite.
  */
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
-import { RUN_REFUSED_WHILE_PAUSED } from "@/lib/agent/run-gate";
+import { USDC_NOT_AVAILABLE } from "@/lib/agent/inference";
+import { RUN_REFUSED_WHILE_PAUSED, RUN_REFUSED_WITHOUT_KEY, RunRefusedError } from "@/lib/agent/run-gate";
 import { attachLlmKey, seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { setTradingPaused } from "@/lib/security/kill-switch";
 import { MAX_NEW_AGENTS_PER_DAY, RATE_LIMITS, limiter } from "@/lib/security/rate-limit";
 import { DATA_SPEND_CARRYOVER, realDataSpend24h } from "@/lib/x402/daily-budget";
+import { DEFAULT_PAY_PER_USE_MODEL, describeInferenceStop } from "@/lib/x402/inference-types";
 import { uniqueSlug } from "@/server/queries/_shared";
 import type { Chain, Session } from "@/server/types";
 
@@ -30,9 +32,9 @@ let db: Db;
 const walletCalls: Array<{ agentId: string; chains: Chain[]; existingAgent: boolean }> = [];
 const budgetCalls: Array<{ agentId: string; perTxUsd: number }> = [];
 let walletOutage = false;
-const startRun = vi.fn<(input: { agentId: string; trigger: string }) => Promise<{ runId: string }>>(async () => ({
-  runId: "run_test",
-}));
+const startRun = vi.fn<(input: { agentId: string; trigger: string; invocationStartedAt?: number }) => Promise<{ runId: string }>>(
+  async () => ({ runId: "run_test" }),
+);
 
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined, revalidateTag: () => undefined }));
 vi.mock("@/lib/auth", () => ({
@@ -70,7 +72,7 @@ vi.mock("@/lib/wallets/stranded", () => ({
 }));
 vi.mock("@/lib/agent/run", () => ({
   reapStaleRuns: async () => 0,
-  startRun: (input: { agentId: string; trigger: string }) => startRun(input),
+  startRun: (input: { agentId: string; trigger: string; invocationStartedAt?: number }) => startRun(input),
   STALE_RUN_MS: 600_000,
 }));
 
@@ -463,8 +465,14 @@ describe("triggerRun: while the owner has paused all trading", () => {
     await setTradingPaused(seeded.userId, true);
     await setTradingPaused(seeded.userId, false);
 
+    const before = Date.now();
     expect(await triggerRun(seeded.agentId)).toEqual({ ok: true, data: { runId: "run_test" } });
-    expect(startRun).toHaveBeenCalledWith({ agentId: seeded.agentId, trigger: "manual" });
+    expect(startRun).toHaveBeenCalledTimes(1);
+    const [input] = startRun.mock.calls[0] ?? [];
+    expect(input).toMatchObject({ agentId: seeded.agentId, trigger: "manual" });
+    // The run is told when this invocation began, taken before anything else was done.
+    expect(input?.invocationStartedAt).toBeGreaterThanOrEqual(before);
+    expect(input?.invocationStartedAt).toBeLessThanOrEqual(Date.now());
   });
 
   it("is one owner's switch: another account's agents still run", async () => {
@@ -475,5 +483,292 @@ describe("triggerRun: while the owner has paused all trading", () => {
     session = { userId: other.userId, handle: "owner", displayName: null, avatarUrl: null, email: null };
 
     expect((await triggerRun(other.agentId)).ok).toBe(true);
+  });
+});
+
+/**
+ * Where an agent's thinking comes from. The mode is the config's own word
+ * (`llm.source`); the server never reads it off a missing key, and an account that may
+ * not use pay-per-use cannot save an agent into it.
+ */
+describe("how an agent thinks: its own key, or pay per use", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  type Usdc = NonNullable<schema.AgentConfig["llm"]["usdc"]>;
+  const payPerUse = (usdc: Partial<Usdc> = {}, config: Partial<schema.AgentConfig> = {}): schema.AgentConfig => ({
+    ...DEFAULT_AGENT_CONFIG,
+    ...config,
+    llm: {
+      ...DEFAULT_AGENT_CONFIG.llm,
+      source: "usdc",
+      usdc: { model: DEFAULT_PAY_PER_USE_MODEL, maxUsdPerRun: 0.3, maxUsdPerDay: 3, ...usdc },
+    },
+  });
+  const createWith = (config: schema.AgentConfig, llmKeyId: string | null = null) =>
+    createAgent({ name: `Agent ${nanoid(4)}`, isPublic: true, llmKeyId, config: config as never });
+  async function rowOf(agentId: string) {
+    const [row] = await db.select().from(schema.agents).where(eq(schema.agents.id, agentId)).limit(1);
+    if (!row) throw new Error("agent row missing");
+    return row;
+  }
+  async function keyOf(userId: string): Promise<string> {
+    const id = `key_${nanoid(10)}`;
+    await db.insert(schema.llmKeys).values({ id, userId, provider: "anthropic", encryptedKey: "not-a-real-ciphertext", last4: "0000" });
+    return id;
+  }
+  /** A pay-per-use agent that already exists, whatever the switch says now. */
+  async function payingAgent() {
+    const seeded = await seedAgent(db, { config: { chains: ["solana"], llm: payPerUse().llm } });
+    session = { userId: seeded.userId, handle: "owner", displayName: null, avatarUrl: null, email: null };
+    return seeded;
+  }
+
+  describe("createAgent", () => {
+    it("refuses pay-per-use while the switch is off, which is the default, and makes nothing", async () => {
+      const userId = await newOwner();
+      for (const value of [undefined, "", "off", "true"]) {
+        if (value === undefined) vi.stubEnv("INFERENCE_USDC", "");
+        else vi.stubEnv("INFERENCE_USDC", value);
+        expect(await createWith(payPerUse())).toEqual({ ok: false, error: USDC_NOT_AVAILABLE });
+      }
+      expect(await db.select().from(schema.agents).where(eq(schema.agents.ownerId, userId))).toHaveLength(0);
+      expect(walletCalls).toHaveLength(0);
+    });
+
+    it("creates a key agent exactly as before, whatever the switch says", async () => {
+      const userId = await newOwner();
+      const key = await keyOf(userId);
+      for (const value of ["", "on"]) {
+        vi.stubEnv("INFERENCE_USDC", value);
+        const made = await createAgent({ name: `Agent ${nanoid(4)}`, isPublic: true, llmKeyId: key, config: DEFAULT_AGENT_CONFIG });
+        expect(made.ok).toBe(true);
+        if (!made.ok) return;
+        const row = await rowOf(made.data.id);
+        expect(row.llmKeyId).toBe(key);
+        // Nothing about the mode is written into a key agent's config.
+        expect(row.config.llm).toEqual(DEFAULT_AGENT_CONFIG.llm);
+        expect("source" in row.config.llm).toBe(false);
+        expect(row).toMatchObject({ inferenceHold: null, inferenceStrikes: 0 });
+      }
+    });
+
+    it("creates a pay-per-use agent with no key once the switch is on, even when a key is sent along", async () => {
+      vi.stubEnv("INFERENCE_USDC", "on");
+      const userId = await newOwner();
+      const key = await keyOf(userId);
+
+      const made = await createWith(payPerUse({ model: "openai/gpt-4o-mini", maxUsdPerRun: 0.5, maxUsdPerDay: 4 }), key);
+      expect(made.ok).toBe(true);
+      if (!made.ok) return;
+      const row = await rowOf(made.data.id);
+      expect(row.llmKeyId).toBeNull();
+      expect(row.config.llm.source).toBe("usdc");
+      expect(row.config.llm.usdc).toEqual({ model: "openai/gpt-4o-mini", maxUsdPerRun: 0.5, maxUsdPerDay: 4 });
+    });
+
+    it("at the owner stage, admits an admin and a listed account and nobody else", async () => {
+      vi.stubEnv("INFERENCE_USDC", "owner");
+      const outsider = await newOwner();
+      expect(await createWith(payPerUse())).toEqual({ ok: false, error: USDC_NOT_AVAILABLE });
+
+      vi.stubEnv("INFERENCE_USDC_USER_IDS", `someone, ${outsider}`);
+      expect((await createWith(payPerUse())).ok).toBe(true);
+      vi.stubEnv("INFERENCE_USDC_USER_IDS", "");
+
+      const admin = await newOwner();
+      session = { userId: admin, handle: "owner", displayName: null, avatarUrl: null, email: "Admin@Example.test" };
+      expect(await createWith(payPerUse())).toEqual({ ok: false, error: USDC_NOT_AVAILABLE });
+      vi.stubEnv("ADMIN_EMAILS", "ops@example.test, admin@example.test");
+      expect((await createWith(payPerUse())).ok).toBe(true);
+    });
+
+    it("refuses a choice that is incomplete or could never run, with a sentence", async () => {
+      vi.stubEnv("INFERENCE_USDC", "on");
+      const userId = await newOwner();
+
+      const noBlock = { ...DEFAULT_AGENT_CONFIG, llm: { ...DEFAULT_AGENT_CONFIG.llm, source: "usdc" as const } };
+      expect(await createWith(noBlock)).toMatchObject({ ok: false, error: expect.stringMatching(/needs a model/) });
+      expect(await createWith(payPerUse({ model: "anthropic/claude-opus-5.5" }))).toMatchObject({ ok: false, error: expect.stringMatching(/no longer offered/) });
+      expect(await createWith(payPerUse({ maxUsdPerRun: 2, maxUsdPerDay: 1 }))).toMatchObject({ ok: false, error: expect.stringMatching(/daily thinking limit/) });
+      // The payment leaves the agent's Solana wallet, and a Base-only agent has none.
+      expect(await createWith(payPerUse({}, { chains: ["base"] }))).toEqual({ ok: false, error: describeInferenceStop("no_wallet").detail });
+      // Limits outside what the product offers are the schema's to refuse.
+      expect((await createWith(payPerUse({ maxUsdPerRun: 50 }))).ok).toBe(false);
+      expect((await createWith(payPerUse({ maxUsdPerDay: 0.01 }))).ok).toBe(false);
+
+      expect(await db.select().from(schema.agents).where(eq(schema.agents.ownerId, userId))).toHaveLength(0);
+    });
+  });
+
+  describe("updateAgent", () => {
+    it("refuses to turn pay-per-use on for an account that may not use it, and saves nothing", async () => {
+      const userId = await newOwner();
+      const key = await keyOf(userId);
+      const made = await createAgent({ name: `Agent ${nanoid(4)}`, isPublic: true, llmKeyId: key, config: DEFAULT_AGENT_CONFIG });
+      if (!made.ok) throw new Error(made.error);
+
+      expect(await updateAgent(made.data.id, { config: payPerUse() })).toEqual({ ok: false, error: USDC_NOT_AVAILABLE });
+      const row = await rowOf(made.data.id);
+      expect(row.config.llm).toEqual(DEFAULT_AGENT_CONFIG.llm);
+      expect(row.llmKeyId).toBe(key);
+    });
+
+    it("turns it on when the account may, by the config's word alone, and keeps the key for the way back", async () => {
+      vi.stubEnv("INFERENCE_USDC", "on");
+      const userId = await newOwner();
+      const key = await keyOf(userId);
+      const made = await createAgent({ name: `Agent ${nanoid(4)}`, isPublic: true, llmKeyId: key, config: DEFAULT_AGENT_CONFIG });
+      if (!made.ok) throw new Error(made.error);
+
+      // The settings form sends the key it has along with the config: the config decides.
+      expect((await updateAgent(made.data.id, { llmKeyId: key, config: payPerUse() })).ok).toBe(true);
+      const row = await rowOf(made.data.id);
+      expect(row.config.llm.source).toBe("usdc");
+      expect(row.llmKeyId).toBe(key);
+    });
+
+    it("refuses an incomplete choice on a save too", async () => {
+      vi.stubEnv("INFERENCE_USDC", "on");
+      const agent = await payingAgent();
+      expect(await updateAgent(agent.agentId, { config: payPerUse({ model: "not/offered" }) })).toMatchObject({ ok: false });
+      expect(await updateAgent(agent.agentId, { config: payPerUse({}, { chains: ["base"] }) })).toEqual({
+        ok: false,
+        error: describeInferenceStop("no_wallet").detail,
+      });
+      expect((await rowOf(agent.agentId)).config.llm.usdc?.model).toBe(DEFAULT_PAY_PER_USE_MODEL);
+    });
+
+    it("puts a pay-per-use agent back on a key, in as many words, when a key is set on it", async () => {
+      const agent = await payingAgent();
+      const key = await keyOf(agent.userId);
+      // Held and struck, as an agent whose wallet ran dry would be.
+      await db
+        .update(schema.agents)
+        .set({ inferenceHold: "needs_funds", inferenceHoldSince: new Date(), inferenceHoldUntil: new Date(Date.now() + 3_600_000), inferenceStrikes: 3, inferenceNotifiedAt: new Date() })
+        .where(eq(schema.agents.id, agent.agentId));
+
+      // "Use my own key": the key and nothing else. No switch is needed to leave pay-per-use.
+      expect((await updateAgent(agent.agentId, { llmKeyId: key })).ok).toBe(true);
+
+      const row = await rowOf(agent.agentId);
+      expect(row.llmKeyId).toBe(key);
+      expect(row.config.llm.source).toBe("key");
+      // Everything else about its config is as it was.
+      expect(row.config.strategyPrompt).toBe(DEFAULT_AGENT_CONFIG.strategyPrompt);
+      expect(row.config.llm.model).toBe(DEFAULT_AGENT_CONFIG.llm.model);
+      // And what was holding its paid thinking no longer applies.
+      expect(row).toMatchObject({ inferenceHold: null, inferenceHoldSince: null, inferenceHoldUntil: null, inferenceStrikes: 0, inferenceNotifiedAt: null });
+      // Setting a key is not saving the agent's settings: no wallet was made, no policy applied.
+      expect(walletCalls).toHaveLength(0);
+      expect(budgetCalls).toHaveLength(0);
+    });
+
+    it("goes back to a key even while wallets cannot be made", async () => {
+      const agent = await payingAgent();
+      const key = await keyOf(agent.userId);
+      // A chain with no wallet behind it, and the wallet provider down: a settings save
+      // would be refused here. Leaving pay-per-use must not be.
+      await db.delete(schema.wallets).where(eq(schema.wallets.agentId, agent.agentId));
+      walletOutage = true;
+
+      expect((await updateAgent(agent.agentId, { llmKeyId: key })).ok).toBe(true);
+      expect((await rowOf(agent.agentId)).config.llm.source).toBe("key");
+    });
+
+    it("does not let a key that is someone else's move it", async () => {
+      const agent = await payingAgent();
+      const stranger = await newOwner();
+      const theirs = await keyOf(stranger);
+      session = { userId: agent.userId, handle: "owner", displayName: null, avatarUrl: null, email: null };
+
+      expect(await updateAgent(agent.agentId, { llmKeyId: theirs })).toEqual({ ok: false, error: "That LLM key does not belong to you" });
+      const row = await rowOf(agent.agentId);
+      expect(row.config.llm.source).toBe("usdc");
+      expect(row.llmKeyId).toBeNull();
+    });
+
+    it("leaves the mode alone on a save that says nothing about it", async () => {
+      const agent = await payingAgent();
+      expect((await updateAgent(agent.agentId, { tagline: "Pays its own way" })).ok).toBe(true);
+      // Taking a key off changes nothing either: it had none to use.
+      expect((await updateAgent(agent.agentId, { llmKeyId: null })).ok).toBe(true);
+      expect((await rowOf(agent.agentId)).config.llm.source).toBe("usdc");
+    });
+
+    it("lets an agent already on pay-per-use be edited while the switch is off", async () => {
+      const agent = await payingAgent();
+      const result = await updateAgent(agent.agentId, { config: payPerUse({ maxUsdPerRun: 0.5 }, { chains: ["solana"] }) });
+      expect(result.ok).toBe(true);
+      expect((await rowOf(agent.agentId)).config.llm.usdc?.maxUsdPerRun).toBe(0.5);
+    });
+
+    it("has a held agent looked at again at once when its settings are saved", async () => {
+      const agent = await payingAgent();
+      const until = new Date(Date.now() + 6 * 3_600_000);
+      await db
+        .update(schema.agents)
+        .set({ inferenceHold: "model_unavailable", inferenceHoldSince: new Date(), inferenceHoldUntil: until, inferenceStrikes: 5, inferenceNotifiedAt: new Date() })
+        .where(eq(schema.agents.id, agent.agentId));
+
+      expect((await updateAgent(agent.agentId, { config: payPerUse({ model: "openai/gpt-4.1-mini" }, { chains: ["solana"] }) })).ok).toBe(true);
+      const row = await rowOf(agent.agentId);
+      // Still held, with its strikes: only a check that passes lifts a hold. But due a look now.
+      expect(row.inferenceHold).toBe("model_unavailable");
+      expect(row.inferenceStrikes).toBe(5);
+      expect((row.inferenceHoldUntil as Date).getTime()).toBeLessThanOrEqual(Date.now());
+
+      // A save that does not touch the config leaves the hold's time alone.
+      await db.update(schema.agents).set({ inferenceHoldUntil: until }).where(eq(schema.agents.id, agent.agentId));
+      expect((await updateAgent(agent.agentId, { tagline: "Nothing to see" })).ok).toBe(true);
+      expect((await rowOf(agent.agentId)).inferenceHoldUntil).toEqual(until);
+    });
+
+    it("writes nothing about the mode onto a key agent", async () => {
+      const userId = await newOwner();
+      const key = await keyOf(userId);
+      const other = await keyOf(userId);
+      const made = await createAgent({ name: `Agent ${nanoid(4)}`, isPublic: true, llmKeyId: key, config: DEFAULT_AGENT_CONFIG });
+      if (!made.ok) throw new Error(made.error);
+
+      expect((await updateAgent(made.data.id, { llmKeyId: other })).ok).toBe(true);
+      expect((await updateAgent(made.data.id, { tagline: "Still on a key" })).ok).toBe(true);
+      const row = await rowOf(made.data.id);
+      expect(row.llmKeyId).toBe(other);
+      expect(row.config.llm).toEqual(DEFAULT_AGENT_CONFIG.llm);
+      expect("source" in row.config.llm).toBe(false);
+    });
+  });
+
+  describe("triggerRun", () => {
+    it("still refuses a key agent that has no key, with the sentence it always had", async () => {
+      const seeded = await seedAgent(db);
+      session = { userId: seeded.userId, handle: "owner", displayName: null, avatarUrl: null, email: null };
+      expect(await triggerRun(seeded.agentId)).toEqual({ ok: false, error: RUN_REFUSED_WITHOUT_KEY });
+      expect(RUN_REFUSED_WITHOUT_KEY).toBe("Attach an LLM key before running this agent");
+      expect(startRun).not.toHaveBeenCalled();
+    });
+
+    it("starts an agent that pays per use without a key", async () => {
+      const agent = await payingAgent();
+      expect(await triggerRun(agent.agentId)).toEqual({ ok: true, data: { runId: "run_test" } });
+      expect(startRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("says the sentence when the run loop will not start it, and writes no run", async () => {
+      const agent = await payingAgent();
+      const said = describeInferenceStop("needs_funds").detail;
+      startRun.mockRejectedValueOnce(new RunRefusedError(said, "needs_funds"));
+
+      expect(await triggerRun(agent.agentId)).toEqual({ ok: false, error: said });
+      expect(await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.agentId, agent.agentId))).toHaveLength(0);
+    });
+
+    it("keeps anything else that goes wrong out of the answer", async () => {
+      const agent = await payingAgent();
+      startRun.mockRejectedValueOnce(new Error(`connect ECONNREFUSED postgres://tocker:${nanoid(24)}@db.internal/tocker`));
+      expect(await quietly(() => triggerRun(agent.agentId))).toEqual({ ok: false, error: "The agent runtime is unavailable" });
+    });
   });
 });

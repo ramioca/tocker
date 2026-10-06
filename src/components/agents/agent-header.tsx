@@ -15,6 +15,8 @@ import { ModeBadge } from "@/components/common/mode-badge";
 import { RelativeTime } from "@/components/common/relative-time";
 import { StatusBadge } from "@/components/common/status-badge";
 import { modelLabel } from "@/components/social-common/chain-badge";
+import { thinkSource } from "@/lib/agent/inference";
+import { payPerUseModelLabel } from "./thinking";
 import { useRunStatus } from "@/components/providers/run-status";
 import { followUser } from "@/components/feed/feed-actions";
 import { FundAgentDrawer } from "./settings/fund-agent-drawer";
@@ -118,7 +120,14 @@ export function AgentHeader({
               @{agent.owner.handle}
             </Link>
             <MetaSegment>
-              <span title={agent.model}>{modelLabel(agent.model)}</span>
+              {/* The owner of an agent that pays per use reads the model by the name they
+                  picked it under. `config` is null for everyone else, and a key agent's
+                  label is made the way it always was. */}
+              <span title={agent.model}>
+                {agent.config && thinkSource(agent.config) === "usdc"
+                  ? payPerUseModelLabel(agent.model)
+                  : modelLabel(agent.model)}
+              </span>
             </MetaSegment>
             <MetaSegment>
               {agent.chains.map((chain) => (

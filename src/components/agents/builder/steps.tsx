@@ -1,10 +1,19 @@
 "use client";
 
-import { useId, useMemo, useState, useTransition } from "react";
+import { useId, useMemo, useRef, useState, useTransition } from "react";
 import { AlertTriangle, KeyRound, Plus, Shuffle, X } from "lucide-react";
 import { toast } from "sonner";
 import { DEFAULT_MODEL_ID } from "@/lib/agent/config";
 import { ModelPicker } from "@/components/agents/model-picker";
+import { PayPerUsePanel, ThinkSourceChoice } from "@/components/agents/think-source";
+import {
+  chooseSource,
+  defaultUsdc,
+  shownSource,
+  stepsAllowed,
+  type UsdcSettings,
+} from "@/components/agents/thinking";
+import { MAX_PAID_STEPS, USDC_DEFAULT_INTERVAL_MINUTES, type ThinkSource } from "@/lib/x402/inference-types";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { AgentAvatar } from "@/components/common/agent-avatar";
@@ -43,6 +52,7 @@ import {
   MAX_AGENT_NAME,
   MAX_TRADE_LADDER,
   feeSharePct,
+  intervalHint,
   launchRadarUsdPerRun,
   PAPER_BALANCES,
   RISK_BOUNDS,
@@ -452,15 +462,42 @@ export function BrainStep({
   llmKeys,
   onKeyAdded,
   feeUsd = 0,
+  payPerUseAllowed = false,
   hideHeading,
 }: StepProps & {
   llmKeys: LlmKeyRow[];
   onKeyAdded: (key: LlmKeyRow) => void;
   /** Tocker's flat fee per fill, from the server; 0 when it is off. */
   feeUsd?: number;
+  /** The server's answer for this viewer. False: no choice is shown, only the key fields. */
+  payPerUseAllowed?: boolean;
 }) {
   const provider = draft.config.llm.provider;
   const keysForProvider = llmKeys.filter((key) => key.provider === provider);
+  const source = shownSource(draft.config, payPerUseAllowed);
+  // A draft that says pay-per-use always shows the panel, even one saved without its
+  // limits: the panel then opens on the defaults instead of on key fields it cannot use.
+  const usdc =
+    source === "usdc" ? (draft.config.llm.usdc ?? defaultUsdc(draft.config.schedule.intervalMinutes)) : null;
+  /** The interval a switch to pay-per-use moved the schedule from, so switching back can undo it. */
+  const [scheduleMovedFrom, setScheduleMovedFrom] = useState<number | null>(null);
+  // Forgotten the moment the schedule is anywhere else: from then on it is the owner's
+  // own choice, and neither the note in the panel nor a switch back may undo it.
+  if (scheduleMovedFrom !== null && draft.config.schedule.intervalMinutes !== USDC_DEFAULT_INTERVAL_MINUTES) {
+    setScheduleMovedFrom(null);
+  }
+  /** The limits last set in this form, put back if the owner returns to pay-per-use. */
+  const rememberedUsdc = useRef<UsdcSettings | null>(null);
+  const switchSource = (next: ThinkSource) => {
+    if (next === source) return;
+    if (source === "usdc") rememberedUsdc.current = draft.config.llm.usdc ?? null;
+    const change = chooseSource(draft.config, next, {
+      remembered: rememberedUsdc.current,
+      restoreInterval: scheduleMovedFrom,
+    });
+    updateConfig(change.config);
+    setScheduleMovedFrom(change.scheduleMovedFrom);
+  };
   /** The chip under the pointer or focus, whose blurb the line under the row shows. */
   const [hintedPreset, setHintedPreset] = useState<string | null>(null);
   const pressedPreset = STRATEGY_PRESETS.find((preset) => preset.prompt === draft.config.strategyPrompt) ?? null;
@@ -517,6 +554,23 @@ export function BrainStep({
         />
       )}
 
+      {/* Only when the server said this viewer may pay per use. Without it there is no
+          choice to make, and the key fields below are the whole section, as before. */}
+      {payPerUseAllowed ? <ThinkSourceChoice idPrefix="builder" value={source} onChange={switchSource} /> : null}
+
+      {usdc ? (
+        <PayPerUsePanel
+          idPrefix="builder"
+          usdc={usdc}
+          intervalMinutes={draft.config.schedule.intervalMinutes}
+          maxSteps={draft.config.llm.maxSteps}
+          chains={draft.config.chains}
+          onChange={(next) => updateConfig({ llm: { ...draft.config.llm, source: "usdc", usdc: next } })}
+          scheduleMovedFrom={scheduleMovedFrom}
+          scheduleSection="Schedule & mode"
+        />
+      ) : (
+      <>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Provider" htmlFor="llm-provider">
           <SimpleSelect
@@ -613,6 +667,8 @@ export function BrainStep({
           />
         </div>
       </Field>
+      </>
+      )}
 
       {/* Tuning is advanced by definition: the defaults are right for nearly
           everyone, so the sliders live one level down (the values still show). */}
@@ -647,7 +703,11 @@ export function BrainStep({
           value={draft.config.llm.maxSteps}
           {...LLM_BOUNDS.maxSteps}
           format={(value) => String(Math.round(value))}
-          meaning={`Up to ${Math.round(draft.config.llm.maxSteps)} tool calls before the run is cut off. More steps means deeper research and a bigger token bill.`}
+          meaning={
+            source === "usdc"
+              ? `Up to ${stepsAllowed(Math.round(draft.config.llm.maxSteps), "usdc")} steps before the run is cut off: a pay-per-use run stops at ${MAX_PAID_STEPS} whatever this says, and every step is paid for.`
+              : `Up to ${Math.round(draft.config.llm.maxSteps)} tool calls before the run is cut off. More steps means deeper research and a bigger token bill.`
+          }
           onChange={(maxSteps) =>
             updateConfig({ llm: { ...draft.config.llm, maxSteps: Math.round(maxSteps) } })
           }
@@ -944,7 +1004,19 @@ export function RiskStep({
 
 // ----------------------------------------------------------- schedule & mode
 
-export function ScheduleStep({ draft, update, updateConfig, hideHeading }: StepProps) {
+export function ScheduleStep({
+  draft,
+  update,
+  updateConfig,
+  hideHeading,
+  payPerUseAllowed = false,
+}: StepProps & {
+  /** The server's answer for this viewer; see `BrainStep`. */
+  payPerUseAllowed?: boolean;
+}) {
+  // On pay per use each choice says what it is expected to cost on the chosen model.
+  const payPerUseModel =
+    shownSource(draft.config, payPerUseAllowed) === "usdc" ? (draft.config.llm.usdc?.model ?? null) : null;
   return (
     <div className="space-y-5">
       {hideHeading ? null : (
@@ -960,7 +1032,9 @@ export function ScheduleStep({ draft, update, updateConfig, hideHeading }: StepP
         label="Interval"
         hint={
           hideHeading
-            ? `Every run bills model tokens to your ${PROVIDER_LABELS[draft.config.llm.provider]} key, whether or not it trades. Tocker pays for its data.`
+            ? payPerUseModel
+              ? "Every run pays for its own thinking in USDC from the agent's wallet, whether or not it trades. Tocker pays for its data."
+              : `Every run bills model tokens to your ${PROVIDER_LABELS[draft.config.llm.provider]} key, whether or not it trades. Tocker pays for its data.`
             : undefined
         }
       >
@@ -983,8 +1057,14 @@ export function ScheduleStep({ draft, update, updateConfig, hideHeading }: StepP
                 )}
               >
                 <span className="block text-sm font-medium">{preset.label}</span>
-                <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
-                  {preset.hint}
+                {/* Tabular figures only where the hint is a price; the key hints are set as they were. */}
+                <span
+                  className={cn(
+                    "mt-0.5 block text-xs leading-relaxed text-muted-foreground",
+                    payPerUseModel && "tnum",
+                  )}
+                >
+                  {intervalHint(preset, payPerUseModel)}
                 </span>
               </button>
             );

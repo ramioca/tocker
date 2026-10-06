@@ -8,6 +8,7 @@ import { LAMPORTS_PER_SOL, MIN_PLATFORM_SOL, sponsoredFundingLamports } from "@/
 import { FEES_COVERED, chainLabelFor, feeFailureKind } from "@/lib/wallets/funding";
 import { fmtUsd } from "@/lib/money";
 import { RETIRED_DATA_SOURCE_IDS } from "@/lib/agent/config";
+import { thinkSource, thinkingReserveUsd } from "@/lib/agent/inference";
 import { dataChainsFor, getDataSource } from "@/lib/data-sources/registry";
 import { isMockMode } from "@/lib/x402/paidFetch";
 import { UNAVAILABLE_TO_USERS, getMfaStatus } from "./mfa";
@@ -161,6 +162,11 @@ export function withFirstTradePreset(config: AgentConfig): AgentConfig {
  * limit, cash against the platform fee, and `maxPositionPct` against equity. Those are
  * the ones the operator can fix before going live, and the ones a preset can break.
  *
+ * An agent that pays for its own thinking keeps one run's worth of it, and the wallet
+ * floor, out of its trades (`thinkingReserveUsd`; the live book does the same in
+ * `getPortfolio`). The guard is given the cash a buy may actually use, so a wallet that
+ * covers the ticket but not the ticket and the thinking fails here, not on the first tick.
+ *
  * Returns `null` when the trade would be allowed.
  */
 export async function simulateFirstTrade(config: AgentConfig, usdc: number): Promise<string | null> {
@@ -170,10 +176,12 @@ export async function simulateFirstTrade(config: AgentConfig, usdc: number): Pro
   ]);
   const chain: Chain = (config.chains[0] as Chain) ?? "base";
   const amountUsd = config.risk.maxTradeUsd;
+  // Zero for an agent that thinks on a key.
+  const heldBack = Math.min(thinkingReserveUsd(config), Math.max(0, usdc));
 
   const verdict = riskGuard(
     { id: "readiness-simulation", mode: "live", config },
-    { cashUsd: usdc, equityUsd: usdc, positions: [], tradesToday: 0 },
+    { cashUsd: Math.max(0, usdc - heldBack), equityUsd: usdc, positions: [], tradesToday: 0 },
     {
       chain,
       side: "buy",
@@ -218,6 +226,7 @@ export async function simulateFirstTrade(config: AgentConfig, usdc: number): Pro
   const fee = platformFeeUsd();
   return (
     `A ${fmtUsd(amountUsd)} buy against the ${fmtUsd(usdc)} this agent holds` +
+    `${heldBack > 0 ? `, of which ${fmtUsd(heldBack)} is kept back to pay for its own thinking,` : ""}` +
     `${fee > 0 ? ` (plus the ${fmtUsd(fee)} Tocker fee)` : ""} would be refused by the risk guard: ${verdict.reason}`
   );
 }
@@ -836,8 +845,14 @@ function sumAsset(
  * The wallet layer is optional (product decision, 2026-09-21): an agent can only ever
  * spend the USDC in its own wallet and simply stops when that is gone, so a missing
  * policy is worth a warning, never a block.
+ *
+ * With one exception: an agent that pays for its own thinking. Its wallet signs a
+ * payment on every model step, and a run of such an agent is not started while its
+ * Solana wallet has no policy (the `no_policy` stop). Going live without one would be
+ * going live with an agent that never thinks, so for that agent a missing Solana policy
+ * fails the step.
  */
-function checkBudget(
+export function checkBudget(
   config: AgentConfig,
   walletBudget: WalletBudget | null,
   capUsd: number,
@@ -858,6 +873,15 @@ function checkBudget(
     };
   }
   const ceiling = "Whatever happens, it can only ever spend the USDC in its own wallet, and it stops when that is gone.";
+  if (thinkSource(config) === "usdc" && !walletBudget?.policyIds?.solana) {
+    return {
+      id: "budget",
+      title: "Spend caps applied",
+      state: "fail",
+      detail: `${appLayer} This agent pays for its own thinking from its Solana wallet, and it is not allowed to pay for anything until that wallet has a spending limit applied. Save the agent's risk settings to apply one.`,
+      fix: { label: "Agent settings → Wallet budget", href: `${settings}#budget` },
+    };
+  }
   if (!walletBudget) {
     return {
       id: "budget",

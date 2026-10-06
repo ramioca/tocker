@@ -27,14 +27,30 @@ export function flowText(flowUsd: number): string | null {
   return null;
 }
 
-/** The note under a day that moved money, or null for an ordinary trading day. */
+/**
+ * "excl. $0.42 thinking": what the agents paid for their own thinking that day, which
+ * the day's number leaves out because it is a cost and not a trading loss. Null for a
+ * day with none, which is every day of an owner who does not use pay-per-use.
+ */
+export function thinkingText(thinkingUsd: number): string | null {
+  return thinkingUsd > 0 ? `excl. ${formatUsd(thinkingUsd)} thinking` : null;
+}
+
+/**
+ * The note under a day whose number leaves something out, or null for an ordinary
+ * trading day. A deposit or withdrawal and the day's thinking can both apply, and are
+ * both said.
+ */
 export function dayNote(day: PnlDay, previous: PnlDay | undefined): string | null {
   const flow = flowText(day.flowUsd);
+  const thinking = thinkingText(day.thinkingUsd);
+  if (flow && thinking) return `${flow}, ${thinking.replace(/^excl\. /, "")}`;
   if (flow) return flow;
   if (previous !== undefined && previous.agents !== day.agents) {
-    return day.agents > previous.agents ? "new agent" : "agent left";
+    const change = day.agents > previous.agents ? "new agent" : "agent left";
+    return thinking ? `${change}, ${thinking}` : change;
   }
-  return null;
+  return thinking;
 }
 
 /**

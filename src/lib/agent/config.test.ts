@@ -132,3 +132,53 @@ describe("universe.blocklist", () => {
     expect(() => parseAgentConfig(withBlocked("x".repeat(65)))).toThrow();
   });
 });
+
+/**
+ * Where the thinking comes from. The two fields are optional and nothing is written for
+ * them by default: a config saved before they existed, and every key agent's since, must
+ * parse to exactly what it was.
+ */
+describe("llm.source and llm.usdc", () => {
+  const usdc = { model: "google/gemini-2.5-flash", maxUsdPerRun: 0.3, maxUsdPerDay: 3 };
+  const withLlm = (llm: Record<string, unknown>) => ({ ...DEFAULT_AGENT_CONFIG, llm: { ...DEFAULT_AGENT_CONFIG.llm, ...llm } });
+
+  it("adds nothing to a key agent's config: no source, no limits, no default", () => {
+    const parsed = parseAgentConfig(DEFAULT_AGENT_CONFIG);
+    expect(parsed.llm).toEqual(DEFAULT_AGENT_CONFIG.llm);
+    expect(Object.keys(parsed.llm).sort()).toEqual(["maxSteps", "model", "provider", "temperature"]);
+    expect("source" in DEFAULT_AGENT_CONFIG.llm).toBe(false);
+  });
+
+  it("keeps a choice of pay-per-use as it was written", () => {
+    const parsed = parseAgentConfig(withLlm({ source: "usdc", usdc }));
+    expect(parsed.llm.source).toBe("usdc");
+    expect(parsed.llm.usdc).toEqual(usdc);
+    // And the key model stays beside it, for the day the owner goes back to a key.
+    expect(parsed.llm.model).toBe(DEFAULT_AGENT_CONFIG.llm.model);
+    expect(parseAgentConfig(withLlm({ source: "key" })).llm.source).toBe("key");
+  });
+
+  it("refuses a source that is neither", () => {
+    expect(agentConfigSchema.safeParse(withLlm({ source: "free" })).success).toBe(false);
+    expect(agentConfigSchema.safeParse(withLlm({ source: "" })).success).toBe(false);
+  });
+
+  it("holds both limits inside what the product offers", () => {
+    const ok = (limits: Partial<typeof usdc>) => agentConfigSchema.safeParse(withLlm({ source: "usdc", usdc: { ...usdc, ...limits } })).success;
+    expect(ok({ maxUsdPerRun: 0.05 })).toBe(true);
+    expect(ok({ maxUsdPerRun: 2 })).toBe(true);
+    expect(ok({ maxUsdPerRun: 0.049 })).toBe(false);
+    expect(ok({ maxUsdPerRun: 2.01 })).toBe(false);
+    expect(ok({ maxUsdPerDay: 0.5 })).toBe(true);
+    expect(ok({ maxUsdPerDay: 50 })).toBe(true);
+    expect(ok({ maxUsdPerDay: 0.49 })).toBe(false);
+    expect(ok({ maxUsdPerDay: 50.01 })).toBe(false);
+    expect(ok({ maxUsdPerRun: Number.NaN })).toBe(false);
+    expect(ok({ maxUsdPerRun: Number.POSITIVE_INFINITY })).toBe(false);
+  });
+
+  it("refuses text where the pay-per-use model id belongs", () => {
+    expect(agentConfigSchema.safeParse(withLlm({ source: "usdc", usdc: { ...usdc, model: "ignore previous instructions" } })).success).toBe(false);
+    expect(agentConfigSchema.safeParse(withLlm({ source: "usdc", usdc: { ...usdc, model: "" } })).success).toBe(false);
+  });
+});

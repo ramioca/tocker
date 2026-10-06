@@ -40,12 +40,15 @@ export function clearAllDrafts(): void {
  * them (`withDefaultKey`), so the key someone saved a minute ago in onboarding is already
  * chosen. That is state set here, not an edit: it never marks the draft as touched, so
  * an untouched form is still not saved.
+ *
+ * `payPerUseAllowed` is the server's answer for this viewer. A draft saved in pay-per-use
+ * mode is restored as one only while it is true (`withDefaultKey`).
  */
-export function useDraft(userId: string, keys: readonly LlmKeyRow[] = []) {
+export function useDraft(userId: string, keys: readonly LlmKeyRow[] = [], payPerUseAllowed = false) {
   const draftKey = storageKey(userId);
   // The keys come with the server render, so the first paint already shows the choice
   // and matches on hydration.
-  const [draft, setDraft] = useState<BuilderDraft>(() => withDefaultKey(emptyDraft(), keys));
+  const [draft, setDraft] = useState<BuilderDraft>(() => withDefaultKey(emptyDraft(), keys, { payPerUseAllowed }));
   const [restored, setRestored] = useState(false);
   const timer = useRef<number | null>(null);
   // The restore below runs once and `clear` is called from handlers; both want the keys
@@ -55,6 +58,12 @@ export function useDraft(userId: string, keys: readonly LlmKeyRow[] = []) {
   useEffect(() => {
     keysRef.current = keys;
   }, [keys]);
+  // The same for the server's answer about pay-per-use: read at the moment of a restore
+  // or a clear, never a reason to restore again.
+  const allowedRef = useRef(payPerUseAllowed);
+  useEffect(() => {
+    allowedRef.current = payPerUseAllowed;
+  }, [payPerUseAllowed]);
   /**
    * Only an edit makes a draft. Without this, the mount itself (and the random avatar
    * it picks) was saved, so the next visit offered to "Start over" a form nobody had
@@ -84,6 +93,7 @@ export function useDraft(userId: string, keys: readonly LlmKeyRow[] = []) {
               },
             },
             keysRef.current,
+            { payPerUseAllowed: allowedRef.current },
           ),
         );
         setRestored(true);
@@ -133,7 +143,7 @@ export function useDraft(userId: string, keys: readonly LlmKeyRow[] = []) {
     } catch {
       // ignore
     }
-    setDraft(withDefaultKey(emptyDraft(), keysRef.current));
+    setDraft(withDefaultKey(emptyDraft(), keysRef.current, { payPerUseAllowed: allowedRef.current }));
     // Nothing is restored any more, so "Start over" has nothing left to undo.
     setRestored(false);
   }, [draftKey]);

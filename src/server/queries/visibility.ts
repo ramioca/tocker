@@ -10,6 +10,7 @@
  * once and can be unit-tested without a database.
  */
 import type { AgentConfig } from "@/db/schema";
+import { thinkingModel } from "@/lib/agent/inference";
 import { DATA_SOURCES } from "@/lib/data-sources/registry";
 import { redactDeep, redactSecrets } from "@/lib/security/redact";
 import { publicExitText } from "@/lib/trading/exits";
@@ -42,7 +43,9 @@ export function toPublicProfile(config: AgentConfig | null | undefined): PublicP
   const interval = config?.schedule?.intervalMinutes;
   return {
     chains,
-    model: config?.llm?.model ?? "",
+    // The model the agent actually thinks on: for one that pays per use, the model it
+    // buys, not the key model its config still carries from before.
+    model: thinkingModel(config),
     // 0 means "manual only" in the config; null reads better in the UI.
     intervalMinutes: typeof interval === "number" && interval > 0 ? interval : null,
     dataSourceCount: config?.dataSources?.length ?? 0,

@@ -3,6 +3,11 @@
  *
  * Paper cash is recomputed from the trade ledger (see `trading/paper.ts`); live cash
  * is the agent's USDC balance across its Privy server wallets.
+ *
+ * A live agent that pays for its own thinking (`llm.source: "usdc"`) keeps one run's
+ * worth of it, and the wallet floor, out of its trades: `thinkingReserveUsd`. That money
+ * is still the agent's and still counts in its cash and equity; it is only left out of
+ * what a buy may spend, the same way fees owed are.
  */
 import { isDustPosition } from "@/lib/trading/positions";
 import { nanoid } from "nanoid";
@@ -20,6 +25,7 @@ import { loadCachedScores } from "@/lib/trading/score-cache";
 import { toTokenRef } from "@/lib/trading/tokens";
 import { sizeCeiling, type RiskPortfolio } from "@/lib/trading/risk";
 import { readSizing } from "@/lib/trading/sizing";
+import { thinkingReserveUsd } from "./inference";
 
 export interface Portfolio {
   agentId: string;
@@ -38,6 +44,22 @@ export interface Portfolio {
    * this is true.
    */
   cashReadFailed: boolean;
+  /**
+   * USDC a live pay-per-use agent holds back from buys so it can pay for its next run:
+   * its limit for one run plus the wallet floor, and never more than its Solana wallet
+   * has. Part of `cashUsd`, not on top of it. Absent or zero for every other agent.
+   */
+  thinkingReserveUsd?: number;
+}
+
+/**
+ * What a buy may spend: cash, less what is held back for thinking. For an agent that
+ * holds nothing back (every key agent, every paper agent) this is its cash.
+ */
+export function spendableCashUsd(portfolio: Pick<Portfolio, "cashUsd" | "thinkingReserveUsd">): number {
+  const held = portfolio.thinkingReserveUsd ?? 0;
+  if (!(held > 0)) return portfolio.cashUsd;
+  return Math.max(0, Math.round((portfolio.cashUsd - held) * 1e6) / 1e6);
 }
 
 export function startOfUtcDay(now: Date = new Date()): Date {
@@ -75,18 +97,21 @@ async function solanaUsdcOnChain(address: string): Promise<number | null> {
   }
 }
 
-async function getLiveCash(walletRefs: AgentWalletRef[]): Promise<{ usd: number; complete: boolean }> {
+async function getLiveCash(walletRefs: AgentWalletRef[]): Promise<{ usd: number; complete: boolean; solanaUsd: number }> {
   const usable = walletRefs.filter((w) => !w.walletId.startsWith("paper_"));
-  if (usable.length === 0) return { usd: 0, complete: true };
+  if (usable.length === 0) return { usd: 0, complete: true, solanaUsd: 0 };
   const { privy } = await import("@/lib/privy");
   const client = privy();
   let total = 0;
+  // The Solana part on its own: pay-per-use thinking is paid from that wallet only.
+  let solanaUsd = 0;
   let complete = true;
   for (const w of usable) {
     if (w.chain === "solana" && w.address) {
       const onChain = await solanaUsdcOnChain(w.address);
       if (onChain !== null) {
         total += onChain;
+        solanaUsd += onChain;
         continue;
       }
     }
@@ -96,13 +121,15 @@ async function getLiveCash(walletRefs: AgentWalletRef[]): Promise<{ usd: number;
         .balance.get(w.walletId, { asset: "usdc", chain: w.chain === "solana" ? "solana" : "base" });
       for (const b of res.balances) {
         const raw = Number(b.raw_value);
-        if (Number.isFinite(raw)) total += raw / 10 ** b.raw_value_decimals;
+        if (!Number.isFinite(raw)) continue;
+        total += raw / 10 ** b.raw_value_decimals;
+        if (w.chain === "solana") solanaUsd += raw / 10 ** b.raw_value_decimals;
       }
     } catch {
       complete = false;
     }
   }
-  return { usd: total, complete };
+  return { usd: total, complete, solanaUsd };
 }
 
 export async function getAgentWallets(agentId: string): Promise<AgentWalletRef[]> {
@@ -181,12 +208,18 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
   // `computePaperCash`.
   let cashReadFailed = false;
   let cashUsd: number;
+  let heldForThinking = 0;
   if (agent.mode === "paper") {
     cashUsd = await getPaperCash(agentId);
   } else {
     const live = await getLiveCash(await getAgentWallets(agentId));
     cashReadFailed = !live.complete;
     cashUsd = netLiveCashUsd(live.usd, await accruedFeesUsd(agentId));
+    // A live agent that pays for its own thinking keeps the next run's worth of it out
+    // of its trades, or its first buy could leave it unable to think again. Held back
+    // here, beside the fees, and from the Solana wallet's USDC only: that is the wallet
+    // that pays, and USDC on another chain cannot stand in for it. Zero for a key agent.
+    heldForThinking = Math.max(0, Math.min(thinkingReserveUsd(agent.config), live.solanaUsd, cashUsd));
   }
 
   // Buys only. The daily limit caps how much *new* exposure an agent may take on; a
@@ -217,13 +250,18 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
     tradesToday: todayRows.length,
     startingUsd: Number(agent.paperStartingUsd),
     cashReadFailed,
+    ...(heldForThinking > 0 ? { thinkingReserveUsd: heldForThinking } : {}),
   };
 }
 
-/** Shape the risk guard consumes. */
+/**
+ * Shape the risk guard consumes. Every buy is checked against this, so this is where
+ * what is held back for thinking stops being spendable: the guard sees the cash a buy may
+ * use, and the full equity for its concentration cap.
+ */
 export function toRiskPortfolio(portfolio: Portfolio): RiskPortfolio {
   return {
-    cashUsd: portfolio.cashUsd,
+    cashUsd: spendableCashUsd(portfolio),
     equityUsd: portfolio.equityUsd,
     tradesToday: portfolio.tradesToday,
     positions: portfolio.positions.map((p) => ({
@@ -281,12 +319,18 @@ export async function snapshotEquity(portfolio: Portfolio): Promise<boolean> {
  * why, rather than being made to discover it by being refused.
  */
 export function effectiveTicketUsd(
-  portfolio: Pick<Portfolio, "cashUsd" | "equityUsd">,
+  portfolio: Pick<Portfolio, "cashUsd" | "equityUsd" | "thinkingReserveUsd">,
   config: AgentConfig,
 ): { amountUsd: number; reason: string } {
   const ceiling = sizeCeiling(config, portfolio, {});
   const feeUsd = platformFeeUsd();
   const equity = portfolio.equityUsd > 0 ? portfolio.equityUsd : portfolio.cashUsd;
+  // What the risk guard will compare a buy with (`toRiskPortfolio`), so the number the
+  // model is told is the number it has.
+  const held = portfolio.thinkingReserveUsd ?? 0;
+  const spendable = spendableCashUsd(portfolio);
+  const cashWords =
+    held > 0 ? `cash $${portfolio.cashUsd.toFixed(2)} minus the $${held.toFixed(2)} held back to pay for thinking` : `cash $${portfolio.cashUsd.toFixed(2)}`;
 
   const limits: Array<{ amountUsd: number; reason: string }> = [
     {
@@ -294,11 +338,11 @@ export function effectiveTicketUsd(
       reason: `${ceiling.effectiveMode.replace(/_/g, " ")} sizing — ${ceiling.explanation}`,
     },
     {
-      amountUsd: Math.max(0, portfolio.cashUsd - feeUsd),
+      amountUsd: Math.max(0, spendable - feeUsd),
       reason:
         feeUsd > 0
-          ? `cash $${portfolio.cashUsd.toFixed(2)} minus the $${feeUsd.toFixed(2)} Tocker fee charged on the fill`
-          : `cash $${portfolio.cashUsd.toFixed(2)}`,
+          ? `${cashWords} ${held > 0 ? "and" : "minus"} the $${feeUsd.toFixed(2)} Tocker fee charged on the fill`
+          : cashWords,
     },
   ];
   if (equity > 0) {
@@ -332,6 +376,12 @@ export function describePortfolio(portfolio: Portfolio, config: AgentConfig): st
         ? " Adding to a token you already hold has less room than this: the position you hold counts towards the same concentration cap."
         : ""),
   ];
+  if ((portfolio.thinkingReserveUsd ?? 0) > 0) {
+    // Said plainly, or a model that sees $5.00 of cash and a $4.20 ceiling goes looking for the rest.
+    lines.push(
+      `Of that cash, $${(portfolio.thinkingReserveUsd ?? 0).toFixed(2)} is held back to pay for your own thinking and cannot be spent on a buy: $${spendableCashUsd(portfolio).toFixed(2)} is available to trade.`,
+    );
+  }
   if (portfolio.cashReadFailed) {
     lines.push(
       "WARNING: at least one wallet balance could not be read this tick, so the cash figure above is too low. Do not open a new position on it.",
