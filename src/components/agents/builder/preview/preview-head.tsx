@@ -42,7 +42,9 @@ export function PreviewHead({
       </p>
       <div className="mt-3 flex items-center gap-3">
         {/* A hairline and a short shadow, so the art sits on the card instead of in it. */}
-        <span className="shrink-0 rounded-lg shadow-[0_0_0_1px_rgb(255_255_255/0.10),0_8px_20px_-10px_rgb(0_0_0/0.9)]">
+        {/* `flex`, so the span is exactly the avatar's box: as an inline box it is a line
+            tall, and the hairline would be drawn around the extra space under the art. */}
+        <span className="flex shrink-0 rounded-lg shadow-[0_0_0_1px_rgb(255_255_255/0.10),0_8px_20px_-10px_rgb(0_0_0/0.9)]">
           <AgentAvatar seed={draft.avatarSeed} name={name || "Unnamed agent"} size="lg" />
         </span>
         <div className="min-w-0 flex-1">
