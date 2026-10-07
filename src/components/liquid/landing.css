@@ -469,7 +469,7 @@ html.lenis body {
   place-items: center;
   width: 28px;
   height: 28px;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: var(--r-sm);
   background: var(--raised);
   font-family: var(--font-mono);
@@ -479,6 +479,21 @@ html.lenis body {
   letter-spacing: 0.02em;
   color: var(--fg-2);
   user-select: none;
+  position: relative;
+  overflow: hidden;
+}
+.lp-agentmark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.lp-agentmark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+  pointer-events: none;
 }
 .lp-agentmark[data-size="md"] {
   width: 36px;

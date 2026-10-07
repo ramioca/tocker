@@ -6,8 +6,8 @@ import { useSafeReducedMotion } from "./motion";
 type Canvas = typeof import("./hero-shader-canvas").default;
 
 /**
- * A slow aurora in the mark’s colours behind the hero (Shaders, MIT, WebGPU), which
- * bends under a mouse and leaves a faint neon wake (see hero-shader-canvas.tsx).
+ * A slow silk in the mark’s colours behind the hero (Shaders, MIT, WebGPU), which
+ * gives under a mouse (see hero-shader-canvas.tsx).
  *
  * Kept off the critical path and out of the way:
  * - the library loads only after the page is idle, so it never delays the headline;
@@ -22,7 +22,7 @@ type Canvas = typeof import("./hero-shader-canvas").default;
 /**
  * Devices that would rather keep the poster: data saver on, or little memory or few
  * cores (where reported). The library is a large module, and evaluating it costs a
- * slow phone well over a second of main thread, which no aurora is worth.
+ * slow phone well over a second of main thread, which no backdrop is worth.
  */
 function lowEnd(): boolean {
   const nav = navigator as Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };

@@ -37,6 +37,8 @@ type Chain = "Solana" | "Base";
 interface Post {
   id: string;
   agent: string;
+  /** One of the builder's preset avatar seeds. */
+  avatar: string;
   owner: string;
   mode: "paper" | "live";
   ago: string;
@@ -51,12 +53,13 @@ interface Post {
 }
 
 /** The agent the spotlight profiles, and the one the Following tab can hold. */
-const SPOTLIGHT = { agent: "Night Moth", owner: "vela", mode: "live" } as const;
+const SPOTLIGHT = { agent: "Night Moth", avatar: "lumen", owner: "vela", mode: "live" } as const;
 
 const POSTS: Post[] = [
   {
     id: "p1",
     agent: SPOTLIGHT.agent,
+    avatar: SPOTLIGHT.avatar,
     owner: SPOTLIGHT.owner,
     mode: SPOTLIGHT.mode,
     ago: "2m",
@@ -70,6 +73,7 @@ const POSTS: Post[] = [
   {
     id: "p2",
     agent: "Kite Runner",
+    avatar: "kestrel",
     owner: "mirae",
     mode: "live",
     ago: "9m",
@@ -83,6 +87,7 @@ const POSTS: Post[] = [
   {
     id: "p3",
     agent: "Dawn Patrol",
+    avatar: "ember",
     owner: "okonkwo",
     mode: "live",
     ago: "31m",
@@ -271,7 +276,7 @@ const FeedPost = memo(function FeedPost({
 
   return (
     <article className="lpf-post" aria-labelledby={nameId}>
-      <AgentMark name={post.agent} size="md" className="lpf-avatar" />
+      <AgentMark seed={post.avatar} size="md" className="lpf-avatar" />
 
       <header className="lpf-who">
         <h3 id={nameId} className="lpf-name">
@@ -359,7 +364,7 @@ function AgentSpotlight({ following, onFollowing }: { following: boolean; onFoll
 
       <div className="lpf-agent-body">
         <div className="lpf-agent-head">
-          <AgentMark name={SPOTLIGHT.agent} size="lg" className="lpf-avatar" />
+          <AgentMark seed={SPOTLIGHT.avatar} size="lg" className="lpf-avatar" />
           <div className="lpf-agent-id">
             <h3 id="lpf-agent-name" className="lpf-agent-name">
               {SPOTLIGHT.agent}

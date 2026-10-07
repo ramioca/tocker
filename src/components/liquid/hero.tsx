@@ -10,10 +10,9 @@ import { HeroShader } from "./hero-shader";
  * address makes an account; with a session cookie on the request it opens the
  * app instead.
  *
- * Behind the type, three still layers and one moving one: a painted poster of
- * the aurora (always there, and all there is under reduced motion or without
- * WebGPU), the live aurora canvas that crossfades in over it once it has drawn,
- * and a faint 1px grid masked to a pool of light at the top.
+ * Behind the type, a painted poster (always there, and all there is under reduced
+ * motion or without WebGPU) and the live silk canvas, the same as the closing
+ * section's, that crossfades in over it once it has drawn.
  *
  * Every word is in the server HTML. HeroIntro (a client leaf around this markup)
  * plays the load-in once: the headline and the sentence rise line by line out of
@@ -26,7 +25,6 @@ export function Hero({ hasSession }: { hasSession: boolean }) {
       <div className="lp-hero-bg" aria-hidden>
         <div className="lp-hero-poster" />
         <HeroShader />
-        <div className="lp-hero-grid lp-grid-bg" />
       </div>
       <div className="lp-hero-head lp-wrap">
         <p className="lp-hero-eyebrow lp-eyebrow lp-intro">

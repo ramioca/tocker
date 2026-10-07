@@ -5,7 +5,7 @@
  * The first screen is type and one product moment: an eyebrow, the headline
  * with one word in the brand gradient, a sentence, one action, and the run
  * card rising out of depth on a painted glow (radial gradients, no blur).
- * Behind it all: a painted poster of the aurora, the live aurora crossfading
+ * Behind it all: a painted poster, the live silk crossfading
  * over it, and a faint grid. Colour appears where it means something: the cyan
  * dot, "sleep", the bars of the tokens that clear the floor and their buy dots.
  *
@@ -135,7 +135,7 @@
   padding-top: clamp(48px, 10vh, 112px);
 }
 
-/* The backdrop: poster, live aurora, grid. It reaches up behind the nav (which
+/* The backdrop: poster, live silk. It reaches up behind the nav (which
    sits above it), and fades into the black well before the card's foot. */
 .lp-hero-bg {
   position: absolute;
@@ -172,11 +172,6 @@
 }
 .lp-hero-bg:has(.lp-hero-shader[data-ready]) .lp-hero-poster {
   opacity: 0.45;
-}
-.lp-hero-grid {
-  position: absolute;
-  inset: 0;
-  --grid-mask: radial-gradient(ellipse 55% 60% at 50% 18%, #000 0%, rgba(0, 0, 0, 0.45) 50%, transparent 82%);
 }
 .lp-hero-head {
   display: flex;
@@ -735,7 +730,7 @@
   }
 }
 
-/* The hero's aurora (hero-shader.tsx): a WebGPU canvas over the poster that
+/* The hero’s silk (hero-shader.tsx): a WebGPU canvas over the poster that
    crossfades in once it has drawn (the poster dims under it), inside the
    backdrop's fade to black. It never takes pointer events, and the type keeps
    its own contrast over it. */
@@ -743,10 +738,13 @@
   position: absolute;
   inset: 0;
   opacity: 0;
+  /* Fades out toward the run card, so the silk sits behind the type, not under the card. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 45%, transparent 95%);
+  mask-image: linear-gradient(to bottom, #000 45%, transparent 95%);
   transition: opacity 1600ms var(--ease-out);
 }
 .lp-hero-shader[data-ready] {
-  opacity: 0.65;
+  opacity: 0.6;
 }
 .lp-hero-shader-canvas {
   width: 100%;
