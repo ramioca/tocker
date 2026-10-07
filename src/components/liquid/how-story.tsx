@@ -15,12 +15,12 @@ import { usd3 } from "./signals-data";
  *
  * Nothing here touches React state: GSAP writes styles, the step index is a
  * data attribute, and numbers are written to textContent. Everywhere else
- * (phones, reduced motion, short screens) the media query does not match, the
+ * (phones, reduced motion, short screens, no script) the media query does not match, the
  * section is stacked, and every pane shows its finished state.
  */
 
 /** Must match the pinned block's media query in landing-how.css. */
-export const HOW_PIN_QUERY = `${DESKTOP_MOTION} and (min-height: 640px)`;
+export const HOW_PIN_QUERY = `(scripting: enabled) and ${DESKTOP_MOTION} and (min-height: 640px)`;
 
 /** Timeline units (the timeline is 10 long): when each step's swap is half done. */
 const SWAP_1 = 2.7;

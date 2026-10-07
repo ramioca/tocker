@@ -73,7 +73,7 @@ export const LAUNCH_RADARS = { solana: "solenrich-launches", base: "gate402-base
 const LAUNCH_RADARS_IDS = Object.values(LAUNCH_RADARS);
 
 /** What score_token buys for a token on `chain` that the free data has not ruled out. */
-export function readsFor(chain: Chain): string[] {
+function readsFor(chain: Chain): string[] {
   const plan: EnrichmentPlan = planEnrichment({
     free: { total: 70, verdict: "watch", blockers: [] },
     chain,
@@ -349,14 +349,6 @@ export const APPROVAL = {
 const STAGE_AT = [0, 1, 1, 1, 2, 2, 3] as const;
 const LINES_AT = [0, 1, 2, 3, 4, 5, 5] as const;
 export const FINAL_BEAT = STAGE_AT.length - 1;
-
-/**
- * One beat of the replay. Six beats make 4.8s: the replay is over inside five
- * seconds (WCAG 2.2.2), and the finished trace reports the time it showed.
- */
-export const BEAT_MS = 800;
-/** How long the model thought, as the finished trace reports it. */
-export const THOUGHT_MS = FINAL_BEAT * BEAT_MS;
 
 /**
  * A step as it stands at `beat`. A step that has not finished has no timing,

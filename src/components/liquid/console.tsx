@@ -12,7 +12,7 @@ import { SAMPLE_AGENT } from "./sample";
  * trade it asks them to approve.
  *
  * Each step is a chapter: its text, then its console pane. Stacked (phones,
- * reduced motion, short screens) they read top to bottom, every pane finished.
+ * reduced motion, short screens, no script) they read top to bottom, every pane finished.
  * On a desktop that allows motion the chapters dissolve into one grid: the
  * texts share the left cell and the panes share the console on the right, the
  * stage is held by `position: sticky` for 300vh and how-story.tsx scrubs the

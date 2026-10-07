@@ -720,8 +720,10 @@
 
 /* ============================ pinned ============================ */
 /* Must match HOW_PIN_QUERY in how-story.tsx. The CSS state here is the
-   timeline's first frame (Strategy), so nothing jumps when it attaches. */
-@media (prefers-reduced-motion: no-preference) and (min-width: 768px) and (min-height: 640px) {
+   timeline's first frame (Strategy), so nothing jumps when it attaches.
+   `scripting: enabled`: without script nothing would ever scrub past that first
+   frame, so a no-JS visitor gets the stacked story with every pane finished. */
+@media (scripting: enabled) and (prefers-reduced-motion: no-preference) and (min-width: 768px) and (min-height: 640px) {
   .lp-how {
     height: 400vh;
   }
@@ -780,6 +782,10 @@
     pointer-events: auto;
   }
   .lp-how-text {
+    /* Not the stacked layout's sticky text: here the whole stage is the sticky part,
+       and a sticky text inside it would slide down over the rail as the stage leaves. */
+    position: relative;
+    top: auto;
     grid-column: 1;
     grid-row: 1 / -1;
     align-self: center;
@@ -843,6 +849,11 @@
   .lp-how-pane {
     will-change: transform, opacity;
   }
+  /* The strategy's data budget, the run's receipt and the approval all sit at the
+     foot of the console, so the three panes share one baseline as they swap. */
+  .lp-how-pane[data-pane="strategy"] .lp-how-sources {
+    margin-top: auto;
+  }
   /* The approval sits at the foot of the console. */
   .lp-how-pane[data-pane="trade"] .lp-how-why {
     margin-bottom: auto;
@@ -852,7 +863,7 @@
   }
 }
 /* A tablet: the text sits above the console instead of beside it. */
-@media (prefers-reduced-motion: no-preference) and (min-width: 768px) and (max-width: 1023px) and (min-height: 640px) {
+@media (scripting: enabled) and (prefers-reduced-motion: no-preference) and (min-width: 768px) and (max-width: 1023px) and (min-height: 640px) {
   .lp-how-grid {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto auto auto minmax(0, 1fr);
@@ -885,7 +896,7 @@
   }
 }
 /* A short desktop: everything a step tighter, and the trade pane loses its reasoning. */
-@media (prefers-reduced-motion: no-preference) and (min-width: 768px) and (min-height: 640px) and (max-height: 819px) {
+@media (scripting: enabled) and (prefers-reduced-motion: no-preference) and (min-width: 768px) and (min-height: 640px) and (max-height: 819px) {
   .lp-how-pane {
     gap: 16px;
     padding-block: 18px 18px;
@@ -907,7 +918,7 @@
   }
 }
 /* Shorter still: the transcript goes; the scores and the receipt stay. */
-@media (prefers-reduced-motion: no-preference) and (min-width: 768px) and (min-height: 640px) and (max-height: 719px) {
+@media (scripting: enabled) and (prefers-reduced-motion: no-preference) and (min-width: 768px) and (min-height: 640px) and (max-height: 719px) {
   .lp-how-log-wrap {
     display: none;
   }

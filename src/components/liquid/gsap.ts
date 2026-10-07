@@ -3,7 +3,6 @@
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { SplitText } from "gsap/SplitText";
-import { Flip } from "gsap/Flip";
 import { useGSAP } from "@gsap/react";
 
 /**
@@ -13,10 +12,10 @@ import { useGSAP } from "@gsap/react";
  * motion gets the finished state with no pins, scrub or split.
  */
 if (typeof window !== "undefined") {
-  gsap.registerPlugin(ScrollTrigger, SplitText, Flip, useGSAP);
+  gsap.registerPlugin(ScrollTrigger, SplitText, useGSAP);
 }
 
 export const MOTION_OK = "(prefers-reduced-motion: no-preference)";
 export const DESKTOP_MOTION = "(prefers-reduced-motion: no-preference) and (min-width: 768px)";
 
-export { gsap, ScrollTrigger, SplitText, Flip, useGSAP };
+export { gsap, ScrollTrigger, SplitText, useGSAP };
