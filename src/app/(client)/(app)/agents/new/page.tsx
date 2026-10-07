@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AgentBuilder } from "@/components/agents/builder/agent-builder";
@@ -7,7 +8,8 @@ import { payPerUseAllowedFor } from "@/server/queries/agents";
 
 export const metadata: Metadata = {
   title: "New agent",
-  description: "A name, a key and a strategy. It starts on paper and asks before each trade.",
+  description:
+    "Give it a strategy, a way to think and a name. Every other rule starts on a default you can change.",
 };
 
 export default async function NewAgentPage() {
@@ -22,13 +24,19 @@ export default async function NewAgentPage() {
 
   // The fee is read here, on the server, and handed down: the builder states it before
   // the first fill, and a figure typed into a component would outlive a change to it.
+  //
+  // The builder reads `?step=` with `useSearchParams`, which wants a Suspense boundary
+  // above it. This page is rendered per request (it reads the session), so the hook has
+  // the address on the server and the boundary never shows its fallback.
   return (
-    <AgentBuilder
-      userId={session.userId}
-      sources={sources}
-      initialKeys={keys}
-      feeUsd={feeEnabled() ? platformFeeUsd() : 0}
-      payPerUseAllowed={payPerUseAllowed}
-    />
+    <Suspense fallback={null}>
+      <AgentBuilder
+        userId={session.userId}
+        sources={sources}
+        initialKeys={keys}
+        feeUsd={feeEnabled() ? platformFeeUsd() : 0}
+        payPerUseAllowed={payPerUseAllowed}
+      />
+    </Suspense>
   );
 }

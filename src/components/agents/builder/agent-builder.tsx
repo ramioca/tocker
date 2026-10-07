@@ -1,31 +1,60 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { ChevronDown, RotateCcw, TriangleAlert } from "lucide-react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { RotateCcw } from "lucide-react";
 import { toast } from "sonner";
-import { LiquidMetal } from "@/components/common/liquid-metal";
-import { MorphButton } from "@/components/spectrumui/morph-button";
-import { MORPH_FOCUS } from "@/components/common/focus";
-import { formatUsd } from "@/components/common/format";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { createAgentAction } from "@/components/agents/agent-actions";
 import { providerLabel as providerLabelFor } from "@/lib/agent/providers";
 import {
-  BrainStep,
   DataStep,
   FundingStep,
   IdentityStep,
   RiskStep,
   ScheduleStep,
+  StrategyStep,
+  ThinkStep,
   UniverseStep,
   ttlLabel,
 } from "./steps";
 import { universeSummary } from "./universe-controls";
-import { PAID_LAUNCH_RADAR_USD_PER_CHAIN, launchRadarUsdPerRun } from "./types";
 import { useDraft } from "./use-draft";
 import { validateDraft } from "./validate";
-import { shownSource, stripPayPerUse, usdcEstimate, walletNeedUsd } from "@/components/agents/thinking";
+import { BuilderStepper, type StepView } from "./builder-stepper";
+import { CommitBar } from "./commit-bar";
+import { CommitSentence } from "./commit-sentence";
+import {
+  BUILDER_STEPS,
+  CARD_STEP,
+  parseCard,
+  type BuilderStepId,
+  type CardId,
+  type Place,
+  type StepStatus,
+  type SummaryLabels,
+  type Via,
+} from "./contract";
+import { firstErrorKey, firstErrorPlace, neighbours, placeOfError, stepStatus } from "./flow";
+import { AgentPreview } from "./preview/agent-preview";
+import { PreviewPeek } from "./preview/preview-peek";
+import { RuleCard } from "./rule-card";
+import { StepPanel } from "./step-panel";
+import {
+  commitShortLine,
+  costFacts,
+  costLines,
+  dataSummary,
+  fundingSummary,
+  previewRows,
+  readyItems,
+  riskSummary,
+  runLine,
+  scheduleSummary,
+  stillNeeded,
+} from "./summaries";
+import { useBuilderStep } from "./use-builder-step";
+import { shownSource, stripPayPerUse } from "@/components/agents/thinking";
 import { useFundingPlan } from "@/components/wallets/use-funding-plan";
 import { isTransferStatusUnknown } from "@/components/wallets/funding-attempt";
 import { useRefreshCash } from "@/components/wallets/use-cash";
@@ -41,7 +70,6 @@ import {
   recordFundingIntents,
   settleFundingIntent,
 } from "@/server/actions/wallets";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -53,43 +81,60 @@ import {
 } from "@/components/ui/dialog";
 import type { AgentConfig } from "@/db/schema";
 import type { Chain, DataSourceInfo, LlmKeyRow } from "@/server/types";
-import { stickyActionbarRef } from "@/hooks/root-flag";
 
 /**
- * One page, not seven gates. Only three things are truly required — a name, a
- * key, a strategy — so those sit inline, and every rule domain (universe, data,
- * risk, schedule) is a summary card whose defaults you can read in a sentence
- * and open only if you want to tune them. Simplicity here is disclosure, not
- * removal: every control of the old wizard is still one tap away.
+ * Four steps, none of them a gate: Strategy, Rules, Brain, Name and create. Only three
+ * things are the user's to decide (a strategy, a way to think, a name) and the strategy
+ * is already written, so Next never refuses and any step can be visited at any time.
+ * Every rule domain (universe, data, risk, schedule, funding) is still a card whose
+ * defaults read as one sentence and open only to be changed. Beside the form sits a card
+ * of the agent being made, filled in from the draft as the user goes.
+ *
+ * This file is the shell: the draft, the keys, which step is showing, which cards are
+ * open, and the create itself. The steps' controls are `./steps`, the sentences every
+ * part quotes are `./summaries`, and where an error or a link takes the user is `./flow`.
  *
  * What a draft needs before it can be created is decided in `./validate.ts`.
  */
 
-type RuleId = "universe" | "data" | "risk" | "funding" | "schedule";
+/** The two labels the summaries cannot import themselves: they live in `.tsx` files. */
+const LABELS: SummaryLabels = { interval: intervalLabel, ttl: ttlLabel };
+
+const STEP_LABELS: Record<BuilderStepId, string> = {
+  strategy: "Strategy",
+  rules: "Rules",
+  brain: "Brain",
+  create: "Create",
+};
+
+/** What the Next button calls the step it leads to. */
+const NEXT_LABELS: Record<BuilderStepId, string> = {
+  strategy: "Strategy",
+  rules: "Rules",
+  brain: "Brain",
+  create: "Name and create",
+};
+
+const STATUS_WORDS: Record<StepStatus, string> = {
+  needed: "Needed",
+  ready: "Ready",
+  defaults: "Defaults",
+  edited: "Edited",
+  fix: "Fix",
+};
 
 /**
- * The three required fields, in page order, and the control an error on each should
- * take focus to. The commit bar is sticky, so people submit from the bottom of a long
- * page; a toast alone leaves them hunting for a field 1,400px up.
+ * A move the page has been asked to make, kept until the render that makes it has
+ * committed: only then is the step showing and the card open, so only then can a control
+ * on it take focus.
  */
-const FIELD_TARGETS: Array<{ key: string; ids: string[] }> = [
-  { key: "name", ids: ["agent-name"] },
-  // The key select when there is a key to choose; otherwise the way to add one.
-  { key: "llmKeyId", ids: ["llm-key", "llm-key-add"] },
-  // A pay-per-use draft has no key field; what can be wrong is its model or its limits.
-  { key: "thinking", ids: ["builder-usdc-model"] },
-  { key: "strategyPrompt", ids: ["strategy-prompt"] },
-];
-
-const RULE_ERROR_KEYS: Record<RuleId, string[]> = {
-  universe: ["chains", "universe"],
-  data: ["dataSources"],
-  risk: ["risk"],
-  // Funding is checked against live balances, not the config schema — see
-  // `useFundingPlan` in the component below.
-  funding: [],
-  schedule: ["schedule"],
-};
+interface PendingMove {
+  place: Place;
+  /** Arriving on an `?open=` link: bring the card into view, leave focus where it is. */
+  scrollOnly?: boolean;
+  /** Called when none of the place's controls is on the page. */
+  missing?: () => void;
+}
 
 /**
  * Sign every transfer in the plan, in order, recording each outcome.
@@ -168,92 +213,6 @@ async function runFundingPlan(input: {
   return { sent, total: transfers.length, firstError, unknown };
 }
 
-/** A heading that looks like a label, so heading navigation finds the builder's sections. */
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <h2 className="font-mono text-[11px] tracking-[0.14em] text-muted-foreground uppercase">
-      {children}
-    </h2>
-  );
-}
-
-/**
- * A rule domain: closed, it is one readable sentence; open, it is the full
- * control surface. The grid-rows transition keeps the reveal smooth without
- * measuring heights.
- */
-function RuleCard({
-  title,
-  summary,
-  open,
-  onToggle,
-  hasError,
-  children,
-}: {
-  title: string;
-  summary: React.ReactNode;
-  open: boolean;
-  onToggle: () => void;
-  hasError: boolean;
-  children: React.ReactNode;
-}) {
-  const panelId = `rule-panel-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-  return (
-    <section
-      className={cn(
-        "rounded-xl border bg-card/30 transition-colors duration-150",
-        hasError ? "border-destructive/60" : "border-border/70",
-      )}
-    >
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        aria-controls={panelId}
-        className="flex w-full items-center gap-3 rounded-xl px-4 py-3.5 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-      >
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-1.5 text-sm font-medium">
-            {title}
-            {hasError ? (
-              <TriangleAlert aria-label="has an error" className="size-3.5 shrink-0 text-destructive" />
-            ) : null}
-          </span>
-          <span className={cn("mt-0.5 line-clamp-2 text-xs text-muted-foreground", open && "sr-only")}>
-            {summary}
-          </span>
-        </span>
-        <ChevronDown
-          aria-hidden
-          className={cn(
-            "size-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]",
-            open && "rotate-180",
-          )}
-        />
-      </button>
-      {/* `inert` while closed: the panel is 0px tall but its controls would otherwise
-          stay in the Tab order and the accessibility tree, and arrow keys could move a
-          risk limit nobody can see. It keeps the grid-rows transition intact. */}
-      <div
-        id={panelId}
-        role="region"
-        aria-label={title}
-        inert={!open}
-        className={cn(
-          "grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none",
-          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
-        )}
-      >
-        {/* relative: sr-only notes inside are position:absolute; without a positioned
-            ancestor here they escape the 0fr clip and stretch the page. */}
-        <div className="relative overflow-hidden">
-          <div className="border-t border-border/50 px-4 pt-4 pb-4">{children}</div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 export function AgentBuilder({
   userId,
   sources,
@@ -277,19 +236,24 @@ export function AgentBuilder({
   payPerUseAllowed?: boolean;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [keys, setKeys] = useState(initialKeys);
   // The draft starts on a key the account already has, so it needs to know them.
   const { draft, update, updateConfig, clear, restore, restored } = useDraft(userId, keys, payPerUseAllowed);
   const [attempted, setAttempted] = useState(false);
+  // A create in flight. Held here and not in the Create button, which unmounts whenever
+  // the step changes: the ref is what refuses a second create, the state is what the page
+  // shows while the first one runs.
+  const creatingRef = useRef(false);
+  const [creating, setCreating] = useState(false);
   /** An agent that exists whose funding did not go through: offered the signature again, here. */
   const [fundingRetry, setFundingRetry] = useState<FundingRetry | null>(null);
-  const [open, setOpen] = useState<Set<RuleId>>(new Set());
-  const rulesRef = useRef<HTMLDivElement>(null);
-  // The chrome ring runs only under the pointer or keyboard focus, as in the top bar:
-  // the commit bar is on screen the whole time someone writes a strategy, and a ring
-  // that redraws every frame for all of it is a phone's battery for no reason.
-  const [metalHovered, setMetalHovered] = useState(false);
-  const [metalFocused, setMetalFocused] = useState(false);
+  // `?open=risk` opens that card once, on arrival. Toggling cards afterwards is local:
+  // it does not touch the address or the history.
+  const [open, setOpen] = useState<Set<CardId>>(() => {
+    const card = parseCard(searchParams.get("open"));
+    return new Set(card ? [card] : []);
+  });
 
   const errors = useMemo(
     () => validateDraft(draft, keys, { payPerUseAllowed }),
@@ -297,7 +261,10 @@ export function AgentBuilder({
   );
   const visibleErrors = attempted ? errors : {};
 
-  const toggle = (id: RuleId) =>
+  const nav = useBuilderStep({ restored, errors });
+  const step = nav.step;
+
+  const toggle = (id: CardId) =>
     setOpen((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -305,32 +272,120 @@ export function AgentBuilder({
       return next;
     });
 
-  const chosen = sources.filter((source) => draft.config.dataSources.includes(source.id));
-  const sourcesPerRun = chosen.reduce((sum, source) => sum + (source.priceUsd ?? 0.01), 0);
-  const radarPerRun = launchRadarUsdPerRun(draft.config.universe.discovery, draft.config.chains);
-  // An estimate, not a ceiling: the cap below is the ceiling, so never show more than it.
-  const costPerRun = Math.min(sourcesPerRun + radarPerRun, draft.config.risk.maxDataSpendUsdPerRun);
-  const interval = draft.config.schedule.intervalMinutes;
-  const runsPerDay = interval === 0 ? 0 : Math.round(1_440 / interval);
-  const risk = draft.config.risk;
-  const execution = draft.config.execution;
+  const pendingPlace = useRef<PendingMove | null>(null);
+  /** The step the effect below last saw, to tell a step change it was not told about. */
+  const shownStep = useRef<BuilderStepId | null>(null);
+  const columnRef = useRef<HTMLDivElement>(null);
+  // Counted so a move to a place that is already showing (the same step, a card already
+  // open) still reaches the effect.
+  const [moves, setMoves] = useState(0);
+  // How the user last touched the page. The agent card reports a click on a row without
+  // saying how it was made, and a keyboard move must not animate the step.
+  const lastInput = useRef<Via>("pointer");
+
+  /** Go to a place: show its step, open its card, then put focus on its control. */
+  const goTo = (place: Place, via: Via, missing?: () => void) => {
+    // Nobody leaves the step while its agent is being created.
+    if (creatingRef.current) return;
+    pendingPlace.current = { place, missing };
+    const card = place.card;
+    if (card) setOpen((current) => (current.has(card) ? current : new Set([...current, card])));
+    setMoves((count) => count + 1);
+    nav.go(place, via);
+  };
+  const goFromCard = (place: Place) => goTo(place, lastInput.current);
+
+  // After the commit that un-hides the panel and opens the card, so focus can never land
+  // on a hidden control and the focused control already carries its error when a screen
+  // reader announces it.
+  useEffect(() => {
+    const arriving = shownStep.current === null;
+    const stepChanged = shownStep.current !== step;
+    shownStep.current = step;
+    let move = pendingPlace.current;
+    pendingPlace.current = null;
+    if (arriving) {
+      const [card] = open;
+      move =
+        card && CARD_STEP[card] === step
+          ? { place: { step, card, focusIds: [`rule-card-${card}`] }, scrollOnly: true }
+          : null;
+    } else if (!move && stepChanged) {
+      // The browser's Back or Forward button, or a restored draft resuming: the step
+      // changed without a place, so focus goes to its heading.
+      move = { place: { step } };
+    }
+    if (!move || move.place.step !== step) return;
+
+    const target = move.place.focusIds?.map((id) => document.getElementById(id)).find((el) => el !== null);
+    if (target) {
+      const smooth = !move.scrollOnly && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const reveal = () => target.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "center" });
+      reveal();
+      if (!move.scrollOnly) target.focus({ preventScroll: true });
+      // A control inside a card that is still opening is not where it will be: once the
+      // card has finished, bring it into view again.
+      const panel = target.closest<HTMLElement>('[id^="rule-panel-"]');
+      if (panel) {
+        // Transitions of the controls inside bubble up here too; only the panel's own counts.
+        const settle = (event: TransitionEvent) => {
+          if (event.target !== panel) return;
+          panel.removeEventListener("transitionend", settle);
+          reveal();
+        };
+        panel.addEventListener("transitionend", settle);
+        window.setTimeout(() => panel.removeEventListener("transitionend", settle), 400);
+      }
+      return;
+    }
+    move.missing?.();
+    // A plain step change: the top of the form, at once, with focus on the step's heading.
+    columnRef.current?.scrollIntoView({ behavior: "auto", block: "start" });
+    document.getElementById(`step-${step}-title`)?.focus({ preventScroll: true });
+  }, [step, open, moves]);
+
   const providerLabel = providerLabelFor(draft.config.llm.provider);
-  // Pay per use: the run count and the cost are the panel's own estimate, so the commit
-  // bar and the Brain section never quote two different numbers for the same schedule.
   const payPerUse = shownSource(draft.config, payPerUseAllowed) === "usdc";
-  const thinking = payPerUse ? usdcEstimate(draft.config.llm.usdc?.model, interval) : null;
-  const thinkingNeedUsd = payPerUse && draft.config.llm.usdc ? walletNeedUsd(draft.config.llm.usdc) : null;
-  // "Ask me first" is the default, and an agent in it never fills until you approve; with
-  // the Schedule card collapsed, nothing else on the page said so.
-  const executionLabel =
-    execution.mode === "approve"
-      ? `asks before each trade (${ttlLabel(execution.proposalTtlMinutes)} to decide)`
-      : "trades on its own";
-  // Funded and headed for the checklist: the create holds its schedule until the switch.
-  const heldForLive = draft.funding.mode === "fund" && draft.goLive;
-  // The same short form as the balance buttons in the Schedule card.
-  const paperLabel =
-    draft.paperStartingUsd >= 1_000 ? `$${draft.paperStartingUsd / 1_000}K` : formatUsd(draft.paperStartingUsd);
+  // Every figure the bar and the closed cards quote, worked out once (`./summaries`).
+  const facts = costFacts(draft, sources, { payPerUseAllowed, feeUsd });
+  const ready = readyItems(draft, errors, keys, { payPerUseAllowed });
+  const readyCount = ready.filter((item) => item.ready).length;
+  // The one line that speaks the ready count, whichever copies of the agent card are on
+  // screen. Spoken only when the count moves, and empty until it first does.
+  const [counted, setCounted] = useState(readyCount);
+  const [announcement, setAnnouncement] = useState("");
+  if (counted !== readyCount) {
+    setCounted(readyCount);
+    setAnnouncement(`${readyCount} of ${ready.length} ready`);
+  }
+  const firstMissing = ready.find((item) => !item.ready) ?? null;
+
+  // The agent card reads a deferred copy of the draft, so typing in an 8,000-character
+  // prompt never waits on it. Derived, never stored: no effect and no second draft.
+  const cardDraft = useDeferredValue(draft);
+  // Deferred with it, so the card learns that the draft was swapped whole (restored,
+  // started over, undone) in the same render as its rows change.
+  const cardRestored = useDeferredValue(restored);
+  const card = useMemo(() => {
+    const cardErrors = validateDraft(cardDraft, keys, { payPerUseAllowed });
+    const cardFacts = costFacts(cardDraft, sources, { payPerUseAllowed, feeUsd });
+    return {
+      ready: readyItems(cardDraft, cardErrors, keys, { payPerUseAllowed }),
+      rows: previewRows(cardDraft, cardFacts, cardErrors, {
+        hunts: universeSummary(cardDraft.config.universe as AgentConfig["universe"], cardDraft.config.chains),
+        labels: LABELS,
+        payPerUseAllowed,
+      }),
+      costs: costLines(cardDraft, cardFacts),
+      runLine: runLine(cardDraft.config),
+      // No figure on a manual schedule, or while a funded agent waits for the checklist:
+      // the Runs line then stands as text.
+      runsPerDay:
+        cardFacts.intervalMinutes === 0 || cardFacts.heldForLive
+          ? null
+          : (cardFacts.thinking?.runsPerDay ?? cardFacts.runsPerDay),
+    };
+  }, [cardDraft, keys, sources, payPerUseAllowed, feeUsd]);
 
   // Funding cannot be validated from the draft alone — it depends on what the
   // user holds right now — so it gets its own gate, checked at submit time.
@@ -362,33 +417,25 @@ export function AgentBuilder({
     router.push(`/agents/${slug}/settings#wallets`);
   };
 
-  const submit = async () => {
+  const create = async () => {
     const allErrors = validateDraft(draft, keys, { payPerUseAllowed });
     if (Object.keys(allErrors).length > 0) {
       setAttempted(true);
-      const badRules = (Object.keys(RULE_ERROR_KEYS) as RuleId[]).filter((id) =>
-        RULE_ERROR_KEYS[id].some((key) => allErrors[key]),
-      );
-      if (badRules.length > 0) setOpen((current) => new Set([...current, ...badRules]));
-      const field = FIELD_TARGETS.find((target) => allErrors[target.key]);
-      // After the render that marks it invalid (and opens any card), so the focused
-      // control already carries its error when a screen reader announces it.
-      requestAnimationFrame(() => {
-        const target = field?.ids.map((id) => document.getElementById(id)).find((el) => el !== null);
-        if (target) {
-          target.scrollIntoView({ behavior: "smooth", block: "center" });
-          target.focus({ preventScroll: true });
-          // The focused field carries its own message; a toast repeating it only
-          // covers the commit bar on a phone.
-          return;
-        }
-        if (badRules.length > 0) {
-          rulesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
+      // The earliest step with something wrong, then the control on it. The step is
+      // shown and its card opened before focus lands (`goTo`).
+      const key = firstErrorKey(allErrors);
+      const place = firstErrorPlace(allErrors, null);
+      const stillMissing = () =>
         toast.error("Something is still missing", {
-          description: Object.values(allErrors)[0],
+          description: key ? allErrors[key] : Object.values(allErrors)[0],
         });
-      });
+      if (place) {
+        // The focused field carries its own message; a toast repeating it only
+        // covers the commit bar on a phone. A card has no field of its own to carry one.
+        const hasField = !place.card && (place.focusIds?.length ?? 0) > 0;
+        goTo(place, "auto", hasField ? stillMissing : undefined);
+        if (!hasField) stillMissing();
+      }
       throw new Error("invalid");
     }
 
@@ -396,12 +443,13 @@ export function AgentBuilder({
     // create rather than creating an agent that gets a fraction of the money.
     if (fundingBlocker) {
       setAttempted(true);
-      setOpen((current) => new Set([...current, "funding"] as RuleId[]));
-      rulesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      goTo(firstErrorPlace({}, fundingBlocker) ?? { step: "create" }, "auto");
       toast.error("Funding is not ready", { description: fundingBlocker });
       throw new Error("funding-blocked");
     }
 
+    creatingRef.current = true;
+    setCreating(true);
     const result = await createAgentAction({
       name: draft.name.trim(),
       tagline: draft.tagline.trim() || undefined,
@@ -480,6 +528,20 @@ export function AgentBuilder({
     router.push(fundedAndWantsLive ? `/agents/${result.data.slug}/live` : `/agents/${result.data.slug}`);
   };
 
+  /**
+   * One create at a time. The flag goes up inside `create`, once the draft has passed its
+   * checks and just before the agent is made, and comes down here however that ends.
+   */
+  const submit = async () => {
+    if (creatingRef.current) return;
+    try {
+      await create();
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
+    }
+  };
+
   const retryFunding = async () => {
     if (!fundingRetry || fundingRetry.busy) return;
     setFundingRetry({ ...fundingRetry, busy: true });
@@ -514,295 +576,290 @@ export function AgentBuilder({
     router.push(`/agents/${slug}`);
   };
 
+  const statusCtx = { config: draft.config, attempted, fundingBlocked: fundingBlocker !== null };
+  const steps: StepView[] = BUILDER_STEPS.map((id) => {
+    const status = stepStatus(id, errors, statusCtx);
+    return {
+      id,
+      label: STEP_LABELS[id],
+      status,
+      statusLabel: STATUS_WORDS[status],
+      // Red is for after a failed Create. Before one, a missing thing is simply needed.
+      tone: attempted && (status === "needed" || status === "fix") ? "error" : "neutral",
+    };
+  });
+  const { back, next } = neighbours(step);
+  /** A card is marked only after a failed Create, and only for an error that lives in it. */
+  const cardHasError = (id: CardId) =>
+    attempted && Object.keys(errors).some((key) => errors[key] && placeOfError(key).card === id);
+
+  const stepProps = { draft, update, updateConfig, errors: visibleErrors, hideHeading: true };
+  const previewProps = {
+    draft: cardDraft,
+    ready: card.ready,
+    rows: card.rows,
+    costs: card.costs,
+    runLine: card.runLine,
+    runsPerDay: card.runsPerDay,
+    onGo: goFromCard,
+    quietKey: cardRestored,
+    disabled: creating,
+  };
+  const panel = (id: BuilderStepId) => ({
+    id,
+    active: step === id,
+    direction: nav.direction,
+    animate: nav.animate,
+  });
+
   return (
     <>
     {fundingRetry ? (
       <FundingRetryDialog retry={fundingRetry} onRetry={retryFunding} onSkip={skipFunding} />
     ) : null}
-    <div className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold tracking-tight">New agent</h1>
-        {restored ? (
-          // Say why the form is already filled in, next to the way out of it.
-          <div className="flex items-center gap-2">
-            <p className="text-xs text-muted-foreground">
-              <span className="sm:hidden">Draft restored</span>
-              <span className="hidden sm:inline">Restored your unsaved draft</span>
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                // A hand-written strategy is the one thing here that cannot be retyped from
-                // memory, so clearing it gets the same Undo the preset chips have.
-                const previous = draft;
-                clear();
-                setOpen(new Set());
-                setAttempted(false);
-                toast.success("Draft cleared", {
-                  action: { label: "Undo", onClick: () => restore(previous) },
-                });
-                // This button unmounts with the draft, so focus goes to the first field
-                // rather than falling back to the page.
-                requestAnimationFrame(() => document.getElementById("agent-name")?.focus());
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <RotateCcw aria-hidden className="size-3" />
-              Start over
-            </button>
-          </div>
-        ) : null}
-      </div>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {payPerUseAllowed
-          ? "Three things are required: a name, a way to think (your own key, or pay per use), a strategy. "
-          : "Three things are required: a name, a key, a strategy. "}
-        Everything else ships with defaults you can read below — and open if you disagree.
+    <div
+      className="mx-auto w-full max-w-[1120px] px-4 py-6 sm:px-6"
+      onPointerDownCapture={() => {
+        lastInput.current = "pointer";
+      }}
+      onKeyDownCapture={() => {
+        lastInput.current = "keyboard";
+      }}
+    >
+      <p aria-live="polite" className="sr-only">
+        {announcement}
       </p>
-
-      <div className="mt-8 space-y-8">
-        <section className="space-y-5">
-          <SectionLabel>Identity</SectionLabel>
-          <IdentityStep draft={draft} update={update} updateConfig={updateConfig} errors={visibleErrors} hideHeading />
-        </section>
-
-        <section className="space-y-5">
-          <SectionLabel>Brain</SectionLabel>
-          <BrainStep
-            draft={draft}
-            update={update}
-            updateConfig={updateConfig}
-            errors={visibleErrors}
-            llmKeys={keys}
-            onKeyAdded={(key) => setKeys((current) => [key, ...current])}
-            feeUsd={feeUsd}
-            payPerUseAllowed={payPerUseAllowed}
-            hideHeading
-          />
-        </section>
-
-        <section ref={rulesRef} className="scroll-mt-20 space-y-3">
-          <SectionLabel>Trading rules</SectionLabel>
-
-          <RuleCard
-            title="Where it hunts"
-            summary={universeSummary(draft.config.universe as AgentConfig["universe"], draft.config.chains)}
-            open={open.has("universe")}
-            onToggle={() => toggle("universe")}
-            hasError={attempted && RULE_ERROR_KEYS.universe.some((key) => errors[key])}
-          >
-            <UniverseStep draft={draft} update={update} updateConfig={updateConfig} errors={visibleErrors} hideHeading />
-          </RuleCard>
-
-          <RuleCard
-            title="Data it buys"
-            summary={
-              chosen.length === 0 && radarPerRun === 0
-                ? // Not "nothing to pay for": every sweep buys the launch radar whatever
-                  // the feed list says (`discover_tokens`), and Tocker pays for it.
-                  `No paid sources. Each sweep still buys the launch radar (about ${formatUsd(PAID_LAUNCH_RADAR_USD_PER_CHAIN)} a chain), paid by Tocker.`
-                : `${[
-                    chosen.length > 0 ? `${chosen.length} paid source${chosen.length === 1 ? "" : "s"}` : null,
-                    radarPerRun > 0 ? "launch radar" : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" + ")} · ≈${formatUsd(costPerRun)} per run, paid by Tocker`
-            }
-            open={open.has("data")}
-            onToggle={() => toggle("data")}
-            hasError={attempted && RULE_ERROR_KEYS.data.some((key) => errors[key])}
-          >
-            <DataStep draft={draft} update={update} updateConfig={updateConfig} errors={visibleErrors} sources={sources} hideHeading />
-          </RuleCard>
-
-          <RuleCard
-            title="Risk limits"
-            // The fee closes the line: this is the one sentence about trades that is on
-            // screen without opening anything, and nothing in the builder named the fee.
-            summary={`${formatUsd(risk.maxTradeUsd)}/trade · ${risk.maxDailyTrades}/day · ${risk.maxPositionPct}% max position · ${formatUsd(risk.maxDataSpendUsdPerRun)} data/run${
-              feeUsd > 0 ? ` · ${formatUsd(feeUsd)} Tocker fee per fill` : ""
-            }`}
-            open={open.has("risk")}
-            onToggle={() => toggle("risk")}
-            hasError={attempted && RULE_ERROR_KEYS.risk.some((key) => errors[key])}
-          >
-            <RiskStep
-              draft={draft}
-              update={update}
-              updateConfig={updateConfig}
-              errors={visibleErrors}
-              feeUsd={feeUsd}
-              hideHeading
-            />
-          </RuleCard>
-
-          <RuleCard
-            title="Funding"
-            summary={
-              draft.funding.mode === "paper"
-                ? thinkingNeedUsd !== null
-                  ? // Paper trades need no money; pay-per-use thinking does, from the first run.
-                    `Paper only. Its wallets are created empty, and it cannot think until its Solana wallet holds ${formatUsd(thinkingNeedUsd)} of USDC`
-                  : "Paper only — its wallets are created empty, fund it whenever you like"
-                : `${formatUsd(draft.funding.amountUsd)} USDC, signed by you on create`
-            }
-            open={open.has("funding")}
-            onToggle={() => toggle("funding")}
-            hasError={attempted && Boolean(fundingBlocker)}
-          >
-            <FundingStep
-              draft={draft}
-              update={update}
-              updateConfig={updateConfig}
-              errors={visibleErrors}
-              hideHeading
-            />
-          </RuleCard>
-
-          <RuleCard
-            title="Schedule & mode"
-            summary={
-              heldForLive
-                ? `${intervalLabel(interval)} · ${executionLabel} · real money only, live after the checklist`
-                : draft.funding.mode === "fund"
-                  ? `${intervalLabel(interval)} · ${executionLabel} · paper on the funded amount until you go live`
-                  : `${intervalLabel(interval)} · ${executionLabel} · ${draft.activate ? "starts active" : "starts paused"} · ${paperLabel} paper`
-            }
-            open={open.has("schedule")}
-            onToggle={() => toggle("schedule")}
-            hasError={attempted && RULE_ERROR_KEYS.schedule.some((key) => errors[key])}
-          >
-            <ScheduleStep
-              draft={draft}
-              update={update}
-              updateConfig={updateConfig}
-              errors={visibleErrors}
-              payPerUseAllowed={payPerUseAllowed}
-              hideHeading
-            />
-          </RuleCard>
-        </section>
-      </div>
-
-      {/* The commit bar: what it costs, then the one button. Sticky glass so the
-          decision is always in reach, above the mobile tab bar on phones. */}
-      <div
-        data-sticky-actionbar
-        // Holds the flag on <html> that adds this bar to the scroll padding (globals.css) and
-        // lifts the toasts above it on a phone.
-        ref={stickyActionbarRef}
-        // overflow-x-clip: the chrome ring's glow canvas is wider than the button and,
-        // at the right edge of a phone, pushed the whole page 28px sideways.
-        // py-2 on a phone: with the text on one line the 48px button sets the height, and
-        // every pixel of this bar is a pixel of form it covers.
-        className="glass-bar sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] z-10 mt-8 -mx-4 flex items-center gap-3 overflow-x-clip border-t border-border/60 px-4 py-2 sm:-mx-6 sm:px-6 sm:py-3 md:bottom-0"
-      >
-        <p className="min-w-0 flex-1 text-xs leading-4 text-muted-foreground">
-          {/* One line on a phone: the full sentence wrapped to five and made the bar a
-              third of the screen. The money being signed stays in it. */}
-          <span className="tnum block truncate sm:hidden">
-            {draft.funding.mode === "fund"
-              ? `Signs ${formatUsd(draft.funding.amountUsd)} USDC · ${runsPerDay === 0 ? "manual runs" : `~${runsPerDay}/day`}`
-              : runsPerDay === 0
-                ? "Manual runs only"
-                : thinking
-                  ? thinking.model
-                    ? `~${thinking.runsPerDay} runs/day · ≈${formatUsd(thinking.dayUsd)} thinking`
-                    : "Pick a model to see the cost"
-                  : // Whose bill the runs are, in the room one line has. The data estimate
-                    // that used to sit here is the part Tocker pays.
-                    `~${runsPerDay} runs/day on your key`}
-          </span>
-          <span className="hidden sm:inline">
-            {draft.funding.mode === "fund" ? (
-              <>
-                You will sign transfers of{" "}
-                <span className="tnum font-mono">{formatUsd(draft.funding.amountUsd)}</span> USDC right after it is created.{" "}
-              </>
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-8 xl:grid-cols-[minmax(0,1fr)_400px] xl:gap-10">
+        {/* The form. 672px is the width every control in it was built for. */}
+        <div ref={columnRef} className="mx-auto w-full max-w-2xl min-w-0 scroll-mt-20 lg:mx-0">
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-lg font-semibold tracking-tight">New agent</h1>
+            {restored ? (
+              // Say why the form is already filled in, next to the way out of it.
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-muted-foreground">
+                  <span className="sm:hidden">Draft restored</span>
+                  <span className="hidden sm:inline">Restored your unsaved draft</span>
+                </p>
+                <button
+                  type="button"
+                  disabled={creating}
+                  onClick={() => {
+                    // A hand-written strategy is the one thing here that cannot be retyped from
+                    // memory, so clearing it gets the same Undo the preset cards have.
+                    const previous = draft;
+                    clear();
+                    setOpen(new Set());
+                    setAttempted(false);
+                    toast.success("Draft cleared", {
+                      action: { label: "Undo", onClick: () => restore(previous) },
+                    });
+                    // This button unmounts with the draft, so focus goes to the first step's
+                    // heading rather than falling back to the page.
+                    goTo({ step: "strategy" }, "auto");
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <RotateCcw aria-hidden className="size-3" />
+                  Start over
+                </button>
+              </div>
             ) : null}
-            {runsPerDay === 0 ? (
-              <>Manual runs only — nothing is spent until you press Run now.</>
-            ) : thinking && !thinking.model ? (
-              // No listed model, no price: saying "$0.00 a day" would be a number nobody stands behind.
-              <>Pick a model for pay-per-use thinking to see what a day of runs is expected to cost.</>
-            ) : thinking ? (
-              // Pay per use: the thinking is the agent's own bill, in USDC, on every run.
-              <>
-                {heldForLive ? "No ticks until you switch it live on the checklist. Then ~" : "~"}
-                <span className="tnum font-mono">{thinking.runsPerDay}</span> runs/day. Each run pays for its own
-                thinking in USDC from the agent&rsquo;s wallet (≈
-                <span className="tnum font-mono">{formatUsd(thinking.runUsd)}</span>, about{" "}
-                <span className="tnum font-mono">{formatUsd(thinking.dayUsd)}</span> a day); its data (≈
-                <span className="tnum font-mono">{formatUsd(costPerRun)}</span>) is paid by Tocker.
-                {heldForLive
-                  ? null
-                  : execution.mode === "approve"
-                    ? " Proposes paper trades for you to approve."
-                    : " Paper trades until you go live."}
-              </>
-            ) : heldForLive ? (
-              // The Mode card promises it never trades paper, so this line cannot count
-              // paper runs: nothing ticks until the hold-to-confirm on the checklist.
-              <>
-                No ticks until you switch it live on the checklist. Then ~
-                <span className="tnum font-mono">{runsPerDay}</span> runs/day, each billing model tokens to your{" "}
-                {providerLabel} key; its data (≈<span className="tnum font-mono">{formatUsd(costPerRun)}</span>) is
-                paid by Tocker.
-              </>
-            ) : (
-              // The run count used to stand next to the data estimate alone, which is the
-              // part Tocker pays. The model bill is the owner's, on every run, traded or not.
-              <>
-                ~<span className="tnum font-mono">{runsPerDay}</span> runs/day. Each run bills model tokens to your{" "}
-                {providerLabel} key; its data (≈<span className="tnum font-mono">{formatUsd(costPerRun)}</span>,
-                capped at <span className="tnum font-mono">{formatUsd(risk.maxDataSpendUsdPerRun)}</span>) is paid by
-                Tocker.{" "}
-                {execution.mode === "approve" ? "Proposes paper trades for you to approve." : "Paper trades until you go live."}
-              </>
-            )}
-          </span>
-        </p>
-        <div
-          className="shrink-0"
-          onPointerEnter={() => setMetalHovered(true)}
-          onPointerLeave={() => setMetalHovered(false)}
-          // Keyboard focus only: a click also focuses the button, and the ring would then
-          // keep running for as long as nothing else took the focus.
-          onFocus={(event) => setMetalFocused(event.target.matches(":focus-visible"))}
-          onBlur={() => setMetalFocused(false)}
-        >
-          {/* Paused keeps the last frame on screen: at rest the ring is still chrome, just still. */}
-          <LiquidMetal
-            preset="chromatic"
-            theme="dark"
-            strength={0.85}
-            paused={!(metalHovered || metalFocused)}
-            className="shrink-0"
-          >
-            {/* metal-fx strips the button's fill, which would leave its dark:text-neutral-900
-                on the dark chrome at about 1.2:1, so inside the ring the label takes the
-                foreground colour. Only inside the ring (`.metal-fx-content` is its wrapper
-                around the child): before hydration, and wherever WebGL2 is missing, there is
-                no ring and the button keeps its own fills, and a forced foreground label was
-                near-white on the white pill, idle and while creating. There it now wears the
-                button's own colours in every state. The `dark:` copy is there to outrank the
-                button's `dark:text-neutral-900` by specificity, not by order. */}
-            <MorphButton
-              size="lg"
-              onAction={submit}
-              loadingLabel="Creating…"
-              successLabel="Created"
-              errorLabel="Check the form"
-              className={cn(
-                "[.metal-fx-content>&]:text-foreground dark:[.metal-fx-content>&]:text-foreground",
-                MORPH_FOCUS,
-              )}
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            <span className="sm:hidden">A strategy, a way to think, a name. The rest is already set.</span>
+            <span className="hidden sm:inline">
+              Three things are yours to decide: a strategy, a way to think, a name. Everything else is already set.
+            </span>
+          </p>
+
+          <div className="mt-6">
+            <BuilderStepper
+              steps={steps}
+              current={step}
+              onGo={(id, via) => goTo({ step: id }, via)}
+              disabled={creating}
+            />
+          </div>
+
+          {/* A minimum height, so a short step never makes the page shorter than the
+              viewport and the bar below does not jump between steps. */}
+          <div className="mt-8 min-h-[calc(100dvh-16rem)]">
+            <StepPanel
+              {...panel("strategy")}
+              title="What should it do?"
+              lead={
+                errors.strategyPrompt ? (
+                  "Pick a starting point or write your own."
+                ) : (
+                  <>
+                    Pick a starting point or write your own. One is already written
+                    <span className="hidden sm:inline">, so you can press Next</span>.
+                  </>
+                )
+              }
             >
-              Create agent
-            </MorphButton>
-          </LiquidMetal>
+              <StrategyStep {...stepProps} feeUsd={feeUsd} />
+            </StepPanel>
+
+            <StepPanel
+              {...panel("rules")}
+              title="The rules it cannot break"
+              lead={
+                stepStatus("rules", errors, statusCtx) === "fix"
+                  ? "Enforced in code before any trade. One of them needs a look before you can create."
+                  : "Enforced in code before any trade. All four are already set. Open one only to change it."
+              }
+            >
+              <div className="space-y-3">
+                <RuleCard
+                  id="universe"
+                  title="Where it hunts"
+                  summary={universeSummary(draft.config.universe as AgentConfig["universe"], draft.config.chains)}
+                  open={open.has("universe")}
+                  onToggle={() => toggle("universe")}
+                  hasError={cardHasError("universe")}
+                >
+                  <UniverseStep {...stepProps} />
+                </RuleCard>
+
+                <RuleCard
+                  id="data"
+                  title="Data it buys"
+                  summary={dataSummary(facts)}
+                  open={open.has("data")}
+                  onToggle={() => toggle("data")}
+                  hasError={cardHasError("data")}
+                >
+                  <DataStep {...stepProps} sources={sources} />
+                </RuleCard>
+
+                <RuleCard
+                  id="risk"
+                  title="Risk limits"
+                  // The fee closes the line: this is the one sentence about trades that is on
+                  // screen without opening anything, and nothing in the builder named the fee.
+                  summary={riskSummary(draft.config.risk, feeUsd)}
+                  open={open.has("risk")}
+                  onToggle={() => toggle("risk")}
+                  hasError={cardHasError("risk")}
+                >
+                  <RiskStep {...stepProps} feeUsd={feeUsd} />
+                </RuleCard>
+
+                <RuleCard
+                  id="schedule"
+                  title="Schedule & mode"
+                  summary={scheduleSummary(draft, facts, LABELS)}
+                  open={open.has("schedule")}
+                  onToggle={() => toggle("schedule")}
+                  hasError={cardHasError("schedule")}
+                >
+                  <ScheduleStep {...stepProps} payPerUseAllowed={payPerUseAllowed} />
+                </RuleCard>
+              </div>
+            </StepPanel>
+
+            <StepPanel
+              {...panel("brain")}
+              title="How it thinks"
+              lead={
+                payPerUse
+                  ? "Paying per run in USDC from the agent's own wallet. No key needed."
+                  : errors.llmKeyId
+                    ? payPerUseAllowed
+                      ? "The one thing we cannot decide for you. Add a key from any provider, or choose pay per use below."
+                      : "The one thing we cannot decide for you. Add a key from any provider, or press Next and come back to it later."
+                    : errors.llm
+                      ? "Check the model settings below."
+                      : `Using your ${providerLabel} key. Nothing to do here unless you want a different model.`
+              }
+            >
+              <ThinkStep
+                {...stepProps}
+                llmKeys={keys}
+                onKeyAdded={(key) => setKeys((current) => [key, ...current])}
+                payPerUseAllowed={payPerUseAllowed}
+              />
+            </StepPanel>
+
+            <StepPanel
+              {...panel("create")}
+              title="Name it and create"
+              lead="The name sits above every trade it posts. Everything else on this screen is optional."
+            >
+              <div className="space-y-6">
+                <IdentityStep {...stepProps} />
+
+                {/* On the last step because it is the one card that decides what the user
+                    signs when they press Create, and that button is on this screen. */}
+                <RuleCard
+                  id="funding"
+                  title="Funding"
+                  summary={fundingSummary(draft, facts)}
+                  open={open.has("funding")}
+                  onToggle={() => toggle("funding")}
+                  hasError={attempted && Boolean(fundingBlocker)}
+                >
+                  <FundingStep {...stepProps} />
+                </RuleCard>
+
+                {/* Below lg the agent card has no column: this copy is the read-back
+                    before Create. */}
+                <div className="lg:hidden">
+                  <AgentPreview {...previewProps} />
+                </div>
+              </div>
+            </StepPanel>
+          </div>
+        </div>
+
+        {/* The agent card, in its own column from lg, so nothing the form does moves it.
+            The height stops it sliding under the bar below. */}
+        <div className="hidden lg:block">
+          <div className="lg:sticky lg:top-20 lg:max-h-[calc(100dvh-11rem)] lg:overflow-y-auto">
+            <AgentPreview {...previewProps} reveal />
+          </div>
         </div>
       </div>
+
+      <CommitBar
+        step={step}
+        nextLabel={next ? NEXT_LABELS[next] : null}
+        onBack={back ? (via) => goTo({ step: back }, via) : null}
+        onNext={(via) => {
+          // Next never refuses: what is still missing is said by the stepper and the agent card.
+          if (next) goTo({ step: next }, via);
+        }}
+        // Offered once the strategy and the way to think are ready: with a key on the
+        // account that is on arrival, and all that is left is a name.
+        onSkipToEnd={
+          step !== "create" && ready.every((item) => item.ready || item.id === "name")
+            ? (via) => goTo({ step: "create" }, via)
+            : null
+        }
+        stillNeeded={stillNeeded(ready, errors)}
+        onStillNeeded={() => {
+          if (firstMissing) goTo(firstMissing.place, lastInput.current);
+        }}
+        submit={submit}
+        creating={creating}
+        sentence={<CommitSentence draft={draft} facts={facts} />}
+        signing={<CommitSentence draft={draft} facts={facts} part="signing" />}
+        // The same words the strip carries on the other steps, where a signature is coming.
+        signingShort={draft.funding.mode === "fund" ? commitShortLine(draft, facts) : null}
+        peek={
+          <PreviewPeek
+            draft={cardDraft}
+            readyCount={readyCount}
+            shortLine={commitShortLine(draft, facts)}
+            compact={step === "create"}
+            disabled={creating}
+          >
+            <AgentPreview {...previewProps} />
+          </PreviewPeek>
+        }
+      />
     </div>
     </>
   );
