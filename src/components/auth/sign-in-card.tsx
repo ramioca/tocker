@@ -5,7 +5,6 @@ import Link from "next/link";
 import { KeyRound, Loader2 } from "lucide-react";
 import { useLoginWithEmail, useLoginWithOAuth, useLoginWithPasskey, useModalStatus } from "@privy-io/react-auth";
 import { cn } from "cn";
-import { PetriClock } from "@/components/brand/petri-mark";
 import { PRIVY_APP_ID } from "@/components/providers/privy-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +24,7 @@ import {
   type NotInvited,
 } from "./login-helpers";
 import { loginMethodEnabled, type LoginMethod } from "./login-methods";
+import { AUTH_PRESS, MetalSubmit } from "./metal-submit";
 import { GoogleGlyph, XGlyph } from "./oauth-glyphs";
 
 export interface SignInCardProps {
@@ -333,12 +333,12 @@ function PrivySignInCard({ next, returningFromOAuth = false, oauthProvider = nul
   if (signedIn || finishingOAuth) {
     const stuck = signedIn && stalled;
     return (
-      <Card>
+      <Card variant="status">
         <Header title={signedIn ? "Signed in" : "Finishing sign-in"} />
         {/* One element whose text changes, so the change is announced. */}
         <p
           role="status"
-          className="mt-5 flex items-center justify-center gap-2 text-center text-sm text-balance text-muted-foreground"
+          className="auth-status mt-5 flex items-center justify-center gap-2 text-center text-sm text-balance text-muted-foreground"
         >
           {stuck ? null : <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden />}
           {stuck
@@ -350,7 +350,11 @@ function PrivySignInCard({ next, returningFromOAuth = false, oauthProvider = nul
         {stuck ? (
           // A full page load, not the router: whatever the client is stuck on goes with
           // it. `next` is the path `safeNext` already vetted, never a URL built here.
-          <Button type="button" className="mt-4 h-10 w-full" onClick={() => window.location.replace(next)}>
+          <Button
+            type="button"
+            className={cn("mt-4", PRIMARY_BUTTON)}
+            onClick={() => window.location.replace(next)}
+          >
             Try again
           </Button>
         ) : null}
@@ -372,14 +376,14 @@ function PrivySignInCard({ next, returningFromOAuth = false, oauthProvider = nul
           }
         />
         {/* Keyed like the steps below, so it fades up in place of the form it replaces. */}
-        <div key="not-invited" className="mt-6 motion-safe:animate-rise">
+        <div key="not-invited" className="mt-5 motion-safe:animate-rise sm:mt-6">
           <p className="text-center text-sm text-balance text-muted-foreground">
             {"Tocker is opening up in stages. DM us on X and we'll add you."}
           </p>
           <div className="mt-5 grid gap-2">
             <Button
               nativeButton={false}
-              className="h-10 w-full"
+              className={PRIMARY_BUTTON}
               render={<a href={FOUNDER_X.href} target="_blank" rel="noreferrer" />}
             >
               <XGlyph className="size-3.5" />
@@ -411,7 +415,7 @@ function PrivySignInCard({ next, returningFromOAuth = false, oauthProvider = nul
       />
 
       {/* Keyed so each step fades up on its own, instead of the fields swapping in place. */}
-      <div key={stage} className="mt-6 motion-safe:animate-rise">
+      <div key={stage} className="mt-5 motion-safe:animate-rise sm:mt-6">
         {stage === "email" ? (
           <form
             noValidate
@@ -441,10 +445,10 @@ function PrivySignInCard({ next, returningFromOAuth = false, oauthProvider = nul
                 setEmail(event.target.value);
                 if (error) setError(null);
               }}
-              className="mt-1.5 h-10"
+              className={cn("mt-1.5 h-11 px-3", FIELD)}
               disabled={busy}
             />
-            <Button type="submit" className="mt-4 h-10 w-full" disabled={!isEmailish(email) || busy}>
+            <MetalSubmit disabled={!isEmailish(email) || busy}>
               {sendingCode ? (
                 <>
                   <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
@@ -453,7 +457,7 @@ function PrivySignInCard({ next, returningFromOAuth = false, oauthProvider = nul
               ) : (
                 "Continue"
               )}
-            </Button>
+            </MetalSubmit>
           </form>
         ) : (
           <form
@@ -486,10 +490,11 @@ function PrivySignInCard({ next, returningFromOAuth = false, oauthProvider = nul
               }}
               // `indent` cancels the trailing letter-space, which would otherwise pull
               // the digits half a space left of centre.
-              className="mt-1.5 h-11 text-center indent-[0.3em] text-lg tracking-[0.3em] tabular-nums"
+              // `md:text-xl` because the input's own `md:text-sm` would otherwise win there.
+              className={cn("mt-1.5 h-12 text-center indent-[0.3em] text-xl tracking-[0.3em] tabular-nums md:text-xl", FIELD)}
               disabled={submittingCode}
             />
-            <Button type="submit" className="mt-4 h-10 w-full" disabled={!isCompleteOtp(code) || submittingCode}>
+            <MetalSubmit disabled={!isCompleteOtp(code) || submittingCode}>
               {submittingCode ? (
                 <>
                   <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />
@@ -498,7 +503,7 @@ function PrivySignInCard({ next, returningFromOAuth = false, oauthProvider = nul
               ) : (
                 "Sign in"
               )}
-            </Button>
+            </MetalSubmit>
             <div className="mt-3 flex items-center justify-between text-xs">
               <QuietButton onClick={() => void sendCode()} disabled={secondsLeft > 0 || busy}>
                 {secondsLeft > 0 ? (
@@ -534,7 +539,7 @@ function PrivySignInCard({ next, returningFromOAuth = false, oauthProvider = nul
               <Button
                 type="button"
                 variant="outline"
-                className="h-10 w-full"
+                className={QUIET_BUTTON}
                 disabled={busy}
                 onClick={() => void startOAuth("google")}
               >
@@ -550,7 +555,7 @@ function PrivySignInCard({ next, returningFromOAuth = false, oauthProvider = nul
               <Button
                 type="button"
                 variant="outline"
-                className="h-10 w-full"
+                className={QUIET_BUTTON}
                 disabled={busy}
                 onClick={() => void startOAuth("twitter")}
               >
@@ -566,7 +571,7 @@ function PrivySignInCard({ next, returningFromOAuth = false, oauthProvider = nul
               <Button
                 type="button"
                 variant="ghost"
-                className="h-10 w-full text-muted-foreground hover:text-foreground"
+                className={cn(QUIET_BUTTON, "text-muted-foreground hover:text-foreground")}
                 disabled={busy}
                 onClick={() => void startPasskey()}
               >
@@ -582,7 +587,7 @@ function PrivySignInCard({ next, returningFromOAuth = false, oauthProvider = nul
         </>
       ) : null}
 
-      <div className="mt-5 border-t border-border/60 pt-4 text-center">
+      <div className="mt-6 border-t border-white/[0.08] pt-4 text-center">
         {WALLET_ENABLED ? (
           <QuietButton
             onClick={() => {
@@ -633,7 +638,7 @@ function UnavailableSignInCard() {
         </p>
       ) : null}
       {/* Somewhere to go meanwhile: the feed is public, so the visit is not a dead end. */}
-      <Button nativeButton={false} variant="outline" className="mt-5 h-10 w-full" render={<Link href="/feed" />}>
+      <Button nativeButton={false} variant="outline" className={cn("mt-5", QUIET_BUTTON)} render={<Link href="/feed" />}>
         Browse the feed
       </Button>
     </Card>
@@ -648,15 +653,19 @@ const Impl = PRIVY_APP_ID ? PrivySignInCard : UnavailableSignInCard;
  * The card with one line on it, for the moments either side of the form: /login working
  * out whether the visitor is already signed in, and forwarding them once it knows.
  *
- * Same card, logo and title as the form and as the "Signed in" state above, so the
- * three are one size and nothing jumps when one replaces another. No auth hooks, so it
+ * Same card, logo and title as the form and as the "Signed in" state above. From 640px
+ * the status card is held at the form's height (`--auth-card-h` in auth.css), and every
+ * card is anchored by its top edge, so the title does not move when one replaces another. No auth hooks, so it
  * renders with or without an auth app behind the build.
  */
 export function SignInStatus({ message }: { message: string }) {
   return (
-    <Card>
+    <Card variant="status">
       <Header title="Sign in to Tocker" />
-      <p role="status" className="mt-5 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+      <p
+        role="status"
+        className="auth-status mt-5 flex items-center justify-center gap-2 text-sm text-muted-foreground"
+      >
         <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden />
         {message}
       </p>
@@ -666,8 +675,19 @@ export function SignInStatus({ message }: { message: string }) {
 
 /* --- small parts ------------------------------------------------------------- */
 
-function Card({ children }: { children: ReactNode }) {
-  return <div className="glass-panel w-full max-w-[360px] rounded-2xl p-6">{children}</div>;
+/** The shared look of the card's buttons; sizes and type from the landing's primary. */
+const QUIET_BUTTON = `h-11 w-full rounded-[12px] ${AUTH_PRESS}`;
+const PRIMARY_BUTTON = `${QUIET_BUTTON} text-[15px] font-[550] tracking-[-0.01em]`;
+/** A field on the glass. Twice, because the input's own fill is a `dark:` class. */
+const FIELD = "rounded-[12px] bg-white/[0.04] dark:bg-white/[0.04]";
+
+/**
+ * The glass card (auth.css). Width, padding, radius and material all live in the
+ * stylesheet, which is unlayered: a Tailwind utility for any of them here would lose.
+ * `status` is the one-line variant, held at the form's height from 640px.
+ */
+function Card({ children, variant }: { children: ReactNode; variant?: "status" }) {
+  return <div className={cn("auth-card", variant === "status" && "auth-card-status")}>{children}</div>;
 }
 
 function Header({
@@ -682,23 +702,28 @@ function Header({
 }) {
   return (
     <div className="flex flex-col items-center text-center">
-      {/* The way back for someone who changes their mind, without the browser's back. */}
-      <Link
-        href="/"
-        aria-label="Tocker home"
-        className="flex rounded-lg focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-      >
-        <PetriClock size={44} />
-      </Link>
+      {/* Decorative: the way home is the lockup in the page's top bar (login-shell.tsx),
+          which on a phone sits just above the card, so the mark is not repeated there. */}
+      {/* eslint-disable-next-line @next/next/no-img-element -- a 2KB vector; next/image adds nothing here */}
+      <img
+        src="/brand/tocker/v2/tocker-mark-neon-sm.svg"
+        alt=""
+        width={49}
+        height={40}
+        className="hidden sm:block"
+        draggable={false}
+      />
       <h1
         ref={titleRef}
         tabIndex={titleRef ? -1 : undefined}
-        className="mt-3 text-lg font-semibold tracking-tight outline-none"
+        className="mt-0 text-[22px] leading-7 font-semibold tracking-[-0.025em] outline-none sm:mt-4"
       >
         {title}
       </h1>
       {/* `break-words`: the subtitle can carry an email address, which has no spaces to wrap at. */}
-      {subtitle ? <p className="mt-1 text-sm text-balance break-words text-muted-foreground">{subtitle}</p> : null}
+      {subtitle ? (
+        <p className="mt-1.5 text-sm leading-5 text-balance break-words text-muted-foreground">{subtitle}</p>
+      ) : null}
     </div>
   );
 }

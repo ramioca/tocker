@@ -4,6 +4,7 @@ import { PrivyProvider } from "@privy-io/react-auth";
 import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
 import { ENABLED_LOGIN_METHODS } from "@/components/auth/login-methods";
 import { SessionKeepAlive } from "./session-keep-alive";
+import "./privy-theme.css";
 
 /** Set at build time; empty in local dev without a Privy app. */
 export const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
@@ -78,8 +79,10 @@ export function AppPrivyProvider({ children }: { children: ReactNode }) {
         // itself — the external-wallet connector, MFA enrolment, recovery — wears
         // Tocker's mark and copy.
         appearance: {
-          theme: "dark",
-          accentColor: "#a78bfa",
+          // A hex sets the modal's surface and the vendor derives the rest from it: the
+          // sign-in card's near-black, and the violet of the mark.
+          theme: "#0a0a0b",
+          accentColor: "#8b6cff",
           logo: logoUrl,
           walletChainType: "ethereum-and-solana",
           showWalletLoginFirst: false,

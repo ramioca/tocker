@@ -1,0 +1,4 @@
+/* Untyped in @privy-io/react-auth 3.42.0: re-check on every upgrade. `html.dark` outranks the vendor's `:root`. */
+html.dark {
+  --privy-border-radius-lg: 20px;
+}
