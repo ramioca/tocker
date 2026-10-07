@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { ImageResponse } from "next/og";
 
 /**
- * The share card: the neon T on black, the headline, the wordmark, one mono
+ * The share card: the chroma T on black, the headline, the wordmark, one mono
  * line, and the mark again large on the right as the card's art. Generated at
  * build time and cached.
  *
@@ -42,8 +42,20 @@ async function loadLocalGeist(): Promise<Font | null> {
   }
 }
 
+/** The v3 chroma mark as a data URL (the renderer can't fetch relative paths). */
+async function loadMark(): Promise<string> {
+  const buf = await readFile(join(process.cwd(), "public/brand/tocker/v3/tocker-mark-lg.png"));
+  return `data:image/png;base64,${buf.toString("base64")}`;
+}
+
+/** Width / height of public/brand/tocker/v3/tocker-mark-lg.png. */
+const MARK_RATIO = 1200 / 989;
+
 export default async function Image() {
-  const loaded = await Promise.all([loadLocalGeist(), loadGeistFromGoogle(500), loadGeistFromGoogle(600)]);
+  const [loaded, mark] = await Promise.all([
+    Promise.all([loadLocalGeist(), loadGeistFromGoogle(500), loadGeistFromGoogle(600)]),
+    loadMark(),
+  ]);
   const fonts = loaded.filter((f): f is Font => f !== null);
 
   return new ImageResponse(
@@ -56,20 +68,19 @@ export default async function Image() {
           flexDirection: "column",
           justifyContent: "space-between",
           padding: "64px 72px",
-          background:
-            "radial-gradient(60% 70% at 80% 45%, rgba(61,107,255,0.22) 0%, rgba(255,61,203,0.08) 45%, #050507 75%)",
+          background: "#000000",
           position: "relative",
           color: "#f4f4f1",
           fontFamily: fonts.length > 0 ? "Geist" : "sans-serif",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <NeonT width={44} stroke={60} />
+          <img src={mark} width={44} height={Math.round(44 / MARK_RATIO)} alt="" />
           <div style={{ fontSize: 30, fontWeight: 600, letterSpacing: -1 }}>tocker</div>
         </div>
 
-        <div style={{ position: "absolute", right: 64, top: 120, display: "flex" }}>
-          <NeonT width={380} stroke={14} />
+        <div style={{ position: "absolute", right: 64, top: 130, display: "flex" }}>
+          <img src={mark} width={400} height={Math.round(400 / MARK_RATIO)} alt="" />
         </div>
 
         <div style={{ display: "flex", flexDirection: "column" }}>
@@ -97,33 +108,5 @@ export default async function Image() {
       </div>
     ),
     { ...size, fonts },
-  );
-}
-
-/**
- * The new mark (public/brand/tocker/v2/tocker-mark-neon.svg) in the subset of
- * SVG the OG renderer draws: a dark glass fill and a cyan-to-magenta edge. No
- * filters, so no glow; at share-card sizes the gradient edge carries it.
- */
-function NeonT({ width, stroke }: { width: number; stroke: number }) {
-  return (
-    <svg width={width} height={Math.round((width * 970) / 1180)} viewBox="40 170 1180 970">
-      <defs>
-        <linearGradient id="edge" x1="80" y1="200" x2="1180" y2="1100" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#3FD2FF" />
-          <stop offset="0.32" stopColor="#2F5BFF" />
-          <stop offset="0.55" stopColor="#FF2BD6" />
-          <stop offset="0.78" stopColor="#3F7BFF" />
-          <stop offset="1" stopColor="#FF3DB4" />
-        </linearGradient>
-      </defs>
-      <path
-        d="M76 204 H556 L563 386 L716 236 Q752 204 842 204 H1180 L1030 381 H802 Q727 381 727 458 V1110 L495 938 V381 H229 Z"
-        fill="#0e0c16"
-        stroke="url(#edge)"
-        strokeWidth={stroke}
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }

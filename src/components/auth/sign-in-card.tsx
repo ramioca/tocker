@@ -5,7 +5,7 @@ import Link from "next/link";
 import { KeyRound, Loader2 } from "lucide-react";
 import { useLoginWithEmail, useLoginWithOAuth, useLoginWithPasskey } from "@privy-io/react-auth";
 import { cn } from "cn";
-import { PetriClock } from "@/components/brand/petri-mark";
+import { BrandMark } from "@/components/liquid/brand";
 import { PRIVY_APP_ID } from "@/components/providers/privy-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -482,7 +482,7 @@ function Header({ title, subtitle }: { title: string; subtitle?: string }) {
         aria-label="Tocker home"
         className="flex rounded-lg focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       >
-        <PetriClock size={44} />
+        <BrandMark size={44} />
       </Link>
       <h1 className="mt-3 text-lg font-semibold tracking-tight">{title}</h1>
       {subtitle ? <p className="mt-1 text-sm text-balance text-muted-foreground">{subtitle}</p> : null}

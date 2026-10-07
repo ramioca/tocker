@@ -1,5 +1,5 @@
 /**
- * The Tocker brand, v2: the neon "T" (electric blue to magenta on black glass)
+ * The Tocker brand, v3: the chroma "T" (blue, magenta and silver liquid chrome)
  * and the "tocker" wordmark set in Geist 650. Both are plain markup, so they
  * render on the server and cost nothing to hydrate.
  *
@@ -8,15 +8,15 @@
  * - `BrandLockup` is mark + wordmark, for the nav and the footer.
  */
 
-const SM_SRC = "/brand/tocker/v2/tocker-mark-neon-sm.svg";
-const LG_SRC = "/brand/tocker/v2/tocker-mark-neon.svg";
-/** viewBox ratios of the two drawings (width / height). */
-const SM_RATIO = 1180 / 970;
-const LG_RATIO = 1180 / 990;
+const SM_SRC = "/brand/tocker/v3/tocker-mark-sm.png";
+const LG_SRC = "/brand/tocker/v3/tocker-mark-lg.png";
+/** Width / height of the two renders (same artwork at two sizes). */
+const SM_RATIO = 194 / 160;
+const LG_RATIO = 1200 / 989;
 
 export function BrandMark({ size = 28, className, alt = "" }: { size?: number; className?: string; alt?: string }) {
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- a 2KB vector; next/image adds nothing here
+    // eslint-disable-next-line @next/next/no-img-element -- a small pre-sized PNG; next/image adds nothing here
     <img
       src={SM_SRC}
       alt={alt}
@@ -30,7 +30,7 @@ export function BrandMark({ size = 28, className, alt = "" }: { size?: number; c
 
 export function BrandHeroMark({ width = 360, className }: { width?: number; className?: string }) {
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- vector hero art, loaded eagerly
+    // eslint-disable-next-line @next/next/no-img-element -- hero art, loaded eagerly
     <img
       src={LG_SRC}
       alt=""

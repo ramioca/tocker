@@ -52,7 +52,7 @@ export function AppPrivyProvider({ children }: { children: ReactNode }) {
 
   // Privy renders the logo inside its own modal, so it wants an absolute URL.
   const logoUrl = useMemo(
-    () => (typeof window === "undefined" ? "https://tocker.xyz/icon.svg" : `${window.location.origin}/icon.svg`),
+    () => (typeof window === "undefined" ? "https://tocker.xyz/icon.png" : `${window.location.origin}/icon.png`),
     [],
   );
 

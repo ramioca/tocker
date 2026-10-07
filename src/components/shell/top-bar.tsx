@@ -1,6 +1,6 @@
 "use client";
 
-import { PetriMark } from "@/components/brand/petri-mark";
+import { BrandMark } from "@/components/liquid/brand";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
@@ -83,7 +83,7 @@ export function TopBar({
         className="flex shrink-0 items-center gap-2 rounded-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden"
         aria-label="Tocker home"
       >
-        <PetriMark size={22} />
+        <BrandMark size={22} />
         <span className="hidden text-sm font-semibold tracking-tight lg:inline">tocker</span>
       </Link>
 
