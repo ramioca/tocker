@@ -432,8 +432,8 @@ export const STORY = [
   {
     id: "trade",
     kicker: "Trade",
-    title: "Then it asks you.",
-    body: `${capitalise(countWord(SAMPLE_BUYS.length))} cleared the floor, so it proposes ${countWord(SAMPLE_BUYS.length)} paper buys and waits for your OK. Try it: approve, skip, or switch approvals off. Stops and take profit run in code either way.`,
+    title: "Then it asks you, or just trades.",
+    body: `${capitalise(countWord(SAMPLE_BUYS.length))} cleared the floor, so it proposes ${countWord(SAMPLE_BUYS.length)} paper buys and waits for your OK. Switch approvals off and it runs on its own, on schedule, every ${SAMPLE_EVERY_MIN} minutes. Try it: approve, skip, or flip the switch. Stops and take profit run in code either way.`,
   },
 ] as const;
 
