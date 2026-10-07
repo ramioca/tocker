@@ -57,16 +57,12 @@ export const CATALOGUE_IDS = [
 export type CatalogueId = (typeof CATALOGUE_IDS)[number];
 
 /**
- * The providers a key can be added for today, and so the values `LlmProvider` has.
- *
- * Three, while the rest of the code is moved onto this file: a wider union here would
- * stop every file that still spells the three out from compiling. Sixteen more have a
- * row below and are switched on by replacing the list on the next line with
- * `CATALOGUE_IDS` (`export const PROVIDER_IDS = CATALOGUE_IDS;`): google, xai, deepseek,
- * mistral, moonshot, zai, groq, cerebras, together, fireworks, deepinfra, vercel, venice,
- * nebius, novita, huggingface. Nothing else in this file changes with it.
+ * The providers a key can be added for, and so the values `LlmProvider` has: every row
+ * of the catalogue. To withdraw a provider, list the ids to keep here instead; a saved
+ * key for one that is no longer listed is refused at use with `PROVIDER_UNSUPPORTED`,
+ * and nothing in the database has to change.
  */
-export const PROVIDER_IDS = ["anthropic", "openai", "openrouter"] as const satisfies readonly CatalogueId[];
+export const PROVIDER_IDS = CATALOGUE_IDS;
 
 export type LlmProvider = (typeof PROVIDER_IDS)[number];
 
