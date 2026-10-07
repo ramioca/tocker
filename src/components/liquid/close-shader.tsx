@@ -49,7 +49,11 @@ export function CloseShader() {
   const Canvas = lib && !failed && !reduced ? lib.Canvas : null;
   return (
     <div ref={setHost} className="lp-close-shader" data-ready={ready && Canvas ? "" : undefined} aria-hidden>
-      {Canvas ? <Canvas onReady={() => setReady(true)} onUnavailable={() => setFailed(true)} /> : null}
+      {Canvas ? <Canvas
+          interactive={window.matchMedia("(hover: hover) and (pointer: fine)").matches}
+          onReady={() => setReady(true)}
+          onUnavailable={() => setFailed(true)}
+        /> : null}
     </div>
   );
 }

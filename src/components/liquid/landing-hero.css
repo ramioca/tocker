@@ -746,7 +746,7 @@
   transition: opacity 1600ms var(--ease-out);
 }
 .lp-hero-shader[data-ready] {
-  opacity: 0.55;
+  opacity: 0.65;
 }
 .lp-hero-shader-canvas {
   width: 100%;
