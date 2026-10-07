@@ -1,7 +1,7 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
 ~483 words, about 3:05 at 155 wpm. Sam is an illustrative composite, not a real user. [pause] marks a beat.
-Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition is a Series A comparison table of agentic-trading startups (Bankr, Senpi, Fere AI, Nansen AI, Ask Gina): the stack columns first (USDC inference next, x402 data, filters & gates, social trading), autonomy as table stakes, and real funding/traction per company.
+Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: three camps of agentic-trading startups (chat-to-trade, perps agents, agent kits) vs Tocker's full stack (USDC inference next, x402 alpha, advanced filters & gates, social trading).
 
 ## cover
 Three a.m. A trader, call her Sam, sees a new token trending. She buys. Minutes later, it's worth nothing. The wallets that bought first? Insiders. [pause] Sam isn't dumb. She's outgunned. I'm Rami, and this is Tocker: the infrastructure for agentic trading.
@@ -22,7 +22,7 @@ Can AI even trade? Last October, six frontier models traded real money; four los
 Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We plan to charge zero point two percent: twenty cents on a hundred dollars.
 
 ## competition
-Here's who is building agentic trading. Each owns a piece: Bankr has the payment rails, Senpi a public arena, Nansen the data and real volume. None we found is building all four: USDC inference, which ships next, x402 data, advanced filters and gates, and social trading. That full stack, hosted 24/7, is Tocker.
+Three camps of funded startups are building trading agents. Chat-to-trade apps like Nansen and Bankr wait for your prompt. Perps agents like Senpi are autonomous, but on one venue. Agent kits hand you parts to wire yourself. Tocker is the full stack, hosted 24/7: USDC inference next, x402 alpha, advanced filters, and social trading.
 
 ## gtm
 Every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score, never the strategy. Followers launch their own; next, creators earn a fee share. Today that's memecoins, five billion dollars a week on Solana at the August peak. Next Polymarket, then tokenized stocks.
