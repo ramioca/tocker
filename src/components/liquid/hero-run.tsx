@@ -88,7 +88,6 @@ export function HeroRun() {
               <span className="lp-hr-agent">{SAMPLE_AGENT}</span>
               <span className="lp-hr-chip lp-mono">sample</span>
               <span className="lp-hr-meta lp-mono">
-                <span className="lp-hr-wide">paper · </span>
                 {SAMPLE_MODE}
                 <span className="lp-hr-xwide"> · every {SAMPLE_EVERY_MIN} min</span>
               </span>
@@ -127,7 +126,7 @@ export function HeroRun() {
           </p>
 
           <div className="lp-hr-foot lp-mono">
-            <span>Paper · {SAMPLE_BUYS.length} buys waiting for your OK</span>
+            <span>{SAMPLE_BUYS.length} buys waiting for your OK</span>
             <span className="lp-hr-wide">next run {SAMPLE_NEXT_RUN_AT}</span>
           </div>
         </div>

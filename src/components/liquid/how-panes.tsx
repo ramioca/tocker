@@ -44,7 +44,7 @@ export function HowHead() {
         <span className="lp-cx-id">
           <span className="lp-cx-name">{SAMPLE_AGENT}</span>
           <span className="lp-cx-meta lp-mono">
-            paper · {SAMPLE_MODE}
+            {SAMPLE_MODE}
             <span className="lp-cx-wide"> · every {SAMPLE_EVERY_MIN} min</span>
           </span>
         </span>

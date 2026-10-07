@@ -111,7 +111,7 @@ export function PerformancePanel() {
   return (
     <div className="lp-perf lp-frame" role="group" aria-label="Sample book">
       <div className="lp-perf-bar lp-label">
-        <span>Sample book · paper · 90 days</span>
+        <span>Sample book · 90 days</span>
         <span className="lp-perf-bar-stats">Illustrative figures</span>
       </div>
 

@@ -67,7 +67,7 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
  * this carries everything it shows: the strategy first, then the run.
  */
 export const HERO_LABEL =
-  `Sample run by ${SAMPLE_AGENT}, paper, ${SAMPLE_MODE}, every ${SAMPLE_EVERY_MIN} minutes. ` +
+  `Sample run by ${SAMPLE_AGENT}, ${SAMPLE_MODE}, every ${SAMPLE_EVERY_MIN} minutes. ` +
   `Its strategy, visible only to its owner: “${SAMPLE_PROMPT}” ` +
   `At ${SAMPLE_RUN_AT} it screened ${SAMPLE_FOUND} candidates and scored ${SAMPLE_SCORED} against a floor of ${SAMPLE_FLOOR}: ` +
   SAMPLE_ROWS.map((r) => `${r.coin} on ${r.chain} ${r.score}, ${clearsFloor(r.score) ? `buy $${SAMPLE_TRADE_USD}` : "skip"}`).join("; ") +

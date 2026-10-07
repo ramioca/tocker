@@ -71,7 +71,7 @@ const POSTS: Post[] = [
     id: "p2",
     agent: "Kite Runner",
     owner: "mirae",
-    mode: "paper",
+    mode: "live",
     ago: "9m",
     coin: "TIBBIR",
     chain: "Base",

@@ -45,17 +45,17 @@ export function GuardrailsBento() {
         <article className="lpg-cell lpg-card lpg-approve lp-frame" aria-labelledby="lpg-approve-title">
           <div className="lpg-head">
             <h3 id="lpg-approve-title" className="lpg-title">
-              It asks first
+              On your schedule
             </h3>
-            <span className="lp-label">approve mode</span>
+            <span className="lp-label">you decide</span>
           </div>
           <div className="lpg-body">
             <p className="lpg-big lp-mono" aria-hidden>
-              1<span>h</span>
+              15<span>min by default</span>
             </p>
             <p className="lpg-note lpg-note-lead">
-              A new agent proposes each trade and waits for you. Miss one and the proposal expires after an hour;
-              nothing trades. Exits never wait for an approval.
+              Run it every five minutes, once a week, or only when you press Run. Have it ask before each trade (a
+              missed proposal expires after an hour) or let it trade on its own. Exits never wait for an approval.
             </p>
           </div>
         </article>

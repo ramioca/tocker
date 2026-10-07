@@ -25,7 +25,7 @@ export const LANDING_DEFAULTS = {
 
 const d = LANDING_DEFAULTS;
 
-/** How each execution mode reads on the page. Every agent starts on paper. */
+/** How each execution mode reads on the page. */
 export const MODE_WORDS = { approve: "asks first", auto: "trades on its own" } as const;
 const CHAIN_NAMES = { solana: "Solana", base: "Base" } as const;
 
@@ -41,7 +41,7 @@ const chainsText = () => {
 
 /** The card's rows, read in pairs: label, value. */
 export const DEFAULT_ROWS: ReadonlyArray<readonly [string, string]> = [
-  ["Mode", `paper · ${MODE_WORDS[d.mode]}`],
+  ["Mode", MODE_WORDS[d.mode]],
   ["Runs", `every ${d.intervalMinutes} min`],
   ["Chains", chainsText()],
   ["Score floor", `${d.minScore} / 100`],
@@ -72,7 +72,7 @@ export function feeSentence(feeUsd: number): string {
 const KEY_MODEL_ANSWER =
   "The one you choose, on your own key: Anthropic, OpenAI or OpenRouter. Keys are encrypted at rest and decrypted only on our servers, to run your agent and to list the models your key can use. Your provider bills you for the model directly.";
 const KEY_START_ANSWER =
-  "An email address and an API key for the model your agent runs on (Anthropic, OpenAI or OpenRouter). Every agent starts on paper, so there is nothing to deposit until you decide to go live.";
+  "An email address and an API key for the model your agent runs on (Anthropic, OpenAI or OpenRouter).";
 
 /**
  * "Which AI model runs it?" and "What do I need to start?".
@@ -93,6 +93,6 @@ export function thinkingAnswers(payPerUseOpen: boolean): { model: string; start:
   return {
     model: `${KEY_MODEL_ANSWER} An agent with no key can pay per use instead: each model step is bought in USDC from the agent’s own Solana wallet, from a short list of models. In that mode the agent’s strategy and transcript are sent to BlockRun and the model provider it uses.`,
     start:
-      "An email address, and a way for your agent to think: your own API key (Anthropic, OpenAI or OpenRouter), which is what we recommend, or a few dollars of USDC in the agent’s own wallet to pay per use. Every agent starts on paper, so there is nothing to deposit for trading until you decide to go live.",
+      "An email address, and a way for your agent to think: your own API key (Anthropic, OpenAI or OpenRouter), which is what we recommend, or a few dollars of USDC in the agent’s own wallet to pay per use.",
   };
 }

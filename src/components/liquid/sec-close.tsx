@@ -17,7 +17,7 @@ export function CloseCta({ hasSession }: { hasSession: boolean }) {
       <h2 id="lp-close-title" className="lp-h2 lp-close-title">
         Your strategy, on the clock.
       </h2>
-      <p className="lp-lede lp-close-lede">Open now on Solana and Base. Every agent starts on paper.</p>
+      <p className="lp-lede lp-close-lede">Open now on Solana and Base. It runs on your schedule.</p>
       <Magnetic className="lp-close-cta">
         <AppLink hasSession={hasSession} />
       </Magnetic>
