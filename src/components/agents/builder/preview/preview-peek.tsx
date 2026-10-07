@@ -15,7 +15,7 @@ export interface PreviewPeekProps {
   readyCount: number;
   /** The one-line cost text, from `commitShortLine`. */
   shortLine: string;
-  /** Step 4: only the avatar and the chevron, so the Create button keeps its width. */
+  /** The last step: the strip keeps the avatar and the name and drops the cost line, so the Create button keeps its width. */
   compact: boolean;
   /** While the agent is being created: the strip does not open. */
   disabled?: boolean;

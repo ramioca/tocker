@@ -20,7 +20,7 @@ export const TYPE = {
 } as const;
 
 /** The silk, at the stops the login card's edge uses. Marks only, never behind text. */
-export const SILK_STOPS = ["#3d6bff", "#7a5cff", "#ff3dcb"] as const;
+const SILK_STOPS = ["#3d6bff", "#7a5cff", "#ff3dcb"] as const;
 export const SILK = "bg-[linear-gradient(90deg,#3d6bff_0%,#7a5cff_52%,#ff3dcb_100%)]";
 export const SILK_V = "bg-[linear-gradient(180deg,#3d6bff_0%,#7a5cff_52%,#ff3dcb_100%)]";
 /** A 1px line that fades out at both ends: the agent card's top edge. */
@@ -96,7 +96,7 @@ export function Mark({
           ? "border-primary bg-primary text-primary-foreground"
           : off === "dashed"
             ? "border-dashed border-foreground/40"
-            : "border-foreground/25 group-hover:border-foreground/40",
+            : "border-foreground/40 group-hover:border-foreground/60",
         className,
       )}
     >
@@ -118,6 +118,8 @@ export function Mark({
  */
 export function Facts({ text }: { text: string }) {
   const parts = text.split(" · ");
+  // No separator: plain text, so it runs on from whatever is before it.
+  if (parts.length === 1) return <>{text}</>;
   return (
     <>
       {parts.map((part, index) => (

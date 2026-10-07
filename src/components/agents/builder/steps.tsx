@@ -146,7 +146,7 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
       <Field label="Avatar · optional" hint="Picked for you.">
         {/* One row at every width. On phones it scrolls, runs to the screen edge and fades
             out, so the cut-off tile reads as "more this way". */}
-        <div className="flex items-center gap-2 max-sm:-mr-4 max-sm:-ml-1 max-sm:overflow-x-auto max-sm:py-1 max-sm:pr-10 max-sm:pl-1 max-sm:[scrollbar-width:none] max-sm:[mask-image:linear-gradient(to_right,black_calc(100%-40px),transparent)] lg:max-xl:gap-1">
+        <div className="flex items-center gap-2 max-sm:-mr-4 max-sm:-ml-1 max-sm:overflow-x-auto max-sm:py-1 max-sm:pr-10 max-sm:pl-1 max-sm:[scrollbar-width:none] max-sm:[mask-image:linear-gradient(to_right,black_calc(100%-40px),transparent)] max-sm:scroll-pr-10 sm:max-md:gap-1 lg:max-xl:gap-1">
           {AVATAR_SEEDS.map((seed) => {
             const active = draft.avatarSeed === seed;
             return (

@@ -5,7 +5,7 @@ import { FOCUS, HAIR, Mark, TYPE } from "./look";
 
 /**
  * The three things only the user decides, as tiles on the last step. Desktop only: below
- * lg the agent card itself is on this step.
+ * lg the same three are in the agent card behind the strip in the bar.
  */
 export function ReviewReady({
   items,
@@ -41,7 +41,7 @@ export function ReviewReady({
             <span
               className={cn(
                 TYPE.caption,
-                "line-clamp-2 break-words",
+                "break-words",
                 item.ready ? "text-muted-foreground" : "font-medium text-foreground",
               )}
             >

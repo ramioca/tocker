@@ -31,9 +31,9 @@ export function applyPresetTo(config: Config, preset: StrategyPreset): Config {
 }
 
 /**
- * What a strategy preset changed besides the prompt, in the words of the rule cards.
+ * What a strategy preset changed besides the prompt, in the words of the rule steps.
  * A preset rewrites whatever its way of trading needs in one tap — chains, sources, even
- * the schedule — and those cards are collapsed, so the toast is where that gets said.
+ * the schedule — and those steps are not on screen, so the toast is where that gets said.
  */
 export function presetChanges(before: Config, next: Config, labels: SummaryLabels): string[] {
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);

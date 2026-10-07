@@ -830,7 +830,7 @@ export function AgentBuilder({
             The height stops it sliding under the bar below. The padding leaves room for the
             card's shadow, and the mask fades the cut instead of slicing a row in half. */}
         <div className="hidden lg:block">
-          <div className="scrollbar-thin lg:sticky lg:top-20 lg:-mx-4 lg:max-h-[calc(100dvh-11rem)] lg:overflow-y-auto lg:px-4 lg:pb-8 lg:[mask-image:linear-gradient(to_bottom,black_calc(100%-24px),transparent)]">
+          <div className="scrollbar-thin lg:sticky lg:top-20 lg:-mx-4 lg:max-h-[calc(100dvh-11rem)] lg:overflow-y-auto lg:scroll-pb-8 lg:px-4 lg:pb-8 lg:[mask-image:linear-gradient(to_bottom,black_calc(100%-24px),transparent)]">
             <AgentPreview {...previewProps} reveal />
           </div>
         </div>

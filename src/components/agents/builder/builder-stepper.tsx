@@ -86,7 +86,7 @@ export function BuilderStepper({
                 // the step at once, a pointer move plays the short entrance.
                 onClick={(event) => onGo(step.id, event.detail === 0 ? "keyboard" : "pointer")}
                 className={cn(
-                  "group flex h-11 w-full flex-col justify-start rounded-md px-[3px] pt-2 text-left sm:h-10 sm:px-0 sm:pt-1",
+                  "group flex h-11 w-full flex-col justify-start rounded-md px-[3px] pt-2 text-left sm:h-10 sm:px-0 sm:pt-1 sm:pointer-coarse:h-11",
                   "disabled:pointer-events-none",
                   FOCUS,
                   FOCUS_OFFSET,
@@ -115,6 +115,11 @@ export function BuilderStepper({
                     style={error ? undefined : { backgroundPosition: `${(i / last) * 100}% 0` }}
                   />
                 </span>
+                {/* Phones have no label under the segment, so a step that needs fixing is
+                    marked with the same glyph the label carries from sm, not by red alone. */}
+                {error ? (
+                  <CircleAlert aria-hidden className="mx-auto mt-1 size-3 text-destructive sm:hidden" strokeWidth={2.5} />
+                ) : null}
 
                 {/* sm and up: status glyph and name. */}
                 <span

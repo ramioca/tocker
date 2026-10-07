@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import {
   CircleDollarSign,
   Clock,
@@ -25,6 +26,8 @@ const LOOK: Record<string, { icon: LucideIcon; tone: Tone }> = {
   "fresh-launch": { icon: Sprout, tone: "cyan" },
 };
 const FALLBACK: { icon: LucideIcon; tone: Tone } = { icon: Sparkles, tone: "plain" };
+/** The preset ids that have their own icon and hue. A preset missing here gets the fallback tile. */
+export const PRESET_LOOK_IDS: readonly string[] = Object.keys(LOOK);
 // The facts line joins four facts in a fixed order: chains, interval, ticket, mode.
 const FACT_ICONS = [Globe, Clock, CircleDollarSign, Hand] as const;
 
@@ -101,18 +104,23 @@ export function StrategyPresetCards({
                 inside one. */}
             <span
               id={`${base}-facts`}
-              className={cn(TYPE.caption, "mt-auto flex flex-wrap gap-x-3 gap-y-1 border-t pt-3 text-muted-foreground", HAIR)}
+              className={cn(TYPE.caption, "mt-auto flex flex-wrap gap-x-3 gap-y-0.5 border-t pt-3 text-muted-foreground", HAIR)}
             >
               {facts.map((fact, index) => {
                 // Icons only when the line has the four facts they were drawn for.
                 const Icon =
                   facts.length === 4 ? (index === 3 && fact !== "asks first" ? Zap : FACT_ICONS[index]) : null;
                 return (
-                  <span key={index} className="inline-flex items-center gap-1 whitespace-nowrap">
-                    {Icon ? <Icon aria-hidden className="size-3 shrink-0 opacity-70" /> : null}
-                    {fact}
-                    {index < facts.length - 1 ? <span className="sr-only"> · </span> : null}
-                  </span>
+                  <Fragment key={index}>
+                    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                      {Icon ? <Icon aria-hidden className="size-3 shrink-0 opacity-70" /> : null}
+                      {fact}
+                      {index < facts.length - 1 ? <span className="sr-only"> · </span> : null}
+                    </span>
+                    {/* Four facts sit two and two at every width, so no card is left with
+                        one fact alone on a second line. */}
+                    {facts.length === 4 && index === 1 ? <span aria-hidden className="h-0 basis-full" /> : null}
+                  </Fragment>
                 );
               })}
             </span>

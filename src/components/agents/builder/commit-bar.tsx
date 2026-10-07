@@ -87,7 +87,7 @@ export function CommitBar({
   const [metalFocused, setMetalFocused] = useState(false);
 
   const last = step === "create";
-  // A phone's last step drops the strip's text to give the Create button its width, so
+  // A phone's last step drops the strip's cost line to give the Create button its width, so
   // the money about to be signed takes a line of its own above the buttons.
   const signingLine = last ? signingShort : null;
 
@@ -153,7 +153,7 @@ export function CommitBar({
           variant="ghost"
           disabled={creating}
           onClick={(event) => onSkipToEnd(viaOf(event))}
-          className={cn("hidden h-11 shrink-0 px-3 text-[13px] text-muted-foreground sm:inline-flex", PRESS)}
+          className={cn("hidden h-11 shrink-0 px-3 text-[13px] text-muted-foreground md:inline-flex", PRESS)}
         >
           Skip to the end
         </Button>

@@ -15,6 +15,7 @@ import {
   presetChanges,
   presetFacts,
 } from "./strategy-presets";
+import { PRESET_LOOK_IDS } from "./strategy-preset-cards";
 import { STRATEGY_PRESETS, UNIVERSE_PRESETS, emptyDraft, type BuilderDraft, type StrategyPreset } from "./types";
 
 type Config = BuilderDraft["config"];
@@ -337,5 +338,17 @@ describe("CUSTOM_STRATEGY", () => {
       blurb: "Write your own from scratch.",
       facts: "Keeps every rule as it is",
     });
+  });
+});
+
+/**
+ * Each preset card draws an icon and a hue looked up by the preset's id, with a plain
+ * fallback. A renamed or added preset would quietly get the fallback, and the four cards
+ * would stop being told apart at a glance.
+ */
+describe("the look of a preset card", () => {
+  it("has an icon and a hue for every preset, and for nothing that is not one", () => {
+    const ids = STRATEGY_PRESETS.map((preset) => preset.id);
+    expect([...PRESET_LOOK_IDS].sort()).toEqual([...ids].sort());
   });
 });
