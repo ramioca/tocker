@@ -18,7 +18,7 @@ import {
   SAMPLE_FOUND,
   SAMPLE_NEXT_RUN_AT,
   SAMPLE_MODE,
-  SAMPLE_OTHER_SCORES,
+  SAMPLE_OTHERS,
   SAMPLE_PROMPT,
   SAMPLE_ROWS,
   SAMPLE_RUN_AT,
@@ -31,6 +31,7 @@ import {
   countWord,
   sampleRow,
 } from "./sample";
+import type { CoinName } from "./coins";
 
 /**
  * The hero's sample run, opened up: what the How section's console shows. Pure
@@ -100,7 +101,8 @@ type Step = {
   reads: { id: string; n: number }[];
   /** How many tokens it scored in full (score_token rows only). */
   scored?: number;
-  chain?: Chain;
+  /** The chain of each token it scored, one entry per token. */
+  chains?: Chain[];
 };
 
 /** What one call to a source buys, in words: one and many. */
@@ -127,24 +129,27 @@ const children = (stepId: string, reads: Step["reads"]): ToolCall[] =>
 function scoreStep(s: {
   id: string;
   args: Record<string, unknown>;
-  chain: Chain;
-  scored: number;
+  /** One per token scored. */
+  chains: Chain[];
   result: string;
   start: number;
   done: number;
   startedAt: number;
   completedAt: number;
 }): Step {
-  const reads = readsFor(s.chain).map((id) => ({ id, n: s.scored }));
+  const counts = new Map<string, number>();
+  for (const chain of s.chains) for (const id of readsFor(chain)) counts.set(id, (counts.get(id) ?? 0) + 1);
+  const reads = [...counts].map(([id, n]) => ({ id, n }));
+  const scored = s.chains.length;
   return {
     start: s.start,
     done: s.done,
     reads,
-    scored: s.scored,
-    chain: s.chain,
+    scored,
+    chains: s.chains,
     call: {
       id: s.id,
-      name: s.scored > 1 ? `score_token ×${s.scored}` : "score_token",
+      name: scored > 1 ? `score_token ×${scored}` : "score_token",
       args: s.args,
       result: s.result,
       status: "success",
@@ -182,8 +187,7 @@ const STEPS: Step[] = [
   scoreStep({
     id: "score-tibbir",
     args: { token: "TIBBIR", chain: "base" },
-    chain: "base",
-    scored: 1,
+    chains: ["base"],
     result: `${TIBBIR.score} / 100 · your floor is ${SAMPLE_FLOOR}.`,
     start: 1,
     done: 2,
@@ -193,8 +197,7 @@ const STEPS: Step[] = [
   scoreStep({
     id: "score-sol",
     args: { token: "SOL", chain: "solana" },
-    chain: "solana",
-    scored: 1,
+    chains: ["solana"],
     result: `${SOL.score} / 100 · your floor is ${SAMPLE_FLOOR}.`,
     start: 2,
     done: 3,
@@ -204,8 +207,7 @@ const STEPS: Step[] = [
   scoreStep({
     id: "score-super-inu",
     args: { token: "SUPER INU", chain: "solana" },
-    chain: "solana",
-    scored: 1,
+    chains: ["solana"],
     result: `${SUPER_INU.score} / 100 · below your floor of ${SAMPLE_FLOOR}.`,
     start: 2,
     done: 3,
@@ -214,10 +216,9 @@ const STEPS: Step[] = [
   }),
   scoreStep({
     id: "score-rest",
-    args: { tokens: SAMPLE_OTHER_SCORES.length, chain: "solana" },
-    chain: "solana",
-    scored: SAMPLE_OTHER_SCORES.length,
-    result: `${SAMPLE_OTHER_SCORES.join(", ").replace(/, (\d+)$/, " and $1")} / 100 · all below your floor of ${SAMPLE_FLOOR}.`,
+    args: { tokens: SAMPLE_OTHERS.map((r) => r.coin) },
+    chains: SAMPLE_OTHERS.map((r) => (r.chain === "Base" ? "base" : "solana")),
+    result: `${SAMPLE_OTHERS.map((r) => `${r.coin} ${r.score}`).join(", ").replace(/, ([^,]+)$/, " and $1")} / 100 · all below your floor of ${SAMPLE_FLOOR}.`,
     start: 3,
     done: 4,
     startedAt: 5100,
@@ -255,8 +256,8 @@ const STEPS: Step[] = [
 
 /** How many tokens the transcript shows scored in full; console-run.test.ts holds it to SAMPLE_SCORED. */
 export const STEPS_SCORED = STEPS.reduce((n, s) => n + (s.scored ?? 0), 0);
-/** Each score_token row's chain and the sources it bought, for the planner check in the test. */
-export const SCORE_READS = STEPS.filter((s) => s.scored).map((s) => ({ chain: s.chain!, ids: s.reads.map((r) => r.id) }));
+/** Each token scored in full: its chain and the sources bought for it, for the planner check in the test. */
+export const SCORE_READS = STEPS.flatMap((s) => (s.chains ?? []).map((chain) => ({ chain, ids: readsFor(chain) })));
 /** discover_tokens' paid reads. */
 export const DISCOVER_READS = STEPS[0].reads.map((r) => r.id);
 
@@ -305,7 +306,7 @@ export const REASONING: ReasoningStep[] = [
   },
   {
     id: "r4",
-    content: `SOL clears at ${SOL.score}. SUPER INU stops at ${SUPER_INU.score} and the other ${countWord(SAMPLE_OTHER_SCORES.length)} score lower, all below your floor.`,
+    content: `SOL clears at ${SOL.score}. SUPER INU stops at ${SUPER_INU.score} and the other ${countWord(SAMPLE_OTHERS.length)} score lower, all below your floor.`,
   },
   {
     id: "r5",
@@ -319,7 +320,7 @@ export const CONSOLE_SUMMARY =
   `It screened ${SAMPLE_FOUND} candidates on Solana and Base, scored ${SAMPLE_SCORED} against a floor of ${SAMPLE_FLOOR} ` +
   `and bought ${usd3(DATA_TOTAL_USD)} of data: ${BOUGHT_WORDS}. ` +
   `It proposed ${SAMPLE_BUYS.length} paper buys of $${SAMPLE_TRADE_USD}: ${SAMPLE_BUYS.map((r) => `${r.coin} at ${r.score}`).join(" and ")}. ` +
-  `${SAMPLE_SKIPS.map((r) => `${r.coin} stopped at ${r.score}`).join(", ")} and ${countWord(SAMPLE_OTHER_SCORES.length)} more scored lower, below the floor. ` +
+  `${SAMPLE_SKIPS.map((r) => `${r.coin} stopped at ${r.score}`).join(", ")} and ${countWord(SAMPLE_OTHERS.length)} more scored lower, below the floor. ` +
   `Both wait for the owner's approval, starting with the request below. ` +
   `The next run is at ${SAMPLE_NEXT_RUN_AT}; exits are checked every 5 minutes in code, between runs too.`;
 
@@ -426,7 +427,7 @@ export const STORY = [
     id: "run",
     kicker: "Scored run",
     title: "It scores, then pays for proof.",
-    body: `Every ${SAMPLE_EVERY_MIN} minutes it screens fresh launches, scores the best in full and buys only the data it needs. This run: ${SAMPLE_FOUND} candidates, ${SAMPLE_SCORED} scored, ${usd3(DATA_TOTAL_USD)} of data.`,
+    body: `Every ${SAMPLE_EVERY_MIN} minutes it screens Solana and Base, scores the best in full and buys only the data it needs. This run: ${SAMPLE_FOUND} candidates, ${SAMPLE_SCORED} scored, ${usd3(DATA_TOTAL_USD)} of data.`,
   },
   {
     id: "trade",
@@ -452,10 +453,10 @@ export const STRATEGY_BUDGET_USD = LANDING_DEFAULTS.maxDataSpendUsdPerRun;
 /** The universe rule in words: open by default, the blocklist only subtracts. */
 export const STRATEGY_UNIVERSE = `Any token that clears the hard gates and scores ${SAMPLE_FLOOR}+`;
 
-/** Every token the run scored in full, best first: the three it names, then the fresh launches it doesn't. */
-export const SCORE_BOARD: readonly { id: string; label: string; coin?: (typeof SAMPLE_ROWS)[number]["coin"]; chain: string; score: number; clears: boolean }[] = [
+/** Every token the run scored in full, best first: the top three, then the rest under the floor. */
+export const SCORE_BOARD: readonly { id: string; label: string; coin?: CoinName; chain: string; score: number; clears: boolean }[] = [
   ...SAMPLE_ROWS.map((r) => ({ id: r.coin, label: r.coin, coin: r.coin, chain: r.chain, score: r.score, clears: clearsFloor(r.score) })),
-  ...SAMPLE_OTHER_SCORES.map((score, i) => ({ id: `fresh-${i}`, label: "Fresh launch", chain: "Solana", score, clears: clearsFloor(score) })),
+  ...SAMPLE_OTHERS.map((r) => ({ id: r.coin, label: r.coin, coin: r.coin, chain: r.chain, score: r.score, clears: clearsFloor(r.score) })),
 ];
 
 /** The strategy step's text alternative (its card is a picture). */
