@@ -3,6 +3,7 @@ import { DEFAULT_AGENT_CONFIG, DEFAULT_MODEL_ID } from "@/lib/agent/config";
 import { DEFAULT_PLATFORM_FEE_USD } from "@/lib/platform/fee";
 import { chooseSource, defaultUsdc, usdcEstimate } from "@/components/agents/thinking";
 import { DEFAULT_PAY_PER_USE_MODEL, PAY_PER_USE_MODELS, USDC_DEFAULT_INTERVAL_MINUTES } from "@/lib/x402/inference-types";
+import { CATALOGUE, CATALOGUE_IDS, PROVIDER_IDS, isProvider, type LlmProvider } from "@/lib/agent/providers";
 import {
   INTERVAL_PRESETS,
   MAX_TRADE_LADDER,
@@ -10,9 +11,11 @@ import {
   STRATEGY_PRESETS,
   emptyDraft,
   feeSharePct,
+  firstKeyFor,
   intervalHint,
   ladderStops,
   nearestStopIndex,
+  onProvider,
   withDefaultKey,
 } from "./types";
 
@@ -87,6 +90,105 @@ describe("withDefaultKey", () => {
     withDefaultKey(draft, [openrouter]);
     expect(draft.llmKeyId).toBeNull();
     expect(draft.config.llm.provider).toBe("anthropic");
+  });
+});
+
+/**
+ * A draft is read back from localStorage and a key from its row: neither is checked by
+ * the types that describe them. A provider can be switched off after a draft was saved
+ * or a key was added, and a stored value can be anything.
+ */
+describe("withDefaultKey and a provider that is not offered", () => {
+  const anthropic = { id: "key_a", provider: "anthropic" as const };
+  const stale = (provider: string) => {
+    const draft = emptyDraft();
+    return {
+      ...draft,
+      llmKeyId: "key_x",
+      config: { ...draft.config, llm: { ...draft.config.llm, provider: provider as LlmProvider, model: "some-model" } },
+    };
+  };
+  /** A key row as the database could hold it: the column is plain text. */
+  const keyFor = (provider: string) => ({ id: "key_x", provider: provider as LlmProvider });
+
+  it("starts a draft that names no offered provider on the default one, with its model", () => {
+    for (const provider of ["retired-provider", "", "constructor", "Anthropic"]) {
+      const next = withDefaultKey(stale(provider), []);
+      expect(next.config.llm.provider, provider).toBe(DEFAULT_AGENT_CONFIG.llm.provider);
+      expect(next.config.llm.model, provider).toBe(DEFAULT_AGENT_CONFIG.llm.model);
+      expect(next.llmKeyId, provider).toBeNull();
+      // The rest of its model settings are the owner's and stay.
+      expect(next.config.llm.temperature).toBe(DEFAULT_AGENT_CONFIG.llm.temperature);
+      // And then it is put on a key like any other draft.
+      expect(withDefaultKey(stale(provider), [anthropic]).llmKeyId, provider).toBe("key_a");
+    }
+  });
+
+  it("never chooses a key whose provider is not offered", () => {
+    for (const provider of ["retired-provider", "", "constructor"]) {
+      const draft = emptyDraft();
+      expect(withDefaultKey(draft, [keyFor(provider)]), provider).toBe(draft);
+      expect(withDefaultKey({ ...draft, llmKeyId: "key_x" }, [keyFor(provider)]).llmKeyId, provider).toBeNull();
+      expect(withDefaultKey(draft, [keyFor(provider), anthropic]).llmKeyId, provider).toBe("key_a");
+    }
+  });
+
+  /** Holds before and after the other providers are switched on: each id is asked whether it is. */
+  it("uses a key for any provider that is switched on, and none for one that is not", () => {
+    for (const id of CATALOGUE_IDS) {
+      const next = withDefaultKey(emptyDraft(), [keyFor(id)]);
+      if (id === "anthropic") continue;
+      if (isProvider(id)) {
+        expect(next.llmKeyId, id).toBe("key_x");
+        expect(next.config.llm.provider, id).toBe(id);
+        expect(next.config.llm.model, id).toBe(CATALOGUE[id].defaultModel);
+      } else {
+        expect(next.llmKeyId, id).toBeNull();
+        expect(next.config.llm.provider, id).toBe("anthropic");
+      }
+    }
+  });
+});
+
+describe("choosing a provider", () => {
+  const llm = { ...DEFAULT_AGENT_CONFIG.llm, temperature: 0.9, maxSteps: 14, model: "the-model-being-left" };
+
+  it("starts Anthropic, OpenAI and OpenRouter on the models they always started on", () => {
+    expect(onProvider(llm, "anthropic").model).toBe("claude-sonnet-5-5");
+    expect(onProvider(llm, "openai").model).toBe("gpt-5");
+    expect(onProvider(llm, "openrouter").model).toBe("anthropic/claude-sonnet-5.5");
+  });
+
+  it("moves to that provider on its own default model and keeps every other setting", () => {
+    for (const id of PROVIDER_IDS) {
+      const next = onProvider(llm, id);
+      expect(next, id).toEqual({ ...llm, provider: id, model: CATALOGUE[id].defaultModel });
+      expect(next.model, id).toBe(DEFAULT_MODEL_ID[id]);
+      // The model it starts on is one its own list offers.
+      expect(CATALOGUE[id].models.some((model) => model.id === next.model), id).toBe(true);
+    }
+    expect(llm.model).toBe("the-model-being-left");
+  });
+
+  it("leaves how the agent thinks, and its pay-per-use limits, exactly as they were", () => {
+    const usdc = defaultUsdc(USDC_DEFAULT_INTERVAL_MINUTES);
+    const paying = { ...llm, source: "usdc" as const, usdc };
+    const next = onProvider(paying, "openai");
+    expect(next.source).toBe("usdc");
+    expect(next.usdc).toBe(usdc);
+  });
+
+  it("picks the first of the account's keys for that provider, or none", () => {
+    const keys = [
+      { id: "key_or", provider: "openrouter" as const },
+      { id: "key_a1", provider: "anthropic" as const },
+      { id: "key_a2", provider: "anthropic" as const },
+    ];
+    expect(firstKeyFor(keys, "anthropic")).toBe("key_a1");
+    expect(firstKeyFor(keys, "openrouter")).toBe("key_or");
+    // A key of the provider being left is never carried over.
+    expect(firstKeyFor(keys, "openai")).toBeNull();
+    expect(firstKeyFor([], "anthropic")).toBeNull();
   });
 });
 

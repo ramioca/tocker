@@ -17,10 +17,13 @@ import { slippageMeaning } from "@/components/agents/builder/slippage-copy";
 import { UniverseControls } from "@/components/agents/builder/universe-controls";
 import { UniversePreview } from "@/components/agents/settings/universe-preview";
 import { sameConfig } from "@/components/agents/settings/same-config";
-import { AddKeyInline, PROVIDER_LABELS } from "@/components/agents/builder/steps";
+import { AddKeyInline } from "@/components/agents/builder/steps";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
-import { DEFAULT_MODEL_ID, agentConfigSchema } from "@/lib/agent/config";
+import { agentConfigSchema } from "@/lib/agent/config";
+import { providerLabel } from "@/lib/agent/providers";
 import { ModelPicker } from "@/components/agents/model-picker";
+import { ProviderHelp, ProviderPicker } from "@/components/agents/provider-picker";
+import { providerHelp } from "@/components/agents/provider-choice";
 import { PayPerUsePanel, ThinkSourceChoice } from "@/components/agents/think-source";
 import {
   checkUsdc,
@@ -44,6 +47,7 @@ import {
   MAX_AGENT_NAME,
   MAX_TRADE_LADDER,
   RISK_BOUNDS,
+  onProvider,
 } from "@/components/agents/builder/types";
 import { EmptyState } from "@/components/common/empty-state";
 import { setAgentStatusAction, updateAgentAction } from "@/components/agents/agent-actions";
@@ -499,24 +503,33 @@ function SettingsForm({
             <label htmlFor="settings-llm-provider" className="mb-1 block text-xs text-muted-foreground">
               Provider
             </label>
-            <SimpleSelect
+            <ProviderPicker
               id="settings-llm-provider"
               value={config.llm.provider}
-              options={[
-                { value: "anthropic", label: "Anthropic" },
-                { value: "openai", label: "OpenAI" },
-                { value: "openrouter", label: "OpenRouter" },
-              ]}
-              onChange={(next) => {
-                const provider = next as AgentConfig["llm"]["provider"];
-                setConfig((current) => ({
-                  ...current,
-                  llm: { ...current.llm, provider, model: DEFAULT_MODEL_ID[provider] },
-                }));
+              // Only while there is a line under the chooser to read out with it.
+              describedBy={
+                providerHelp(config.llm.provider, { hasKey: keysForProvider.length > 0 })
+                  ? "settings-llm-provider-help"
+                  : undefined
+              }
+              onChange={(provider) => {
+                // That provider's default model, and no key: the key that was chosen
+                // belongs to the provider being left, and a run sends a key only to the
+                // provider on its own row.
+                setConfig((current) => ({ ...current, llm: onProvider(current.llm, provider) }));
                 setLlmKeyId(null);
               }}
             />
           </div>
+          {/* What the registry notes about this provider, and where its keys are made
+              while the account has none. Straight under the chooser on a phone; under the
+              row, across both columns, where Provider and Model sit side by side. */}
+          <ProviderHelp
+            id="settings-llm-provider-help"
+            provider={config.llm.provider}
+            hasKey={keysForProvider.length > 0}
+            className="-mt-2 sm:order-last sm:col-span-2"
+          />
           <div>
             <label htmlFor="settings-llm-model" className="mb-1 block text-xs text-muted-foreground">
               Model
@@ -566,7 +579,7 @@ function SettingsForm({
               placeholder="Choose a key"
               options={keysForProvider.map((key) => ({
                 value: key.id,
-                label: key.label ?? `${PROVIDER_LABELS[key.provider]} key`,
+                label: key.label ?? `${providerLabel(key.provider)} key`,
                 hint: `••••${key.last4}`,
               }))}
               onChange={(next) => {
@@ -575,7 +588,7 @@ function SettingsForm({
               }}
             />
           ) : (
-            <p className="text-xs text-muted-foreground">No {PROVIDER_LABELS[config.llm.provider]} key on file yet.</p>
+            <p className="text-xs text-muted-foreground">No {providerLabel(config.llm.provider)} key on file yet.</p>
           )}
           <AddKeyInline
             provider={config.llm.provider}

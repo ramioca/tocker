@@ -2,8 +2,11 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { nanoid } from "nanoid";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
+import { DEFAULT_AGENT_CONFIG as C } from "@/lib/agent/config";
+import { CATALOGUE } from "@/lib/agent/providers";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { toNumeric } from "@/lib/money";
+import { PAY_PER_USE_MODELS } from "@/lib/x402/inference-types";
 import {
   EQUITY_BUCKET_MS,
   MODEL_PRICES,
@@ -325,6 +328,96 @@ describe("model pricing", () => {
   });
 });
 
+/**
+ * The same model id is sold by several hosts at different prices, and a host's own long
+ * path is in no list but its own. A price is read where the tokens were bought.
+ */
+describe("model pricing, by provider", () => {
+  const M = { inputTokens: 1_000_000, outputTokens: 1_000_000 };
+
+  it("prices one id at each host's own rate", () => {
+    expect(resolveModelPrice("zai-org/GLM-5.3", "together")).toMatchObject({ inputPerMTok: 1.4, outputPerMTok: 4.4 });
+    expect(resolveModelPrice("zai-org/GLM-5.3", "deepinfra")).toMatchObject({ inputPerMTok: 0.9, outputPerMTok: 4 });
+    expect(estimateModelSpendUsd("zai-org/GLM-5.3", M, "together")).toBeCloseTo(5.8, 10);
+    expect(estimateModelSpendUsd("zai-org/GLM-5.3", M, "deepinfra")).toBeCloseTo(4.9, 10);
+    // Groq and Cerebras both sell GPT OSS 120B, under different ids and at different prices.
+    expect(estimateModelSpendUsd("openai/gpt-oss-120b", M, "groq")).toBeCloseTo(0.75, 10);
+    expect(estimateModelSpendUsd("gpt-oss-120b", M, "cerebras")).toBeCloseTo(1.1, 10);
+  });
+
+  it("prices a host's long model path", () => {
+    expect(resolveModelPrice("accounts/fireworks/models/glm-5p3", "fireworks")).toMatchObject({
+      label: "GLM 5.3",
+      inputPerMTok: 1.4,
+      outputPerMTok: 4.4,
+    });
+    expect(estimateModelSpendUsd("accounts/fireworks/models/kimi-k3", M, "fireworks")).toBeCloseTo(18, 10);
+  });
+
+  it("prices a model maker's own ids on its own key", () => {
+    expect(resolveModelPrice("gemini-3.8-flash", "google")).toMatchObject({ inputPerMTok: 0.75, outputPerMTok: 3.75 });
+    expect(resolveModelPrice("grok-4.7", "xai")).toMatchObject({ inputPerMTok: 2, outputPerMTok: 6 });
+    expect(resolveModelPrice("deepseek-flash", "deepseek")).toMatchObject({ inputPerMTok: 0.3, outputPerMTok: 1.2 });
+  });
+
+  it("knows a free model from one with no price", () => {
+    expect(estimateModelSpendUsd("glm-4.7-flash", M, "zai")).toBe(0);
+    expect(estimateModelSpendUsd("glm-9", M, "zai")).toBeNull();
+  });
+
+  it("says it does not know rather than borrowing another host's price", () => {
+    // Together lists this id. Fireworks, Groq and Anthropic do not.
+    for (const provider of ["fireworks", "groq", "anthropic", "openrouter"]) {
+      expect(resolveModelPrice("zai-org/GLM-5.3", provider)).toBeNull();
+    }
+    // Nor is a model maker's price read for another provider: Groq does not sell Gemini,
+    // and Venice sells Claude Sonnet 5.5 under Anthropic's own id at its own, higher price.
+    expect(resolveModelPrice("gemini-3.8-flash", "groq")).toBeNull();
+    expect(resolveModelPrice("claude-sonnet-5-5", "venice")).toMatchObject({ inputPerMTok: 2.5, outputPerMTok: 12.5 });
+    expect(resolveModelPrice("claude-sonnet-5-5", "anthropic")).toMatchObject({ inputPerMTok: 2, outputPerMTok: 10 });
+  });
+
+  it("does not price a later provider's model when no provider is given", () => {
+    for (const model of ["zai-org/GLM-5.3", "accounts/fireworks/models/glm-5p3", "gemini-3.8-flash", "grok-4.7", "kimi-k3"]) {
+      expect(resolveModelPrice(model)).toBeNull();
+      expect(estimateModelSpendUsd(model, M)).toBeNull();
+    }
+  });
+
+  it("reads an unknown provider as no provider", () => {
+    expect(resolveModelPrice("claude-sonnet-5", "constructor")).toEqual(resolveModelPrice("claude-sonnet-5"));
+    expect(resolveModelPrice("zai-org/GLM-5.3", "nobody")).toBeNull();
+    expect(resolveModelPrice("claude-sonnet-5", null)).toEqual(resolveModelPrice("claude-sonnet-5"));
+  });
+
+  /**
+   * Nothing moves for an agent already on Anthropic, OpenAI or OpenRouter: every model
+   * any of the three lists, asked about on any of the three, costs what it cost when no
+   * provider was passed, and every other id is still unknown.
+   */
+  it("changes no price for the three providers the builder started with", () => {
+    const three = ["anthropic", "openai", "openrouter"] as const;
+    const ids = three.flatMap((provider) => CATALOGUE[provider].models.map((model) => model.id));
+    expect(ids.length).toBeGreaterThan(40);
+    for (const provider of three) {
+      for (const id of ids) {
+        const before = resolveModelPrice(id);
+        const now = resolveModelPrice(id, provider);
+        expect(before, id).not.toBeNull();
+        expect([now?.inputPerMTok, now?.outputPerMTok], `${id} on ${provider}`).toEqual([before?.inputPerMTok, before?.outputPerMTok]);
+        expect(estimateModelSpendUsd(id, M, provider)).toBe(estimateModelSpendUsd(id, M));
+      }
+      // On its own list a model keeps its name too.
+      for (const model of CATALOGUE[provider].models) {
+        expect(resolveModelPrice(model.id, provider)?.label).toBe(resolveModelPrice(model.id)?.label);
+      }
+      for (const id of ["deepseek/deepseek-v4", "nousresearch/hermes-4-405b", "claude-opus-5-9", "z-ai/glm-5.3", ""]) {
+        expect(resolveModelPrice(id, provider), `${id} on ${provider}`).toBeNull();
+      }
+    }
+  });
+});
+
 describe("what the same tokens would cost on the owner's own key", () => {
   it("prices a model the catalogue lists at the catalogue's price", () => {
     // Haiku 4.5, in the gateway's spelling, is the catalogue's own row.
@@ -337,6 +430,21 @@ describe("what the same tokens would cost on the owner's own key", () => {
     expect(ownKeyPrice("google/gemini-2.5-flash")).toMatchObject({ inputPerMTok: 0.3, outputPerMTok: 2.5 });
     expect(ownKeyPrice("some-model/nobody-lists")).toBeNull();
     expect(ownKeyPrice(null)).toBeNull();
+  });
+
+  /**
+   * The comparison is with the model's maker. It reads no host's list, so a provider
+   * being added cannot move what every pay-per-use model is compared against.
+   */
+  it("compares every pay-per-use model with its maker's price, whichever providers exist", () => {
+    for (const offered of PAY_PER_USE_MODELS) {
+      const price = ownKeyPrice(offered.id);
+      expect(price, offered.id).not.toBeNull();
+      const listed = resolveModelPrice(offered.id);
+      expect([price?.inputPerMTok, price?.outputPerMTok], offered.id).toEqual(
+        listed ? [listed.inputPerMTok, listed.outputPerMTok] : [offered.inputPerMTok, offered.outputPerMTok],
+      );
+    }
   });
 
   it("covers the same steps on both sides, and says how many it left out", () => {
@@ -447,4 +555,56 @@ describe("getMoney", () => {
     // Postgres prints a timestamptz as "… +00", which `Date` cannot parse.
     expect(money.live[0].firstFundedAt).toBe(new Date(at).toISOString());
   });
+
+  /** One paper agent that ran a million tokens each way on its owner's key. */
+  async function agentOn(provider: string, model: string) {
+    const llm = { ...C.llm, provider, model } as typeof C.llm;
+    const { userId, agentId } = await seedAgent(db, { config: { llm } });
+    await db.insert(schema.agentRuns).values({
+      id: nanoid(),
+      agentId,
+      trigger: "schedule",
+      status: "succeeded",
+      inputTokens: 1_000_000,
+      outputTokens: 1_000_000,
+      llmSource: "key",
+    });
+    const [row] = (await getMoney(userId)).paper;
+    return row;
+  }
+
+  it("estimates an agent's tokens at its own provider's price", async () => {
+    // The same id, the same tokens, two hosts, two bills.
+    const together = await agentOn("together", "zai-org/GLM-5.3");
+    const deepinfra = await agentOn("deepinfra", "zai-org/GLM-5.3");
+    expect(together).toMatchObject({ provider: "together", model: "zai-org/GLM-5.3" });
+    expect(together.modelSpendUsd).toBeCloseTo(5.8, 6);
+    expect(deepinfra.modelSpendUsd).toBeCloseTo(4.9, 6);
+
+    const fireworks = await agentOn("fireworks", "accounts/fireworks/models/glm-5p3");
+    expect(fireworks.modelSpendUsd).toBeCloseTo(5.8, 6);
+
+    // A model its provider does not list is unknown, not priced from another host's row.
+    const unlisted = await agentOn("fireworks", "zai-org/GLM-5.3");
+    expect(unlisted.modelSpendUsd).toBeNull();
+    expect(unlisted).toMatchObject({ inputTokens: 1_000_000, outputTokens: 1_000_000 });
+  });
+
+  it("estimates an Anthropic, OpenAI or OpenRouter agent exactly as before", async () => {
+    for (const [provider, model] of [
+      ["anthropic", "claude-sonnet-5-5"],
+      ["anthropic", "claude-haiku-4-5-20251001"],
+      ["openai", "gpt-5-mini"],
+      ["openrouter", "anthropic/claude-sonnet-5.5"],
+      ["openrouter", "openai/gpt-5"],
+      ["openrouter", "deepseek/deepseek-v4.1-flash"],
+      ["openrouter", "z-ai/glm-5.3"],
+    ] as const) {
+      const row = await agentOn(provider, model);
+      // What the page showed when the lookup took no provider: the id alone, in three lists.
+      const before = estimateModelSpendUsd(model, { inputTokens: 1_000_000, outputTokens: 1_000_000 });
+      expect(row.modelSpendUsd, `${model} on ${provider}`).toBe(before);
+      expect(row.provider).toBe(provider);
+    }
+  }, 60_000);
 });

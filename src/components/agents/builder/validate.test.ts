@@ -7,7 +7,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { chooseSource, defaultUsdc, suggestedLimits } from "@/components/agents/thinking";
-import { emptyDraft, type BuilderDraft } from "./types";
+import { CATALOGUE, PROVIDER_IDS } from "@/lib/agent/providers";
+import { emptyDraft, onProvider, type BuilderDraft } from "./types";
 import { validateDraft } from "./validate";
 
 const anthropic = { id: "key_a", provider: "anthropic" as const };
@@ -36,6 +37,21 @@ describe("a key draft", () => {
     expect(validateDraft(named({ llmKeyId: "key_oa" }), [openai, anthropic]).llmKeyId).toBe(
       "Pick one of your Anthropic keys, or add one.",
     );
+  });
+
+  it("names the provider as the registry does, and passes with a key of that provider", () => {
+    for (const id of PROVIDER_IDS) {
+      const draft = named({ llmKeyId: "key_x" });
+      draft.config = { ...draft.config, llm: onProvider(draft.config.llm, id) };
+      const other = PROVIDER_IDS.find((candidate) => candidate !== id) ?? id;
+      // A key of another provider is as good as no key: a run sends a key only to its own provider.
+      if (other !== id) {
+        expect(validateDraft(draft, [{ id: "key_x", provider: other }]).llmKeyId, id).toBe(
+          `Pick one of your ${CATALOGUE[id].label} keys, or add one.`,
+        );
+      }
+      expect(validateDraft(draft, [{ id: "key_x", provider: id }]), id).toEqual({});
+    }
   });
 
   it("passes with a name, a usable key and the default config", () => {

@@ -8,6 +8,7 @@ import { DEFAULT_SIZING } from "@/lib/trading/sizing";
 import { MAX_DATA_SPEND_PER_RUN_USD } from "@/lib/x402/types";
 import { USDC_DAY_CAP, USDC_RUN_CAP } from "@/lib/x402/inference-types";
 import { DEFAULT_MODEL_ID, MAX_MODEL_ID, MODEL_ID_PATTERN } from "./models";
+import { PROVIDER_IDS } from "./providers";
 
 export const chainSchema = z.enum(["solana", "base"]);
 
@@ -45,7 +46,9 @@ export const positionSizingSchema = z.object({
   referenceRangePct: z.number().min(1).max(500),
   minTradeUsd: z.number().min(0).max(1_000_000),
 });
-export const llmProviderSchema = z.enum(["anthropic", "openai", "openrouter"]);
+// The providers a key can be added for, read from the one list. A stored config that
+// names any other fails to parse, which is what stops its run before a key is touched.
+export const llmProviderSchema = z.enum(PROVIDER_IDS);
 
 // The id → label list lives in a leaf module so display code can use it without zod.
 export { DEFAULT_MODELS } from "./models";

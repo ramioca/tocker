@@ -12,24 +12,19 @@ import type { LlmKeyRow } from "@/server/types";
 import { AddLlmKeyForm } from "./add-llm-key-form";
 import { clip, reinsert } from "./key-removal";
 import { MORPH_FOCUS } from "./use-morph-action";
+import { providerLabel } from "@/lib/agent/providers";
 import { cn } from "@/lib/utils";
-
-const PROVIDER_LABEL: Record<LlmKeyRow["provider"], string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-  openrouter: "OpenRouter",
-};
 
 type PendingRemoval = { key: LlmKeyRow; index: number };
 
 function keyName(key: LlmKeyRow) {
-  return key.label ?? `${PROVIDER_LABEL[key.provider]} key`;
+  return key.label ?? `${providerLabel(key.provider)} key`;
 }
 
 // The row's accessible name. Two keys from one provider otherwise both read "OpenAI key",
 // and "Delete OpenAI key" did not say which one was about to go.
 function keyA11yName(key: LlmKeyRow) {
-  const base = `${PROVIDER_LABEL[key.provider]} key ending ${key.last4}`;
+  const base = `${providerLabel(key.provider)} key ending ${key.last4}`;
   return key.label ? `${key.label}, ${base}` : base;
 }
 
@@ -188,7 +183,7 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
                         wrapped line never starts on a stray "·". */}
                     <p className="overflow-hidden font-mono text-xs text-muted-foreground">
                       <span className="tnum -ml-[calc(1ch+0.375rem)] flex w-[calc(100%+1ch+0.375rem)] flex-wrap gap-x-1.5 [&>*]:before:mr-1.5 [&>*]:before:content-['·']">
-                        <span>{PROVIDER_LABEL[key.provider]}</span>
+                        <span>{providerLabel(key.provider)}</span>
                         <span>••••{key.last4}</span>
                         <span>
                           added <RelativeTime iso={key.createdAt} />
@@ -216,6 +211,9 @@ export function LlmKeysSection({ initialKeys }: { initialKeys: LlmKeyRow[] }) {
         <div className="rounded-xl border border-border/80 bg-background/40 p-4">
           <AddLlmKeyForm
             autoFocus={openedOnDemand}
+            // The form links to a provider's key page only while the account has no key
+            // for it, so it is told which providers it already has one for.
+            haveKeysFor={keys.map((key) => key.provider)}
             onCancel={keys.length > 0 ? closeForm : undefined}
             onAdded={(key, info) => {
               setKeys((current) => [...current, key]);

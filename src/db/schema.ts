@@ -25,12 +25,14 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
+// A type only, by relative path: drizzle-kit reads this file outside the app's bundler,
+// and the registry it comes from imports nothing.
+import type { LlmProvider } from "../lib/agent/providers";
 
 // ---------- enums ----------
 export const chainEnum = pgEnum("chain", ["solana", "base"]);
 export const agentModeEnum = pgEnum("agent_mode", ["paper", "live"]);
 export const agentStatusEnum = pgEnum("agent_status", ["draft", "active", "paused", "error"]);
-export const llmProviderEnum = pgEnum("llm_provider", ["anthropic", "openai", "openrouter"]);
 export const runStatusEnum = pgEnum("run_status", ["queued", "running", "succeeded", "failed", "cancelled"]);
 export const runTriggerEnum = pgEnum("run_trigger", ["schedule", "manual", "webhook"]);
 export const stepKindEnum = pgEnum("step_kind", ["thought", "tool_call", "tool_result", "message", "error"]);
@@ -79,7 +81,13 @@ export const llmKeys = pgTable(
   {
     id: text("id").primaryKey(),
     userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    provider: llmProviderEnum("provider").notNull(),
+    /**
+     * A provider id from `src/lib/agent/providers.ts`, which is the only list of them.
+     * Text, not a Postgres enum (it was one until migration 0011): a provider is added
+     * or retired in code, with no migration. Nothing in the database checks the value,
+     * so every reader asks `isProvider` before using a row and refuses one it does not know.
+     */
+    provider: text("provider").$type<LlmProvider>().notNull(),
     label: text("label"),
     encryptedKey: text("encrypted_key").notNull(), // base64(iv|tag|ciphertext)
     last4: text("last4").notNull(),
@@ -184,7 +192,7 @@ export type AgentConfig = {
     intervalMinutes: number; // 0 = manual only
   };
   llm: {
-    provider: "anthropic" | "openai" | "openrouter";
+    provider: LlmProvider;
     model: string; // e.g. "claude-sonnet-5"
     temperature: number;
     maxSteps: number;

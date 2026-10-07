@@ -35,6 +35,12 @@
  *     without the generic failure notice.
  * A key agent's run is what it was, apart from two columns saying it thought on a key and
  * on which model.
+ *
+ * A key agent's provider: the key's row names it, the registry (`providers.ts`) says
+ * whether it is still one, and `providers-server.ts` builds its model and says what a
+ * step sends with it. The key is decrypted in this file and handed down as it is needed;
+ * nothing below keeps it. Whatever a failed run says has that exact key taken out of it
+ * before it is stored, shown or sent.
  */
 import { discoverAnthropicWorkspace, isWorkspaceScopeError, needsWorkspaceHeader } from "./anthropic-workspace";
 import { nanoid } from "nanoid";
@@ -66,6 +72,8 @@ import { RunLogger } from "./logger";
 import { createMockModel, isLlmMock } from "./mock-model";
 import { getAgentWallets, getPortfolio, snapshotEquity } from "./portfolio";
 import { buildSystemPrompt, buildTickPrompt, type RecentTrade } from "./prompts";
+import { PROVIDER_UNSUPPORTED, isProvider, type LlmProvider } from "./providers";
+import { callOptionsFor, keyScrubber, modelFor, noScrub, type KeyScrub } from "./providers-server";
 import { RUN_DEFERRED, RunRefusedError } from "./run-gate";
 import { buildTools, type RunAgentRecord, type RunContext } from "./tools";
 
@@ -91,6 +99,22 @@ export interface RunAgentResult {
   stopReason?: InferenceStopReason;
 }
 
+/** The model a run thinks on, and what the run needs to know about where it came from. */
+export interface ResolvedModel {
+  model: LanguageModel;
+  /**
+   * The provider of the key the model was built from, which is the provider every
+   * request goes to. Null when no key was used: the scripted model, and pay-per-use.
+   */
+  provider: LlmProvider | null;
+  /**
+   * Takes this run's key out of text. The key never leaves `resolveModel`; this is how
+   * the run removes it from whatever a provider said when it failed. Does nothing for a
+   * run that has no key.
+   */
+  scrub: KeyScrub;
+}
+
 /**
  * Builds the language model an agent thinks on.
  *
@@ -98,6 +122,10 @@ export interface RunAgentResult {
  * client pointed at the pinned gateway, whose every request goes through the paying fetch
  * for this run (`pay`). The mode is the config's word and nothing else: a pay-per-use
  * agent never reaches the key lookup, even with a key id still on its row.
+ *
+ * A key agent's model comes with the provider it was built for and with a function that
+ * removes the key from text (see {@link ResolvedModel}). Anything thrown from here after
+ * the key was read has already been through that function.
  */
 export async function resolveModel(
   agent: {
@@ -106,8 +134,8 @@ export async function resolveModel(
     config: AgentConfig;
   },
   pay?: InferencePayContext | null,
-): Promise<LanguageModel> {
-  if (isLlmMock()) return createMockModel();
+): Promise<ResolvedModel> {
+  if (isLlmMock()) return { model: createMockModel(), provider: null, scrub: noScrub };
 
   if (thinkSource(agent.config) === "usdc") {
     // No context means nobody checked this run or resolved its limits. Thinking on the
@@ -116,7 +144,8 @@ export async function resolveModel(
     const { createOpenAI } = await import("@ai-sdk/openai");
     // `.chat`: the gateway serves chat completions, and the provider's default form posts
     // to /responses. The key is a placeholder; the fetch drops the header it becomes.
-    return createOpenAI({ baseURL: INFERENCE_GATEWAY[pay.chain].baseUrl, apiKey: "x402", fetch: createInferenceFetch(pay) }).chat(pay.model);
+    const model = createOpenAI({ baseURL: INFERENCE_GATEWAY[pay.chain].baseUrl, apiKey: "x402", fetch: createInferenceFetch(pay) }).chat(pay.model);
+    return { model, provider: null, scrub: noScrub };
   }
 
   if (!agent.llmKeyId) {
@@ -134,30 +163,30 @@ export async function resolveModel(
   const row = rows[0];
   if (!row) throw new Error("The LLM API key attached to this agent no longer exists.");
 
+  // The column is plain text, so nothing in the database says this provider is still
+  // one. A key saved for a provider that has since been dropped is refused here, before
+  // it is decrypted, and never sent to whichever provider happens to come next.
+  const provider: unknown = row.provider;
+  if (!isProvider(provider)) throw new Error(PROVIDER_UNSUPPORTED);
+
   // The decrypted key stays in this scope and is never logged or persisted.
   const apiKey = decryptSecret(row.encryptedKey);
-  const modelId = agent.config.llm.model;
-
-  switch (row.provider) {
-    case "anthropic": {
-      const { createAnthropic } = await import("@ai-sdk/anthropic");
-      // An organization-level key must name the workspace it acts in; a key created
-      // inside a workspace must not (Anthropic rejects the header on those).
-      // Unknown yet? One free request tells whether the key needs the header, and the
-      // Admin API (which such a key may call) says which workspace; it is saved on the
-      // key so this happens once.
-      const workspaceId = row.workspaceId ?? (await ensureAnthropicWorkspace(row.id, apiKey));
-      const headers = workspaceId ? { "anthropic-workspace-id": workspaceId } : undefined;
-      return createAnthropic({ apiKey, ...(headers ? { headers } : {}) })(modelId);
-    }
-    case "openai": {
-      const { createOpenAI } = await import("@ai-sdk/openai");
-      return createOpenAI({ apiKey })(modelId);
-    }
-    case "openrouter": {
-      const { createOpenRouter } = await import("@openrouter/ai-sdk-provider");
-      return createOpenRouter({ apiKey })(modelId);
-    }
+  const scrub = keyScrubber(apiKey);
+  try {
+    // Anthropic only. An organization-level key must name the workspace it acts in.
+    // Unknown yet? One free request tells whether the key needs the header, and the
+    // Admin API (which such a key may call) says which workspace; it is saved on the
+    // key so this happens once.
+    const workspaceId = provider === "anthropic" ? (row.workspaceId ?? (await ensureAnthropicWorkspace(row.id, apiKey))) : null;
+    // The host is the key's provider, never the config's: a key only goes where it was saved for.
+    const model = await modelFor(provider, { apiKey, modelId: agent.config.llm.model, workspaceId });
+    return { model, provider, scrub };
+  } catch (err) {
+    // The caller has no scrub yet, so what went wrong here leaves without the key in it.
+    const said = err instanceof Error ? err.message : String(err);
+    const clean = scrub(said);
+    if (clean === said) throw err;
+    throw new Error(clean);
   }
 }
 
@@ -175,7 +204,9 @@ export function explainProviderError(message: string): string {
 async function saveDiscoveredWorkspace(keyId: string, apiKey: string): Promise<string | null> {
   const found = await discoverAnthropicWorkspace(apiKey);
   if (found.kind !== "found") {
-    console.warn(`[run] anthropic workspace for key ${keyId}: ${found.kind}${found.kind === "unknown" ? ` — ${found.reason}` : ""}`);
+    // The reason can be whatever a failed request said, so it is logged without the key.
+    const reason = found.kind === "unknown" ? ` — ${redactSecrets(keyScrubber(apiKey)(found.reason))}` : "";
+    console.warn(`[run] anthropic workspace for key ${keyId}: ${found.kind}${reason}`);
     return null;
   }
   const db = await getDb();
@@ -588,6 +619,9 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
   let modelCallStarted = false;
   const counted = { inputTokens: 0, outputTokens: 0 };
   let runSignal: AbortSignal | null = null;
+  // Set once the model is built from a key. Until then no key has been read, and what
+  // `resolveModel` throws has already had it taken out.
+  let scrub: KeyScrub = noScrub;
 
   /** Ends a pay-per-use run that stopped on one of its own limits: a normal end, as far as it got. */
   const finishAtLimit = async (reason: InferenceStopReason, paid: InferencePayContext): Promise<RunAgentResult> => {
@@ -637,7 +671,16 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
       }
     }
 
-    const model = await resolveModel({ ownerId: agentRow.ownerId, llmKeyId: agentRow.llmKeyId, config }, pay);
+    const thought = await resolveModel({ ownerId: agentRow.ownerId, llmKeyId: agentRow.llmKeyId, config }, pay);
+    scrub = thought.scrub;
+    const model = thought.model;
+    // What each step sends beside the prompt and the tools. A key agent: what its key's
+    // provider takes (`callOptionsFor`), which for Anthropic is its prompt caching. A run
+    // with no key (pay-per-use, the scripted model) is sent what it always was; the
+    // gateway's client does not read the Anthropic option.
+    const callOptions = thought.provider
+      ? callOptionsFor(thought.provider, config)
+      : { temperature: config.llm.temperature, providerOptions: { anthropic: { cacheControl: { type: "ephemeral" as const } } } };
     const sources = resolveDataSources(config.dataSources);
 
     // The exit engine runs *before* the model thinks, so the book it reads is the book
@@ -705,13 +748,8 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
       system,
       prompt,
       tools,
-      temperature: config.llm.temperature,
-      // Anthropic prompt caching, automatic mode: a top-level `cache_control` asks the
-      // API to cache the whole prefix on every step, so a 20-step tick re-reads its
-      // tools, system prompt and growing transcript at a tenth of the input price
-      // instead of paying full price for them twenty times. A 113k-input-token run
-      // measured before this was mostly that repetition. Other providers ignore the key.
-      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+      // The temperature, and for a key agent whatever else its provider needs sent.
+      ...callOptions,
       abortSignal: runSignal,
       // The run ends when `finish` *accepted* the summary, not when it was merely called:
       // in approval mode the tool sends the model back once for an unproposed shortlist.
@@ -881,8 +919,10 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
 
     // What broke said this, and it is about to be stored, shown to the owner and sent as
     // a notification. A provider's refusal echoes the key it refused (half masked), and
-    // an RPC or database client prints the address it was given, key and all.
-    const raw = redactSecrets(err instanceof Error ? err.message : String(err));
+    // an RPC or database client prints the address it was given, key and all. The run's
+    // own key goes first, by its exact value: many providers' keys have no shape for
+    // `redactSecrets` to know them by. Everything below is made from `raw`.
+    const raw = redactSecrets(scrub(err instanceof Error ? err.message : String(err)));
     // A multi-workspace key that still failed for want of the header: find the
     // workspace now, save it on the key, and make the agent due again so the next tick
     // simply works. Only for an agent that thinks on a key: no other run touches one.

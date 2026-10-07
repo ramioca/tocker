@@ -9,29 +9,18 @@ import { MorphButton } from "@/components/spectrumui/morph-button";
 import { addLlmKey } from "@/server/actions/users";
 import type { LlmKeyRow } from "@/server/types";
 import { MORPH_FOCUS, enterSubmits, useMorphAction } from "./use-morph-action";
-import { mismatchedProvider, providerName, wrongProviderOnAdd } from "@/lib/agent/key-prefix";
+import { ProviderHelp, ProviderPicker } from "@/components/agents/provider-picker";
+import { keyNote, keyRefusal, keyShapeHint, providerHelp, shownKeyError } from "@/components/agents/provider-choice";
+import { providerLabel } from "@/lib/agent/providers";
 
 type Provider = LlmKeyRow["provider"];
 type Field = "key" | "label" | "workspace";
-
-// The server refuses anything shorter (src/server/actions/users.ts), so the client does too.
-const KEY_MIN = 16;
 
 /** Which field a server error is about, so it can sit under that field. */
 function fieldFor(message: string): Field {
   if (/^label/i.test(message)) return "label";
   if (/workspace id/i.test(message)) return "workspace";
   return "key";
-}
-
-const PROVIDERS: Array<{ id: Provider; label: string; hint: string }> = [
-  { id: "anthropic", label: "Anthropic", hint: "sk-ant-…" },
-  { id: "openai", label: "OpenAI", hint: "sk-…" },
-  { id: "openrouter", label: "OpenRouter", hint: "sk-or-…" },
-];
-
-function providerLabel(provider: Provider): string {
-  return PROVIDERS.find((p) => p.id === provider)?.label ?? provider;
 }
 
 /** What the server said beyond the new row: how many of the owner's agents still have no key. */
@@ -45,6 +34,8 @@ export function AddLlmKeyForm({
   autoFocus = false,
   submitLabel = "Add key",
   compact = false,
+  haveKeysFor = [],
+  aboveDialog = false,
 }: {
   onAdded?: (key: LlmKeyRow, info: KeyAddedInfo) => void;
   /** Set when the form was opened on demand, so there is somewhere to go back to. Escape calls it too. */
@@ -58,6 +49,14 @@ export function AddLlmKeyForm({
    * to someone adding their first key.
    */
   compact?: boolean;
+  /**
+   * The providers the account already holds a key for. For any other provider the form
+   * links to the page where its keys are made: someone adding their first key for it
+   * usually has to go and create one.
+   */
+  haveKeysFor?: readonly string[];
+  /** Set where the form sits inside the onboarding dialog, so the provider list opens over it. */
+  aboveDialog?: boolean;
 }) {
   const uid = useId();
   const [provider, setProvider] = useState<Provider>("anthropic");
@@ -69,13 +68,17 @@ export function AddLlmKeyForm({
   // The compact form's "Advanced" disclosure. Tracked, not left to the DOM, so an error
   // that opened it does not snap it shut again as soon as typing clears that error.
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const providerRef = useRef<HTMLSelectElement>(null);
+  const providerRef = useRef<HTMLButtonElement>(null);
 
-  const hint = PROVIDERS.find((p) => p.id === provider)?.hint ?? "";
-  // The select defaults to Anthropic and keeps the pasted key when it changes, so a key
+  const hint = keyShapeHint(provider);
+  const hasKeyFor = haveKeysFor.includes(provider);
+  // The chooser defaults to Anthropic and keeps the pasted key when it changes, so a key
   // under the wrong provider is easy to end up with — and, when that provider can't be
-  // reached to check it, it would be saved and only fail on the agent's next run.
-  const otherProvider = mismatchedProvider(key, provider);
+  // reached to check it, it would be saved and only fail on the agent's next run. The
+  // note says whose key it looks like, and offers the switch when that provider is one
+  // that can be chosen.
+  const note = keyNote(provider, key);
+  const otherProvider = note?.switchTo ?? null;
 
   /**
    * The checks that need no request. Kept out of `submit()` on purpose: a throw there
@@ -89,13 +92,12 @@ export function AddLlmKeyForm({
       document.getElementById(`${uid}-key`)?.focus();
       return false;
     };
-    if (key.trim().length < KEY_MIN) {
-      return refuse("That doesn’t look like a full API key — paste the whole thing.");
-    }
-    // Pressing Add past the note below. Refused here, not by disabling the button,
-    // so the reason is said rather than hidden.
-    if (otherProvider) return refuse(wrongProviderOnAdd(otherProvider, provider));
-    return true;
+    // Too short, another provider's key, or one without the prefix this provider puts on
+    // every key. That includes pressing Add past the note below: refused here, not by
+    // disabling the button, so the reason is said rather than hidden. Nothing has been
+    // sent anywhere at this point.
+    const refusal = keyRefusal(provider, key);
+    return refusal ? refuse(refusal) : true;
   }
 
   async function submit() {
@@ -115,8 +117,10 @@ export function AddLlmKeyForm({
         workspaceId: provider === "anthropic" && workspaceId.trim() ? workspaceId.trim() : undefined,
       });
       if (!result.ok) {
-        setError({ field: fieldFor(result.error), message: result.error });
-        throw new Error(result.error);
+        // The key is still in the field, so it can be taken out of whatever came back.
+        const message = shownKeyError(result.error, key);
+        setError({ field: fieldFor(message), message });
+        throw new Error(message);
       }
       if (result.data.unverified) {
         // Saved, but the provider could not be asked (down, slow, a network in the way).
@@ -130,7 +134,7 @@ export function AddLlmKeyForm({
         { keylessAgents: result.data.keylessAgents ?? 0 },
       );
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Could not add the key";
+      const message = shownKeyError(e instanceof Error ? e.message : "Could not add the key", key);
       // Only ever in development: in production a server error that happened to contain
       // these words would otherwise render a key row that does not exist.
       if (process.env.NODE_ENV === "production" || !message.includes("not implemented")) {
@@ -168,7 +172,7 @@ export function AddLlmKeyForm({
     error?.field === field ? { "aria-invalid": true, "aria-describedby": `${uid}-${field}-error` } : {};
 
   // Under a key error the note would only repeat it, so just its button stays.
-  const showKeyNote = otherProvider !== null && error?.field !== "key";
+  const showKeyNote = note !== null && error?.field !== "key";
   const keyDescribedBy =
     [error?.field === "key" ? `${uid}-key-error` : null, showKeyNote ? `${uid}-key-note` : null]
       .filter(Boolean)
@@ -177,7 +181,7 @@ export function AddLlmKeyForm({
   const switchProvider = (next: Provider) => {
     setProvider(next);
     edited("key");
-    // The button leaves with the mismatch. The select is where the change shows, and
+    // The button leaves with the mismatch. The chooser is where the change shows, and
     // landing there reads it back ("Provider, OpenAI").
     providerRef.current?.focus();
   };
@@ -233,25 +237,33 @@ export function AddLlmKeyForm({
           <label htmlFor={`${uid}-provider`} className="text-sm font-medium">
             Provider
           </label>
-          <select
-            ref={providerRef}
+          <ProviderPicker
+            triggerRef={providerRef}
             id={`${uid}-provider`}
             autoFocus={autoFocus}
             value={provider}
-            onChange={(event) => {
-              setProvider(event.target.value as Provider);
+            // Only while there is a line under the chooser to read out with it.
+            describedBy={providerHelp(provider, { hasKey: hasKeyFor }) ? `${uid}-provider-help` : undefined}
+            aboveDialog={aboveDialog}
+            onChange={(next) => {
+              setProvider(next);
               // A key error is about this key under that provider; a new provider moots it.
               edited("key");
             }}
-            className="mt-2 h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-base outline-none md:text-sm transition-[border-color,box-shadow] duration-150 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-          >
-            {PROVIDERS.map((p) => (
-              <option key={p.id} value={p.id} className="bg-card">
-                {p.label}
-              </option>
-            ))}
-          </select>
+            // As tall as the fields beside it, and as transparent: this form sits on a card.
+            className="mt-2 h-9 dark:bg-transparent"
+          />
         </div>
+
+        {/* What the registry notes about this provider, and where its keys are made while
+            the account has none for it. Straight under the chooser on a phone; under the
+            row, across both columns, where Provider and Label sit side by side. */}
+        <ProviderHelp
+          id={`${uid}-provider-help`}
+          provider={provider}
+          hasKey={hasKeyFor}
+          className="-mt-2 sm:order-last sm:col-span-2"
+        />
 
         <div>
           <label htmlFor={`${uid}-label`} className="text-sm font-medium">
@@ -279,7 +291,7 @@ export function AddLlmKeyForm({
       */}
       <div>
         <label htmlFor={`${uid}-key`} className="text-sm font-medium">
-          API key <span className="font-normal text-muted-foreground">({hint})</span>
+          API key{hint ? <span className="font-normal text-muted-foreground"> ({hint})</span> : null}
         </label>
         <div className="relative mt-2">
           <Input
@@ -309,18 +321,20 @@ export function AddLlmKeyForm({
         {errorFor("key")}
         {/* Always mounted, so the note is announced when it appears. */}
         <div aria-live="polite">
-          {otherProvider ? (
+          {note && (showKeyNote || otherProvider) ? (
             <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm text-amber-700 dark:text-amber-400">
-              {showKeyNote ? (
-                <span id={`${uid}-key-note`}>This looks like an {providerName(otherProvider)} key.</span>
+              {showKeyNote ? <span id={`${uid}-key-note`}>{note.text}</span> : null}
+              {/* Offered only for a provider that can be chosen. A key that belongs to
+                  none of them has nowhere to switch to, and the note says so alone. */}
+              {otherProvider ? (
+                <button
+                  type="button"
+                  onClick={() => switchProvider(otherProvider)}
+                  className="inline-flex h-8 items-center rounded-md border border-amber-600/40 px-2.5 text-xs font-medium transition-[background-color,transform] duration-150 hover:bg-amber-500/10 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:h-7 dark:border-amber-400/30"
+                >
+                  Switch to {providerLabel(otherProvider)}
+                </button>
               ) : null}
-              <button
-                type="button"
-                onClick={() => switchProvider(otherProvider)}
-                className="inline-flex h-8 items-center rounded-md border border-amber-600/40 px-2.5 text-xs font-medium transition-[background-color,transform] duration-150 hover:bg-amber-500/10 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:h-7 dark:border-amber-400/30"
-              >
-                Switch to {providerName(otherProvider)}
-              </button>
             </p>
           ) : null}
         </div>

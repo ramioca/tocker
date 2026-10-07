@@ -36,11 +36,22 @@ const KEY_SHAPES: readonly RegExp[] = [
   // Anthropic, OpenAI, OpenRouter, and the vendors that copied the prefix. A key has a
   // digit or a capital in it (or the mask's asterisks); a hyphenated name does not.
   /\bsk-(?=[a-z_-]*[A-Z0-9*])[A-Za-z0-9_*-]{12,}/g,
+  // Cerebras. Its `csk-` is not caught by the rule above: there is no word break before
+  // the `sk-` inside it.
+  /\bcsk-(?=[a-z_-]*[A-Z0-9*])[A-Za-z0-9_*-]{12,}/g,
+  // Novita, whose prefix is `sk_` with an underscore. Same test as the hyphenated rule,
+  // so a snake_case name ("sk_momentum_rotation") is not taken for a key.
+  /\bsk_(?=[a-z_-]*[A-Z0-9*])[A-Za-z0-9_*-]{12,}/g,
   /\b[sr]k_(?:live|test)_[A-Za-z0-9]{12,}/g,
   /\bAIza[0-9A-Za-z_-]{30,}/g,
+  // Google's newer keys. No word break is possible before the A in "FAQ.", so prose is safe.
+  /\bAQ\.[A-Za-z0-9_-]{20,}/g,
   /\bgsk_[A-Za-z0-9]{20,}/g,
   /\bxai-[A-Za-z0-9]{20,}/g,
   /\bhf_[A-Za-z0-9]{20,}/g,
+  // Fireworks and the Vercel AI Gateway.
+  /\bfw_[A-Za-z0-9_-]{20,}/g,
+  /\bvck_[A-Za-z0-9_-]{20,}/g,
   /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
   /\bxox[abprs]-[A-Za-z0-9-]{10,}/g,

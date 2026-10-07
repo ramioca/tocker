@@ -3,8 +3,17 @@
 import { useId, useMemo, useRef, useState, useTransition } from "react";
 import { AlertTriangle, KeyRound, Plus, Shuffle, X } from "lucide-react";
 import { toast } from "sonner";
-import { DEFAULT_MODEL_ID } from "@/lib/agent/config";
+import { providerLabel } from "@/lib/agent/providers";
 import { ModelPicker } from "@/components/agents/model-picker";
+import { KeyPageLink, ProviderHelp, ProviderPicker } from "@/components/agents/provider-picker";
+import {
+  addKeyLabel,
+  keyPlaceholder,
+  keyRefusal,
+  providerHelp,
+  shownKeyError,
+  temperatureNote,
+} from "@/components/agents/provider-choice";
 import { PayPerUsePanel, ThinkSourceChoice } from "@/components/agents/think-source";
 import {
   chooseSource,
@@ -52,8 +61,10 @@ import {
   MAX_AGENT_NAME,
   MAX_TRADE_LADDER,
   feeSharePct,
+  firstKeyFor,
   intervalHint,
   launchRadarUsdPerRun,
+  onProvider,
   PAPER_BALANCES,
   RISK_BOUNDS,
   STRATEGY_PRESETS,
@@ -183,19 +194,6 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
 
 // --------------------------------------------------------------------- brain
 
-export const PROVIDER_LABELS: Record<LlmKeyRow["provider"], string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-  openrouter: "OpenRouter",
-};
-
-// The server refuses anything shorter (src/server/actions/users.ts), so the form does too.
-const KEY_MIN = 16;
-
-/** A link inside a sentence of help text; the same treatment as the onboarding key step's. */
-const INLINE_LINK =
-  "rounded-sm text-foreground underline decoration-muted-foreground/50 underline-offset-2 transition-colors duration-150 hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
-
 type KeyField = "key" | "label" | "workspace";
 
 /** Which field a server error is about, so it sits under that field. */
@@ -244,7 +242,7 @@ export function AddKeyInline({
         className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <Plus aria-hidden className="size-3.5" />
-        Add an {PROVIDER_LABELS[provider]} key
+        {addKeyLabel(provider)}
       </button>
     );
   }
@@ -265,8 +263,11 @@ export function AddKeyInline({
 
   const save = () => {
     if (pending || value.trim() === "") return;
-    if (value.trim().length < KEY_MIN) {
-      setError({ field: "key", message: "That doesn’t look like a full API key — paste the whole thing." });
+    // Too short, another provider's key, or one without the prefix this provider puts on
+    // every key: said here, before the key has been sent anywhere at all.
+    const refusal = keyRefusal(provider, value);
+    if (refusal) {
+      setError({ field: "key", message: refusal });
       return;
     }
     setError(null);
@@ -278,7 +279,7 @@ export function AddKeyInline({
         workspaceId: provider === "anthropic" && workspaceId.trim() ? workspaceId.trim() : undefined,
       });
       if (!result.ok) {
-        setError({ field: keyFieldFor(result.error), message: result.error });
+        setError({ field: keyFieldFor(result.error), message: shownKeyError(result.error, value) });
         return;
       }
       onAdded({
@@ -308,7 +309,7 @@ export function AddKeyInline({
     <div className="space-y-2.5 rounded-xl border border-border bg-card/40 p-3">
       <div className="flex items-center gap-2">
         <KeyRound aria-hidden className="size-3.5 text-muted-foreground" />
-        <p className="text-xs font-medium">New {PROVIDER_LABELS[provider]} key</p>
+        <p className="text-xs font-medium">New {providerLabel(provider)} key</p>
         <button
           type="button"
           onClick={() => {
@@ -339,7 +340,7 @@ export function AddKeyInline({
           // focus would fall back to the page.
           autoFocus
           value={value}
-          placeholder="sk-…"
+          placeholder={keyPlaceholder(provider)}
           // "new-password" is the value Chrome actually honours on a password field;
           // "off" still offers to save the key into the password manager.
           autoComplete="new-password"
@@ -573,30 +574,32 @@ export function BrainStep({
       <>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Provider" htmlFor="llm-provider">
-          <SimpleSelect
+          <ProviderPicker
             id="llm-provider"
             value={provider}
-            options={[
-              { value: "anthropic", label: "Anthropic" },
-              { value: "openai", label: "OpenAI" },
-              { value: "openrouter", label: "OpenRouter" },
-            ]}
-            onChange={(next) => {
-              const nextProvider = next as typeof provider;
-              updateConfig({
-                llm: {
-                  ...draft.config.llm,
-                  provider: nextProvider,
-                  model: DEFAULT_MODEL_ID[nextProvider],
-                },
-              });
+            // Only while there is a line under the chooser to read out with it.
+            describedBy={providerHelp(provider, { hasKey: keysForProvider.length > 0 }) ? "llm-provider-help" : undefined}
+            onChange={(nextProvider) => {
+              // The provider's own default model: the one that was chosen belongs to the
+              // provider being left, and would fail the first run on this one.
+              updateConfig({ llm: onProvider(draft.config.llm, nextProvider) });
               // The first key this provider has, not none: with one on file the select
               // sat on "Choose a key" and Create was refused until the only option was
               // picked by hand. With none it stays empty, and adding one is the next step.
-              update({ llmKeyId: llmKeys.find((key) => key.provider === nextProvider)?.id ?? null });
+              update({ llmKeyId: firstKeyFor(llmKeys, nextProvider) });
             }}
           />
         </Field>
+
+        {/* What the registry notes about this provider, and where its keys are made while
+            the account has none. Straight under the chooser on a phone; under the row,
+            across both columns, where Provider and Model sit side by side. */}
+        <ProviderHelp
+          id="llm-provider-help"
+          provider={provider}
+          hasKey={keysForProvider.length > 0}
+          className="-mt-2 sm:order-last sm:col-span-2"
+        />
 
         <Field label="Model" htmlFor="llm-model">
           <ModelPicker
@@ -620,7 +623,7 @@ export function BrainStep({
               placeholder="Choose a key"
               options={keysForProvider.map((key) => ({
                 value: key.id,
-                label: key.label ?? `${PROVIDER_LABELS[key.provider]} key`,
+                label: key.label ?? `${providerLabel(key.provider)} key`,
                 hint: `••••${key.last4}`,
               }))}
               onChange={(llmKeyId) => update({ llmKeyId })}
@@ -628,31 +631,25 @@ export function BrainStep({
           ) : llmKeys.length === 0 ? (
             // No key on the account at all: someone who skipped the key step lands here,
             // and "No Anthropic key on file yet" said neither what a key is nor where one
-            // comes from. The same three links as the onboarding step.
+            // comes from. The page for the chosen provider's keys is linked under the
+            // chooser above; this says what a key is and points there, whichever of the
+            // providers is chosen. OpenRouter is still named as the quickest start for
+            // someone with no account anywhere, with its link, both read from its row.
             <p className="text-xs leading-5 text-muted-foreground">
               Your agent&rsquo;s model runs on your own account with an AI provider, and they bill you for it. No
-              key yet? The quickest is OpenRouter: create one at{" "}
-              <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className={INLINE_LINK}>
-                openrouter.ai/keys
-              </a>
-              {provider === "openrouter" ? " and paste it here. " : ", set Provider to OpenRouter above, and paste it here. "}
-              <a
-                href="https://console.anthropic.com/settings/keys"
-                target="_blank"
-                rel="noreferrer"
-                className={INLINE_LINK}
-              >
-                Anthropic
-              </a>{" "}
-              and{" "}
-              <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className={INLINE_LINK}>
-                OpenAI
-              </a>{" "}
-              keys work too.
+              key yet? Create one on the page linked under Provider above, then add it here.
+              {provider === "openrouter" ? null : (
+                <>
+                  {" "}
+                  If you have no account with any provider, {providerLabel("openrouter")} is the quickest to start
+                  with: create a key at <KeyPageLink provider="openrouter" />, then set Provider to{" "}
+                  {providerLabel("openrouter")} above.
+                </>
+              )}
             </p>
           ) : (
             <p className="text-xs text-muted-foreground">
-              No {PROVIDER_LABELS[provider]} key on file yet.
+              No {providerLabel(provider)} key on file yet.
             </p>
           )}
           <AddKeyInline
@@ -689,11 +686,17 @@ export function BrainStep({
           step={0.1}
           format={(value) => value.toFixed(1)}
           meaning={
-            draft.config.llm.temperature <= 0.3
+            // Some providers are sent no temperature, or less than is set here. Where
+            // that is so the slider says it, rather than describing an effect it will
+            // not have. On Anthropic, OpenAI and OpenRouter the setting is sent as it is.
+            (source === "usdc"
+              ? null
+              : temperatureNote(provider, draft.config.llm.temperature, draft.config.llm.model)) ??
+            (draft.config.llm.temperature <= 0.3
               ? "Nearly deterministic. It will reach the same conclusion from the same data, which makes its record readable."
               : draft.config.llm.temperature <= 0.7
                 ? "Some variety in how it reasons, without wandering off the strategy."
-                : "Creative. Expect it to surprise you — sometimes usefully, sometimes expensively."
+                : "Creative. Expect it to surprise you — sometimes usefully, sometimes expensively.")
           }
           onChange={(temperature) => updateConfig({ llm: { ...draft.config.llm, temperature } })}
         />
@@ -1034,7 +1037,7 @@ export function ScheduleStep({
           hideHeading
             ? payPerUseModel
               ? "Every run pays for its own thinking in USDC from the agent's wallet, whether or not it trades. Tocker pays for its data."
-              : `Every run bills model tokens to your ${PROVIDER_LABELS[draft.config.llm.provider]} key, whether or not it trades. Tocker pays for its data.`
+              : `Every run bills model tokens to your ${providerLabel(draft.config.llm.provider)} key, whether or not it trades. Tocker pays for its data.`
             : undefined
         }
       >
