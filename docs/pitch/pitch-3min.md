@@ -1,7 +1,7 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
 ~483 words, about 3:05 at 155 wpm. Sam is an illustrative composite, not a real user. [pause] marks a beat.
-Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition is a category landscape (exchange agents, perps agents, on-chain chat agents, agent rails) with Tocker's answer to each gap.
+Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition is a startup landscape (perps agents, autonomous on-chain agents, chat-to-trade, open-source agent kits) with Tocker's edge up front: USDC inference (next), x402 alpha, filters and gates, social trading.
 
 ## cover
 Three a.m. A trader, call her Sam, sees a new token trending. She buys. Minutes later, it's worth nothing. The wallets that bought first? Insiders. [pause] Sam isn't dumb. She's outgunned. I'm Rami, and this is Tocker: the infrastructure for agentic trading.
@@ -22,7 +22,7 @@ Can AI even trade? Last October, six frontier models traded real money; four los
 Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We plan to charge zero point two percent: twenty cents on a hundred dollars.
 
 ## competition
-Here's the landscape. Agents went mainstream this year: Robinhood has over a hundred and fifty thousand agentic accounts, but exchange agents trade only what their venue lists. Perps agents live on one venue. On-chain chat agents reach any token, but the model or your click decides. Rails make you wire the rest. Tocker runs the whole loop, and its gates can say no.
+Here's the startup landscape. Perps agents like Senpi trade one venue. Autonomous agents like Fere run their own wallet. Chat agents like Nansen AI and Bankr wait for your click. Open-source kits like OpenClaw make you host and wire everything. Tocker is the full stack: it pays for its own inference in USDC, next; buys alpha per call over x402; filters every token; and trades in public while the strategy stays private.
 
 ## gtm
 Every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score, never the strategy. Followers launch their own; next, creators earn a fee share. Today that's memecoins, five billion dollars a week on Solana at the August peak. Next Polymarket, then tokenized stocks.
