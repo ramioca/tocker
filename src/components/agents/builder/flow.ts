@@ -10,13 +10,14 @@ import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import {
   BUILDER_STEPS,
   CARD_STEP,
+  LEGACY_RULES_STEP,
+  LEGACY_RULES_TARGET,
   parseCard,
   parseStep,
   REQUIRED_ERROR_KEYS,
   REQUIRED_ORDER,
   REQUIRED_PLACE,
   type BuilderStepId,
-  type CardId,
   type Place,
   type StepStatus,
 } from "./contract";
@@ -28,35 +29,49 @@ type Config = BuilderDraft["config"];
  * Every `validateDraft` key with a home, in the order errors are visited: step order,
  * then top to bottom within the step. A key that is not listed lands on the last step
  * with nothing to focus, and is reported by a toast.
+ *
+ * A rule error names a whole section of the config ("risk"), not one control, so its
+ * place is the step that holds the section and focus goes to that step's heading.
  */
 const ERROR_PLACES: ReadonlyArray<readonly [key: string, place: Place]> = [
+  ["name", { step: "name", focusIds: ["agent-name"] }],
   ["strategyPrompt", { step: "strategy", focusIds: ["strategy-prompt"] }],
-  ["chains", { step: "rules", card: "universe", focusIds: ["rule-card-universe"] }],
-  ["universe", { step: "rules", card: "universe", focusIds: ["rule-card-universe"] }],
-  ["dataSources", { step: "rules", card: "data", focusIds: ["rule-card-data"] }],
-  ["risk", { step: "rules", card: "risk", focusIds: ["rule-card-risk"] }],
-  ["schedule", { step: "rules", card: "schedule", focusIds: ["rule-card-schedule"] }],
-  ["execution", { step: "rules", card: "schedule", focusIds: ["rule-card-schedule"] }],
+  // The chain picker sits with the hunting ground, so a missing Solana wallet goes there.
+  ["chains", { step: "hunts" }],
+  ["universe", { step: "hunts" }],
+  ["dataSources", { step: "data" }],
+  ["risk", { step: "limits" }],
+  ["schedule", { step: "schedule" }],
+  ["execution", { step: "schedule" }],
+  // Not a config key and not checked today; the paper balance is chosen on this step.
+  ["paperStartingUsd", { step: "schedule" }],
   // The key select when there is a key to choose; otherwise the way to add one.
   ["llmKeyId", { step: "brain", focusIds: ["llm-key", "llm-key-add"] }],
   // A pay-per-use draft has no key field; what can be wrong is its model or its limits.
   ["thinking", { step: "brain", focusIds: ["builder-usdc-model"] }],
   ["llm", { step: "brain", focusIds: ["llm-model"] }],
-  ["name", { step: "create", focusIds: ["agent-name"] }],
 ];
 
-/** The keys that make the Rules step read "Fix". */
-const RULES_ERROR_KEYS = ["chains", "universe", "dataSources", "risk", "schedule", "execution"] as const;
+/** The four steps whose settings start on a default, and are judged against it. */
+type RuleStepId = "hunts" | "data" | "limits" | "schedule";
+
+/** The keys that make each of them read "Fix": the sections its controls write. */
+const RULE_ERROR_KEYS: Record<RuleStepId, readonly string[]> = {
+  hunts: ["chains", "universe"],
+  data: ["dataSources"],
+  limits: ["risk"],
+  schedule: ["schedule", "execution", "paperStartingUsd"],
+};
 
 /** Funding is checked against live balances, not the draft, so it has no key of its own. */
-const FUNDING_PLACE: Place = { step: "create", card: "funding", focusIds: ["rule-card-funding"] };
+const FUNDING_PLACE: Place = { step: "create" };
 
 const copyOf = (place: Place): Place => ({
   ...place,
   ...(place.focusIds ? { focusIds: [...place.focusIds] } : {}),
 });
 
-/** The step, the card to open and the control to focus for one `validateDraft` key. */
+/** The step and the control to focus for one `validateDraft` key. */
 export function placeOfError(key: string): Place {
   const known = ERROR_PLACES.find(([name]) => name === key);
   return known ? copyOf(known[1]) : { step: "create" };
@@ -103,20 +118,36 @@ function same(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Whether any rule differs from the shipped defaults. Display only: it picks between the
- * words "Defaults" and "Edited" and decides nothing else.
+ * Whether one step's settings differ from the shipped defaults. Display only: it picks
+ * between the words "Defaults" and "Edited" and decides nothing else. Each step answers
+ * for the sections of the config its own controls write, so moving a risk slider never
+ * marks the schedule as edited.
  */
-export function rulesEdited(config: Config): boolean {
+export function stepEdited(step: RuleStepId, config: Config): boolean {
   const base = DEFAULT_AGENT_CONFIG;
-  if (!sameSet(config.chains, base.chains)) return true;
-  if (!sameSet(config.dataSources, base.dataSources)) return true;
-  const { discovery, ...universe } = config.universe;
-  const { discovery: baseDiscovery, ...baseUniverse } = base.universe;
-  if (!sameSet(discovery, baseDiscovery)) return true;
-  if (!same(universe, baseUniverse)) return true;
-  if (!same(config.risk, base.risk)) return true;
-  if (!same(config.schedule, base.schedule)) return true;
-  return !same(config.execution, base.execution);
+  switch (step) {
+    case "hunts": {
+      // The chain picker is drawn with the hunting ground, so the chains count here.
+      if (!sameSet(config.chains, base.chains)) return true;
+      const { discovery, ...universe } = config.universe;
+      const { discovery: baseDiscovery, ...baseUniverse } = base.universe;
+      return !sameSet(discovery, baseDiscovery) || !same(universe, baseUniverse);
+    }
+    case "data":
+      return !sameSet(config.dataSources, base.dataSources);
+    case "limits":
+      // The exit rules and the per-run data cap are part of `risk`, and of this step.
+      return !same(config.risk, base.risk);
+    case "schedule":
+      return !same(config.schedule, base.schedule) || !same(config.execution, base.execution);
+  }
+}
+
+const RULE_STEPS = ["hunts", "data", "limits", "schedule"] as const satisfies readonly RuleStepId[];
+
+/** Whether any rule on any step differs from the shipped defaults. */
+export function rulesEdited(config: Config): boolean {
+  return RULE_STEPS.some((step) => stepEdited(step, config));
 }
 
 /**
@@ -131,23 +162,33 @@ export function stepStatus(
 ): StepStatus {
   const missing = (keys: readonly string[]) => keys.some((key) => errors[key]);
   switch (step) {
+    case "name":
+      return missing(REQUIRED_ERROR_KEYS.name) ? "needed" : "ready";
     case "strategy":
-      return missing(REQUIRED_ERROR_KEYS.strategy) ? "needed" : "ready";
-    case "rules":
-      if (missing(RULES_ERROR_KEYS)) return "fix";
-      return rulesEdited(ctx.config) ? "edited" : "defaults";
+      // One is written on arrival, so a strategy that fails a Create is one the user
+      // cleared or cut short: by then it is a thing to fix, not a thing still to do.
+      if (!missing(REQUIRED_ERROR_KEYS.strategy)) return "ready";
+      return ctx.attempted ? "fix" : "needed";
+    case "hunts":
+    case "data":
+    case "limits":
+    case "schedule":
+      if (missing(RULE_ERROR_KEYS[step])) return "fix";
+      return stepEdited(step, ctx.config) ? "edited" : "defaults";
     case "brain":
       return missing(REQUIRED_ERROR_KEYS.think) ? "needed" : "ready";
     case "create":
-      if (missing(REQUIRED_ERROR_KEYS.name)) return "needed";
-      return ctx.attempted && ctx.fundingBlocked ? "fix" : "ready";
+      if (ctx.attempted && ctx.fundingBlocked) return "fix";
+      // Not ready to create while one of the three required things is still missing,
+      // whichever step holds it.
+      return REQUIRED_ORDER.some((id) => missing(REQUIRED_ERROR_KEYS[id])) ? "needed" : "ready";
   }
 }
 
 /**
  * Where a restored draft picks up: the first step, in order, with a required thing still
- * missing, or the last step when nothing is. Someone who left to fetch a key comes back
- * to the key.
+ * missing (a name, a strategy, a way to think), or the last step when nothing is. Someone
+ * who had named the agent and left to fetch a key comes back to the key.
  */
 export function resumeStep(errors: Record<string, string>): BuilderStepId {
   const missing = REQUIRED_ORDER.find((id) => REQUIRED_ERROR_KEYS[id].some((key) => errors[key]));
@@ -161,17 +202,25 @@ export function neighbours(step: BuilderStepId): { back: BuilderStepId | null; n
 }
 
 /**
- * The step an address asks for. `?step=` wins; without it a valid `?open=` means the
- * step its card sits on; without either, the first step.
+ * The step an address names, or null when it names none. A step id wins. Without one,
+ * an old link still lands: `?open=risk` (with or without `?step=rules`) is the step that
+ * holds what that card held, and a bare `?step=rules` is the first of the rule steps.
  */
-export function stepOf(params: Pick<URLSearchParams, "get">): BuilderStepId {
+export function requestedStep(params: Pick<URLSearchParams, "get">): BuilderStepId | null {
+  const raw = params.get("step");
+  const step = parseStep(raw);
+  if (step) return step;
   const card = parseCard(params.get("open"));
-  return parseStep(params.get("step")) ?? (card ? CARD_STEP[card] : "strategy");
+  if (card) return CARD_STEP[card];
+  return raw === LEGACY_RULES_STEP ? LEGACY_RULES_TARGET : null;
 }
 
-/** The address of a step, with a card to open on arrival when one is given. */
-export function stepHref(step: BuilderStepId, card?: CardId): string {
-  const params = new URLSearchParams({ step });
-  if (card) params.set("open", card);
-  return `/agents/new?${params.toString()}`;
+/** The step an address asks for: the one it names, or the first step. */
+export function stepOf(params: Pick<URLSearchParams, "get">): BuilderStepId {
+  return requestedStep(params) ?? BUILDER_STEPS[0];
+}
+
+/** The address of a step. */
+export function stepHref(step: BuilderStepId): string {
+  return `/agents/new?${new URLSearchParams({ step }).toString()}`;
 }

@@ -3,6 +3,8 @@ import {
   BUILDER_STEPS,
   CARD_IDS,
   CARD_STEP,
+  LEGACY_RULES_STEP,
+  LEGACY_RULES_TARGET,
   REQUIRED_ERROR_KEYS,
   REQUIRED_ORDER,
   REQUIRED_PLACE,
@@ -13,27 +15,31 @@ import {
 } from "./contract";
 
 describe("parseStep", () => {
-  it("accepts the four step ids", () => {
+  it("accepts the eight step ids", () => {
     for (const step of BUILDER_STEPS) expect(parseStep(step)).toBe(step);
-    expect(BUILDER_STEPS).toEqual(["strategy", "rules", "brain", "create"]);
+    expect(BUILDER_STEPS).toEqual(["name", "strategy", "hunts", "data", "limits", "schedule", "brain", "create"]);
   });
 
   it("refuses everything else", () => {
     expect(parseStep(undefined)).toBeNull();
     expect(parseStep(null)).toBeNull();
     expect(parseStep("")).toBeNull();
-    expect(parseStep("Rules")).toBeNull();
-    expect(parseStep("RULES")).toBeNull();
-    expect(parseStep(" rules")).toBeNull();
-    expect(parseStep("rules ")).toBeNull();
+    expect(parseStep("Limits")).toBeNull();
+    expect(parseStep("LIMITS")).toBeNull();
+    expect(parseStep(" limits")).toBeNull();
+    expect(parseStep("limits ")).toBeNull();
     expect(parseStep("nonsense")).toBeNull();
-    // A card id is not a step id.
+    // The step the rule cards used to share is not a step any more.
+    expect(parseStep(LEGACY_RULES_STEP)).toBeNull();
+    // An old card id is not a step id, unless the step happens to carry the same name.
     expect(parseStep("risk")).toBeNull();
+    expect(parseStep("universe")).toBeNull();
+    expect(parseStep("funding")).toBeNull();
     // `?step=a&step=b` reaches a server page as an array.
-    expect(parseStep(["rules"])).toBeNull();
-    expect(parseStep(["rules", "brain"])).toBeNull();
+    expect(parseStep(["limits"])).toBeNull();
+    expect(parseStep(["limits", "brain"])).toBeNull();
     expect(parseStep(1)).toBeNull();
-    expect(parseStep({ step: "rules" })).toBeNull();
+    expect(parseStep({ step: "limits" })).toBeNull();
     // Names every object has must not pass as a step.
     expect(parseStep("toString")).toBeNull();
     expect(parseStep("length")).toBeNull();
@@ -41,7 +47,7 @@ describe("parseStep", () => {
 });
 
 describe("parseCard", () => {
-  it("accepts the five card ids", () => {
+  it("still accepts the five old card ids", () => {
     for (const card of CARD_IDS) expect(parseCard(card)).toBe(card);
     expect(CARD_IDS).toEqual(["universe", "data", "risk", "schedule", "funding"]);
   });
@@ -55,6 +61,8 @@ describe("parseCard", () => {
     expect(parseCard("risk ")).toBeNull();
     expect(parseCard("nonsense")).toBeNull();
     // A step id is not a card id.
+    expect(parseCard("limits")).toBeNull();
+    expect(parseCard("hunts")).toBeNull();
     expect(parseCard("rules")).toBeNull();
     expect(parseCard(["risk"])).toBeNull();
     expect(parseCard(0)).toBeNull();
@@ -63,34 +71,48 @@ describe("parseCard", () => {
 });
 
 describe("CARD_STEP", () => {
-  it("places every card on a step, and only the cards", () => {
-    expect(Object.keys(CARD_STEP).sort()).toEqual([...CARD_IDS].sort());
+  it("sends every old card to the step that holds what it held", () => {
+    expect(CARD_STEP).toEqual({
+      universe: "hunts",
+      data: "data",
+      risk: "limits",
+      schedule: "schedule",
+      funding: "create",
+    });
     for (const card of CARD_IDS) expect(BUILDER_STEPS).toContain(CARD_STEP[card]);
   });
 
   it("keeps Funding on the step that holds the Create button", () => {
-    expect(CARD_STEP.funding).toBe("create");
+    expect(CARD_STEP.funding).toBe(BUILDER_STEPS[BUILDER_STEPS.length - 1]);
+  });
+
+  it("sends the old rules step to the first of the rule steps", () => {
+    expect(LEGACY_RULES_TARGET).toBe("hunts");
+    expect(BUILDER_STEPS).toContain(LEGACY_RULES_TARGET);
   });
 });
 
-function expectPlaceIsConsistent(place: Place) {
+function expectPlaceIsReal(place: Place) {
   expect(BUILDER_STEPS).toContain(place.step);
-  if (place.card !== undefined) {
-    expect(CARD_IDS).toContain(place.card);
-    expect(CARD_STEP[place.card]).toBe(place.step);
-  }
+  // A place is a step and, at most, ids to focus: nothing on the page opens any more.
+  expect(Object.keys(place).filter((key) => key !== "step" && key !== "focusIds")).toEqual([]);
+  for (const id of place.focusIds ?? []) expect(id).not.toMatch(/^rule-/);
 }
 
 describe("REQUIRED_PLACE", () => {
   it("covers the three required things, in step order", () => {
+    expect(REQUIRED_ORDER).toEqual(["name", "strategy", "think"]);
     expect(Object.keys(REQUIRED_PLACE).sort()).toEqual([...REQUIRED_ORDER].sort());
     expect(Object.keys(REQUIRED_ERROR_KEYS).sort()).toEqual([...REQUIRED_ORDER].sort());
     const steps = REQUIRED_ORDER.map((id) => BUILDER_STEPS.indexOf(REQUIRED_PLACE[id].step));
     expect(steps).toEqual([...steps].sort((a, b) => a - b));
   });
 
-  it("names a real step, and a card that sits on it", () => {
-    for (const id of REQUIRED_ORDER) expectPlaceIsConsistent(REQUIRED_PLACE[id]);
+  it("names the step that holds each one", () => {
+    expect(REQUIRED_PLACE.name).toEqual({ step: "name", focusIds: ["agent-name"] });
+    expect(REQUIRED_PLACE.strategy).toEqual({ step: "strategy", focusIds: ["strategy-prompt"] });
+    expect(REQUIRED_PLACE.think.step).toBe("brain");
+    for (const id of REQUIRED_ORDER) expectPlaceIsReal(REQUIRED_PLACE[id]);
   });
 
   it("gives every required thing a control to focus", () => {
@@ -103,14 +125,16 @@ describe("ROW_PLACE", () => {
     expect(Object.keys(ROW_PLACE)).toEqual(["hunts", "data", "limits", "exits", "runs", "thinks", "money"]);
   });
 
-  it("names a real step, and a card that sits on it", () => {
-    for (const place of Object.values(ROW_PLACE)) expectPlaceIsConsistent(place);
-  });
-
-  it("focuses the header of the card it opens, except the exits row", () => {
-    for (const [row, place] of Object.entries(ROW_PLACE)) {
-      if (place.card === undefined) continue;
-      expect(place.focusIds).toEqual([row === "exits" ? "risk-exits" : `rule-card-${place.card}`]);
-    }
+  it("sends each row to the step that holds its controls", () => {
+    expect(ROW_PLACE).toEqual({
+      hunts: { step: "hunts" },
+      data: { step: "data" },
+      limits: { step: "limits" },
+      exits: { step: "limits", focusIds: ["risk-exits"] },
+      runs: { step: "schedule" },
+      thinks: { step: "brain" },
+      money: { step: "create" },
+    });
+    for (const place of Object.values(ROW_PLACE)) expectPlaceIsReal(place);
   });
 });

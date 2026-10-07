@@ -1,6 +1,8 @@
 "use client";
 
+import { cn } from "@/lib/utils";
 import type { CostLine, Place, PreviewRow, ReadyItem } from "../contract";
+import { SILK_EDGE } from "../look";
 import type { BuilderDraft } from "../types";
 import { PreviewHead } from "./preview-head";
 import { PreviewRows } from "./preview-rows";
@@ -66,7 +68,25 @@ export function AgentPreview({
     reveal ? { className: "animate-rise", style: { animationDelay: `${index * STAGGER_MS}ms` } } : {};
 
   return (
-    <aside aria-label="Your agent" className="overflow-hidden rounded-2xl border border-border/70 bg-card/30">
+    <aside
+      aria-label="Your agent"
+      data-all-ready={ready.every((item) => item.ready)}
+      className={cn(
+        "group/card relative overflow-hidden rounded-2xl border border-white/[0.09] bg-card/50",
+        "shadow-[inset_0_1px_0_0_rgb(255_255_255/0.06),0_24px_48px_-32px_rgb(0_0_0/0.8)]",
+      )}
+    >
+      {/* The lit top edge. It brightens once all three things are ready: a transition
+          from a state, so it never plays on mount. Marked so the phone sheet can drop it. */}
+      <span
+        aria-hidden
+        data-card-edge
+        className={cn(
+          SILK_EDGE,
+          "pointer-events-none absolute inset-x-6 top-0 h-px opacity-50 transition-opacity duration-200",
+          "group-data-[all-ready=true]/card:opacity-100 forced-colors:hidden",
+        )}
+      />
       <PreviewHead draft={draft} onGo={onGo} disabled={disabled} {...rise(0)} />
       <ReadyList items={ready} onGo={onGo} disabled={disabled} {...rise(1)} />
       <PreviewRows

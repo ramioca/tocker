@@ -1,7 +1,17 @@
 "use client";
 
 import { useId, useMemo, useRef, useState, useTransition } from "react";
-import { AlertTriangle, KeyRound, Plus, Shuffle, X } from "lucide-react";
+import {
+  AlertTriangle,
+  CircleDollarSign,
+  Info,
+  KeyRound,
+  Plus,
+  ScrollText,
+  Shuffle,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { providerLabel } from "@/lib/agent/providers";
 import { ModelPicker } from "@/components/agents/model-picker";
@@ -50,11 +60,19 @@ import {
   transfersFor,
 } from "@/lib/wallets/funding";
 import { Field, RiskSlider, StepHeading, Toggle } from "./field";
+import { CHOICE_CARD, CHOICE_OFF, CHOICE_ON, IconTile, Mark, TYPE, type Tone } from "./look";
 import { parseBps } from "./parse-value";
 import { slippageMeaning } from "./slippage-copy";
 import { UniverseControls } from "./universe-controls";
 import { StrategyPresetCards } from "./strategy-preset-cards";
-import { applyPresetTo, presetChanges, presetFacts } from "./strategy-presets";
+import {
+  CUSTOM_STRATEGY,
+  applyCustomTo,
+  applyPresetTo,
+  isCustomPressed,
+  presetChanges,
+  presetFacts,
+} from "./strategy-presets";
 import { SimpleSelect } from "./simple-select";
 import {
   AVATAR_SEEDS,
@@ -91,7 +109,7 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
   const shuffled = !(AVATAR_SEEDS as readonly string[]).includes(draft.avatarSeed);
   const [shuffles, setShuffles] = useState(0);
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {hideHeading ? null : (
         <StepHeading
         title="Give it a name"
@@ -126,7 +144,9 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
       </Field>
 
       <Field label="Avatar · optional" hint="Picked for you.">
-        <div className="flex flex-wrap items-center gap-2 max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:py-1">
+        {/* One row at every width. On phones it scrolls, runs to the screen edge and fades
+            out, so the cut-off tile reads as "more this way". */}
+        <div className="flex items-center gap-2 max-sm:-mr-4 max-sm:-ml-1 max-sm:overflow-x-auto max-sm:py-1 max-sm:pr-10 max-sm:pl-1 max-sm:[scrollbar-width:none] max-sm:[mask-image:linear-gradient(to_right,black_calc(100%-40px),transparent)] max-sm:scroll-pr-10 sm:max-md:gap-1 lg:max-xl:gap-1">
           {AVATAR_SEEDS.map((seed) => {
             const active = draft.avatarSeed === seed;
             return (
@@ -137,12 +157,15 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
                 aria-pressed={active}
                 onClick={() => update({ avatarSeed: seed })}
                 className={cn(
-                  "rounded-xl p-0.5 transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.94]",
+                  "shrink-0 rounded-xl p-0.5 transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.94] motion-reduce:active:scale-100",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  active ? "ring-2 ring-primary" : "ring-1 ring-transparent hover:ring-border",
+                  // The gap keeps the ring visible around an avatar that is itself violet.
+                  active
+                    ? "ring-2 ring-primary ring-offset-2 ring-offset-background"
+                    : "ring-1 ring-transparent hover:ring-white/20",
                 )}
               >
-                <AgentAvatar seed={seed} name={draft.name || seed} size="lg" />
+                <AgentAvatar seed={seed} name={draft.name || seed} size="lg" className="sm:size-9" />
               </button>
             );
           })}
@@ -159,17 +182,17 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
             aria-pressed={shuffled}
             aria-label={shuffled ? "Randomise avatar (current: random)" : "Randomise avatar"}
             className={cn(
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               shuffled
-                ? "relative rounded-xl p-0.5 ring-2 ring-primary transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.94]"
-                : "grid size-12 place-items-center rounded-xl border border-dashed border-border text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground",
+                ? "relative rounded-xl p-0.5 ring-2 ring-primary ring-offset-2 ring-offset-background transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.94] motion-reduce:active:scale-100"
+                : "grid size-12 place-items-center rounded-xl border border-dashed border-border text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground sm:size-9",
             )}
           >
             {shuffled ? (
               <>
-                <AgentAvatar seed={draft.avatarSeed} name={draft.name || "Random"} size="lg" />
-                <span className="absolute -right-1.5 -bottom-1.5 grid size-5 place-items-center rounded-full border border-border bg-background text-muted-foreground">
-                  <Shuffle aria-hidden className="size-3" />
+                <AgentAvatar seed={draft.avatarSeed} name={draft.name || "Random"} size="lg" className="sm:size-9" />
+                <span className="absolute -right-1.5 -bottom-1.5 grid size-5 place-items-center rounded-full border border-border bg-background text-muted-foreground sm:size-4">
+                  <Shuffle aria-hidden className="size-3 sm:size-2.5" />
                 </span>
               </>
             ) : (
@@ -654,6 +677,7 @@ export function StrategyStep({
   feeUsd?: number;
 }) {
   const pressedPreset = STRATEGY_PRESETS.find((preset) => preset.prompt === draft.config.strategyPrompt) ?? null;
+  const promptRef = useRef<HTMLTextAreaElement>(null);
   // A preset that sets a small ticket also decides how much of every trade the flat fee
   // takes, and its paper record starts that far under water. Said with the blurb, from
   // the preset's own size and the server's fee, so neither number is written twice.
@@ -686,8 +710,29 @@ export function StrategyStep({
     });
   };
 
+  const applyCustom = () => {
+    const previous = draft.config.strategyPrompt;
+    // Already on Custom with words in the box: those words are the user's own. Tapping the
+    // card again takes them to the box and clears nothing.
+    if (previous.trim() !== "" && isCustomPressed(previous)) {
+      promptRef.current?.focus();
+      return;
+    }
+    // Only the prompt is written, and only the prompt comes back on Undo: a rule changed
+    // while the toast is up is not Custom's to take away.
+    updateConfig({ strategyPrompt: applyCustomTo(draft.config).strategyPrompt });
+    // The card's whole point is the empty box, so that is where the caret goes.
+    promptRef.current?.focus();
+    if (previous.trim() === "") return;
+    toast(`${CUSTOM_STRATEGY.label} applied`, {
+      description: "Cleared the strategy prompt.",
+      action: { label: "Undo", onClick: () => updateConfig({ strategyPrompt: previous }) },
+      duration: 8_000,
+    });
+  };
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="space-y-2">
         <StrategyPresetCards
           presets={STRATEGY_PRESETS}
@@ -697,10 +742,12 @@ export function StrategyStep({
           factsLine={(preset) => presetFacts(applyPresetTo(draft.config, preset), PRESET_LABELS)}
           feeNote={presetFeeNote}
           onApply={applyPreset}
+          customPressed={isCustomPressed(draft.config.strategyPrompt)}
+          onCustom={applyCustom}
         />
         {/* Screen readers get the same promise from each card's own description, so this
             line stays out of their way. */}
-        <p aria-hidden className="text-[11px] leading-4 text-muted-foreground">
+        <p aria-hidden className={cn(TYPE.caption, "text-muted-foreground")}>
           A preset replaces the prompt and sets what it needs. You can undo it.
         </p>
       </div>
@@ -711,9 +758,10 @@ export function StrategyStep({
         error={errors.strategyPrompt}
         hint="Standing instructions: when to enter, when to exit, what never to do."
       >
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <Textarea
             id="strategy-prompt"
+            ref={promptRef}
             value={draft.config.strategyPrompt}
             aria-invalid={Boolean(errors.strategyPrompt)}
             aria-describedby={errors.strategyPrompt ? "strategy-prompt-error" : undefined}
@@ -723,7 +771,7 @@ export function StrategyStep({
             // smaller field) and 14px from md. A "text-xs" here only ever reached phones.
             className="font-mono leading-relaxed"
           />
-          <p className="tnum text-right text-[11px] text-muted-foreground">
+          <p className={cn(TYPE.caption, "text-right text-muted-foreground")}>
             {draft.config.strategyPrompt.length} / 8000
           </p>
         </div>
@@ -1111,6 +1159,12 @@ export function ScheduleStep({
 
 // ------------------------------------------------------------------ funding
 
+/** An icon per funding choice, keyed by the option's value; a value with none shows no tile. */
+const CHOICE_ICON: Record<string, { icon: LucideIcon; tone: Tone }> = {
+  paper: { icon: ScrollText, tone: "plain" },
+  fund: { icon: CircleDollarSign, tone: "blue" },
+};
+
 function SegmentedChoice({
   value,
   onChange,
@@ -1121,28 +1175,28 @@ function SegmentedChoice({
   options: Array<{ value: string; label: string; hint: string }>;
 }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
+    <div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
       {options.map((option) => {
         const active = option.value === value;
+        const look = CHOICE_ICON[option.value];
         return (
           <button
             key={option.value}
             type="button"
             aria-pressed={active}
             onClick={() => onChange(option.value)}
-            className={cn(
-              "rounded-xl border p-3 text-left",
-              "transition-[border-color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              active
-                ? "border-primary/50 bg-primary/8"
-                : "border-border/70 bg-card/30 hover:border-border hover:bg-card/60",
-            )}
+            className={cn(CHOICE_CARD, active ? CHOICE_ON : CHOICE_OFF)}
           >
-            <span className="block text-sm font-medium">{option.label}</span>
-            <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
-              {option.hint}
+            <span className="flex items-center gap-2.5">
+              {look ? (
+                <IconTile tone={look.tone}>
+                  <look.icon strokeWidth={2} />
+                </IconTile>
+              ) : null}
+              <span className={cn(TYPE.heading, "min-w-0 flex-1")}>{option.label}</span>
+              <Mark on={active} />
             </span>
+            <span className="tnum block text-[13px] leading-5 text-muted-foreground">{option.hint}</span>
           </button>
         );
       })}
@@ -1216,7 +1270,7 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
       : null;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {hideHeading ? null : (
         <StepHeading
           title="Give it money, or not yet"
@@ -1242,13 +1296,17 @@ export function FundingStep({ draft, update, hideHeading }: StepProps) {
       />
 
       {paper ? (
-        <div className="rounded-xl border border-border/70 bg-card/30 p-3.5">
-          <p className="text-sm font-medium">Paper agents skip funding</p>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Its wallets are still created, and they stay empty until you put something in them.
-            When the record convinces you, fund it from its settings page and switch to live —
-            nothing here is a one-way door.
-          </p>
+        // An aside, not a third choice: no box, so only the two cards above look tappable.
+        <div className="flex gap-2.5">
+          <Info aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <div>
+            <p className="text-[13px] leading-5 font-medium">Paper agents skip funding</p>
+            <p className="mt-0.5 max-w-[60ch] text-[13px] leading-5 text-muted-foreground">
+              Its wallets are still created, and they stay empty until you put something in them.
+              When the record convinces you, fund it from its settings page and switch to live —
+              nothing here is a one-way door.
+            </p>
+          </div>
         </div>
       ) : (
         <>

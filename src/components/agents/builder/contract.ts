@@ -1,6 +1,6 @@
 /**
- * The words the builder's parts agree on: the four steps, the five cards, a place on the
- * page, and the shapes the summaries hand to the agent card. Pure, no React, so the flow
+ * The words the builder's parts agree on: the eight steps, a place on the page, and the
+ * shapes the summaries hand to the agent card. Pure, no React, so the flow
  * and the summaries can be tested in node.
  *
  * Nothing here is saved. The draft, its storage and the payload sent on create are
@@ -10,29 +10,45 @@ import type { LlmKeyRow } from "@/server/types";
 import type { UsdcEstimate } from "@/components/agents/thinking";
 
 /** The steps, in the order the stepper shows them. Also the values `?step=` accepts. */
-export const BUILDER_STEPS = ["strategy", "rules", "brain", "create"] as const;
+export const BUILDER_STEPS = [
+  "name",
+  "strategy",
+  "hunts",
+  "data",
+  "limits",
+  "schedule",
+  "brain",
+  "create",
+] as const;
 export type BuilderStepId = (typeof BUILDER_STEPS)[number];
 
-/** The cards that open and close. Also the values `?open=` accepts. */
+/**
+ * Old links only. The rules used to be cards that opened on one "rules" step, and an
+ * address could name one (`?step=rules&open=risk`). Each is a step of its own now, and
+ * nothing on the page opens or closes: these are kept so an old link still lands.
+ */
 export const CARD_IDS = ["universe", "data", "risk", "schedule", "funding"] as const;
 export type CardId = (typeof CARD_IDS)[number];
 
-/** The step each card sits on. Funding is on the last one, beside the Create button. */
+/** The step that holds what each old card held. */
 export const CARD_STEP: Record<CardId, BuilderStepId> = {
-  universe: "rules",
-  data: "rules",
-  risk: "rules",
-  schedule: "rules",
+  universe: "hunts",
+  data: "data",
+  risk: "limits",
+  schedule: "schedule",
   funding: "create",
 };
 
+/** The old step that held the four rule cards, and the step an address naming it gets. */
+export const LEGACY_RULES_STEP = "rules";
+export const LEGACY_RULES_TARGET: BuilderStepId = "hunts";
+
 /**
- * Somewhere the page can take the user: a step, a card to open on it, and the DOM ids to
- * try for focus, first one that exists wins.
+ * Somewhere the page can take the user: a step, and the DOM ids to try for focus, first
+ * one that exists wins. With none, or none on the page, focus goes to the step's heading.
  */
 export interface Place {
   step: BuilderStepId;
-  card?: CardId;
   focusIds?: string[];
 }
 
@@ -43,7 +59,8 @@ export type StepStatus = "needed" | "ready" | "defaults" | "edited" | "fix";
 
 /** The three things only the user can decide. */
 export type RequiredId = "strategy" | "think" | "name";
-export const REQUIRED_ORDER: readonly RequiredId[] = ["strategy", "think", "name"];
+/** In step order, which is also the order of the ready list on the agent card. */
+export const REQUIRED_ORDER: readonly RequiredId[] = ["name", "strategy", "think"];
 
 /** The `validateDraft` keys that make each required thing not ready. */
 export const REQUIRED_ERROR_KEYS: Record<RequiredId, readonly string[]> = {
@@ -56,7 +73,7 @@ export const REQUIRED_ERROR_KEYS: Record<RequiredId, readonly string[]> = {
 export const REQUIRED_PLACE: Record<RequiredId, Place> = {
   strategy: { step: "strategy", focusIds: ["strategy-prompt"] },
   think: { step: "brain", focusIds: ["llm-key", "llm-key-add", "builder-usdc-model"] },
-  name: { step: "create", focusIds: ["agent-name"] },
+  name: { step: "name", focusIds: ["agent-name"] },
 };
 
 /** One row of "Yours to decide" on the agent card. */
@@ -71,15 +88,18 @@ export interface ReadyItem {
 /** The seven rows of "Already set" on the agent card, in the order they are shown. */
 export type PreviewRowId = "hunts" | "data" | "limits" | "exits" | "runs" | "thinks" | "money";
 
-/** Where a click on each row goes. */
+/**
+ * Where a click on each row goes. Only the exit rules have a spot of their own inside a
+ * step; every other row is a whole step, so focus goes to its heading.
+ */
 export const ROW_PLACE: Record<PreviewRowId, Place> = {
-  hunts: { step: "rules", card: "universe", focusIds: ["rule-card-universe"] },
-  data: { step: "rules", card: "data", focusIds: ["rule-card-data"] },
-  limits: { step: "rules", card: "risk", focusIds: ["rule-card-risk"] },
-  exits: { step: "rules", card: "risk", focusIds: ["risk-exits"] },
-  runs: { step: "rules", card: "schedule", focusIds: ["rule-card-schedule"] },
+  hunts: { step: "hunts" },
+  data: { step: "data" },
+  limits: { step: "limits" },
+  exits: { step: "limits", focusIds: ["risk-exits"] },
+  runs: { step: "schedule" },
   thinks: { step: "brain" },
-  money: { step: "create", card: "funding", focusIds: ["rule-card-funding"] },
+  money: { step: "create" },
 };
 
 export interface PreviewRow {
@@ -99,7 +119,7 @@ export interface CostLine {
 }
 
 /**
- * Every figure the cost sentence, the card summaries and the agent card quote, worked
+ * Every figure the cost sentence, the read-back lines and the agent card quote, worked
  * out once from the draft so no two of them can disagree.
  */
 export interface CostFacts {
@@ -137,7 +157,7 @@ export function parseStep(value: unknown): BuilderStepId | null {
     : null;
 }
 
-/** A card id from an `?open=` value. Exact string match only; anything else is null. */
+/** An old card id from an `?open=` value. Exact string match only; anything else is null. */
 export function parseCard(value: unknown): CardId | null {
   return typeof value === "string" && (CARD_IDS as readonly string[]).includes(value) ? (value as CardId) : null;
 }

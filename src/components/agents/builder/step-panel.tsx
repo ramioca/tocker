@@ -1,4 +1,5 @@
 import type { BuilderStepId } from "./contract";
+import { Facts, SILK_V, TYPE } from "./look";
 import { cn } from "@/lib/utils";
 
 /**
@@ -11,6 +12,9 @@ import { cn } from "@/lib/utils";
  * deep link, a restored draft and the browser's Back button swap the panel at once.
  * Leaving has no motion at all, so an exit is always faster than an entrance. Where
  * `@starting-style` is not supported the panel simply appears.
+ *
+ * A step whose settings start on a default says what they are now (`now`), in the same
+ * sentence the agent card shows, so the user reads the setting before the controls.
  */
 export function StepPanel({
   id,
@@ -19,6 +23,7 @@ export function StepPanel({
   animate,
   title,
   lead,
+  now,
   children,
 }: {
   id: BuilderStepId;
@@ -28,6 +33,8 @@ export function StepPanel({
   animate: boolean;
   title: string;
   lead: React.ReactNode;
+  /** The step's settings as one sentence, read back under the lead. */
+  now?: string;
   children: React.ReactNode;
 }) {
   const titleId = `step-${id}-title`;
@@ -48,11 +55,27 @@ export function StepPanel({
     >
       {/* Focus lands here after a step change, so a screen reader starts at the top of the
           new step. It is not a tab stop. */}
-      <h2 id={titleId} tabIndex={-1} className="text-base font-semibold tracking-tight outline-none">
+      <h2 id={titleId} tabIndex={-1} className={cn(TYPE.display, "mt-2 text-balance outline-none")}>
         {title}
       </h2>
-      <p className="mt-1 text-sm text-muted-foreground">{lead}</p>
-      <div className="mt-6">{children}</div>
+      <p className={cn(TYPE.body, "mt-1 max-w-[60ch] text-pretty sm:mt-2")}>{lead}</p>
+      {now ? <NowLine text={now} className="mt-3" /> : null}
+      <div className="mt-5 sm:mt-8">{children}</div>
     </section>
+  );
+}
+
+/**
+ * What a group of settings comes to, as the one sentence the agent card shows for it.
+ * Quiet on purpose: it is a read-back, not a control and not an announcement.
+ */
+export function NowLine({ text, className }: { text: string; className?: string }) {
+  return (
+    <p className={cn(TYPE.caption, "relative pl-3 text-muted-foreground", className)}>
+      <span aria-hidden className={cn(SILK_V, "absolute inset-y-[3px] left-0 w-0.5 rounded-full")} />
+      <span className="font-medium text-foreground">Now: </span>
+      {/* Breaks between facts, never inside one. */}
+      <Facts text={text} />
+    </p>
   );
 }

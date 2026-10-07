@@ -9,7 +9,7 @@ import { payPerUseAllowedFor } from "@/server/queries/agents";
 export const metadata: Metadata = {
   title: "New agent",
   description:
-    "Give it a strategy, a way to think and a name. Every other rule starts on a default you can change.",
+    "Give it a name, a strategy and a way to think. Every other rule starts on a default you can change.",
 };
 
 export default async function NewAgentPage() {

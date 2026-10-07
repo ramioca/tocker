@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronLeft } from "lucide-react";
+import { ArrowRight, ChevronLeft } from "lucide-react";
 import { LiquidMetal } from "@/components/common/liquid-metal";
 import { MorphButton } from "@/components/spectrumui/morph-button";
 import { MORPH_FOCUS } from "@/components/common/focus";
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { stickyActionbarRef } from "@/hooks/root-flag";
 import type { BuilderStepId, Via } from "./contract";
+import { FOCUS } from "./look";
 
 /** detail is 0 when a click comes from Enter or Space, which must never animate a step. */
 const viaOf = (event: React.MouseEvent): Via => (event.detail === 0 ? "keyboard" : "pointer");
@@ -16,15 +17,24 @@ const PRESS =
   "duration-150 ease-[var(--ease-out-strong)] active:[transform:scale(0.97)] motion-reduce:active:[transform:none]";
 
 /**
+ * The bar's sentence from `sm` up. The figures inside it arrive in mono; here they are
+ * set in the sentence's own face, brighter, so a price reads as one word.
+ */
+const SENTENCE =
+  "hidden min-w-0 flex-1 text-[13px] leading-[18px] text-pretty text-muted-foreground " +
+  "[&_.font-mono]:font-sans [&_.font-mono]:font-medium [&_.font-mono]:text-foreground";
+
+/**
  * The commit bar: what it costs, then the way forward. Sticky glass so the
  * decision is always in reach, above the mobile tab bar on phones.
  *
- * On the first three steps the way forward is Next, which never refuses. On the last it
+ * On every step but the last the way forward is Next, which never refuses. On the last it
  * is the chrome Create button. While something required is still missing on that last
  * step, from `sm` up the cost sentence gives way to a button that says what and takes the
  * user to it, with the money a funded agent will ask them to sign in front of either. A
  * phone has no room for that button; there the stepper and the agent card say what is
- * missing, and the money to be signed gets one line of its own above the buttons.
+ * missing, and the money to be signed gets one line of its own above the buttons. From
+ * `lg` the last step also names the agent in front of the sentence (`identity`).
  *
  * While the agent is being created every way out of the step is off, and the Create
  * button reads "Creating…" whichever copy of it is on screen.
@@ -43,9 +53,10 @@ export function CommitBar({
   signing,
   signingShort,
   peek,
+  identity,
 }: {
   step: BuilderStepId;
-  /** Where Next goes, in words ("Rules"). Null on the last step, which has Create instead. */
+  /** Where Next goes, in words ("Where it hunts"). Null on the last step, which has Create instead. */
   nextLabel: string | null;
   /** Null on the first step. */
   onBack: ((via: Via) => void) | null;
@@ -66,6 +77,8 @@ export function CommitBar({
   signingShort: string | null;
   /** The agent strip shown below `lg`, where the agent card has no column of its own. */
   peek: React.ReactNode;
+  /** The agent about to be created, shown on the last step from `lg`. Decoration: the card says the same. */
+  identity?: React.ReactNode;
 }) {
   // The chrome ring runs only under the pointer or keyboard focus, as in the top bar:
   // the commit bar is on screen the whole time someone writes a strategy, and a ring
@@ -74,7 +87,7 @@ export function CommitBar({
   const [metalFocused, setMetalFocused] = useState(false);
 
   const last = step === "create";
-  // A phone's last step drops the strip's text to give the Create button its width, so
+  // A phone's last step drops the strip's cost line to give the Create button its width, so
   // the money about to be signed takes a line of its own above the buttons.
   const signingLine = last ? signingShort : null;
 
@@ -103,15 +116,23 @@ export function CommitBar({
           strip is all the text the bar has room for; from sm the sentence sits beside it. */}
       <div className="min-w-0 flex-1 sm:max-w-52 sm:flex-none lg:hidden">{peek}</div>
 
+      {last && identity ? (
+        <div aria-hidden className="hidden shrink-0 items-center gap-3 lg:flex">
+          {identity}
+          <span className="h-8 w-px bg-white/[0.10]" />
+        </div>
+      ) : null}
+
       {last && stillNeeded ? (
-        <p className="hidden min-w-0 flex-1 flex-wrap items-center gap-x-2 text-xs leading-4 text-muted-foreground sm:flex">
+        <p className={cn(SENTENCE, "flex-wrap items-center gap-x-2 sm:flex")}>
           {signing}
           <button
             type="button"
             disabled={creating}
             onClick={onStillNeeded}
             className={cn(
-              "inline-flex min-h-11 items-center rounded-lg border border-border px-3 text-left text-xs text-foreground transition-[color,background-color,border-color,transform] hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+              "inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-primary/40 bg-primary/12 px-3.5 text-left text-[13px] font-medium text-primary transition-[color,background-color,border-color,transform] hover:bg-primary/20",
+              FOCUS,
               PRESS,
             )}
           >
@@ -119,7 +140,10 @@ export function CommitBar({
           </button>
         </p>
       ) : (
-        <p className="hidden min-w-0 flex-1 text-xs leading-4 text-muted-foreground sm:block">{sentence}</p>
+        <p className={cn(SENTENCE, "sm:block")}>
+          {/* Never clamped: about 64 characters a line, on as many lines as it takes. */}
+          <span className="block max-w-[64ch]">{sentence}</span>
+        </p>
       )}
 
       {/* A returning user's shortcut. Not on a phone: the bar has no room, and the stepper
@@ -129,7 +153,7 @@ export function CommitBar({
           variant="ghost"
           disabled={creating}
           onClick={(event) => onSkipToEnd(viaOf(event))}
-          className={cn("hidden h-11 shrink-0 px-3 text-muted-foreground sm:inline-flex", PRESS)}
+          className={cn("hidden h-11 shrink-0 px-3 text-[13px] text-muted-foreground md:inline-flex", PRESS)}
         >
           Skip to the end
         </Button>
@@ -141,7 +165,7 @@ export function CommitBar({
           aria-label="Back"
           disabled={creating}
           onClick={(event) => onBack(viaOf(event))}
-          className={cn("size-11 shrink-0 px-0 sm:w-auto sm:px-4", PRESS)}
+          className={cn("size-11 shrink-0 rounded-xl px-0 sm:w-20", PRESS)}
         >
           <ChevronLeft aria-hidden className="size-4 sm:hidden" />
           <span className="hidden sm:inline">Back</span>
@@ -197,13 +221,20 @@ export function CommitBar({
         <Button
           disabled={creating}
           onClick={(event) => onNext(viaOf(event))}
-          className={cn("h-12 shrink-0 px-5 sm:h-11", PRESS)}
+          // A fixed width where the destination is shown, so Back and the shortcut beside
+          // it sit in the same place on every step.
+          className={cn(
+            "h-12 shrink-0 gap-2 rounded-xl px-5 font-semibold sm:h-11 xl:w-64 xl:justify-between",
+            "shadow-[inset_0_1px_0_0_rgb(255_255_255/0.3)] hover:bg-[#c79bff] disabled:shadow-none",
+            PRESS,
+          )}
         >
           <span>
             Next
             {/* The destination only where the bar has the width for it. */}
             {nextLabel ? <span className="hidden xl:inline">: {nextLabel}</span> : null}
           </span>
+          <ArrowRight aria-hidden className="hidden size-4 xl:block" />
         </Button>
       )}
     </div>
