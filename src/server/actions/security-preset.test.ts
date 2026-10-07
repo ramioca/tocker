@@ -17,24 +17,31 @@ import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import { usdcChoiceProblem } from "@/lib/agent/inference";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { FIRST_TRADE_PRESET } from "@/lib/security/live-readiness";
+import { describeInferenceStop } from "@/lib/x402/inference-types";
 import type { Session } from "@/server/types";
 
 let session: Session | null = null;
 const checkedWith = vi.fn();
+/** A stand-in for the preset, for the one case that asks what the action does with a bad one. Null: the real preset. */
+const preset = vi.hoisted(() => ({ instead: null as null | ((config: AgentConfig) => AgentConfig) }));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined, revalidateTag: () => undefined }));
 vi.mock("@/lib/auth", () => ({
   getSession: async () => session,
   requireSession: async () => session,
 }));
-vi.mock("@/lib/security/live-readiness", async (importOriginal) => ({
-  // The preset is the real one. The checklist reads wallets and the chain, so it is not.
-  ...(await importOriginal<typeof import("@/lib/security/live-readiness")>()),
-  evaluateLiveReadiness: async (input: { config: AgentConfig }) => {
-    checkedWith(input.config);
-    return { ready: true, steps: [] };
-  },
-}));
+vi.mock("@/lib/security/live-readiness", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/security/live-readiness")>();
+  return {
+    // The preset is the real one (unless a case swaps it). The checklist reads wallets and the chain, so it is not.
+    ...real,
+    withFirstTradePreset: (config: AgentConfig) => (preset.instead ? preset.instead(config) : real.withFirstTradePreset(config)),
+    evaluateLiveReadiness: async (input: { config: AgentConfig }) => {
+      checkedWith(input.config);
+      return { ready: true, steps: [] };
+    },
+  };
+});
 vi.mock("@/lib/security/mfa", () => ({
   secondFactorBlock: async () => null,
   getMfaStatus: async () => ({ available: false, appMethods: [], userMethods: [], enrolled: false }),
@@ -63,6 +70,7 @@ beforeAll(async () => {
 beforeEach(() => {
   session = null;
   checkedWith.mockReset();
+  preset.instead = null;
 });
 
 const PAYS_PER_USE: AgentConfig["llm"] = {
@@ -111,6 +119,47 @@ describe("applyFirstTradePresetAction", () => {
       .where(and(eq(schema.auditEvents.agentId, agent.agentId), eq(schema.auditEvents.kind, "first_trade_preset")));
     expect(audit?.summary).toContain("solana only");
     expect(audit?.metadata).toMatchObject({ before: { chains: ["base", "solana"] }, after: { chains: ["solana"] } });
+  });
+
+  /**
+   * The rule "an agent that pays per use trades Solana" is checked by every other save of
+   * a config. The preset is the one writer that changes an agent's chains without going
+   * through them, so the action makes the check itself and does not rest on the preset
+   * getting it right. Here the preset is swapped for the old one, which kept the first
+   * chain: nothing is written, and the owner reads the sentence the settings form gives.
+   */
+  it("refuses, and writes nothing, if the preset would take Solana off an agent that pays per use", async () => {
+    const agent = await ownedAgent(["base", "solana"], PAYS_PER_USE);
+    preset.instead = (config) => ({ ...config, chains: [config.chains[0] ?? "base"] });
+
+    expect(await applyFirstTradePresetAction(agent.agentId)).toEqual({ ok: false, error: describeInferenceStop("no_wallet").detail });
+
+    const saved = await configOf(agent.agentId);
+    expect(saved.chains).toEqual(["base", "solana"]);
+    expect(saved.risk.maxTradeUsd).toBe(100);
+    expect(checkedWith).not.toHaveBeenCalled();
+    expect(
+      await db
+        .select({ id: schema.auditEvents.id })
+        .from(schema.auditEvents)
+        .where(and(eq(schema.auditEvents.agentId, agent.agentId), eq(schema.auditEvents.kind, "first_trade_preset"))),
+    ).toHaveLength(0);
+
+    // The same stand-in on a key agent is the preset it always had: nothing to refuse.
+    const key = await ownedAgent(["base", "solana"]);
+    expect((await applyFirstTradePresetAction(key.agentId)).ok).toBe(true);
+    expect((await configOf(key.agentId)).chains).toEqual(["base"]);
+  });
+
+  it("does not refuse over a problem the agent already had: the preset makes it no worse", async () => {
+    // Pay per use with no Solana chain: no form can save this, and its run is refused where it starts.
+    const agent = await ownedAgent(["base"], PAYS_PER_USE);
+    expect(usdcChoiceProblem(await configOf(agent.agentId))).not.toBeNull();
+
+    expect((await applyFirstTradePresetAction(agent.agentId)).ok).toBe(true);
+    const saved = await configOf(agent.agentId);
+    expect(saved.chains).toEqual(["base"]);
+    expect(saved.risk.maxTradeUsd).toBe(FIRST_TRADE_PRESET.maxTradeUsd);
   });
 
   it("keeps a key agent's first chain, as it always has", async () => {

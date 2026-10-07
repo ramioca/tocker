@@ -20,7 +20,10 @@
  *
  * Nothing here signs, sends or reads a chain. Text that came from outside (a gateway's
  * error, a model id it reported) is redacted before it is stored, and a database error is
- * only ever logged through `dbErrorForLog`.
+ * only ever logged through `dbErrorForLog`. It writes its own three tables and, in one
+ * place, one column of another: `syncRunInferenceSpend` rewrites a run's recorded
+ * thinking spend (`agent_runs.inference_spend_usd`) from the ledger's rows, for the
+ * reconciler to call when a row of that run turns out never to have been charged.
  *
  * Server only: this file imports the database. The rules a screen may need (the caps, the
  * look-again times, the shape of a day's usage and of the switches) are pure and live in
@@ -86,12 +89,20 @@ export const INFERENCE_CONTROL_ID = "global";
 export const PLATFORM_SCOPE_ID = "all";
 /** What the reason column starts with while the halt is off: the ISO time it was cleared follows. */
 const CLEARED_PREFIX = "cleared ";
-/** After the admin's own note in a cleared reason: the transaction ids the clearing acknowledged. */
+/**
+ * Ends a stored reason, cleared or on: the transaction ids that clearing a halt has
+ * acknowledged. The table has no column of its own for them. They stay behind the reason
+ * of a later halt too, so what one clear acknowledged is not forgotten by the next.
+ */
 const ACKNOWLEDGED_MARK = " | acknowledged: ";
+/** That ending, as stored: the mark, then nothing but transaction ids and spaces. Read by this file and, as a pattern, by Postgres. */
+const ACKNOWLEDGED_TAIL = / \| acknowledged: [1-9A-HJ-NP-Za-km-z ]*$/;
+/** What the mark becomes inside text that came from outside, so no reason can pass for that ending. */
+const ACKNOWLEDGED_MARK_IN_TEXT = " | acknowledged; ";
 /** A Solana transaction id as it appears in a halt reason. Addresses are shorter and are not matched. */
 const TRANSACTION_ID = /[1-9A-HJ-NP-Za-km-z]{64,90}/g;
-/** How many acknowledged transaction ids a cleared reason keeps. */
-const MAX_ACKNOWLEDGED = 24;
+/** How many acknowledged transaction ids are kept: the newest. One that falls off halts again if it is still in view. */
+export const MAX_ACKNOWLEDGED = 64;
 /** The most a halt reason grows to as further evidence is added to it. */
 export const MAX_HALT_REASON = 4000;
 /** Ends a halt reason that had no room for more. The rest is in the server log. */
@@ -190,6 +201,31 @@ function transactionIdsIn(text: string | null | undefined): string[] {
   return [...new Set(text?.match(TRANSACTION_ID) ?? [])];
 }
 
+/** Outside text bound for the reason column: redacted, bounded, and unable to pass for the acknowledged ending. */
+function reasonText(text: unknown): string {
+  return clean(text, MAX_DETAIL).split(ACKNOWLEDGED_MARK).join(ACKNOWLEDGED_MARK_IN_TEXT);
+}
+
+/** A stored reason, apart: what it says, and the transaction ids kept behind it. */
+function splitReason(stored: string | null | undefined): { body: string; acknowledged: string[] } {
+  const text = stored ?? "";
+  const tail = ACKNOWLEDGED_TAIL.exec(text);
+  if (!tail) return { body: text, acknowledged: [] };
+  return { body: text.slice(0, tail.index), acknowledged: transactionIdsIn(tail[0]) };
+}
+
+function joinReason(body: string, acknowledged: readonly string[]): string {
+  return acknowledged.length > 0 ? `${body}${ACKNOWLEDGED_MARK}${acknowledged.join(" ")}` : body;
+}
+
+/**
+ * For the reason column of a halt being thrown over an existing row: the new reason, with
+ * the acknowledged ending of whatever the row held kept behind it. One expression, so the
+ * statement that throws the halt is still a single one. `excluded` is the row it tried to
+ * insert.
+ */
+const HALT_REASON_KEEPING_ACKNOWLEDGED = sql`nullif(coalesce(excluded.halt_reason, '') || coalesce(substring(${inferenceControl.haltReason} from ${ACKNOWLEDGED_TAIL.source}::text), ''), '')`;
+
 function scopesOf(row: { ownerId: string; agentId: string | null }): Array<{ scope: "platform" | "owner" | "agent"; scopeId: string }> {
   // Always this order. See the note on lock order at the top of the file.
   const scopes: Array<{ scope: "platform" | "owner" | "agent"; scopeId: string }> = [
@@ -219,15 +255,17 @@ async function readControl(runner: Runner): Promise<InferenceControlState> {
     .limit(1);
   if (!row) return INFERENCE_CONTROL_CLEAR;
   // While the halt is off, the reason column holds when it was last cleared (see
-  // `setInferenceHalt`). Readers get that as a date, and no reason for a halt that is not on.
-  const wasCleared = !row.halted && row.haltReason?.startsWith(CLEARED_PREFIX) ? row.haltReason : null;
-  const cleared = wasCleared ? new Date(wasCleared.slice(CLEARED_PREFIX.length, CLEARED_PREFIX.length + 24)) : null;
-  const mark = wasCleared ? wasCleared.lastIndexOf(ACKNOWLEDGED_MARK) : -1;
+  // `setInferenceHalt`). Readers get that as a date, and no reason for a halt that is not
+  // on. The acknowledged transaction ids sit behind either kind of reason and are never
+  // part of what a reader is shown as the reason.
+  const { body, acknowledged } = splitReason(row.haltReason);
+  const wasCleared = !row.halted && body.startsWith(CLEARED_PREFIX);
+  const cleared = wasCleared ? new Date(body.slice(CLEARED_PREFIX.length, CLEARED_PREFIX.length + 24)) : null;
   return {
     ...row,
-    haltReason: row.halted ? row.haltReason : null,
+    haltReason: row.halted && body !== "" ? body : null,
     haltClearedAt: cleared && Number.isFinite(cleared.getTime()) ? cleared : null,
-    haltAcknowledged: wasCleared && mark >= 0 ? transactionIdsIn(wasCleared.slice(mark + ACKNOWLEDGED_MARK.length)) : [],
+    haltAcknowledged: row.halted || wasCleared ? acknowledged : [],
   };
 }
 
@@ -715,15 +753,43 @@ export async function releaseStaleReserved(olderThan: Date, limit = 50, now: Dat
  * there is one and the quoted amount otherwise.
  */
 export async function runInferenceSpend(runId: string): Promise<{ usd: number; requests: number }> {
-  const db = await getDb();
-  const [row] = await db
+  const spent = await readRunSpend(await getDb(), runId);
+  return { usd: toNum(spent.usd), requests: spent.requests };
+}
+
+/** The one definition of what a run has spent, read through whichever runner asks. The sum stays a `numeric` string. */
+async function readRunSpend(runner: Runner, runId: string): Promise<{ usd: string; requests: number }> {
+  const [row] = await runner
     .select({
-      usd: sql<string>`coalesce(sum(coalesce(${inferencePayments.settledUsd}, ${inferencePayments.quotedUsd})), 0)`,
+      usd: sql<string>`coalesce(sum(coalesce(${inferencePayments.settledUsd}, ${inferencePayments.quotedUsd})), 0)::numeric(18,6)`,
       requests: sql<number>`count(*)::int`,
     })
     .from(inferencePayments)
     .where(and(eq(inferencePayments.runId, runId), inArray(inferencePayments.status, [...CHARGED_STATUSES, "simulated"])));
-  return { usd: toNum(row?.usd), requests: Number(row?.requests ?? 0) };
+  return { usd: row?.usd ?? "0", requests: Number(row?.requests ?? 0) };
+}
+
+/**
+ * Write a run's thinking spend again from the ledger's rows, after a row of that run
+ * stopped counting (the reconciler proved it was never charged). The run wrote the figure
+ * itself when it finished, while that row still counted; without this the run would go
+ * on showing a charge the ledger has since taken back.
+ *
+ * It writes one column of one row of `agent_runs`, `inference_spend_usd`, and nothing
+ * else, to exactly what `runInferenceSpend` reads. The run's row is locked first and the
+ * sum read after, so two verdicts on one run at the same moment leave the later sum, not
+ * whichever was written last. Returns whether there was a run to write to.
+ */
+export async function syncRunInferenceSpend(runId: string): Promise<boolean> {
+  if (!runId) return false;
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const [run] = await tx.select({ id: agentRuns.id }).from(agentRuns).where(eq(agentRuns.id, runId)).limit(1).for("update");
+    if (!run) return false;
+    const spent = await readRunSpend(tx, runId);
+    await tx.update(agentRuns).set({ inferenceSpendUsd: spent.usd }).where(eq(agentRuns.id, runId));
+    return true;
+  }, READ_COMMITTED);
 }
 
 /** What the three counters hold for one UTC day. `day` is `YYYY-MM-DD`, or a moment in that day. */
@@ -788,23 +854,23 @@ export async function readInferenceControl(): Promise<InferenceControlState> {
  * `halted`, on every server, from its next call. The caller checks that `by` is an admin.
  *
  * Clearing it records the moment in the reason column (the table has no column of its
- * own for it). That moment is what stops the reconciler from throwing the halt again
- * five minutes later over the same transaction the admin has just looked at. The
- * transaction ids named in the reason being cleared are kept beside it, for the
- * transactions a node reports with no time on them: those cannot be placed before or
- * after the moment, so they are recognised by id.
+ * own for it), and beside it the transaction ids named in the reason being cleared. Those
+ * ids are what the clear acknowledges: the reconciler does not throw the halt again over
+ * a transaction an admin has had named to them and has cleared. They are kept through
+ * later halts and later clears (the newest `MAX_ACKNOWLEDGED` of them), so a second halt
+ * over something else does not bring the first one back.
  */
 export async function setInferenceHalt(input: { halted: boolean; reason: string | null; by: string }): Promise<void> {
   const now = new Date();
-  const note = cleanOrNull(input.reason, MAX_DETAIL);
+  const note = reasonText(input.reason ?? "");
   const by = clean(input.by);
   const db = await getDb();
   if (input.halted) {
-    const values = { halted: true, haltReason: note, updatedBy: by, updatedAt: now };
+    const values = { halted: true, haltReason: note === "" ? null : note, updatedBy: by, updatedAt: now };
     await db
       .insert(inferenceControl)
       .values({ id: INFERENCE_CONTROL_ID, ...values })
-      .onConflictDoUpdate({ target: inferenceControl.id, set: values });
+      .onConflictDoUpdate({ target: inferenceControl.id, set: { ...values, haltReason: HALT_REASON_KEEPING_ACKNOWLEDGED } });
     return;
   }
   const clearedNote = `${CLEARED_PREFIX}${now.toISOString()}${note ? ` ${note}` : ""}`.slice(0, MAX_DETAIL);
@@ -817,18 +883,12 @@ export async function setInferenceHalt(input: { halted: boolean; reason: string 
       .where(eq(inferenceControl.id, INFERENCE_CONTROL_ID))
       .limit(1)
       .for("update");
-    // What this clear acknowledges: the ids in the reason that was on, or, when no halt
-    // was on, the ones the last clear already acknowledged.
-    const reason = current?.haltReason ?? "";
-    const mark = reason.lastIndexOf(ACKNOWLEDGED_MARK);
-    const before = current?.halted ? reason : mark >= 0 ? reason.slice(mark) : "";
-    const acknowledged = transactionIdsIn(before).slice(-MAX_ACKNOWLEDGED);
-    const values = {
-      halted: false,
-      haltReason: acknowledged.length > 0 ? `${clearedNote}${ACKNOWLEDGED_MARK}${acknowledged.join(" ")}` : clearedNote,
-      updatedBy: by,
-      updatedAt: now,
-    };
+    // What this clear acknowledges: everything earlier clears did, and the ids named in
+    // the reason that was on. With no halt on there is nothing new to acknowledge.
+    const { body, acknowledged: earlier } = splitReason(current?.haltReason);
+    const named = current?.halted ? transactionIdsIn(body) : [];
+    const acknowledged = [...earlier.filter((id) => !named.includes(id)), ...named].slice(-MAX_ACKNOWLEDGED);
+    const values = { halted: false, haltReason: joinReason(clearedNote, acknowledged), updatedBy: by, updatedAt: now };
     await tx
       .insert(inferenceControl)
       .values({ id: INFERENCE_CONTROL_ID, ...values })
@@ -842,20 +902,26 @@ export async function setInferenceHalt(input: { halted: boolean; reason: string 
  *
  * When a halt is already on, the first reason stays at the head and stays the one whose
  * author is recorded, but the new finding is not dropped: it is logged, and added to the
- * stored reason (bounded, each finding once). Clearing a halt tells the reconciler that
- * everything up to that moment has been looked at, so an admin must be able to read
- * everything the clear will acknowledge, not only what was found first.
+ * stored reason (bounded, each finding once). Clearing a halt acknowledges the
+ * transactions its reason names and nothing else, so an admin can read everything the
+ * clear will acknowledge, and a finding that had no room in the reason is raised again
+ * after the clear instead of being passed over unread.
  */
 export async function haltInferenceOnce(reason: string, by: string): Promise<boolean> {
   const now = new Date();
-  const text = clean(reason, MAX_DETAIL);
+  const text = reasonText(reason);
   const who = clean(by);
   const values = { halted: true, haltReason: text, updatedBy: who, updatedAt: now };
   const db = await getDb();
   const thrown = await db
     .insert(inferenceControl)
     .values({ id: INFERENCE_CONTROL_ID, ...values })
-    .onConflictDoUpdate({ target: inferenceControl.id, set: values, setWhere: eq(inferenceControl.halted, false) })
+    .onConflictDoUpdate({
+      target: inferenceControl.id,
+      // What earlier clears acknowledged stays behind the new reason.
+      set: { ...values, haltReason: HALT_REASON_KEEPING_ACKNOWLEDGED },
+      setWhere: eq(inferenceControl.halted, false),
+    })
     .returning({ id: inferenceControl.id });
   if (thrown.length > 0) {
     console.error(`[inference] HALTED by ${who}: ${text}`);
@@ -883,10 +949,13 @@ async function addToHaltReason(text: string, by: string, now: Date): Promise<"ad
       .where(and(eq(inferenceControl.id, INFERENCE_CONTROL_ID), eq(inferenceControl.halted, true)))
       .limit(1)
       .for("update");
-    // Cleared between the two statements: there is no halt to add to, and the caller's
-    // next pass throws a fresh one if the evidence is newer than the clear.
+    // Cleared between the two statements: there is no halt to add to. The finding was
+    // not in the reason that was cleared, so the caller's next pass throws a fresh halt
+    // over it.
     if (!row) return "known" as const;
-    const current = row.haltReason ?? "";
+    // The ids earlier clears acknowledged are not part of the reason: they are set
+    // aside here and put back behind whatever the reason becomes.
+    const { body: current, acknowledged } = splitReason(row.haltReason);
     if (text === "" || current.includes(text)) return "known" as const;
     // Already closed off with the note that more is in the log: nothing further is stored.
     if (current.endsWith(MORE_IN_LOG)) return "full" as const;
@@ -899,7 +968,7 @@ async function addToHaltReason(text: string, by: string, now: Date): Promise<"ad
     const fits = grown.length + MORE_IN_LOG.length <= MAX_HALT_REASON;
     await tx
       .update(inferenceControl)
-      .set({ haltReason: fits ? grown : `${current}${MORE_IN_LOG}`, updatedAt: now })
+      .set({ haltReason: joinReason(fits ? grown : `${current}${MORE_IN_LOG}`, acknowledged), updatedAt: now })
       .where(eq(inferenceControl.id, INFERENCE_CONTROL_ID));
     return fits ? ("added" as const) : ("full" as const);
   }, READ_COMMITTED);

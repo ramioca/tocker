@@ -73,10 +73,12 @@ export function isThinkingProviderAddress(address: string): boolean {
  *  - USDC itself, which the Deposit sheet puts on the clipboard with its own copy button;
  *  - the address pay-per-use thinking is paid to. Money an agent sends there outside a
  *    paid step is a gift to the provider, and it is more than that: every transfer from
- *    an agent's wallet to that address is expected to match a row in the thinking ledger,
- *    and one that matches none is taken as a payment the ledger missed, which stops
- *    pay-per-use for every agent until an admin has looked. A withdrawal must never be
- *    able to look like that.
+ *    an agent's wallet to that address is expected to match a row in the thinking ledger.
+ *    One that matches none is treated as a fault by the check that compares the ledger
+ *    with the chain (`inference-reconcile.ts`): the agent that sent it is put on hold,
+ *    and if the transfer looks like a payment, pay-per-use is stopped for every agent
+ *    until an admin has looked. An owner must not be able to cause either with a
+ *    withdrawal, so a withdrawal is never sent there.
  *
  * It only ever refuses more.
  *

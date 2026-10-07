@@ -1025,6 +1025,27 @@ describe("a balance the chain could not give", () => {
     expect(await noticesFor(agent.userId)).toHaveLength(1);
   });
 
+  /**
+   * The note of a first failure is `inference_hold_since` on a row with no hold. A run
+   * that works wipes everything about a hold, and that has to include the note: one
+   * written by a second look while the run was in flight would otherwise sit on the row
+   * and make the next blip, up to an hour later, count as one that had lasted.
+   */
+  it("is forgotten by a run that works, like everything else about a hold", async () => {
+    const agent = await payingAgent();
+    expect(await admit(agent.agentId, NOW, chain(null))).toEqual({ ok: false, kind: "later" });
+    expect(await rowOf(agent.agentId)).toMatchObject({ inferenceHold: null, inferenceHoldSince: NOW });
+
+    // What the run loop calls once a run has ended well.
+    await clearInferenceHold(agent.agentId);
+    expect(await rowOf(agent.agentId)).toMatchObject({ inferenceHold: null, inferenceHoldSince: null, inferenceHoldUntil: null, inferenceStrikes: 0, inferenceNotifiedAt: null });
+
+    // So a blip eleven minutes after the first is a first one again.
+    expect(await admit(agent.agentId, minutes(11), chain(null))).toEqual({ ok: false, kind: "later" });
+    expect((await rowOf(agent.agentId)).inferenceHold).toBeNull();
+    expect(await noticesFor(agent.userId)).toHaveLength(0);
+  });
+
   it("tells a run started by hand to try again, without holding the agent", async () => {
     const agent = await payingAgent();
     expect(await admit(agent.agentId, NOW, chain(null), "manual")).toEqual({ ok: false, kind: "later" });

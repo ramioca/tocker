@@ -151,12 +151,19 @@ describe("GET /api/cron/inference", () => {
       reconcile: {
         skipped: "mock",
         staleReleased: 0,
+        gaveUp: 0,
         examined: 0,
         charged: 0,
+        confirmed: 0,
         notCharged: 0,
+        runsResynced: 0,
         waiting: 0,
         stuck: 0,
+        unproven: 0,
         unknownTransfers: 0,
+        strayTransfers: 0,
+        heldAgents: 0,
+        decoys: 0,
         mismatches: 0,
         unchecked: 0,
         rpcCalls: 0,
@@ -170,6 +177,15 @@ describe("GET /api/cron/inference", () => {
     expect(fetched).not.toHaveBeenCalled();
     expect(await db.select().from(inferenceControl)).toHaveLength(0);
     expect(await db.select().from(inferenceBudgetDays)).toHaveLength(0);
+    expect(await db.select().from(inferencePayments)).toHaveLength(0);
+  });
+
+  it("answers with counts and fixed words only, whatever the reconciler counts", async () => {
+    const body = await (await call()).json();
+    // Every figure the pass reports is a number, a flag, or the one fixed word for why it did not look.
+    for (const [key, value] of Object.entries(body.reconcile as Record<string, unknown>)) {
+      expect(key === "skipped" ? [null, "mock", "no_rpc"].includes(value as string | null) : typeof value === "number" || typeof value === "boolean").toBe(true);
+    }
   });
 
   it("runs the reconciler: a row never signed and long abandoned is released", async () => {
@@ -235,19 +251,34 @@ describe("GET /api/cron/inference", () => {
     expect(logged).not.toContain("agent-secretive");
   });
 
+  /** A step paid (or maybe paid) a minute ago with no answer, by this agent of this account. */
+  async function unanswered(ownerId: string, agentId: string, at: Date): Promise<void> {
+    const open = await seedOpenPayment();
+    await db
+      .update(inferencePayments)
+      .set({ ownerId, agentId, runId: `run-${agentId}-${open.id}`, signedAt: at, createdAt: at })
+      .where(eq(inferencePayments.id, open.id));
+  }
+
   it("reports a breaker that tripped, by its rule and its end", async () => {
     const real = new Date();
-    for (const agentId of ["agent-1", "agent-1", "agent-2"]) {
-      const open = await seedOpenPayment();
-      await db
-        .update(inferencePayments)
-        .set({ agentId, runId: `run-${agentId}-${open.id}`, signedAt: new Date(real.getTime() - 60_000), createdAt: new Date(real.getTime() - 60_000) })
-        .where(eq(inferencePayments.id, open.id));
-    }
+    const at = new Date(real.getTime() - 60_000);
+    // Three unanswered steps from two accounts.
+    await unanswered("owner-a", "agent-1", at);
+    await unanswered("owner-a", "agent-1", at);
+    await unanswered("owner-b", "agent-2", at);
     const body = await (await call()).json();
     expect(body.breakers.tripped).toBe("unanswered");
     expect(new Date(body.breakers.pausedUntil).getTime()).toBeGreaterThan(real.getTime() + 28 * 60_000);
     expect(await db.select().from(inferenceControl)).toHaveLength(1);
+  });
+
+  it("does not pause everyone over one account's unanswered steps, however many agents it has", async () => {
+    const at = new Date(Date.now() - 60_000);
+    for (const agentId of ["agent-1", "agent-1", "agent-2", "agent-3"]) await unanswered("owner-a", agentId, at);
+    const body = await (await call()).json();
+    expect(body.breakers).toEqual({ tripped: null, pausedUntil: null });
+    expect(await db.select().from(inferenceControl)).toHaveLength(0);
   });
 
   it("answers POST the same way", async () => {

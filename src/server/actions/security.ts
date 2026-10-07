@@ -15,7 +15,7 @@
  * only way its money leaves: the older, ungated mode and withdraw actions are gone.
  */
 import { revalidatePath } from "next/cache";
-import { thinkSource } from "@/lib/agent/inference";
+import { thinkSource, usdcChoiceProblem } from "@/lib/agent/inference";
 import { z } from "zod";
 import { and, eq, gt, inArray } from "drizzle-orm";
 import { agents, getDb, positions, trades, type Db } from "@/db";
@@ -228,6 +228,14 @@ export async function applyFirstTradePresetAction(agentId: string): Promise<Acti
   const next: AgentConfig = withFirstTradePreset(before);
   const parsed = agentConfigSchema.safeParse(next);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "The preset produced an invalid config");
+  // The preset changes an agent's chains, and an agent that pays for its own thinking
+  // pays from its Solana wallet. `withFirstTradePreset` keeps Solana for such an agent;
+  // this is the same check every other save of a config makes (`createAgent`,
+  // `updateAgent`), made here too so the rule does not rest on that function alone. Only
+  // a problem the preset itself would introduce is refused: a config that already had
+  // one is no worse for a smaller trade cap, and its run is refused where it starts.
+  const brokenByPreset = usdcChoiceProblem(before) === null ? usdcChoiceProblem(parsed.data) : null;
+  if (brokenByPreset) return fail(brokenByPreset);
 
   /**
    * The preset lowers `maxTradeUsd`, and the wallet policy has to come down with it.
@@ -488,7 +496,9 @@ export async function secureWithdrawAction(input: {
   if (!raw) return fail("Enter a destination address");
   // The same check the form runs, checksum included: a mixed-case Base address with a
   // typo is refused here in words, not later by the signer in its own. So are the other
-  // chain's address, a .sol or .eth name and the USDC token itself.
+  // chain's address, a .sol or .eth name, the USDC token itself, and the address
+  // pay-per-use thinking is paid to (a transfer there that no paid step explains is
+  // treated as a fault in the thinking ledger: see `destinationProblemForChain`).
   const problem = destinationProblemForChain(input.chain, raw);
   if (problem) return fail(problem);
   const to = normalizeAddressForChain(input.chain, raw);

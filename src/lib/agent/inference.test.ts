@@ -398,6 +398,30 @@ describe("holds", () => {
       const lifted: HoldState = { ...none, inferenceHoldSince: new Date(NOW.getTime() - 5 * 3_600_000), inferenceNotifiedAt: NOW };
       expect(minutesFrom(NOW, nextHold(lifted, "flag_off", NOW).inferenceHoldUntil)).toBe(15);
     });
+
+    /**
+     * "Held since" is when the agent went on hold and is kept when the reason changes. An
+     * agent held for an empty wallet three hours ago, for which the switch then goes off,
+     * is looked at in fifteen minutes the first time and from then on by how long it has
+     * been held in all: it waits longer, never past the table's last wait, and its strikes
+     * are what they were.
+     */
+    it("waits the first wait when the reason has just changed to the switch, then by how long it has been held", () => {
+      const since = new Date(NOW.getTime() - 3 * 3_600_000);
+      const held: HoldState = { ...none, inferenceHold: "needs_funds", inferenceHoldSince: since, inferenceStrikes: 2, inferenceNotifiedAt: since };
+
+      const first = nextHold(held, "flag_off", NOW);
+      expect(minutesFrom(NOW, first.inferenceHoldUntil)).toBe(15);
+      expect(first).toMatchObject({ inferenceHoldSince: since, inferenceStrikes: 2, notify: false });
+
+      const at = first.inferenceHoldUntil;
+      const second = nextHold({ ...held, ...first }, "flag_off", at);
+      expect(minutesFrom(at, second.inferenceHoldUntil)).toBe(120);
+      expect(second.inferenceStrikes).toBe(2);
+
+      const aWeekOn = new Date(NOW.getTime() + 7 * 86_400_000);
+      expect(minutesFrom(aWeekOn, nextHold({ ...held, ...first }, "flag_off", aWeekOn).inferenceHoldUntil)).toBe(360);
+    });
   });
 
   it("waits for the next UTC day on a day limit, and fifteen minutes on a pause, whatever the strikes", () => {

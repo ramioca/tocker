@@ -201,7 +201,8 @@ function ThinkingItem({
         <p className="tnum">
           {formatUsd(thinking.checkingAnsweredUsd)} more is for {formatCount(thinking.checkingAnsweredSteps)}{" "}
           answered step{plural(thinking.checkingAnsweredSteps)} whose payment is still being confirmed on the chain.
-          It joins the total when it is.
+          It joins the total when it is. If the chain shows a payment never landed, that step was not charged and
+          its amount is dropped from here.
         </p>
       ) : null}
       {thinking.checkingSteps > 0 && !former ? (

@@ -290,6 +290,9 @@ describe("what is counted as charged and not proven", () => {
     expect(html).toContain("$0.01 more was signed for 1 step whose request failed");
     expect(html).toContain("it joins the total only if it did");
     expect(html).toContain("$0.09 more is for 2 answered steps whose payment is still being confirmed on the chain");
+    // Both ways it can end are said: an answered step can also turn out to have been free.
+    expect(html).toContain("It joins the total when it is.");
+    expect(html).toContain("If the chain shows a payment never landed, that step was not charged");
     // And what that does to the P&L in the meantime is said, not left to be discovered.
     expect(html).toContain("none of that is taken out of the P&amp;L above");
     // The list is of steps that got no answer: three of them, whatever was answered.

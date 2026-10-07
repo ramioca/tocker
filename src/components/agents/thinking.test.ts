@@ -537,17 +537,35 @@ describe("a run's thinking line, as the run list words it", () => {
   it("calls the amount counted, never paid, and says where the confirmed figure is", () => {
     const shown = runThinkingShown(runThinking(row)!);
     expect(shown).toEqual({ amount: "$0.073", amountNote: RUN_SPEND_NOTE, notFinal: false, stop: null, sentence: null });
-    // The figure is written once at run end and never rewritten, so the row does not
-    // claim more for it than that.
+    // The figure is what the ledger counted as charged, which is more than what is
+    // proven paid, so the row does not claim more for it than that.
     expect(RUN_SPEND_NOTE).not.toMatch(/\bpaid\b/i);
-    expect(RUN_SPEND_NOTE).toContain("counted at when it ended");
+    expect(RUN_SPEND_NOTE).toContain("counted as charged");
     expect(RUN_SPEND_NOTE).toContain("Money has what the chain confirmed");
+  });
+
+  it("says on every run, not only a stopped one, that counted is not confirmed and a step can turn out not charged", () => {
+    // Any counted step can turn out never to have been charged after the run row is
+    // written: an answered step the gateway gave no proof of payment for, or a step that
+    // was signed for and never sent because the run's clock ran out. Neither leaves a
+    // stop reason that says so, so the plain note has to carry it. It is worded to hold
+    // both before the reconciler has brought the stored figure down and after.
+    for (const stopReason of [null, "deadline", "run_cap", "step_limit", "signature_failed"]) {
+      const shown = runThinkingShown(runThinking({ ...row, stopReason })!);
+      expect(shown.amountNote, String(stopReason)).toBe(RUN_SPEND_NOTE);
+      expect(shown.amountNote, String(stopReason)).toContain("Counted is not confirmed");
+      expect(shown.amountNote, String(stopReason)).toContain("one the chain shows never landed was not charged");
+      expect(shown.amountNote, String(stopReason)).not.toMatch(CLAIMS_PAID);
+      // Nothing in it depends on whether the figure was written again since.
+      expect(shown.amountNote, String(stopReason)).not.toMatch(/rewritten|still in it|when it ended/);
+    }
   });
 
   it("does not call a step paid when the run stopped because it got no answer", () => {
     // Signed, the request failed, the run stopped with paid_no_answer and its amount was
     // written including that step. The reconciler may since have proved the payment never
-    // landed (not_charged): nothing rewrites the run row, so its words must hold either way.
+    // landed (not_charged). The stored sentence is never rewritten, and the stored amount
+    // only by a best-effort write after that verdict, so the row's words must hold either way.
     const thinking = runThinking({ ...row, inferenceSpendUsd: "0.012000", stopReason: "paid_no_answer" })!;
 
     const shown = runThinkingShown(thinking);
@@ -562,7 +580,10 @@ describe("a run's thinking line, as the run list words it", () => {
     }
     expect(shown.stop!.detail).toContain("signed a payment for one step");
     expect(shown.stop!.detail).toContain("if the chain shows it never did, nothing was charged");
-    expect(shown.amountNote).toContain("it was not charged and the real figure is lower");
+    expect(shown.amountNote).toContain("it was not charged and the figure is lower");
+    // True before the reconciler has taken that step off the stored figure and after:
+    // the note does not say the step is certainly still counted.
+    expect(shown.amountNote).toContain("for as long as the ledger counts it");
   });
 
   it("marks the amount as not final after a rerouted step too, and keeps that stop's own words", () => {

@@ -16,6 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { APICallError, ToolChoiceViolationError } from "ai";
 import { and, asc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
+import { Keypair } from "@solana/web3.js";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import type { AgentConfig } from "@/db/schema";
@@ -67,13 +68,39 @@ vi.mock("@/lib/x402/inference-ledger", async (importOriginal) => {
 /** Every call the run loop makes to the SDK's `generateText`, as it was given. The call itself is the real one. */
 const sdk = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>> }));
 
+/**
+ * A staged clock, for the one case that needs a run to be long: the scripted model
+ * answers in no time, so a run never gets near its time limits by itself. While `on`, the
+ * model call is found to have been going for `alreadyMs` when its first step starts, and
+ * each step then takes `stepMs`. `Date.now` is moved by `offsetMs` (the case spies on
+ * it); real timers are untouched. `prepared` is what the run loop's step hook answered,
+ * step by step.
+ */
+const clock = vi.hoisted(() => ({ on: false, offsetMs: 0, alreadyMs: 0, stepMs: 0, prepared: [] as unknown[] }));
+
 vi.mock("ai", async (importOriginal) => {
   const real = await importOriginal<typeof import("ai")>();
+  type Options = Parameters<typeof real.generateText>[0];
+  type Hook = (input: unknown) => unknown;
   return {
     ...real,
-    generateText: ((options: Parameters<typeof real.generateText>[0]) => {
+    generateText: ((options: Options) => {
       sdk.calls.push(options as unknown as Record<string, unknown>);
-      return real.generateText(options);
+      if (!clock.on) return real.generateText(options);
+      const hooks = options as unknown as { prepareStep?: Hook; onStepFinish?: Hook };
+      clock.offsetMs += clock.alreadyMs;
+      return real.generateText({
+        ...options,
+        prepareStep: async (step: unknown) => {
+          const told = (await hooks.prepareStep?.(step)) ?? {};
+          clock.prepared.push(told);
+          return told;
+        },
+        onStepFinish: async (step: unknown) => {
+          await hooks.onStepFinish?.(step);
+          clock.offsetMs += clock.stepMs;
+        },
+      } as unknown as Options);
     }) as typeof real.generateText,
   };
 });
@@ -588,6 +615,41 @@ describe("how each stop ends the run", () => {
     expect(run?.summary).not.toMatch(/\$|0\.05|0\.75/);
   });
 
+  /**
+   * The one other sentence the run loop writes with one of the owner's figures in it: the
+   * daily limit, in the `error` of a run that failed on it. That is the right place for
+   * it, because a run's error is the owner's alone and everyone else reads a fixed line.
+   * This is the proof that it stays there: the owner reads the figure, a visitor reads
+   * no figure and no reason, in the list or on the run page.
+   */
+  it("agent_day_cap: the daily limit is in the owner's own view of the run and nowhere in a visitor's", async () => {
+    const agent = await payingAgent({ maxUsdPerRun: 0.05, maxUsdPerDay: 0.75 });
+    seam.refuse = { atSeq: 1, reason: "agent_day_cap" };
+    const result = await runAgent({ agentId: agent.agentId, trigger: "schedule" });
+    expect(result).toMatchObject({ status: "failed", stopReason: "agent_day_cap" });
+
+    const said = describeInferenceStop("agent_day_cap", { dayCapUsd: 0.75 }).detail;
+    expect(said).toContain("$0.75");
+    expect((await getRun(result.runId, agent.userId))?.error).toBe(said);
+    expect((await getAgentRuns(agent.agentId, null, agent.userId)).items.find((run) => run.id === result.runId)?.error).toBe(said);
+
+    for (const viewer of [null, "did:privy:someone-else"]) {
+      const listed = (await getAgentRuns(agent.agentId, null, viewer)).items.find((run) => run.id === result.runId);
+      const opened = await getRun(result.runId, viewer);
+      for (const view of [listed, opened]) {
+        // The failure is public; what explains it is not.
+        expect(view?.status).toBe("failed");
+        expect(view?.summary).toBeNull();
+        expect(view?.error).not.toBe(said);
+        expect(JSON.stringify(view)).not.toContain("$");
+        expect(`${view?.summary} ${view?.error}`).not.toMatch(/0\.05|0\.75|daily|limit/i);
+        // Neither what it spent on thinking nor why it stopped is in a visitor's row.
+        expect(view && "thinking" in view).toBe(false);
+      }
+      expect(opened?.steps).toEqual([]);
+    }
+  });
+
   it("says nothing the second time, waits longer, and starts afresh after a run that works", async () => {
     const agent = await payingAgent();
     seam.refuse = { atSeq: 1, reason: "quote_failed" };
@@ -701,6 +763,159 @@ describe("a run that is told to wrap up", () => {
     const [run] = await runsOf(agent.agentId);
     expect(run?.stopReason).toBe("run_cap");
     expect(Number(run?.inferenceSpendUsd)).toBeCloseTo(sum(payments), 6);
+  });
+
+  /**
+   * The run starts no new step once it has been thinking for 150 seconds, and ends there.
+   * The wrap-up used to be measured to the deadline alone (240 s, less the 75 s a
+   * signature needs), so for steps of a few seconds it could not come before that
+   * moment: the run paid for its steps and was cut with no `finish`. The run loop now
+   * hands the wrap-up the very moment it stops at, and this is that hand-over, through
+   * the real loop on a staged clock.
+   */
+  describe("when its time is nearly up", () => {
+    const FINISH = { toolChoice: { type: "tool", toolName: "finish" } };
+
+    /** One scripted run in which the model call has already lasted `alreadyMs` at its first step, and each step takes `stepMs`. */
+    async function runOnClock(alreadyMs: number, stepMs: number) {
+      const agent = await payingAgent();
+      const realNow = Date.now.bind(Date);
+      Object.assign(clock, { on: true, offsetMs: 0, alreadyMs, stepMs, prepared: [] });
+      const spy = vi.spyOn(Date, "now").mockImplementation(() => realNow() + clock.offsetMs);
+      try {
+        const result = await runAgent({ agentId: agent.agentId, trigger: "schedule" });
+        return { agent, result, told: [...clock.prepared] };
+      } finally {
+        spy.mockRestore();
+        Object.assign(clock, { on: false, offsetMs: 0, alreadyMs: 0, stepMs: 0, prepared: [] });
+      }
+    }
+
+    it("is told to finish at the last step that can start before the run stops starting steps", async () => {
+      // 130 s gone at the first step, eight seconds a step. The second step starts at
+      // 138 s: twelve seconds before the run stops starting steps, less than two steps'
+      // worth, and still 27 s inside what the deadline alone would have allowed.
+      const { agent, result, told } = await runOnClock(130_000, 8_000);
+
+      expect(told).toEqual([{}, FINISH]);
+      // The script does not finish when told, so the run ends on its time limit, in order:
+      // a run that succeeded as far as it got, with nothing held and nobody alarmed.
+      expect(result).toMatchObject({ status: "succeeded", stopReason: "deadline", summary: describeInferenceStop("deadline").detail });
+      const [run] = await runsOf(agent.agentId);
+      expect(run).toMatchObject({ status: "succeeded", stopReason: "deadline", error: null });
+      // Two steps were paid for: the one before, and the one it was told to finish in.
+      expect(await paymentsOf(agent.agentId)).toHaveLength(2);
+      expect((await agentRow(agent.agentId)).inferenceHold).toBeNull();
+      expect((await noticesOf(agent.userId)).filter((notice) => notice.kind === "run_failed" || notice.kind === INFERENCE_HOLD_NOTICE)).toHaveLength(0);
+    });
+
+    it("is left to finish by itself when there is time: no step of an ordinary run is told to", async () => {
+      const { result, told } = await runOnClock(0, 8_000);
+
+      expect(told.length).toBeGreaterThanOrEqual(5);
+      expect(told.every((answer) => JSON.stringify(answer) === "{}")).toBe(true);
+      expect(result.status).toBe("succeeded");
+      expect(result.stopReason).toBeUndefined();
+      expect(result.summary).toMatch(/bonk/i);
+    });
+  });
+});
+
+/**
+ * The check before a run, on the real path for once: not the scripted model's, which
+ * has no wallet to read. The node is the stand-in (it answers nothing), and the agent has
+ * what the real check asks for: a wallet that is not a placeholder, and a wallet policy.
+ * No run can start here, so nothing is thought on and nothing could be paid.
+ */
+describe("a scheduled run whose wallet balance the chain could not give", () => {
+  const RPC = "https://rpc.test.invalid";
+
+  /** A pay-per-use agent the real check would let in, due a minute ago. */
+  async function fundedLookingAgent() {
+    const agent = await payingAgent();
+    const due = new Date(Date.now() - 60_000);
+    await db.delete(schema.wallets).where(and(eq(schema.wallets.agentId, agent.agentId), eq(schema.wallets.chain, "solana")));
+    await db.insert(schema.wallets).values({
+      id: `wal_${nanoid(12)}`,
+      kind: "agent_server",
+      chain: "solana",
+      address: Keypair.generate().publicKey.toBase58(),
+      userId: agent.userId,
+      agentId: agent.agentId,
+    });
+    await db
+      .update(schema.agents)
+      .set({ walletBudget: { perTxUsd: 100, policyIds: { solana: `pol_${nanoid(8)}` } }, nextRunAt: due })
+      .where(eq(schema.agents.id, agent.agentId));
+    return { ...agent, due };
+  }
+
+  /** Runs `body` with mock mode off and a node that does not answer. Gives back every address it was asked at. */
+  async function withDeadNode(body: () => Promise<void>): Promise<string[]> {
+    const asked: string[] = [];
+    const prior = { llm: process.env.LLM_MOCK, x402: process.env.X402_MOCK, rpc: process.env.SOLANA_RPC_URL, fetch: globalThis.fetch };
+    process.env.LLM_MOCK = "0";
+    process.env.X402_MOCK = "0";
+    process.env.SOLANA_RPC_URL = RPC;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      asked.push(String(input));
+      throw new Error("the node did not answer");
+    }) as typeof fetch;
+    try {
+      await body();
+    } finally {
+      for (const [name, value] of [
+        ["LLM_MOCK", prior.llm],
+        ["X402_MOCK", prior.x402],
+        ["SOLANA_RPC_URL", prior.rpc],
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      globalThis.fetch = prior.fetch;
+    }
+    return asked;
+  }
+
+  it("is put off, not held: no run row, no hold, no notice, and the agent is still due for the next pass", async () => {
+    const agent = await fundedLookingAgent();
+
+    const asked = await withDeadNode(async () => {
+      expect(await runAgent({ agentId: agent.agentId, trigger: "schedule" })).toEqual({ runId: "", status: "skipped", error: RUN_DEFERRED });
+      // The scheduler still finds it: the next pass, five minutes on, looks again.
+      expect(await findDueAgents(50)).toContain(agent.agentId);
+    });
+    // Our own node was asked, twice, and nothing else was.
+    expect(asked).toEqual([RPC, RPC]);
+
+    expect(await runsOf(agent.agentId)).toHaveLength(0);
+    expect(await paymentsOf(agent.agentId)).toHaveLength(0);
+    const row = await agentRow(agent.agentId);
+    expect(row).toMatchObject({ inferenceHold: null, inferenceHoldUntil: null, inferenceStrikes: 0, inferenceNotifiedAt: null });
+    expect(row.nextRunAt).toEqual(agent.due);
+    expect(await noticesOf(agent.userId)).toHaveLength(0);
+  });
+
+  it("becomes a hold, said once, only when the node has still not answered ten minutes on", async () => {
+    const agent = await fundedLookingAgent();
+
+    await withDeadNode(async () => {
+      expect((await runAgent({ agentId: agent.agentId, trigger: "schedule" })).error).toBe(RUN_DEFERRED);
+      // Eleven minutes pass with the node still down: the first failure is that old now.
+      await db.update(schema.agents).set({ inferenceHoldSince: new Date(Date.now() - 11 * 60_000) }).where(eq(schema.agents.id, agent.agentId));
+
+      const said = describeInferenceStop("no_rpc");
+      expect(await runAgent({ agentId: agent.agentId, trigger: "schedule" })).toEqual({ runId: "", status: "skipped", error: said.detail, stopReason: "no_rpc" });
+      expect(await findDueAgents(50)).not.toContain(agent.agentId);
+      // A third try while it waits changes nothing and says nothing.
+      expect((await runAgent({ agentId: agent.agentId, trigger: "schedule" })).stopReason).toBe("no_rpc");
+    });
+
+    expect(await runsOf(agent.agentId)).toHaveLength(0);
+    expect(await agentRow(agent.agentId)).toMatchObject({ inferenceHold: "no_rpc", inferenceStrikes: 1 });
+    const notices = await holdNoticesOf(agent.userId);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.title).toBe(`Test Agent: ${describeInferenceStop("no_rpc").title}`);
   });
 });
 

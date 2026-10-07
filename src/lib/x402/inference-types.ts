@@ -346,8 +346,10 @@ export function describeInferenceStop(
  *  reserved        counted against every cap; nothing signed yet
  *  released        given up before any signature; the caps were given back
  *  signed          a signature exists; the paid request is in flight
- *  settled         paid and answered
- *  paid_no_answer  paid (the chain or the gateway confirms it) and no usable answer came
+ *  settled         answered. Proven paid only once `tx_hash` is set: by the gateway's
+ *                  receipt naming this payment, or by the reconciler finding it on chain.
+ *                  Until then it counts against every cap and is not netted from P&L.
+ *  paid_no_answer  paid, with the same proof a settled row needs, and no usable answer came
  *  unconfirmed     signed, the paid request failed, and the chain has not been asked yet;
  *                  counted as charged until the reconciler says otherwise
  *  not_charged     the reconciler proved the payment never landed; the caps were given back
@@ -419,7 +421,7 @@ export interface InferenceLedger {
       outputTokens: number | null;
     },
   ): Promise<void>;
-  /** Paid, confirmed by the gateway's own receipt, and no usable answer. */
+  /** Paid, proven by a receipt that names this payment or by the chain, and no usable answer. */
   markPaidNoAnswer(paymentId: string, result: { txHash: string | null; httpStatus: number | null; detail: string }): Promise<void>;
   /** Signed, the paid request failed, and whether money moved is not yet known. */
   markUnconfirmed(paymentId: string, result: { httpStatus: number | null; detail: string }): Promise<void>;

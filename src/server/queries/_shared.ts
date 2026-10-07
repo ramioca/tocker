@@ -436,9 +436,16 @@ export function withdrawnUsdc(metadata: Record<string, unknown> | null | undefin
  * A pay-per-use payment PROVEN to have left the wallet, as a condition on
  * `inference_payments`:
  *
- *  - `paid_no_answer`: the gateway's own receipt or the reconciler's sighting on chain
- *    says the money moved, and no usable answer came;
- *  - `settled` WITH a transaction id: answered, and the payment is named on chain.
+ *  - `paid_no_answer`: no usable answer came, and the payment has its proof. The pay path
+ *    writes this status only with the same proof a transaction id needs (below), and the
+ *    reconciler only on finding the transfer on chain; without proof the row is
+ *    `unconfirmed`;
+ *  - `settled` WITH a transaction id: answered, and the row names the payment's own
+ *    transaction. The id is written in one of two ways and no other: by the pay path,
+ *    when the gateway's receipt names an id that is this payment's own (checked against
+ *    the bytes that were signed) and says it settled; or by the reconciler, when it finds
+ *    the transfer on chain. The first rests on the gateway's word that its own
+ *    transaction landed, which `scripts/inference-audit.ts` is there to check.
  *
  * The Money page's "Thinking" figure and the flow taken out of P&L are both made from
  * exactly this condition, so the two cannot disagree, and the page's Net (P&L less costs)
@@ -450,7 +457,8 @@ export function withdrawnUsdc(metadata: Record<string, unknown> | null | undefin
  *    landed is still being checked. The ledger counts it as charged against every limit
  *    (the safe side for a cap). It is the unsafe side for a P&L: netted and never landed,
  *    it would read as a gain nobody made, for good. It joins when the reconciler writes
- *    the transaction id, and never joins if the reconciler finds it was not charged.
+ *    the transaction id, and never joins if the reconciler proves it was not charged
+ *    (the row is then `not_charged`, and the answer was free).
  *  - `signed` and `unconfirmed`: signed, and whether the money moved is not yet known.
  *  - `reserved`, `released` and `not_charged`: nothing left the wallet.
  *  - `simulated`: mock mode, no money.
@@ -504,34 +512,95 @@ export function thinkingPaidAtSql() {
  * Only payments proven to have left the wallet ({@link thinkingProvenSql}).
  *
  * The ledger has no foreign keys, so the join to `agents` is also what drops the rows of
- * agents that no longer exist. An agent with no ledger row costs this nothing: marks are
- * looked up per payment, through the snapshots' own (agent, time) index.
+ * agents that no longer exist. An agent with no proven ledger row costs this nothing: it
+ * is not among the agents the query starts from.
+ *
+ * How the query is shaped matters as much as what it returns, because it runs for every
+ * card, the leaderboard and /money. Two things in it are dear, and each is done as
+ * seldom as it can be:
+ *
+ *  - The book's first mark is worked out once per paying agent, in a list of those
+ *    agents that the rest of the query reads from (the list carries a LIMIT it can never
+ *    reach, which keeps the database from folding it into the join, where the first
+ *    mark would be worked out again per payment).
+ *  - The mark before a payment is looked up only for payments after that first mark.
+ *    The others are no flow whatever the lookup would find, and they are the dear ones:
+ *    an agent that paid for its thinking through weeks on paper and then went live has
+ *    thousands of them, and for each the lookup walks back through every paper snapshot
+ *    before it (none is a mark of the live book) to find nothing. So they are dropped by
+ *    one comparison first, and nothing later filters on the lookup's own result: a
+ *    filter on it would have the database look every payment up before it had dropped
+ *    any. Measured on an agent with 2,000 payments from 4,000 paper marks and 100 since
+ *    going live: 430 ms looked up per payment, 40 ms this way.
  */
 async function loadThinkingFlows(db: Db, ids: string[]): Promise<Array<{ agentId: string; atMs: number | string | bigint; usd: string }>> {
   const paidAt = thinkingPaidAtSql();
+  // The live agents among `ids` that have a proven payment, each with the first snapshot
+  // of the book it is running now: the same row `loadBookMarks` measures all-time P&L
+  // from. Null for an agent never marked.
+  const payers = db.$with("thinking_payers").as(
+    db
+      .select({
+        id: sql<string>`${agents.id}`.as("thinking_payer_id"),
+        mode: sql<string>`${agents.mode}`.as("thinking_payer_mode"),
+        // The agent's columns are named in full here. In a query that reads one table
+        // the builder writes a column bare, and inside this inner query a bare `id` or
+        // `mode` would be the snapshot's own.
+        firstAt: sql<Date | null>`(
+          select min(${equitySnapshots.at}) from ${equitySnapshots}
+          where ${equitySnapshots.agentId} = ${agents}.${sql.identifier(agents.id.name)}
+            and (${equitySnapshots.mode} is null or ${equitySnapshots.mode} = ${agents}.${sql.identifier(agents.mode.name)})
+        )`.as("thinking_first_at"),
+      })
+      .from(agents)
+      .where(
+        and(
+          inArray(
+            agents.id,
+            db
+              .select({ agentId: inferencePayments.agentId })
+              .from(inferencePayments)
+              .where(and(inArray(inferencePayments.agentId, ids), thinkingProvenSql())),
+          ),
+          eq(agents.mode, "live"),
+        ),
+      )
+      // Never fewer than there are agents to return, so it cuts nothing. It is here as a
+      // fence: a list with a LIMIT is read as it stands, not folded into the join.
+      .limit(ids.length),
+  );
   // The latest snapshot, strictly before this payment, of the book the agent is running
   // now: the same rows `loadBookMarks` and the leaderboard's windows measure between.
   const markBefore = sql<Date | null>`(
     select max(${equitySnapshots.at}) from ${equitySnapshots}
-    where ${equitySnapshots.agentId} = ${agents.id}
-      and (${equitySnapshots.mode} is null or ${equitySnapshots.mode} = ${agents.mode})
+    where ${equitySnapshots.agentId} = ${payers.id}
+      and (${equitySnapshots.mode} is null or ${equitySnapshots.mode} = ${payers.mode})
       and ${equitySnapshots.at} < ${paidAt}
   )`;
   const paid = db.$with("thinking_paid").as(
     db
       .select({
-        agentId: sql<string>`${agents.id}`.as("thinking_agent_id"),
+        agentId: sql<string>`${payers.id}`.as("thinking_agent_id"),
         runKey: sql<string>`coalesce(${inferencePayments.runId}, ${inferencePayments.id})`.as("thinking_run_key"),
         at: sql<Date>`${paidAt}`.as("thinking_paid_at"),
         usd: thinkingPaidUsdSql().as("thinking_usd"),
         markBefore: markBefore.as("thinking_mark_before"),
       })
-      .from(inferencePayments)
-      .innerJoin(agents, eq(agents.id, inferencePayments.agentId))
-      .where(and(inArray(inferencePayments.agentId, ids), eq(agents.mode, "live"), thinkingProvenSql())),
+      .from(payers)
+      .innerJoin(inferencePayments, eq(inferencePayments.agentId, payers.id))
+      .where(
+        and(
+          thinkingProvenSql(),
+          // Strictly after the book's first mark: a payment at that instant is inside the
+          // mark. An agent never marked has no first mark, and nothing is after nothing.
+          sql`${paidAt} > ${payers.firstAt}`,
+        ),
+      ),
   );
+  // No filter on `markBefore`: every payment that reaches here is after the first mark,
+  // so there is always a mark before it (see the note above on why none is added).
   return db
-    .with(paid)
+    .with(payers, paid)
     .select({
       agentId: paid.agentId,
       // Whole epoch milliseconds, not the timestamp (a raw aggregate is not column-mapped,
@@ -542,7 +611,6 @@ async function loadThinkingFlows(db: Db, ids: string[]): Promise<Array<{ agentId
       usd: sql<string>`coalesce(sum(${paid.usd}), 0)`,
     })
     .from(paid)
-    .where(sql`${paid.markBefore} is not null`)
     .groupBy(paid.agentId, paid.runKey, paid.markBefore);
 }
 

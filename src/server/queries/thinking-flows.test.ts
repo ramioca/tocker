@@ -24,7 +24,7 @@
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { nanoid } from "nanoid";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
@@ -188,6 +188,21 @@ async function run(agent: Seeded, tokens: { input: number; output: number }, llm
     outputTokens: tokens.output,
     llmSource,
   });
+}
+
+/**
+ * How many times the snapshots table has been read so far, by an index or from end to
+ * end: the database's own counters, flushed first so that they are current. A lookup of
+ * the mark before a payment is one read, so the difference across a call is how many
+ * lookups that call made.
+ */
+async function snapshotReads(): Promise<number> {
+  await db.execute(sql`select pg_stat_force_next_flush()`);
+  const result = (await db.execute(sql`
+    select (select coalesce(sum(idx_scan), 0) from pg_stat_user_indexes where relname = 'equity_snapshots')
+         + (select coalesce(sum(seq_scan), 0) from pg_stat_user_tables where relname = 'equity_snapshots') as reads
+  `)) as unknown as { rows: Array<{ reads: number | string }> };
+  return Number(result.rows[0].reads);
 }
 
 /** One agent's all-time number on each surface that prints one. */
@@ -573,6 +588,74 @@ describe("a live agent that pays for its own thinking", () => {
     // Not after it: measured from that mark, nothing moved.
     expect(Number(flows[0].at)).toBe(at.getTime());
     expect((await everySurface(agent)).card.pnlUsd).toBeCloseTo(0, 9);
+  });
+
+  it("makes no flow of a payment at the very instant of the book's first mark, or of any before it", async () => {
+    const agent = await payPerUse("live");
+    const wentLive = ago(3);
+    // A stint on paper first, marked and paying: none of it is the live book's.
+    await mark(agent.agentId, ago(6), 10_000, "paper");
+    await mark(agent.agentId, ago(5), 10_050, "paper");
+    await payment(agent, ago(5.5), 0.3);
+    await payment(agent, ago(4), 0.3);
+    // Paid at the instant the first live mark was taken: that mark already lacks it.
+    await payment(agent, wentLive, 0.4);
+    await mark(agent.agentId, wentLive, 24);
+    await payment(agent, ago(2), 0.25);
+    await mark(agent.agentId, ago(0.01), 23.75);
+
+    // Only what was paid strictly after the first live mark moves the basis.
+    const flows = (await loadMoneyFlows(db, [agent.agentId])).get(agent.agentId) ?? [];
+    expect(flows.map((f) => f.amountUsd)).toEqual([-0.25]);
+    const seen = await everySurface(agent);
+    expect(seen.card.pnlUsd).toBeCloseTo(0, 9);
+    expect(seen.leaderboard.pnlUsd).toBeCloseTo(0, 9);
+    // The ledger's own total is every proven payment, whenever it was made.
+    expect((await getMoney(agent.userId)).live[0].thinkingUsd).toBeCloseTo(1.25, 9);
+  });
+
+  it("looks a mark up only for the payments made after the book's first mark", async () => {
+    // This read runs for every card, the leaderboard and /money. An agent that paid for
+    // its thinking through a long stint on paper and then went live has far more
+    // payments from before its live book than since, and each lookup for one of those
+    // walks back through every paper snapshot to find nothing. Looked up per payment,
+    // an agent with 2,000 of them took 430 ms to read; they are dropped first instead.
+    const agent = await payPerUse("live");
+    const wentLive = ago(3);
+    const PAPER_PAYMENTS = 40;
+    const LIVE_PAYMENTS = 6;
+    for (let i = 0; i < 30; i += 1) await mark(agent.agentId, new Date(wentLive.getTime() - (i + 1) * HOUR), 10_000, "paper");
+    for (let i = 0; i < PAPER_PAYMENTS; i += 1) {
+      await payment(agent, new Date(wentLive.getTime() - (i + 1) * 30 * MINUTE), 0.01, i % 2 === 0 ? "settled" : "paid_no_answer");
+    }
+    await mark(agent.agentId, wentLive, 25);
+    for (let i = 0; i < LIVE_PAYMENTS; i += 1) await payment(agent, new Date(wentLive.getTime() + (i + 1) * HOUR), 0.05);
+    await mark(agent.agentId, ago(0.01), 25 - LIVE_PAYMENTS * 0.05);
+
+    const before = await snapshotReads();
+    const flows = (await loadMoneyFlows(db, [agent.agentId])).get(agent.agentId) ?? [];
+    const lookups = (await snapshotReads()) - before;
+
+    // What it returns is what it always returned: the live payments, each its own run.
+    expect(flows).toHaveLength(LIVE_PAYMENTS);
+    expect(flows.reduce((sum, f) => sum + f.amountUsd, 0)).toBeCloseTo(-LIVE_PAYMENTS * 0.05, 9);
+    // One read for the book's first mark and one per payment after it. Not one per
+    // payment the agent ever made, which is what it cost before.
+    expect(lookups).toBeGreaterThan(0);
+    expect(lookups).toBeLessThanOrEqual(LIVE_PAYMENTS + 2);
+    expect(lookups).toBeLessThan(PAPER_PAYMENTS);
+  });
+
+  it("reads no snapshot at all for agents that never paid for a step", async () => {
+    // With the feature switched off the ledger is empty, and this part of every card
+    // must cost what it cost before the feature existed: nothing.
+    const keyed = await seedAgent(db, { mode: "live" });
+    await mark(keyed.agentId, ago(3), 25);
+    await mark(keyed.agentId, ago(0.01), 26);
+
+    const before = await snapshotReads();
+    expect((await loadMoneyFlows(db, [keyed.agentId])).get(keyed.agentId)).toBeUndefined();
+    expect((await snapshotReads()) - before).toBe(0);
   });
 
   it("has no thinking flow for a live agent that has never been marked", async () => {

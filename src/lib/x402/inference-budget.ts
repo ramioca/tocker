@@ -94,14 +94,16 @@ export interface InferenceControlState {
   /** Why the halt is on. Null when it is not. */
   haltReason: string | null;
   /**
-   * When an admin last cleared a halt. Whoever cleared it has dealt with everything up
-   * to that moment, so evidence older than this does not throw the halt again.
+   * When an admin last cleared a halt. Null while a halt is on. It does NOT acknowledge
+   * evidence: that is `haltAcknowledged`. The reconciler reads it for one thing only, a
+   * hold on a single agent over a transfer that is not a payment (see `holdOver` there).
    */
   haltClearedAt: Date | null;
   /**
-   * The transaction ids named in the reason that clearing acknowledged. A transaction the
-   * node reports with no time on it cannot be placed before or after `haltClearedAt`, so
-   * it is recognised by its id instead and does not throw the halt a second time.
+   * The transaction ids an admin has acknowledged: those named in the reason of a halt
+   * that was then cleared. The reconciler does not throw the halt again over one of
+   * these, and does over anything else, whenever it landed. Kept through later halts and
+   * clears (the newest ones), so they are present while a halt is on as well.
    */
   haltAcknowledged: readonly string[];
   pausedUntil: Date | null;

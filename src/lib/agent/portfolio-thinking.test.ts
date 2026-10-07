@@ -138,6 +138,36 @@ describe("a live agent that pays per use", () => {
     expect(toRiskPortfolio(portfolio).cashUsd).toBeCloseTo(100, 6);
   });
 
+  /**
+   * A KNOWN GAP, pinned here so that it is closed on purpose and not by accident (the
+   * head of `portfolio.ts` has the account of it). The book has one cash figure for both
+   * chains and the risk guard compares a buy with that one figure, so on an agent that
+   * trades Solana AND Base what is held back comes off the total. With $2 on Solana and
+   * $10 on Base the guard is told $11.15 may be spent, which is more than the Solana
+   * wallet can spare ($1.15) once its thinking is kept: a $2 buy on Solana clears, and
+   * the agent is then short for its next run although it holds USDC on Base.
+   *
+   * Closing it needs cash per chain in the guard: `toRiskPortfolio` has to be told the
+   * order's chain by every buy path. When that is done this case changes, to a Solana
+   * buy being kept to `solana − reserve`.
+   */
+  it("known gap, two chains: the reserve comes off the total, not off the Solana wallet that pays", async () => {
+    const agent = await liveAgent({ paysPerUse: true, solana: 2, base: 10 });
+    const portfolio = await getPortfolio(agent.agentId);
+
+    // The right amount is held back, and it is all there in the Solana wallet.
+    expect(portfolio.thinkingReserveUsd).toBeCloseTo(0.85, 6);
+    expect(portfolio.cashUsd).toBeCloseTo(12, 6);
+    // But a buy is sized against one figure for both chains.
+    const spendable = toRiskPortfolio(portfolio).cashUsd;
+    expect(spendable).toBeCloseTo(11.15, 6);
+    const solanaCanSpare = 2 - (portfolio.thinkingReserveUsd ?? 0);
+    expect(spendable).toBeGreaterThan(solanaCanSpare);
+    // An agent that trades Solana alone has no such gap: what it may spend is what its one wallet can spare.
+    const alone = await liveAgent({ paysPerUse: true, solana: 2 });
+    expect(toRiskPortfolio(await getPortfolio(alone.agentId)).cashUsd).toBeCloseTo(1.15, 6);
+  });
+
   it("holds back what is left after the fees it owes, never more than its cash", async () => {
     const agent = await liveAgent({ paysPerUse: true, solana: 0.4 });
     await oweFee(agent, 0.3);

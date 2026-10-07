@@ -46,10 +46,10 @@ function RunRow({
   // Owner only, and only for a run that paid for its own thinking: the query sends
   // nothing for a key run or to a visitor, and such a row renders as it always has.
   const thinking = readRunThinking(run);
-  // The words for it. The amount on a run row is what was counted when the run ended and
-  // is never rewritten, so it is not called paid; and a run that stopped on a step that
-  // got no answer is not told that step was paid for, because the chain may since have
-  // shown it never was (`runThinkingShown`).
+  // The words for it. The amount on a run row is what the ledger counted as charged,
+  // which is more than what is proven paid, so it is not called paid; and a run that
+  // stopped on a step that got no answer is not told that step was paid for, because the
+  // chain may since have shown it never was (`runThinkingShown`).
   const shown = thinking ? runThinkingShown(thinking) : null;
 
   return (

@@ -79,6 +79,13 @@ export const USDC_NOT_AVAILABLE = "Pay-per-use thinking is not available for thi
 /**
  * Why a config that asks for pay-per-use cannot be saved, or null when it can. The schema
  * already holds the two limits inside their ranges; this is what a range cannot say.
+ *
+ * One refusal the settings form makes is NOT made here: a schedule whose estimated cost
+ * for a day is more than the daily limit (`checkUsdc` in components/agents/thinking.ts).
+ * That is an estimate from list prices, and it is the form's alone. A config saved some
+ * other way with such a schedule is accepted; the daily limit is still what is enforced
+ * (when each payment is reserved), so the agent stops for the day when it is reached,
+ * and the form asks for the limit or the schedule to be changed at the next save.
  */
 export function usdcChoiceProblem(config: Pick<AgentConfig, "llm" | "chains">): string | null {
   if (thinkSource(config) !== "usdc") return null;
@@ -268,14 +275,20 @@ export function countsAsStrike(reason: InferenceStopReason): boolean {
 }
 
 /**
- * Which look at a hold this is, told from how long the agent has been held for the same
- * reason: the first while the hold is new, the second once it has lasted the first wait
- * in the back-off table, the third once it has lasted the first two, and so on.
+ * Which look at a hold this is, told from how long the agent has been held: the first
+ * when the hold is new or its reason has just changed to this one, the second once it
+ * has lasted the first wait in the back-off table, the third once it has lasted the
+ * first two, and so on.
  *
  * This is how a hold that adds no strikes still backs off. Only `flag_off` uses it (a
  * halt, a pause and a day limit have waits of their own): an account the switch is off
  * for is looked at less and less often, as before, without the looks being held against
  * the agent when the switch comes back.
+ *
+ * `inferenceHoldSince` is when the agent went on hold, and it is kept when the reason
+ * changes. So an agent that was already held for something else when the switch went
+ * off starts further along the table from its second look. It only ever waits longer,
+ * never past the table's last wait, and nothing is counted against it for that.
  */
 function looksAtSameHold(current: HoldState, reason: InferenceStopReason, now: Date): number {
   if (current.inferenceHold !== reason || !current.inferenceHoldSince) return 1;

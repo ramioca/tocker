@@ -52,7 +52,7 @@ key. If you want working previews, give Preview its own database and its own Pri
 | `X402_PLATFORM_DAILY_USD` | The most all agents together may spend on platform-paid data in 24 hours. Default `100`. This is the ceiling on what the platform data wallets can lose in a day; `0` switches paid data off. |
 | `CRON_MAX_AGENTS` | Agent *runs* per `/api/cron/tick` invocation. Default 5; use 2 on Hobby. It does not limit the exit engine: `/api/cron/marks` checks every agent holding a position, live books first, up to 200 a pass. |
 | `LLM_MOCK` | unset (or `0`) |
-| `SOLANA_RPC_URL` | Solana RPC, server-only. Use Helius or another provider — the public RPC is rate-limited. The browser never sees it; `/api/solana/blockhash` proxies the one call it needs. |
+| `SOLANA_RPC_URL` | Solana RPC, server-only. Use Helius or another provider — the public RPC is rate-limited. The browser never sees it; `/api/solana/blockhash` proxies the one call it needs. Pay-per-use thinking (section 5) reads wallets and reconciles payments through it, and refuses only an empty value: with the public endpoint set, payments are still signed. |
 | `BASE_RPC_URL` | Any Base RPC |
 | `JUPITER_API_KEY` | Optional, raises Jupiter rate limits |
 | `PLATFORM_FEE_USD` | What each executed fill is charged. Default `0.10`; `0` switches the fee off entirely. A malformed value falls back to the default rather than going free. |
@@ -181,7 +181,10 @@ The limits that guard money do not live there. The daily data ceilings are count
 `x402_payments`, and every pay-per-use limit (per step, per run, per agent, per account,
 the whole platform, runs started by hand) is a row in `inference_budget_days` or the
 ledger itself, updated inside one transaction before anything is signed. Those hold
-across instances and survive a cold start.
+across instances and survive a cold start. For the pay-per-use limits that is so far
+proven on the single-connection test database only: the test that makes them race over
+real connections is step 5 of stage 1 in section 5, to be run once before the first
+paid run.
 
 **Audit log** — every sensitive action writes an append-only `audit_events` row with an IP
 and user agent: withdrawals, spend-cap changes, live/paper switches, agent pauses, LLM key
@@ -456,21 +459,31 @@ Where it shows:
 - **P&L.** What a live agent paid for thinking is a money flow out of its book, like a
   withdrawal, so its P&L, its max drawdown and its place on the leaderboard do not read
   it as a trading loss. **A payment is netted only once it is proven**: a
-  `paid_no_answer` row, or a `settled` row that carries its transaction id. A `settled`
-  row with **no** transaction id is an answered step the gateway gave no proof of
-  payment for. The ledger counts it as charged against every limit, which is the safe
-  side for a cap; it is **not** taken out of P&L and not in the Money total until the
+  `paid_no_answer` row, or a `settled` row that carries its transaction id. The id gets
+  onto a row in two ways and no other: the gateway's receipt names it (the id is checked
+  to be this payment's own transaction, against the bytes the wallet signed, and the
+  receipt has to say it settled), or the reconciler finds the payment on chain. A
+  `settled` row with **no** transaction id is an answered step the gateway gave no such
+  proof for. The ledger counts it as charged against every limit, which is the safe side
+  for a cap; it is **not** taken out of P&L and not in the Money total until the
   reconciler has found the payment on chain and written its transaction id, because a
   public P&L adjusted on an assumption would read as a gain nobody made if the
   assumption were wrong. The same goes for `signed` and `unconfirmed` rows. Until then
   the amount reads as a few cents of loss, never as a gain; the Money page's Net is right
   throughout, since the amount is in the P&L or in the costs and never in both. A
-  `not_charged` row (the reconciler proved the payment never landed) is never netted and
-  never shown as paid.
-- **Runs.** The owner's run list shows what each pay-per-use run was *counted at* when
-  it ended. That figure is written once and is not rewritten if the chain later shows a
-  payment never landed, so the row does not call it paid, and after a step that got no
-  answer it reads "up to". Money is where the confirmed amount is.
+  `not_charged` row (the reconciler proved the payment never landed; an answered step
+  can end this way too, and its answer was then free) is never netted and never shown as
+  paid. Max drawdown adds back the same proven payments and nothing else: a withdrawal
+  still reads as a fall on that one figure, as it always has, and the equity line itself
+  is the wallet's real balance, thinking included.
+- **Runs.** The owner's run list shows what the ledger *counted as charged* for each
+  pay-per-use run, written when the run ends. Counted is not confirmed: the figure
+  includes steps whose payment is still being checked. When the reconciler proves a step
+  was never charged it writes that run's figure again from the ledger (that one column,
+  best effort); the sentence a run stored when it stopped is never rewritten. So the row
+  never calls the amount paid, its note says counted is not confirmed, and after a step
+  that got no answer it reads "up to" and does not say the step was paid for. Money is
+  where the confirmed amount is.
 - **Admin.** Settings → Admin → Pay-per-use thinking: today's counters against each cap,
   the rows still open (answered steps whose payment is unproven among them), what the
   breakers see, the halt, and the signature test. The signature test offers, and the
@@ -494,14 +507,22 @@ In the order one step runs (`src/lib/x402/inference-fetch.ts`, reached only thro
 4. The amount is reserved in the ledger against every cap, in one transaction. A refusal
    means nothing is signed.
 5. Privy signs. The signed bytes are decoded and checked **before sending**: one USDC
-   transfer of the quoted amount to the pinned account, one memo, nothing else. The run's
-   clock is read once more; if the paid request no longer fits before the deadline,
-   nothing is sent.
+   transfer of the quoted amount to the pinned account, one memo, nothing else. The
+   signature is then recorded in the ledger, which is given 3 seconds to do it: if the
+   ledger does not answer in that time nothing is sent, and the step stops as "The wallet
+   did not sign" (`signature_failed`), so a database that is stalling shows up as that
+   stop and can trip the signature breaker. The run's clock is read once more after
+   that; if the paid request no longer fits before the deadline, nothing is sent. Either
+   way a row can be left `signed` with no payment behind it; the reconciler gives it back.
 6. The paid request is sent **once**. Whatever happens after that, no second payment is
    made for the step. From here the step counts as charged until the chain says
    otherwise. The gateway's word decides one thing only: an answered step's row gets a
    transaction id when a receipt names one that is this payment's own and says it
-   settled, and gets none in every other case.
+   settled, and gets none in every other case. An answered step is recorded `settled`
+   and its answer is used. The one exception is an answer another model gave: it is
+   never used and the run stops, and if the gateway also says it took no payment for it
+   the row is left `unconfirmed` for the chain to decide. A step with no usable answer is
+   recorded `paid_no_answer` on that same proof, and `unconfirmed` without it.
 7. Every five minutes `/api/cron/inference` looks on chain, by memo, through
    `SOLANA_RPC_URL`, for every payment that is not proven: rows left `signed` or
    `unconfirmed`, and answered (`settled`) rows with no transaction id. Found: an open
@@ -510,7 +531,14 @@ In the order one step runs (`src/lib/x402/inference-fetch.ts`, reached only thro
    day's limits. Neither within six hours: the row stays counted as charged and is
    looked at again only now and then, until it is seven days old. After that nothing
    looks; `scripts/inference-audit.ts` (read-only) is how a person then finds out what
-   the chain says about it.
+   the chain says about it. A pass is bounded: at most 25 rows, 150 RPC calls and one
+   minute, open rows before answered ones. With `X402_MOCK=1` or an empty
+   `SOLANA_RPC_URL` it reads no chain at all: it still gives back rows that were reserved
+   and never signed, and still closes rows past six hours, but it proves nothing either
+   way. The same pass watches
+   for the one thing that must not exist, USDC that went from an agent to the gateway in
+   the shape of a payment with no ledger row behind it, and throws the admin halt itself
+   if it sees one.
 
 ### Every switch and cap
 
@@ -522,33 +550,66 @@ In the order one step runs (`src/lib/x402/inference-fetch.ts`, reached only thro
 | `INFERENCE_OWNER_DAILY_USD` | environment | `25` | One account, one UTC day. |
 | `INFERENCE_PLATFORM_DAILY_USD` | environment | `2` | Every agent together, one UTC day. `0` refuses everything. |
 | **Admin halt** | database, from Settings → Admin | off | Read before every signature. No deploy. |
-| Breaker pause | database, automatic | none | 3 steps paid (or maybe paid) with no answer, from 2 or more agents, in 15 minutes: 30 minutes. 5 gateway failures or 5 signature failures in 10 minutes: 15 minutes. Any pin mismatch: 30 minutes. Clears itself; an admin can end it early. |
+| Breaker pause | database, automatic | none | 3 steps paid (or maybe paid) with no answer, from 2 or more accounts, in 15 minutes: 30 minutes. Accounts, not agents: one owner's agents count once, so one account cannot pause everyone. 5 gateway failures or 5 signature failures in 10 minutes: 15 minutes. Any pin mismatch: 30 minutes. Clears itself; an admin can end it early. |
 | Per-step ceiling | code | the lower of the step cap and 2 × Tocker's own estimate + $0.002 | The estimate is made from the model's list price, not from the quote. |
 | Per-run limit | the owner, per agent | what the builder suggests: about twice a typical run on the chosen model (`$0.15` on the default model, `$0.45` on Claude Haiku 4.5) | Range $0.05 to $2. |
-| Per-day limit | the owner, per agent | what the builder suggests: every scheduled run with a quarter to spare, and at least `$3` | Range $0.50 to $50. The builder refuses a schedule whose estimate exceeds it. |
+| Per-day limit | the owner, per agent | what the builder suggests: every scheduled run with a quarter to spare, and at least `$3` | Range $0.50 to $50. The builder's form refuses a schedule whose estimate exceeds it. Whatever was saved, the limit itself is what is enforced, when each payment is reserved. |
 | Requests per agent per day | code | 600 | |
 | Runs started by hand, per account per day | code | 20 | Counted in the database. |
 | Steps per run | code | the agent's own step limit, at most 20, plus one to wrap up | |
-| Wallet floor | code | `$0.25` | A run does not start unless the wallet's Solana USDC, read from the chain, covers the run limit plus this plus the Tocker fees it owes. On a live agent the run limit plus this floor is also held back from buys, so a trade cannot spend the next run's thinking. It still counts in the agent's cash and equity. |
-| Time | code | no new step after 150 s; no signature with under 75 s left; 15 s for a quote (two free retries), 10 s for the signature, 60 s for the paid request | The paid request has its own clock and is never cut off by the run's. |
+| Wallet floor | code | `$0.25` | A run does not start unless the wallet's Solana USDC, read from the chain, covers the run limit plus this plus the Tocker fees it owes. On a live agent **two** run limits plus this floor are also held back from buys: one for what the run in hand may still spend after the buy, one (with the floor) for what the check before the next run asks for. It still counts in the agent's cash and equity. Known gap: an agent that trades Solana **and** Base has one cash figure for both, so the hold-back comes off the total and a Solana buy can still spend the Solana USDC it was meant to protect; the agent is then held with "Add USDC to keep thinking" until USDC is added on Solana. |
+| Time | code | no new step after 150 s; no signature with under 75 s left; 15 s for a quote (two free retries), 10 s for the signature, 3 s for the ledger to record it, 60 s for the paid request | The paid request has its own clock and is never cut off by the run's. |
 | Schedule a new pay-per-use agent starts on | code | 60 minutes | Every step costs money. |
 
-It also depends on things section 2 already asks for: `SOLANA_RPC_URL` set to a real
-provider (without it nothing is signed, because nothing could be checked), `X402_MOCK`
+It also depends on things section 2 already asks for: `SOLANA_RPC_URL`, `X402_MOCK`
 unset, the Privy authorization key, and an agent whose **wallet policy has been applied**
 (Wallet budget card in the agent's settings): an agent with no policy is not allowed to
 pay.
 
-The schema is one additive migration, `drizzle/0010_tearful_monster_badoon.sql`: three
-new tables (`inference_payments`, `inference_budget_days`, `inference_control`) and new
-nullable columns on `agents` and `agent_runs`. It runs on deploy like the others. Ledger
-rows have no foreign keys and are never deleted: the record of what a wallet paid
-outlives the agent, the run and the account.
+**`SOLANA_RPC_URL` must be your own provider's URL, and the code does not check that it
+is.** The pay path refuses one thing only: an empty value (the agent is held with
+"Pay-per-use is not set up"). Any other value passes, including the public endpoint
+`https://api.mainnet-beta.solana.com`, which is the value `.env.example` ships. With the
+public endpoint set, payments **are** signed, and the wallet read before each run and
+the reconciler after it then depend on a rate-limited node nobody answers for, which is
+how payments end up unresolved. The admin card says so when the host is the public one
+("SOLANA_RPC_URL is the public Solana endpoint"): under Caps always, and in its "Right
+now" line once the switch is on. It never shows the URL itself, and it cannot tell a good
+provider from a bad one. Checking the value is a step of stage 1 below.
 
-`vercel.json` adds a third cron, `/api/cron/inference` at `1-59/5 * * * *`, protected by
-`CRON_SECRET` like the other two. **The fallback scheduler (`.github/workflows/cron.yml`)
-and `pnpm tick` do not call it.** If either is what actually drives your deployment, add
-the call before stage 2, or unresolved payments are never reconciled.
+The schema is one additive migration, `drizzle/0010_tearful_monster_badoon.sql`: three
+new tables (`inference_payments`, `inference_budget_days`, `inference_control`) and nine
+new columns on `agents` and `agent_runs`. Seven are nullable. Two are `NOT NULL` with a
+constant default, `agents.inference_strikes` (`0`) and `agent_runs.inference_spend_usd`
+(`0`), which is still additive: existing rows take the default and the old code never
+writes either. It runs on deploy like the others. Ledger rows have no foreign keys and
+are never deleted: the record of what a wallet paid outlives the agent, the run and the
+account.
+
+**The third cron.** `vercel.json` adds `/api/cron/inference` at `1-59/5 * * * *`, with a
+300-second function entry, protected by `CRON_SECRET` like the other two. It starts no
+run and pays for nothing: it reconciles, applies the breakers and looks again at held
+agents. The fallback scheduler, `.github/workflows/cron.yml`, **calls it too**, as a third
+step after marks and tick ("Settle pay-per-use payments"), and prints only the status
+code. `pnpm tick` (the local loop) does **not**: it calls marks and tick only, so a local
+or self-hosted deployment driven by it never reconciles and never lifts a hold. If that
+is what drives yours, call the route yourself on the same five minutes:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" https://your-app/api/cron/inference
+```
+
+**The payment packages are pinned to exact versions** in `package.json`: `@x402/core`,
+`@x402/svm`, `@solana/kit`, `@solana/web3.js` and `@privy-io/node` carry no `^` (nor do
+`@x402/fetch` and `@x402/evm`, which the paid-data path uses). The reason: the x402
+client builds the payment, Privy signs it, and the pay path then decodes the signed
+Solana transaction byte by byte before anything is sent (one USDC transfer of the quoted
+amount, one memo, the pinned accounts, nothing else). A minor release that lays a
+transaction out differently, or signs it differently, would either make that check
+refuse every payment or, worse, pass something the check no longer reads correctly. So a
+version of any of these changes only on purpose: bump it in a change of its own, run
+`pnpm vitest run src/lib/x402`, and repeat stage 1 (the quotes and the signature test)
+before the bump reaches production.
 
 ### Switching it on, in stages
 
@@ -561,23 +622,50 @@ answers `"ok": true` with nothing to do. Nothing else about the app has changed.
 
 **Stage 1. No money.** Still off.
 
-1. `pnpm tsx scripts/inference-quote.ts <your agent's Solana wallet address>`. One unpaid
+1. **Check `SOLANA_RPC_URL` in production.** It must be your own provider's URL (Helius
+   or another), not `https://api.mainnet-beta.solana.com` and not empty. Nothing in the
+   code refuses the public endpoint (see above), so this is yours to check: look at the
+   value in Vercel, and at Settings → Admin → Pay-per-use thinking, which must **not**
+   say "SOLANA_RPC_URL is the public Solana endpoint" and must not say it is not set.
+   `X402_MOCK` must be unset in production as well: with `X402_MOCK=1` no payment is
+   ever real, the card reads "Mock mode", and the signature test below refuses to run.
+2. `pnpm tsx scripts/inference-quote.ts <your agent's Solana wallet address>`. One unpaid
    request per model, each quote checked against the pins and against its cap. It cannot
-   pay: it imports no wallet and no signer. Exit code 1 if any model fails.
-2. Settings → Admin → Pay-per-use thinking → **Test a signature (nothing is sent)**, on
-   the Solana wallet of one of **your own** agents. Use an unfunded one: what Privy signs
-   is a real payment until its blockhash expires about a minute later, and an empty
-   wallet cannot pay it whatever happens. Apply its wallet policy first (Wallet budget
-   card), so the signature is made under the policy a paid run will meet. The test
-   fetches a real quote, has Privy sign the payment, checks the signed bytes, and throws
-   the result away. Expect six lines ending in "nothing was sent". This is the first
-   time Privy is asked to sign an x402 payment for an agent wallet: if the policy
-   refuses, stop here.
-3. Do both again some hours later. Two things will differ and both are expected: the fee
-   payer alternates between two gateway addresses, and the same request is quoted a few
-   micro-dollars apart.
+   pay: it imports no wallet and no signer, and reads nothing from the environment, so
+   it runs from any machine. The address is optional; with it, the "fee payer is not the
+   agent" pin is checked against the real wallet. Exit code 1 if any model fails.
+3. Settings → Admin → Pay-per-use thinking → **Test a signature (nothing is sent)**. The
+   list offers only the Solana wallets of **your own** agents, and the server refuses any
+   other: if it says none of your agents has one, build an agent of your own with Solana
+   among its chains first. Use an unfunded one: what Privy signs is a real payment until
+   its blockhash expires about a minute later, and an empty wallet cannot pay it whatever
+   happens. Apply its wallet policy first (Wallet budget card), so the signature is made
+   under the policy a paid run will meet. The test fetches a real quote, has Privy sign
+   the payment, checks the signed bytes, and throws the result away. Expect six lines
+   ending in "nothing was sent". This is the first time Privy is asked to sign an x402
+   payment for an agent wallet: if the policy refuses, stop here.
+4. Do steps 2 and 3 again some hours later. Two things will differ and both are
+   expected: the fee payer alternates between two gateway addresses, and the same request
+   is quoted a few micro-dollars apart.
+5. **Run the spending limits against a real Postgres, once.** Every limit (per run, per
+   agent, per account, the platform's day) is a conditional update inside one
+   transaction, and so far that is proven on the test database only: PGlite, which has a
+   single connection, so reservations made "at once" in the ordinary tests run one after
+   another. That proves the arithmetic and not the row locking. The test that makes them
+   genuinely race is written, is skipped in `pnpm test`, and has never been run:
 
-Go on only when every model passes and the signature test passes.
+   ```bash
+   INFERENCE_CONCURRENCY_DATABASE_URL=<a Postgres you can throw away> pnpm vitest run src/lib/x402/inference-ledger.concurrency.test.ts
+   ```
+
+   Use the docker compose database or a scratch branch of your provider's, **not
+   production**. It creates a schema of its own with a random name, builds the three
+   ledger tables in it from the migration's own SQL, runs each race 25 times over ten
+   connections, and drops the schema. All of it must pass. If a test fails, two servers
+   can both take the last cent of a limit: stop here and do not go to stage 2.
+
+Go on only when the RPC is your own, every model passes, the signature test passes and
+the concurrency test passes.
 
 **Stage 2. Owner only, a few dollars.**
 
@@ -587,23 +675,64 @@ Go on only when every model passes and the signature test passes.
 2. On **one** agent of your own: choose Pay per use, keep the default model (Gemini 2.5
    Flash: about $0.07 a typical run by Tocker's estimate) and the two limits the builder
    suggests, and set execution mode to `approve`. Send its Solana wallet a few dollars of
-   USDC ($3 is plenty).
+   USDC ($3 is plenty). A **live** agent is the better subject: the one figure this
+   feature changes in public is a live agent's P&L, and a paper agent, which pays in
+   exactly the same way, shows nothing of it there.
 3. Start **one run by hand**. Then wait ten minutes, so the reconciler has passed twice.
 4. Check the ledger against the chain, to the micro-dollar:
 
    ```bash
-   tsx --env-file-if-exists=.env scripts/inference-audit.ts <agent slug> --hours 24
+   X402_MOCK=0 DATABASE_URL=<production connection string> SOLANA_RPC_URL=<your provider's URL> pnpm tsx scripts/inference-audit.ts <agent slug> --hours 24
    ```
 
-   with `DATABASE_URL` pointing at production and `SOLANA_RPC_URL` set. It is read-only.
-   Exit code 0 means the ledger equals the chain; 1 means it printed a difference; 2
-   means it could not tell. Also compare, by eye, the wallet's USDC on Solscan with the
-   Thinking figure on the Money page. A `settled` row with no transaction hash is one the
-   gateway answered without a receipt: the audit finds it by memo, and it is not proven
-   until it does.
-5. **Write down**, because no code can know these until a payment has been made:
-   - the **receipt header**: which of `PAYMENT-RESPONSE`, `X-Payment-Response` and
-     `X-Payment-Receipt` arrive on a paid answer, and what is in them;
+   Written whole, and with no env file, on purpose. The script refuses to run in mock
+   mode, and a local `.env` copied from `.env.example` carries `X402_MOCK=1`, the public
+   RPC and a local database: an env file fills in whatever the shell leaves unset, so
+   unsetting `X402_MOCK` in the shell does nothing, and a forgotten `DATABASE_URL` would
+   audit the wrong ledger. (The script's own usage line shows a `--env-file` form. Do not
+   use it here.)
+   The first argument is an agent's slug, its id, or a Solana wallet address; `--hours`
+   takes up to 744. The connection string and the RPC URL are secrets: keep that line
+   out of your shell history. It is read-only: it runs SELECTs and RPC reads and changes
+   no row.
+
+   Exit code 0 means the ledger equals the chain, and it prints `No differences.`; 1
+   means it printed a difference; 2 means it could not tell (mock mode, no RPC, no such
+   wallet, or a history the node would not return whole). A row still `signed` or
+   `unconfirmed` is printed as `open`, and an answered row with no transaction id as
+   `unproven`, and both count as differences: ten minutes after the run there should be
+   neither. An `unproven` row "with no transfer found" is an answer the gateway may have
+   given free; leave it to the reconciler, which calls it not charged only on its strict
+   rule, and write it down for step 5.
+
+   Then look at the three places the amount shows. On Solscan, the wallet's USDC fell by
+   the audit's "Chain says paid". On Money, Costs → Thinking (pay per use) shows the same
+   amount. And on a live agent, once the next mark has been taken (marks land every five
+   minutes), **the agent's all-time P&L has not moved by what the run paid**: it is a
+   cost on Money and not a loss on the card. If instead the P&L fell by the amount and
+   Money says a payment "is still being confirmed on the chain", the rows have no
+   transaction id yet: that is the receipt question of step 5, and the reconciler should
+   have written the ids within those ten minutes.
+5. **Write down**, because no code can know these until a payment has been made. At
+   `owner`, and only at `owner`, the pay path writes one line to the function log for
+   every paid response, which answers the first three:
+
+   ```
+   [inference] run <run id>: paid response <HTTP status> said <header>=<value> ...; read as <verdict>
+   ```
+
+   The headers are the ones the rules read, by name, with short cleaned values (an x402
+   receipt is shown decoded, as `{success: ..., transaction: "..."}`); "nothing about the
+   payment or the model" when there were none. The verdict is one of `this payment's
+   transaction id, settled`, `not settled` or `no proof of settlement`. Find the lines in
+   the Vercel logs of the function that ran the agent (`/api/cron/tick`, or the run
+   route for a run started by hand) and copy them out.
+   - the **receipt header**: which of `PAYMENT-RESPONSE`, `X-Payment-Response`,
+     `X-Payment-Receipt` and `X-Payment-Settled` arrive on a paid answer, what is in
+     them, and **how each line was read**. If every line reads `no proof of settlement`,
+     every answered step waits for the reconciler before it is netted from P&L or shown
+     in the Money total: workable for one agent, and a queue at scale, because a pass
+     confirms at most 25 rows. Settle this before stage 3;
    - the **settle order**: whether the USDC moves before the answer, alongside it or
      after (compare the transaction's time with the step's);
    - the **reroute headers** on an ordinary answer: `X-Fallback-Used`,
@@ -614,32 +743,54 @@ Go on only when every model passes and the signature test passes.
      before the 150-second mark;
    - **Privy**: whether signatures are rate-limited, and what one costs on the invoice;
    - any `429` on the unpaid quote requests.
-6. Two drills, while only your money is at stake. Throw the admin halt during a run: the
-   next step must stop with nothing signed, and the agent must show "Pay-per-use is
-   paused". Then empty the wallet: the agent must be held with "Add USDC to keep
-   thinking" and you must be told once, not on every tick.
-7. Put the agent on an hourly schedule for 24 hours and run the audit again.
+6. Two drills, while only your money is at stake. Do them in this order and do not skip
+   the step between them: the check before a run looks at the halt **before** it looks
+   at the wallet, so with the halt still on the second drill can never show its message.
+   1. **The halt.** Start a run by hand and, while it is running, throw the admin halt
+      (Settings → Admin → Pay-per-use thinking, type why, **Halt pay-per-use**). The
+      next step must stop with nothing signed, and the agent must show "Pay-per-use is
+      paused". You are told once.
+   2. **Clear it and prove the agent pays again.** On the same card press **Clear the
+      halt**, then **Yes, let payments resume**. Press **Run now** on the agent: a run
+      started by hand is checked at once, whatever the hold says, so the hold lifts and
+      the run pays. Do not go on until a run has paid again.
+   3. **The empty wallet.** Withdraw the agent's USDC to your own wallet, then press
+      **Run now**. No run starts, the agent is held with "Add USDC to keep thinking",
+      and you are told once, not on every tick.
+7. The 24-hour soak. **First send the wallet USDC again** ($3), press **Run now**, and
+   confirm the hold has gone and the run paid: started with the halt on or the wallet
+   empty, the agent sits held for the whole day, nothing is paid, and the audit passes
+   on nothing. Check too that the card's "All agents" tile is not at its `$2` limit for
+   the day. Then leave the agent on an hourly schedule for 24 hours (the schedule a new
+   pay-per-use agent starts on) and, ten minutes after its last run, run the audit of
+   step 4 again.
 
-Go on only with zero differences between ledger and chain, nothing stuck open on the
-admin card, and every item in step 5 written down.
+Go on only with all of these: the audit printing `No differences.` over a window that
+really held payments (its `Ledger` line counts at least 50 rows for the 24 hours; an
+hourly schedule makes about 22 runs a day, and far fewer rows than that means the agent
+sat held); nothing left open on the admin card and no row marked "no verdict in time";
+the live agent's P&L unmoved by what it paid; both drills seen; and every item in step
+5 written down.
 
-**Stage 3. A few invited owners.** Add their ids to `INFERENCE_USDC_USER_IDS` and raise
-`INFERENCE_PLATFORM_DAILY_USD` to `25`. One week. Audit a few wallets every day. Before
-this stage: correct the reroute rule if stage 2 showed the headers arrive differently
-from BlockRun's documentation, pin exact versions of `@x402/core`, `@x402/svm`,
-`@solana/kit`, `@solana/web3.js` and `@privy-io/node` (the pay path depends on their
-transaction layout, and its tests refuse every payment if that changes), and run the
-ledger's concurrency test against a real Postgres
-(`src/lib/x402/inference-ledger.concurrency.test.ts`, with
-`INFERENCE_CONCURRENCY_DATABASE_URL` set; it builds its own schema and drops it). Go on
-only with zero ledger-and-chain differences across the week and unconfirmed payments
-under 1%.
+**Stage 3. A few invited owners.** Add their user ids to `INFERENCE_USDC_USER_IDS`,
+comma-separated, and raise `INFERENCE_PLATFORM_DAILY_USD` to `25`. A user id is the
+account's Privy DID (`did:privy:...`), the value of `users.id`. No admin table shows it,
+they show handles: copy it from the Privy dashboard, or read it with
+`select id from users where handle = '<their handle>';`. One week. Audit a few wallets
+every day. Before this stage: correct the receipt and reroute rules if stage 2's log
+lines showed the headers arrive differently from BlockRun's documentation, and leave the
+payment packages at the versions stage 2 ran on (they are already pinned exactly; see
+above). The concurrency test belongs to stage 1 and must already have passed. Go on only
+with zero ledger-and-chain differences across the week and unconfirmed payments under 1%.
 
 **Stage 4. Everyone.** `INFERENCE_USDC=on`, and raise `INFERENCE_PLATFORM_DAILY_USD` by
 hand (`250` to begin with). At `on` the landing page's FAQ changes two answers ("Which AI
 model runs it?" and "What do I need to start?") to say an agent can pay per use: read
-them in `src/components/liquid/defaults.ts` first. The Money page's Costs heading still
-says "Three different bills"; with pay-per-use there are four.
+them in `src/components/liquid/defaults.ts` first. The per-response log line of stage 2
+stops at `on`. Nothing on the Money page depends on the switch: an owner who has never
+paid for a step reads the Costs heading as it always was ("Three different bills, only
+one of which we collect."), and an owner whose page has the Thinking line reads "Four
+different bills".
 
 ### How to stop it
 
@@ -668,6 +819,17 @@ Stopping refunds nothing, and nothing should be deleted: the ledger is the only 
 of what each wallet paid. Clearing the halt is what lets payments move again, so clear it
 only after the audit script agrees with the chain for the wallet you were worried about.
 
+The halt is not only yours to throw. The reconciler throws it (as `reconciler`) when it
+finds USDC that went from an agent to the gateway in the shape of a payment with no
+ledger row behind it, and the ledger throws it (as `ledger`) when a payment is reported
+on a row whose amount was already given back. The reason names the transaction, and
+what is found while the halt is on is added to that reason. Read all of it before
+clearing: clearing tells the reconciler that the transactions the reason names have
+been looked at, so those do not halt again, while one it never named still does. A
+transfer to the gateway that is **not** shaped like a payment (no memo, or the wallet
+paid its own fee: an owner's own transfer to that address) halts nobody; it is logged and
+that one agent is put on hold.
+
 ### What is NOT proven until real funds move
 
 - **The paid round trip.** No payment has ever been made. Everything after the signature
@@ -690,10 +852,24 @@ only after the audit script agrees with the chain for the wallet you were worrie
 - **The reroute rule.** It discards an answer when the gateway's fallback headers say
   another model served it. Those headers are documented; none has been seen on a paid
   answer.
+- **The receipt rule, and with it how soon a payment is netted.** Which headers a paid
+  answer carries, and whether any of them names the payment's transaction, is known from
+  documentation only. If none does, every answered step is recorded `settled` with no
+  transaction id and is neither taken out of P&L nor shown in the Money total until the
+  reconciler has found it on chain: minutes late for one agent, and a queue at scale (25
+  rows a pass). Stage 2's log lines are what settle this.
+- **That a transaction the gateway says it settled did land.** A transaction id taken
+  from a receipt is checked to be this payment's own, which needs no chain. That the
+  transaction landed is the gateway's word, and such a row is netted from P&L on it; the
+  reconciler does not look those rows up. `scripts/inference-audit.ts` does, and prints
+  `ledger_charged_not_on_chain` for one that is not there.
 - **The reconciler against a real chain**, in particular its "not charged" verdict,
-  which gives a cap back and is deliberately strict.
-- **The reserve under real concurrency.** The test that runs twenty reservations at once
-  against a real Postgres is written and has never been executed.
+  which gives a cap back and is deliberately strict, and its confirming of answered rows.
+- **The spending limits under real concurrency.** They are proven on the test database
+  only, which has one connection. The test that makes reservations race against a real
+  Postgres (`src/lib/x402/inference-ledger.concurrency.test.ts`, switched on by
+  `INFERENCE_CONCURRENCY_DATABASE_URL`) is written and has never been executed. Running
+  it once is step 5 of stage 1, and it must pass before stage 2.
 - **How many steps fit.** Each step adds a quote, a signature and a settlement to the
   model's own time. A run that reaches its time limit ends cleanly, but it may end
   before the model is done.

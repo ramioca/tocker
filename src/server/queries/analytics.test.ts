@@ -16,7 +16,7 @@
  * above is what proves the number did not move.
  */
 import { beforeAll, describe, expect, it } from "vitest";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
@@ -257,6 +257,19 @@ async function drawdownNetOf(
   );
 }
 
+/**
+ * How many times the snapshots table has been read so far, by an index or from end to
+ * end: the database's own counters, flushed first so that they are current.
+ */
+async function snapshotReads(): Promise<number> {
+  await db.execute(sql`select pg_stat_force_next_flush()`);
+  const result = (await db.execute(sql`
+    select (select coalesce(sum(idx_scan), 0) from pg_stat_user_indexes where relname = 'equity_snapshots')
+         + (select coalesce(sum(seq_scan), 0) from pg_stat_user_tables where relname = 'equity_snapshots') as reads
+  `)) as unknown as { rows: Array<{ reads: number | string }> };
+  return Number(result.rows[0].reads);
+}
+
 describe("max drawdown of an agent that pays for its own thinking", () => {
   it("is nothing for a live book that held cash and only paid for thinking", async () => {
     const agent = await seedAgent(db, { mode: "live", config: { llm: USDC_LLM } });
@@ -335,6 +348,39 @@ describe("max drawdown of an agent that pays for its own thinking", () => {
     const windows = await getAgentAnalyticsWindows(agent.agentId, agent.userId);
     expect(windows!.all.maxDrawdownPct).toBe(await previousDrawdown(agent.agentId, "all", Date.now()));
     expect(windows!.all.maxDrawdownPct).toBeCloseTo(5, 9);
+  });
+
+  it("finds where each slice starts once, not once for every payment", async () => {
+    // The tab is drawn with every agent page view. Each window needs to know when its
+    // slice of marks begins, to add back only what was paid after that. Asked in a way
+    // tied to the row being read, the database answered it again for every payment the
+    // agent had ever made, reading the slice's snapshots each time: an agent with 2,000
+    // paid steps took two seconds to draw this one number.
+    const agent = await seedAgent(db, { mode: "live", config: { llm: USDC_LLM } });
+    await marks(agent.agentId, "live", [
+      { daysAgo: 40.4, equityUsd: 100 },
+      { daysAgo: 20.4, equityUsd: 97 },
+      { daysAgo: 3.4, equityUsd: 96 },
+      { daysAgo: 0.4, equityUsd: 95 },
+    ]);
+    const PAYMENTS = 60;
+    const payments = Array.from({ length: PAYMENTS }, (_, i) => ({ daysAgo: 39 - i * 0.6, usd: 0.05 }));
+    for (const p of payments) await paid(agent, p.daysAgo, p.usd);
+
+    const before = await snapshotReads();
+    const windows = await getAgentAnalyticsWindows(agent.agentId, agent.userId);
+    const reads = (await snapshotReads()) - before;
+
+    // The numbers are the oracle's, as in every test above.
+    const now = Date.now();
+    for (const window of ["7d", "30d", "all"] as const) {
+      expect(windows![window].maxDrawdownPct, window).toBeCloseTo((await drawdownNetOf(agent.agentId, window, now, payments))!, 9);
+    }
+    // A handful of reads for the three windows together: the marks of each slice and
+    // where it starts. Before, it was one more for every payment in every window.
+    expect(reads).toBeGreaterThan(0);
+    expect(reads).toBeLessThanOrEqual(12);
+    expect(reads).toBeLessThan(PAYMENTS);
   });
 
   it("counts a payment made at the instant of a mark inside that mark", async () => {

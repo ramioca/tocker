@@ -11,7 +11,9 @@
  *   ledger_charged_not_on_chain       a row says paid; no such transfer is in the history
  *   ledger_not_charged_but_on_chain   a row's amount was given back; the chain shows it paid
  *   amount_differs                    a row and its transfer disagree on the amount
- *   open                              a row still `signed` or `unconfirmed` (the cron settles these)
+ *   open                              a row still `signed` or `unconfirmed` (the cron settles these; one
+ *                                     it could not settle in six hours is closed, says so here, and
+ *                                     stays counted as charged until the chain is read for it)
  *   unproven                          a row answered and `settled` with no transaction id: the
  *                                     ledger counts it on the gateway's answer alone, so the chain
  *                                     is what says whether it was paid (the cron checks these too)
@@ -128,6 +130,7 @@ async function main(): Promise<number> {
       settledUsd: inferencePayments.settledUsd,
       memo: inferencePayments.memo,
       txHash: inferencePayments.txHash,
+      resolvedAt: inferencePayments.resolvedAt,
       createdAt: inferencePayments.createdAt,
     })
     .from(inferencePayments)

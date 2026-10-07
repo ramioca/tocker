@@ -8,7 +8,10 @@
  *  1. Reconcile: settle payments left `signed` or `unconfirmed` by asking the chain
  *     whether they landed, and prove (or disprove) the settlement of answered payments
  *     the gateway gave no receipt for (`src/lib/x402/inference-reconcile.ts`). A payment
- *     nobody could decide in six hours is closed, still counted as charged.
+ *     nobody could decide in six hours is closed, still counted as charged. When a
+ *     payment is proven never to have landed, the run it belonged to has its recorded
+ *     thinking spend written again from the ledger: the one thing this route writes
+ *     outside the ledger's own tables and an agent's hold.
  *  2. Breakers: pause pay-per-use for everyone if enough runs or payments ended badly
  *     lately (`applyInferenceBreakers`).
  *  3. Holds: look again at pay-per-use agents whose hold has run its time, so a funded

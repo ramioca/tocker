@@ -85,9 +85,10 @@ describe("destinationProblemForChain", () => {
 
   /**
    * Every transfer from an agent's wallet to the address pay-per-use thinking is paid to
-   * is expected to match a row in the thinking ledger; one that matches none stops
-   * pay-per-use for every agent until an admin has looked. An owner could send one with
-   * an ordinary withdrawal. Every address the gateway is pinned to is tried.
+   * is expected to match a row in the thinking ledger; one that matches none puts that
+   * agent on hold, and can stop pay-per-use for every agent until an admin has looked.
+   * An owner could send one with an ordinary withdrawal. Every address the gateway is
+   * pinned to is tried.
    */
   it("refuses the address pay-per-use thinking is paid to, whichever chain is selected", () => {
     const pinned = Object.values(INFERENCE_GATEWAY).flatMap((gateway) => [...gateway.payTo]);

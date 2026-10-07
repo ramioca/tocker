@@ -86,6 +86,17 @@ async function loadMaxDrawdownPct(db: Db, agentId: string, since: Date | null): 
     since ? gte(equitySnapshots.at, since) : undefined,
   );
   const paidAt = thinkingPaidAtSql();
+  // When the slice's first mark was taken. Written so that it names no row of the query
+  // around it (the book's mode is read by the agent's id, not from the joined `agents`
+  // row): the database then works it out once. Tied to the row being read, it was worked
+  // out again for every payment, each time over every snapshot in the slice, and an agent
+  // with a few thousand paid steps took seconds to draw one number.
+  const sliceStart = sql<Date | null>`(
+    select min(${equitySnapshots.at}) from ${equitySnapshots}
+    where ${equitySnapshots.agentId} = ${agentId}
+      and (${equitySnapshots.mode} is null or ${equitySnapshots.mode} = (select book.mode from ${agents} book where book.id = ${agentId}))
+      ${since ? sql`and ${equitySnapshots.at} >= ${since.toISOString()}::timestamptz` : sql``}
+  )`;
   // The marks of the slice, and the thinking payments made after the first of them, as
   // one list of events in time. Both halves name the same five columns in the same order.
   const markEvents = db
@@ -118,8 +129,9 @@ async function loadMaxDrawdownPct(db: Db, agentId: string, since: Date | null): 
         eq(agents.mode, "live"),
         thinkingProvenSql(),
         // After the first mark of the slice, so that mark reads as it stands and every
-        // later one is measured against it.
-        sql`${paidAt} > (select min(${equitySnapshots.at}) from ${equitySnapshots} where ${inSlice})`,
+        // later one is measured against it. No first mark, no payment counts: comparing
+        // with nothing is not true.
+        sql`${paidAt} > ${sliceStart}`,
       ),
     );
   const events = unionAll(markEvents, paidEvents).as("events");

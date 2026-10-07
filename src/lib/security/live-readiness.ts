@@ -194,9 +194,16 @@ export function withFirstTradePreset(config: AgentConfig): AgentConfig {
  *
  * An agent that pays for its own thinking keeps two runs' worth of it, and the wallet
  * floor, out of its trades (`thinkingReserveUsd`; the live book reads the same function
- * in `getPortfolio`, so the two cannot disagree). The guard is given the cash a buy may
- * actually use, so a wallet that covers the ticket but not the ticket and the thinking
- * fails here, not on the first tick.
+ * in `getPortfolio`, so the two cannot disagree about the figure). The guard is given
+ * the cash a buy may actually use, so a wallet that covers the ticket but not the ticket
+ * and the thinking fails here, not on the first tick.
+ *
+ * One difference from the live book, on purpose. `usdc` here is the agent's USDC on all
+ * its chains and the whole figure is held back from it; the live book holds back no more
+ * than the Solana wallet has. For an agent on Solana alone those are the same sum. For
+ * one on two chains whose Solana wallet is short, this is the stricter reading, and the
+ * right one for a checklist: that agent could not pay for a run at all, so "a buy would
+ * clear" is not what its owner needs to be told before going live.
  *
  * Returns `null` when the trade would be allowed.
  */

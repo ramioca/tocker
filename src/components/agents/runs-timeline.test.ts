@@ -2,11 +2,13 @@
  * The owner's run list, rendered to markup, for the one thing a query test cannot see:
  * what a run row says about a step that got no answer.
  *
- * A run's thinking amount and its error sentence are written once, when the run ends.
- * A run that stopped because a signed step got no answer is stored with "The agent paid
- * for one step …" and an amount that includes that step. Minutes later the reconciler may
- * prove the payment never landed (`not_charged`): Money then lists no such charge, and
- * nothing rewrites the run row. So the row must not say the step was paid.
+ * A run's thinking amount and its error sentence are written when the run ends. A run
+ * that stopped because a signed step got no answer is stored with "The agent paid for one
+ * step …" and an amount that includes that step. Minutes later the reconciler may prove
+ * the payment never landed (`not_charged`): Money then lists no such charge. Nothing
+ * rewrites the stored sentence, and the stored amount is brought down only by a
+ * best-effort write after that verdict. So the row must not say the step was paid, before
+ * that write or after it.
  */
 import { describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
@@ -83,7 +85,8 @@ describe("a pay-per-use run", () => {
 
     // The amount may still come down, and says so.
     expect(html).toContain("up to $0.012");
-    expect(html).toContain(RUN_SPEND_NOT_FINAL_NOTE.split(".")[0]);
+    expect(html).toContain(`title="${RUN_SPEND_NOT_FINAL_NOTE.replace(/'/g, "&#x27;")}"`);
+    expect(RUN_SPEND_NOT_FINAL_NOTE).toContain("for as long as the ledger counts it");
     // The row's sentence and its reason hold whether or not the payment landed.
     expect(html).toContain(NO_ANSWER_RUN_WORDS.title);
     expect(html).toContain("signed a payment for one step");

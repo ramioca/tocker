@@ -406,8 +406,9 @@ describe("secureWithdrawAction on Base", () => {
 
 /**
  * A transfer from an agent's wallet to the address pay-per-use thinking is paid to, with
- * no row in the thinking ledger behind it, stops pay-per-use for every agent until an
- * admin has looked. These two actions are the only way an owner moves an agent's money
+ * no row in the thinking ledger behind it, is treated as a fault: that agent is put on
+ * hold, and pay-per-use can be stopped for every agent until an admin has looked. These
+ * two actions are the only way an owner moves an agent's money
  * (`withdraw-surface.test.ts`), so neither may send one there, or offer to.
  */
 describe("the address pay-per-use thinking is paid to", () => {

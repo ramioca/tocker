@@ -14,6 +14,7 @@ import {
   CLOSED_UNCHECKED_DETAIL,
   INFERENCE_MOVES,
   InferenceLedgerError,
+  MAX_ACKNOWLEDGED,
   MAX_HALT_REASON,
   applyInferenceBreakers,
   clearInferencePause,
@@ -30,6 +31,7 @@ import {
   resolveInferencePayment,
   runInferenceSpend,
   setInferenceHalt,
+  syncRunInferenceSpend,
 } from "./inference-ledger";
 import {
   INFERENCE_GATEWAY,
@@ -1023,6 +1025,84 @@ describe("runInferenceSpend", () => {
   });
 });
 
+describe("syncRunInferenceSpend", () => {
+  /** A finished pay-per-use run that recorded `spent` when it ended. */
+  async function finishedRun(spent: string): Promise<{ runId: string; agentId: string }> {
+    const { agentId } = await seedAgent(db);
+    const runId = `run-${nanoid(8)}`;
+    await db.insert(agentRuns).values({
+      id: runId,
+      agentId,
+      trigger: "schedule",
+      status: "succeeded",
+      llmSource: "usdc",
+      summary: "kept as it was",
+      dataSpendUsd: "0.250000",
+      inferenceSpendUsd: spent,
+      stopReason: "deadline",
+      createdAt: NOON,
+      finishedAt: NOON,
+    });
+    return { runId, agentId };
+  }
+
+  it("writes the run's thinking spend again from the ledger once a row of it has stopped counting", async () => {
+    // The run ended with one step settled and one left signed, and recorded both.
+    const { runId } = await finishedRun("0.070000");
+    const kept = await rowIn("signed", { runId, seq: 0, quotedUsd: 0.03 });
+    await ledger.settle(kept, { ...SETTLED, settledUsd: 0.03 });
+    const never = await rowIn("signed", { runId, seq: 1, quotedUsd: 0.04 });
+    const [before] = await db.select().from(agentRuns).where(eq(agentRuns.id, runId));
+
+    // Nothing has changed yet: writing it again leaves the same figure.
+    expect(await syncRunInferenceSpend(runId)).toBe(true);
+    expect((await db.select().from(agentRuns).where(eq(agentRuns.id, runId)))[0]).toEqual(before);
+
+    await resolveInferencePayment(never, { charged: false, detail: "never landed" }, NOON);
+    expect(await syncRunInferenceSpend(runId)).toBe(true);
+    const [after] = await db.select().from(agentRuns).where(eq(agentRuns.id, runId));
+    // That one column, to the micro-dollar, and nothing else on the run.
+    expect(after).toEqual({ ...before, inferenceSpendUsd: "0.030000" });
+    expect(Number(after.inferenceSpendUsd)).toBe((await runInferenceSpend(runId)).usd);
+  });
+
+  it("takes the settled amount where there is one, and reaches zero when no row counts any more", async () => {
+    const { runId } = await finishedRun("0.050000");
+    const settled = await rowIn("signed", { runId, seq: 0, quotedUsd: 0.01 });
+    await ledger.settle(settled, { ...SETTLED, txHash: null, settledUsd: 0.008 });
+    await syncRunInferenceSpend(runId);
+    expect((await db.select().from(agentRuns).where(eq(agentRuns.id, runId)))[0].inferenceSpendUsd).toBe("0.008000");
+    // The answered row turns out never to have been paid for.
+    expect(await resolveInferencePayment(settled, { charged: false, detail: "never paid for" }, NOON)).toBe(true);
+    await syncRunInferenceSpend(runId);
+    expect((await db.select().from(agentRuns).where(eq(agentRuns.id, runId)))[0].inferenceSpendUsd).toBe("0.000000");
+  });
+
+  it("touches no other run, and says so when there is no run to write to", async () => {
+    const one = await finishedRun("0.040000");
+    const other = await finishedRun("0.090000");
+    await rowIn("not_charged", { runId: one.runId, seq: 0, quotedUsd: 0.04 });
+    expect(await syncRunInferenceSpend(one.runId)).toBe(true);
+    expect((await db.select().from(agentRuns).where(eq(agentRuns.id, one.runId)))[0].inferenceSpendUsd).toBe("0.000000");
+    expect((await db.select().from(agentRuns).where(eq(agentRuns.id, other.runId)))[0].inferenceSpendUsd).toBe("0.090000");
+    // A ledger row can outlive its run, and a test's run id may never have had one.
+    expect(await syncRunInferenceSpend("run-that-was-deleted")).toBe(false);
+    expect(await syncRunInferenceSpend("")).toBe(false);
+  });
+
+  it("several at once for one run leave what the ledger says", async () => {
+    const { runId } = await finishedRun("0.090000");
+    const rows = [await rowIn("signed", { runId, seq: 0, quotedUsd: 0.02 }), await rowIn("signed", { runId, seq: 1, quotedUsd: 0.03 }), await rowIn("signed", { runId, seq: 2, quotedUsd: 0.04 })];
+    await Promise.all(
+      rows.slice(0, 2).map(async (id) => {
+        await resolveInferencePayment(id, { charged: false, detail: "never landed" }, NOON);
+        await syncRunInferenceSpend(runId);
+      }),
+    );
+    expect((await db.select().from(agentRuns).where(eq(agentRuns.id, runId)))[0].inferenceSpendUsd).toBe("0.040000");
+  });
+});
+
 describe("dayUsage", () => {
   it("reads the three counters for a day, zero where nothing was spent", async () => {
     expect(await dayUsage({ ownerId: "owner-1", agentId: "agent-1", day: DAY })).toEqual({
@@ -1193,9 +1273,11 @@ describe("the switches", () => {
       expect((await readInferenceControl()).haltReason).toBe("first evidence");
     });
 
-    it("clearing keeps the transaction ids the reason named, and forgets them when a new halt is cleared", async () => {
-      const id = (n: number) => Keypair.generate().publicKey.toBase58() + Keypair.generate().publicKey.toBase58() + String(n);
-      const [first, second, third] = [id(1), id(2), id(3)];
+    /** A transaction id of the real length, made at run time from public halves. */
+    const txId = () => `${Keypair.generate().publicKey.toBase58()}${Keypair.generate().publicKey.toBase58()}`.slice(0, 87);
+
+    it("clearing acknowledges the transaction ids the reason named, and nothing else in it", async () => {
+      const [first, second] = [txId(), txId()];
       const wallet = Keypair.generate().publicKey.toBase58();
       await haltInferenceOnce(`USDC went from an agent wallet to the gateway with no ledger row. Transaction ${first}, wallet ${wallet}.`, "reconciler");
       await haltInferenceOnce(`A payment landed on chain for ledger row abc. Transaction ${second}, wallet ${wallet}.`, "reconciler");
@@ -1211,12 +1293,65 @@ describe("the switches", () => {
       // Clearing again with no halt on keeps what was acknowledged.
       await setInferenceHalt({ halted: false, reason: null, by: "admin-1" });
       expect((await readInferenceControl()).haltAcknowledged).toEqual([first, second]);
+    });
 
-      // A new halt and its clear acknowledge what that halt named.
-      await haltInferenceOnce(`Transaction ${third} is new.`, "reconciler");
-      expect((await readInferenceControl()).haltAcknowledged).toEqual([]);
+    it("what one clear acknowledged is not forgotten by a later halt, or by clearing it", async () => {
+      const [first, second, third, fourth] = [txId(), txId(), txId(), txId()];
+      await haltInferenceOnce(`Transaction ${first} has no ledger row.`, "reconciler");
       await setInferenceHalt({ halted: false, reason: null, by: "admin-1" });
-      expect((await readInferenceControl()).haltAcknowledged).toEqual([third]);
+
+      // A halt thrown on new evidence: the first transaction is still acknowledged while
+      // it is on, and is no part of the reason a reader is shown.
+      expect(await haltInferenceOnce(`Transaction ${second} has no ledger row.`, "reconciler")).toBe(true);
+      let control = await readInferenceControl();
+      expect(control).toMatchObject({ halted: true, haltReason: `Transaction ${second} has no ledger row.`, haltClearedAt: null });
+      expect(control.haltAcknowledged).toEqual([first]);
+
+      // A finding added while it is on goes into the reason, not over the acknowledged ids.
+      expect(await haltInferenceOnce(`Transaction ${third} took another amount.`, "reconciler")).toBe(false);
+      control = await readInferenceControl();
+      expect(control.haltReason).toBe(`[2 findings] Transaction ${second} has no ledger row. | also (reconciler): Transaction ${third} took another amount.`);
+      expect(control.haltAcknowledged).toEqual([first]);
+
+      await setInferenceHalt({ halted: false, reason: "looked", by: "admin-1" });
+      expect((await readInferenceControl()).haltAcknowledged).toEqual([first, second, third]);
+
+      // The same when an admin throws the halt by hand, with or without a reason.
+      await setInferenceHalt({ halted: true, reason: null, by: "admin-1" });
+      expect(await readInferenceControl()).toMatchObject({ halted: true, haltReason: null, haltAcknowledged: [first, second, third] });
+      await setInferenceHalt({ halted: true, reason: `checking ${fourth} by hand`, by: "admin-2" });
+      expect(await readInferenceControl()).toMatchObject({ halted: true, haltReason: `checking ${fourth} by hand`, updatedBy: "admin-2", haltAcknowledged: [first, second, third] });
+      await setInferenceHalt({ halted: false, reason: null, by: "admin-1" });
+      expect((await readInferenceControl()).haltAcknowledged).toEqual([first, second, third, fourth]);
+    });
+
+    it("keeps the newest acknowledged ids when there are more than it holds, the one just named last", async () => {
+      const ids = Array.from({ length: MAX_ACKNOWLEDGED + 3 }, txId);
+      for (const id of ids) {
+        await haltInferenceOnce(`Transaction ${id} has no ledger row.`, "reconciler");
+        await setInferenceHalt({ halted: false, reason: null, by: "admin-1" });
+      }
+      expect((await readInferenceControl()).haltAcknowledged).toEqual(ids.slice(3));
+      // Named again, an old one moves to the newest end instead of falling off next.
+      await haltInferenceOnce(`Transaction ${ids[3]} has no ledger row.`, "reconciler");
+      await setInferenceHalt({ halted: false, reason: null, by: "admin-1" });
+      expect((await readInferenceControl()).haltAcknowledged).toEqual([...ids.slice(4), ids[3]]);
+      const [stored] = await db.select().from(inferenceControl);
+      expect(stored.haltReason!.length).toBeLessThan(MAX_ACKNOWLEDGED * 91 + 600);
+    });
+
+    it("a reason cannot pass text of its own off as acknowledged ids", async () => {
+      const [real, smuggled] = [txId(), txId()];
+      await haltInferenceOnce(`Transaction ${real} has no ledger row.`, "reconciler");
+      await setInferenceHalt({ halted: false, reason: null, by: "admin-1" });
+      // Outside text that ends the way the stored ending does.
+      await haltInferenceOnce(`the node said | acknowledged: ${smuggled}`, "reconciler");
+      const control = await readInferenceControl();
+      expect(control.haltAcknowledged).toEqual([real]);
+      expect(control.haltReason).toContain(smuggled);
+      // It is acknowledged the ordinary way, by being in a reason that is cleared.
+      await setInferenceHalt({ halted: false, reason: `noted | acknowledged: ${txId()}`, by: "admin-1" });
+      expect((await readInferenceControl()).haltAcknowledged).toEqual([real, smuggled]);
     });
   });
 

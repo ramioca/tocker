@@ -59,8 +59,14 @@
  *    to send such a transaction, so this is the wallet's money moved some other way (an
  *    owner's withdrawal to that address, say). It says nothing about whether payments are
  *    being recorded, and an owner must not be able to stop everyone by making one. It is
- *    logged loudly and counted, the agent whose wallet it is goes on hold, and none of
- *    that wallet's rows can be called not charged while the transfer is in the window.
+ *    logged loudly and counted, the agent whose wallet it is goes on hold while the
+ *    transfer is recent (`STRAY_HOLD_MS`), and none of that wallet's rows can be called
+ *    not charged while the transfer is in the window.
+ *
+ * A halt names the transaction it was thrown over, and findings made while it is on are
+ * added to its reason. Clearing the halt acknowledges the transactions that reason named,
+ * by id, and nothing else: those do not halt again, and anything that was never named
+ * does, whenever it landed.
  *
  * A row no verdict could be reached on within `GIVE_UP_AFTER_MS` is closed: it stays
  * counted as charged, says so, and is looked at again now and then for `LATE_LOOK_MS`
@@ -74,7 +80,15 @@ import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, notInArray, or,
 import { getDb, inferencePayments } from "@/db";
 import { dbErrorForLog, redactSecrets } from "@/lib/security/redact";
 import { associatedTokenAddress } from "@/lib/wallets/solana-transfer";
-import { closeUncheckedPayments, confirmSettled, haltInferenceOnce, readInferenceControl, releaseStaleReserved, resolveInferencePayment } from "./inference-ledger";
+import {
+  closeUncheckedPayments,
+  confirmSettled,
+  haltInferenceOnce,
+  readInferenceControl,
+  releaseStaleReserved,
+  resolveInferencePayment,
+  syncRunInferenceSpend,
+} from "./inference-ledger";
 import { INFERENCE_GATEWAY, type InferencePaymentStatus, type InferenceStopReason } from "./inference-types";
 
 // ---------- timing and bounds ----------
@@ -108,6 +122,8 @@ export const LATE_LOOK_MS = 7 * 24 * 60 * 60_000;
 const WINDOW_SLACK_MS = 5 * 60_000;
 /** The block our node judges a blockhash from must be this much later than the signature. */
 const JUDGE_MARGIN_MS = 60_000;
+/** An agent is held over a transfer that is not a payment only while that transfer is this recent. */
+export const STRAY_HOLD_MS = GIVE_UP_AFTER_MS;
 /** Wallets that paid within this long are sampled for transfers the ledger does not know. */
 const SAMPLE_WINDOW_MS = 10 * 60_000;
 /** The payment client writes a 32-character memo. One shorter than this could match by accident, so it is not searched for. */
@@ -362,6 +378,8 @@ export interface ReconcileCounts {
   confirmed: number;
   /** Proven never to have landed: now `not_charged`, the amount returned to its day. */
   notCharged: number;
+  /** Runs whose recorded thinking spend was written again because one of their rows became `not_charged`. */
+  runsResynced: number;
   /** Looked at and left as they are, still counted as charged. */
   waiting: number;
   /** Open rows this pass does not look up as a matter of course: no memo to find them by, or older than the give-up age. */
@@ -395,6 +413,7 @@ function emptyCounts(): ReconcileCounts {
     charged: 0,
     confirmed: 0,
     notCharged: 0,
+    runsResynced: 0,
     waiting: 0,
     stuck: 0,
     unproven: 0,
@@ -437,6 +456,8 @@ class NoMoreChain extends Error {}
 /** A row this pass looks for on chain. */
 interface CheckedRow {
   id: string;
+  /** The run the step belongs to, whose recorded spend is written again when the row stops counting. */
+  runId: string | null;
   /** `open`: signed or unconfirmed, no answer. `answered`: settled, with no transaction id yet. */
   kind: "open" | "answered";
   payerAddress: string;
@@ -482,9 +503,9 @@ class Pass {
     readonly reader: InferenceChainReader,
     readonly limits: ReconcileLimits,
     readonly now: Date,
-    /** When an admin last cleared a halt, epoch ms. Evidence from before it has been looked at. */
-    private readonly acknowledgedBefore: number,
-    /** The transaction ids that clearing named: how evidence with no time on it is recognised. */
+    /** When an admin last cleared a halt, epoch ms. Only what a hold is weighed against: see `holdOver`. */
+    private readonly clearedAt: number,
+    /** The transactions an admin has had named in a halt's reason and has cleared. */
     private readonly acknowledgedIds: ReadonlySet<string>,
     private readonly holdAgent: HoldAgent,
   ) {
@@ -529,8 +550,19 @@ class Pass {
    * `wanted` are the memos being looked for. An entry carrying one of them is kept
    * whatever its block time: the window is cut by this server's clock, the block time is
    * the chain's, and a 128-bit memo is the payment's whichever clock is right.
+   *
+   * `first` are the memos of the rows in hand. The oldest transaction carrying each is
+   * read before any other: a pass may fetch only so many transactions, anyone can fill
+   * an account's history with transfers that report no memo, and those must not use up
+   * the allowance before the one transaction that can settle a row has been read.
    */
-  async history(address: string, sinceSec: number, wanted: readonly string[], minContextSlot?: number): Promise<{ seen: Seen[]; complete: boolean }> {
+  async history(
+    address: string,
+    sinceSec: number,
+    wanted: readonly string[],
+    minContextSlot?: number,
+    first: readonly string[] = [],
+  ): Promise<{ seen: Seen[]; complete: boolean }> {
     const seen: Seen[] = [];
     let complete = false;
     let before: string | undefined;
@@ -556,6 +588,16 @@ class Pass {
       }
       before = entries[entries.length - 1]?.signature;
       if (!before) break;
+    }
+
+    // Oldest first: the payment is the first transaction to carry a memo nobody else knew.
+    for (const memo of first) {
+      for (let index = seen.length - 1; index >= 0; index -= 1) {
+        const entry = seen[index];
+        if (entry.failed || entry.memoText === null || !entry.memoText.includes(memo)) continue;
+        await this.transaction(entry.signature);
+        break;
+      }
     }
 
     // A node may report no memo because there is none, or because it does not index
@@ -600,34 +642,57 @@ class Pass {
   }
 
   /**
-   * Whether an admin has already looked at this evidence: a halt was cleared after the
-   * transaction landed. A transaction the node gives no time for cannot be placed before
-   * or after that moment, so it is recognised by its id, which the clear kept from the
-   * reason it acknowledged.
+   * Halt pay-per-use over a transaction, unless an admin has already been shown it: a
+   * halt whose reason named this very transaction was cleared. Halting again every five
+   * minutes over the same evidence would only stop the admin from switching back on.
+   *
+   * By the transaction's id, never by its time. "It landed before the last clear" is not
+   * "someone looked at it": a transfer in a wallet this pass did not reach, or that a
+   * node's history showed late, or that had no room left in the reason, was never in
+   * front of anyone, and clearing a halt over something else must not wave it through.
+   * It also means a transaction the node reports with no time on it needs no special
+   * case. While a halt is already on, the ledger adds the finding to its reason instead.
    */
-  private acknowledged(evidence: Evidence): boolean {
-    if (evidence.blockTime !== null) return evidence.blockTime * 1000 <= this.acknowledgedBefore;
-    return this.acknowledgedIds.has(evidence.signature);
+  async halt(reason: string, evidence: Evidence): Promise<void> {
+    if (this.acknowledgedIds.has(evidence.signature)) return;
+    if (await haltInferenceOnce(reason, "reconciler")) this.counts.halted = true;
   }
 
   /**
-   * Halt pay-per-use over a transaction, unless an admin has cleared a halt since that
-   * transaction landed: then it has been looked at, and halting again every five
-   * minutes over the same evidence would only stop the admin from switching back on.
-   * While a halt is already on, the ledger adds the finding to its reason instead.
+   * A row of a run stopped counting as charged. The run wrote what it spent when it
+   * finished, while this row still counted, so that one figure (`agent_runs.
+   * inference_spend_usd`, and nothing else on the run) is written again from the ledger.
+   * Best effort: the ledger is the record either way, and a verdict already applied must
+   * not be reported as failed over a figure on a screen.
    */
-  async halt(reason: string, evidence: Evidence): Promise<void> {
-    if (this.acknowledged(evidence)) return;
-    if (await haltInferenceOnce(reason, "reconciler")) this.counts.halted = true;
+  async spendChanged(row: CheckedRow): Promise<void> {
+    if (!row.runId) return;
+    try {
+      if (await syncRunInferenceSpend(row.runId)) this.counts.runsResynced += 1;
+    } catch (err) {
+      console.error(`[inference] the spend of run ${row.runId} could not be written again after payment ${row.id} was found not charged: ${dbErrorForLog(err)}`);
+    }
   }
 
   /**
    * A transfer to the gateway that no ledger row explains and that the payment client
    * cannot have sent. Not a reason to stop anyone else: say it loudly and hold the agent
    * whose wallet made it. Never lets its own failure reach the pass.
+   *
+   * A hold is for a transfer that is recent. One known to have landed more than
+   * `STRAY_HOLD_MS` ago holds nobody: a late look reads a window days long, and one old
+   * transfer must not keep an agent off its schedule for as long as that window lasts.
+   * Nor does one that landed before an admin last cleared a halt. (Such a transfer is
+   * never named in a halt's reason, so that moment is the only way an admin has of
+   * saying it was dealt with.) Either way it is still counted, and it still stops the
+   * wallet's rows from being called not charged. One with no time on it cannot be placed
+   * and goes on holding while it is in view.
    */
   async holdOver(payerAddress: string, evidence: Evidence): Promise<void> {
-    if (this.acknowledged(evidence)) return;
+    if (evidence.blockTime !== null) {
+      const landedAt = evidence.blockTime * 1000;
+      if (landedAt <= this.clearedAt || landedAt < this.now.getTime() - STRAY_HOLD_MS) return;
+    }
     if (this.held.has(`${payerAddress}:${evidence.signature}`)) return;
     this.held.add(`${payerAddress}:${evidence.signature}`);
     console.error(
@@ -854,9 +919,10 @@ async function reconcilePayer(pass: Pass, payerAddress: string, rows: readonly C
     // What must be visible in a read before its silence means anything. Read before the
     // chain is, so a row proven during this pass is not asked of the read that proved it.
     const proven = await provenPayments(payerAddress, since, new Date(pass.now.getTime() - RECONCILE_AFTER_MS));
-    const wanted = [...rows.map((row) => row.memo), ...proven.flatMap((payment) => (payment.memo && payment.memo.length >= MIN_MEMO_LENGTH ? [payment.memo] : []))];
+    const own = rows.map((row) => row.memo);
+    const wanted = [...own, ...proven.flatMap((payment) => (payment.memo && payment.memo.length >= MIN_MEMO_LENGTH ? [payment.memo] : []))];
 
-    const first = await pass.history(account, sinceSec, wanted);
+    const first = await pass.history(account, sinceSec, wanted, undefined, own);
     const missing: CheckedRow[] = [];
     for (const row of rows) {
       const result = await findPayment(pass, row, first.seen);
@@ -886,7 +952,7 @@ async function reconcilePayer(pass: Pass, payerAddress: string, rows: readonly C
     // judged from: a node that is behind that block refuses instead of answering. It must
     // also show everything the first read did. A provider's endpoints do not all know
     // the same history, and the one that answers second must not know less.
-    const second = await pass.history(account, sinceSec, wanted, judgedFrom);
+    const second = await pass.history(account, sinceSec, wanted, judgedFrom, own);
     const secondClean = await watchForUnknownTransfers(pass, payerAddress, second.seen, since);
     const proves = second.complete && secondClean && shows(second.seen, proven) && covers(second.seen, first.seen);
     for (const row of candidates) {
@@ -906,6 +972,7 @@ async function reconcilePayer(pass: Pass, payerAddress: string, rows: readonly C
           pass.now,
         );
         settle(row, released ? "notCharged" : "waiting");
+        if (released) await pass.spendChanged(row);
       }
     }
   } catch (err) {
@@ -976,6 +1043,7 @@ export async function reconcileInferencePayments(options: ReconcileOptions = {})
 
   const columns = {
     id: inferencePayments.id,
+    runId: inferencePayments.runId,
     status: inferencePayments.status,
     payerAddress: inferencePayments.payerAddress,
     payTo: inferencePayments.payTo,
@@ -988,6 +1056,7 @@ export async function reconcileInferencePayments(options: ReconcileOptions = {})
   };
   interface Candidate {
     id: string;
+    runId: string | null;
     status: string;
     payerAddress: string;
     payTo: string;
@@ -1000,6 +1069,7 @@ export async function reconcileInferencePayments(options: ReconcileOptions = {})
   }
   const checked = (row: Candidate, memo: string): CheckedRow => ({
     id: row.id,
+    runId: row.runId,
     kind: row.status === "settled" ? "answered" : "open",
     payerAddress: row.payerAddress,
     payTo: row.payTo,
@@ -1210,6 +1280,12 @@ export interface LedgerRowForAudit {
   settledUsd: string | null;
   memo: string | null;
   txHash: string | null;
+  /**
+   * Set on an open row the cron closed without a verdict (`closeUncheckedPayments`). It
+   * is still open to the chain's answer, and the audit says which rows those are: they
+   * are the ones no pass will settle unless a late look happens to reach the chain.
+   */
+  resolvedAt?: Date | string | null;
 }
 
 export interface AuditDifference {
@@ -1226,7 +1302,8 @@ export interface AuditDifference {
  * A row is matched to a transfer by its memo, or failing that by the transaction id it
  * recorded. `settled` and `paid_no_answer` rows must each have a transfer of their
  * amount; `released` and `not_charged` rows must have none; `signed` and `unconfirmed`
- * rows are reported as open either way. A transfer no row matches is the serious one.
+ * rows are reported as open either way, and one the cron closed without a verdict says
+ * so. A transfer no row matches is the serious one.
  *
  * A `settled` row with no transaction id is "answered, settlement not yet proven": the
  * ledger counts it as charged on the gateway's answer alone. It is a row to check, so it
@@ -1276,11 +1353,12 @@ export function compareLedgerWithChain(
     } else {
       // signed, unconfirmed: counted as charged, not yet settled either way.
       ledgerChargedUnits += quoted;
+      const state = row.resolvedAt ? `${row.status} in the ledger, closed without a verdict and counted as charged` : `still ${row.status} in the ledger`;
       differences.push({
         kind: "open",
         rowId: row.id,
         signature: payment?.signature ?? null,
-        detail: payment ? `still ${row.status} in the ledger; the chain shows it paid (${payment.paid} base units)` : `still ${row.status} in the ledger; no transfer found`,
+        detail: payment ? `${state}; the chain shows it paid (${payment.paid} base units)` : `${state}; no transfer found`,
       });
     }
   }

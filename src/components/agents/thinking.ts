@@ -488,17 +488,26 @@ export function thinkingUsd(value: number): string {
 const SPEND_NOT_FINAL_AFTER: ReadonlySet<string> = new Set(["paid_no_answer", "rerouted"]);
 
 /**
- * What the figure on a run row is. A run's amount is written once, when the run ends,
- * from everything the ledger then counted as charged. It is not rewritten when the chain
- * later proves a payment never landed, so the row says what the figure is ("counted when
- * the run ended") and where the confirmed one lives, and never that it was paid.
+ * What the figure on a run row is: what the ledger COUNTED as charged for the run's
+ * steps. Counted is not confirmed. The figure is written when the run ends, from every
+ * row the ledger then counts (`CHARGED_STATUSES`), and that includes rows whose payment
+ * is not proven: an answered step the gateway gave no proof of payment for, a step whose
+ * request failed after it was signed, and a step that was signed for and never sent
+ * because the run's clock ran out first. The reconciler can find any of these was never
+ * charged, minutes after the run row was written.
+ *
+ * So the row never says the amount was paid. It says what the figure is and where the
+ * confirmed one lives, in words that hold whether or not the stored figure has since been
+ * brought down: the reconciler writes a run's figure again when it proves one of its
+ * steps was never charged, but that is a best-effort write after the verdict, and this
+ * row is read before it as well as after.
  */
 export const RUN_SPEND_NOTE =
-  "What this run's steps were counted at when it ended, in USDC from the agent's own wallet. Money has what the chain confirmed.";
+  "What the ledger counted as charged for this run's steps, in USDC from the agent's own wallet. Counted is not confirmed: a step is counted while its payment is still being checked against the chain, and one the chain shows never landed was not charged. Money has what the chain confirmed.";
 
 /** The same, for a run that ended on a step whose payment was still in question. */
 export const RUN_SPEND_NOT_FINAL_NOTE =
-  "Counted when the run ended, and it includes one step that was signed for and got no usable answer. If the chain shows that payment never landed, it was not charged and the real figure is lower. Money has what the chain confirmed.";
+  "What the ledger counted as charged for this run's steps. The run ended on a step that was signed for and got no usable answer, and that step is in this figure for as long as the ledger counts it. If the chain shows its payment never landed, it was not charged and the figure is lower. Money has what the chain confirmed.";
 
 /**
  * The owner's words for a run that stopped because a signed step got no answer.
@@ -506,7 +515,7 @@ export const RUN_SPEND_NOT_FINAL_NOTE =
  * `describeInferenceStop("paid_no_answer")` says "The agent paid for one step … The
  * charge is listed under Money". At the moment a run stops that is not known: the step
  * is as often `unconfirmed`, and the reconciler may go on to prove it was never charged.
- * A run row is read long after that verdict and cannot be rewritten by it, so the run
+ * The run's stored sentence is written at that moment and nothing rewrites it, so the run
  * list says only what stays true either way. (The contract's own sentence, which the
  * notification and the banner still use, should say the same; it is not this file's to
  * change.)
@@ -523,7 +532,7 @@ export interface RunThinkingShown {
   amount: string;
   /** What that amount is, for its tooltip. Never "paid". */
   amountNote: string;
-  /** True when the amount includes a step whose payment was still in question at run end. */
+  /** True when the run ended on a step whose payment was still in question, so the amount is an upper bound. */
   notFinal: boolean;
   /** Why the run ended early, when it did. */
   stop: { kind: InferenceStopKind; title: string; detail: string } | null;
@@ -541,8 +550,9 @@ export interface RunThinkingShown {
  * Every other reason keeps the title and sentence the banner and the notification use
  * (`stopWords`). Two things differ from the stored row, both so that a step the chain
  * later showed was never charged is not called paid here: the amount is "counted", never
- * "paid", and is "up to" when its last step was in question; and a `paid_no_answer` stop
- * is worded as {@link NO_ANSWER_RUN_WORDS}.
+ * "paid", and is "up to" when its last step was in question (an upper bound, so it stays
+ * true once that step has been taken off the figure too); and a `paid_no_answer` stop is
+ * worded as {@link NO_ANSWER_RUN_WORDS}.
  */
 export function runThinkingShown(thinking: RunThinking): RunThinkingShown {
   const reason = thinking.stop?.reason ?? null;
