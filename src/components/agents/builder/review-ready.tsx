@@ -1,11 +1,13 @@
 import { ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Place, ReadyItem } from "./contract";
-import { FOCUS, HAIR, Mark, TYPE } from "./look";
+import { FOCUS, HAIR, Mark, PartIcon, TYPE } from "./look";
+import { REQUIRED_PART } from "./parts";
 
 /**
  * The three things only the user decides, as tiles on the last step. Desktop only: below
- * lg the same three are in the agent card behind the strip in the bar.
+ * lg the same three are in the agent card behind the strip in the bar. Each leads with
+ * its part's icon and ends with its mark, as on the card.
  */
 export function ReviewReady({
   items,
@@ -35,8 +37,9 @@ export function ReviewReady({
             )}
           >
             <span className="flex items-center gap-2">
+              <PartIcon part={REQUIRED_PART[item.id]} className="text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate text-[13px] leading-5 font-medium">{item.label}</span>
               <Mark on={item.ready} off="dashed" />
-              <span className="min-w-0 truncate text-[13px] leading-5 font-medium">{item.label}</span>
             </span>
             <span
               className={cn(

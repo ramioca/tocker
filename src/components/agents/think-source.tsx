@@ -4,6 +4,7 @@ import { AlertTriangle, Coins, KeyRound } from "lucide-react";
 import { formatUsd } from "@/components/common/format";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { Field, RiskSlider } from "@/components/agents/builder/field";
+import { SPECS } from "@/components/agents/builder/module-specs";
 import { providerNames } from "@/components/agents/provider-choice";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
 import {
@@ -254,7 +255,7 @@ export function PayPerUsePanel({
           min={USDC_RUN_CAP.min}
           max={USDC_RUN_CAP.max}
           step={0.05}
-          format={(value) => formatUsd(value)}
+          spec={SPECS.usdcPerRun}
           meaning={
             check.warnings.maxUsdPerRun ??
             `A run that has spent ${formatUsd(usdc.maxUsdPerRun)} on thinking stops there and keeps what it has done.`
@@ -268,7 +269,7 @@ export function PayPerUsePanel({
           min={USDC_DAY_CAP.min}
           max={USDC_DAY_CAP.max}
           step={0.5}
-          format={(value) => formatUsd(value)}
+          spec={SPECS.usdcPerDay}
           meaning={`Once it has spent ${formatUsd(usdc.maxUsdPerDay)} on thinking in a day, the agent waits for 00:00 UTC.`}
           onChange={(maxUsdPerDay) => onChange({ ...usdc, maxUsdPerDay: limitCents(maxUsdPerDay) })}
         />

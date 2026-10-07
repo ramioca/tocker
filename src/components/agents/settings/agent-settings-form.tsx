@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/common/status-badge";
 import { formatUsd } from "@/components/common/format";
 import { Field, RiskSlider, Toggle } from "@/components/agents/builder/field";
-import { parseBps } from "@/components/agents/builder/parse-value";
+import { SPECS } from "@/components/agents/builder/module-specs";
 import { slippageMeaning } from "@/components/agents/builder/slippage-copy";
 import { UniverseControls } from "@/components/agents/builder/universe-controls";
 import { UniversePreview } from "@/components/agents/settings/universe-preview";
@@ -60,6 +60,9 @@ import { cn } from "@/lib/utils";
 import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { AgentDetail, DataSourceInfo, LlmKeyRow } from "@/server/types";
 import { stickyActionbarRef } from "@/hooks/root-flag";
+
+/** This page calls the field "Steps per run", so what it says about a typed value does too. */
+const STEPS_PER_RUN = { ...SPECS.maxSteps, label: "Steps per run" };
 
 /** The four numbers that decide how much money can move. */
 function capsOf(config: AgentConfig) {
@@ -549,7 +552,7 @@ function SettingsForm({
           label="Steps per run"
           value={config.llm.maxSteps}
           {...LLM_BOUNDS.maxSteps}
-          format={(value) => String(Math.round(value))}
+          spec={STEPS_PER_RUN}
           meaning={
             source === "usdc"
               ? `Up to ${stepsAllowed(Math.round(config.llm.maxSteps), "usdc")} steps a run: a pay-per-use run stops at ${MAX_PAID_STEPS} whatever this says. A shortlist of three proposals needs about 12, and every step is paid for.`
@@ -726,7 +729,7 @@ function SettingsForm({
             value={config.risk.maxTradeUsd}
             {...RISK_BOUNDS.maxTradeUsd}
             ladder={MAX_TRADE_LADDER}
-            format={(value) => formatUsd(value)}
+            spec={SPECS.maxTradeUsd}
             meaning={`No single trade may move more than ${formatUsd(config.risk.maxTradeUsd)}.`}
             onChange={(maxTradeUsd) => patchRisk({ maxTradeUsd })}
           />
@@ -736,7 +739,7 @@ function SettingsForm({
             value={config.risk.maxDailyTrades}
             min={1}
             max={100}
-            format={(value) => String(Math.round(value))}
+            spec={SPECS.maxDailyTrades}
             meaning={`Up to ${formatUsd(config.risk.maxTradeUsd * config.risk.maxDailyTrades)} of new positions a day; sells and exits never count.`}
             onChange={(maxDailyTrades) => patchRisk({ maxDailyTrades: Math.round(maxDailyTrades) })}
           />
@@ -746,7 +749,7 @@ function SettingsForm({
             value={config.risk.maxPositionPct}
             min={1}
             max={100}
-            format={(value) => `${Math.round(value)}%`}
+            spec={SPECS.maxPositionPct}
             meaning={`One token may hold at most ${Math.round(config.risk.maxPositionPct)}% of equity.`}
             onChange={(maxPositionPct) => patchRisk({ maxPositionPct: Math.round(maxPositionPct) })}
           />
@@ -757,7 +760,7 @@ function SettingsForm({
             min={0}
             max={5}
             step={0.05}
-            format={(value) => formatUsd(value)}
+            spec={SPECS.maxDataSpendUsdPerRun}
             meaning={`Once a run has spent ${formatUsd(config.risk.maxDataSpendUsdPerRun)} of Tocker's data budget, further paid calls are refused.`}
             onChange={(maxDataSpendUsdPerRun) => patchRisk({ maxDataSpendUsdPerRun })}
           />
@@ -768,8 +771,8 @@ function SettingsForm({
             min={10}
             max={2_000}
             step={10}
-            format={(value) => `${Math.round(value)} bps`}
-            parse={parseBps}
+            spec={SPECS.slippageBps}
+            className="sm:col-span-2"
             // Not "fills worse than this are rejected": see slippage-copy.ts for the one
             // case where the order goes out looser, and why the sentence is shared.
             meaning={slippageMeaning(config.risk.slippageBps)}

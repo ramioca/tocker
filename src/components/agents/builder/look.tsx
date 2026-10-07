@@ -1,8 +1,9 @@
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PART_ICON, PART_STROKE, type PartId } from "./parts";
 
 /**
- * The builder's look: one type scale, the silk, the choice-card frame and four small
+ * The builder's look: one type scale, the silk, the choice-card frame and five small
  * presentational pieces. Class names are whole literals so Tailwind sees them.
  * Nothing here reads or writes the draft.
  */
@@ -71,6 +72,23 @@ export function IconTile({
       {children}
     </span>
   );
+}
+
+/**
+ * A part's icon, the same drawing on the rail and on the card. Decorative: the name
+ * beside it says what it is.
+ */
+export function PartIcon({
+  part,
+  className,
+  strokeWidth = PART_STROKE,
+}: {
+  part: PartId;
+  className?: string;
+  strokeWidth?: number;
+}) {
+  const Icon = PART_ICON[part];
+  return <Icon aria-hidden data-part={part} className={cn("size-4 shrink-0", className)} strokeWidth={strokeWidth} />;
 }
 
 /**

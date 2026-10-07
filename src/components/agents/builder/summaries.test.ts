@@ -30,6 +30,7 @@ import {
   thinkSummary,
 } from "./summaries";
 import { STRATEGY_PRESETS, emptyDraft, onProvider, type BuilderDraft } from "./types";
+import { universeSummary } from "./universe-copy";
 import { validateDraft } from "./validate";
 
 // The two labels live in `.tsx` files (`intervalLabel`, `ttlLabel`), which a node test
@@ -188,6 +189,9 @@ describe("fundingSummary and scheduleSummary", () => {
     expect(paperLabel(1_000)).toBe("$1K");
     expect(paperLabel(100_000)).toBe("$100K");
     expect(paperLabel(500)).toBe("$500.00");
+    // Not a whole number of thousands: the full amount, never "$12.345K".
+    expect(paperLabel(12_345)).toBe("$12,345.00");
+    expect(paperLabel(1_500)).toBe("$1,500.00");
   });
 });
 
@@ -584,6 +588,29 @@ describe("previewRows", () => {
     expect(text.runs).toBe(scheduleSummary(draft, facts, labels));
     expect(text.thinks).toBe("Needs an Anthropic key");
     expect(text.money).toBe(fundingSummary(draft, facts));
+  });
+
+  it("quotes a typed liquidity gate as the number it is", () => {
+    // Every gate off its ladder, as somebody typing exact values would leave it.
+    const odd = draftWith((d) => {
+      Object.assign(d.config.universe, {
+        minScore: 61.5,
+        minLiquidityUsd: 12_345,
+        minHolderCount: 37,
+        minAgeMinutes: 7,
+        maxAgeHours: 36,
+        maxTop10HolderPct: 42.5,
+        maxBuyTaxPct: 7.5,
+      });
+    });
+    const hunts = universeSummary(odd.config.universe, odd.config.chains);
+    expect(hunts).toBe("Solana · score 62+ · $12,345+ liquidity · 4 feeds");
+    const oddRows = previewRows(odd, costFacts(odd, sources, opts), validateDraft(odd, []), {
+      hunts,
+      labels,
+      payPerUseAllowed: false,
+    });
+    expect(oddRows.find((row) => row.id === "hunts")?.text).toBe(hunts);
   });
 
   it("marks only how it thinks as needed, and only while it is", () => {

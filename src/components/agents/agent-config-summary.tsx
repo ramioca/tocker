@@ -4,14 +4,8 @@ import { ChainBadge } from "@/components/common/chain-badge";
 import { modelLabel } from "@/components/social-common/chain-badge";
 import { formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
-import {
-  VERDICT_META,
-  formatCompactUsd,
-  formatHolders,
-  formatHours,
-  formatMinutes,
-  verdictForScore,
-} from "@/components/tokens";
+import { VERDICT_META, verdictForScore } from "@/components/tokens";
+import { sayCount, sayHours, sayMinutes, sayUsd } from "@/components/agents/builder/typed-value";
 import { DISCOVERY_FEEDS } from "@/components/agents/builder/types";
 import { THINK_SOURCE_LABELS, payPerUseModelLabel, stepsAllowed } from "@/components/agents/thinking";
 import { ownListModelName } from "@/components/agents/model-list";
@@ -159,20 +153,20 @@ export function AgentConfigSummary({
 
           <dl className="mt-1">
             <Row label="Minimum liquidity">
-              <span className="tnum">{formatCompactUsd(universe.minLiquidityUsd)}</span>
+              <span className="tnum">{sayUsd(universe.minLiquidityUsd)}</span>
             </Row>
             <Row label="Minimum holders">
               <span className="tnum">
-                {universe.minHolderCount === 0 ? "Any" : formatHolders(universe.minHolderCount)}
+                {universe.minHolderCount === 0 ? "Any" : sayCount(universe.minHolderCount)}
               </span>
             </Row>
             <Row label="Age window">
               <span className="tnum">
                 {universe.minAgeMinutes === 0
                   ? "From birth"
-                  : `From ${formatMinutes(universe.minAgeMinutes)}`}
+                  : `From ${sayMinutes(universe.minAgeMinutes)}`}
                 {" · "}
-                {universe.maxAgeHours === null ? "no ceiling" : `up to ${formatHours(universe.maxAgeHours)}`}
+                {universe.maxAgeHours === null ? "no ceiling" : `up to ${sayHours(universe.maxAgeHours)}`}
               </span>
             </Row>
             <Row label="Top-10 wallet share">

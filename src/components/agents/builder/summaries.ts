@@ -156,9 +156,13 @@ export function executionLabel(execution: BuilderDraft["config"]["execution"], l
     : "trades on its own";
 }
 
-/** The paper balance in the short form of the Schedule step's buttons: "$10K". */
+/**
+ * The paper balance in the short form of the Schedule step's buttons: "$10K". Only a
+ * whole number of thousands has that form; anything else is the full amount, where
+ * dividing by a thousand used to print "$12.345K".
+ */
 export function paperLabel(usd: number): string {
-  return usd >= 1_000 ? `$${usd / 1_000}K` : formatUsd(usd);
+  return usd >= 1_000 && usd % 1_000 === 0 ? `$${usd / 1_000}K` : formatUsd(usd);
 }
 
 // What the "A way to think" row says while it is missing. `stillNeeded` reads these back,

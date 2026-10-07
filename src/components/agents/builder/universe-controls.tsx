@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import type { Chain } from "@/server/types";
 import { AnimatedSwitch } from "@/components/spectrumui/animated-switch";
 import { Input } from "@/components/ui/input";
-import { Slider } from "@/components/ui/slider";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { addressProblemForChain } from "@/lib/wallet-address";
 import { chainLabelFor } from "@/lib/wallets/funding";
@@ -14,7 +13,6 @@ import { ScoreBadge, VerdictScale } from "@/components/tokens/score-badge";
 import {
   VERDICT_META,
   formatCompactUsd,
-  formatHolders,
   formatHours,
   formatMinutes,
   verdictForScore,
@@ -22,7 +20,16 @@ import {
 } from "@/components/tokens";
 import { cn } from "@/lib/utils";
 import { Field } from "./field";
+import { Module, ModuleAction } from "./module";
+import {
+  HOLDER_LADDER,
+  LIQUIDITY_LADDER,
+  MAX_AGE_LADDER,
+  MIN_AGE_LADDER,
+  SPECS,
+} from "./module-specs";
 import { SimpleSelect } from "./simple-select";
+import { sayCount, sayHours, sayMinutes, sayUsd } from "./typed-value";
 import {
   DISCOVERY_FEEDS,
   UNIVERSE_PRESETS,
@@ -30,283 +37,16 @@ import {
   type DiscoveryFeedId,
   type UniverseConfig,
 } from "./types";
+import { compareToBalanced, universeSentence } from "./universe-copy";
 
-// --------------------------------------------------------------- ladders
-
-/**
- * Liquidity, holders and age are log-ish: the difference between $1k and $5k
- * matters far more than between $500k and $600k. A linear slider over those
- * ranges is a lie, so each one moves along a ladder of numbers a trader would
- * actually type.
- */
-const LIQUIDITY_LADDER = [
-  1_000, 2_500, 5_000, 10_000, 15_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000,
-];
-const HOLDER_LADDER = [0, 25, 50, 100, 150, 250, 500, 1_000, 2_500, 5_000, 10_000, 25_000, 100_000];
-const MIN_AGE_LADDER = [0, 5, 15, 30, 60, 120, 360, 720, 1_440, 4_320, 10_080];
-const MAX_AGE_LADDER = [1, 6, 12, 24, 72, 168, 720, 2_160, 8_760];
-
-function nearestIndex(ladder: number[], value: number): number {
-  let best = 0;
-  let bestDelta = Infinity;
-  ladder.forEach((entry, index) => {
-    const delta = Math.abs(entry - value);
-    if (delta < bestDelta) {
-      best = index;
-      bestDelta = delta;
-    }
-  });
-  return best;
-}
-
-/** A slider over a fixed ladder of values, so every stop is a number worth having. */
-function LadderSlider({
-  id,
-  label,
-  ladder,
-  value,
-  format,
-  meaning,
-  onChange,
-  disabled,
-  action,
-}: {
-  id: string;
-  label: string;
-  ladder: number[];
-  value: number;
-  format: (value: number) => string;
-  meaning: string;
-  onChange: (value: number) => void;
-  disabled?: boolean;
-  action?: React.ReactNode;
-}) {
-  // A stored gate that is not on the ladder (a seed, a preset, an older default) stays
-  // a stop of its own, so the header reads what is actually enforced and the thumb can
-  // come back to it; snapping it to the nearest rung would rewrite the gate on first
-  // touch. Remembered rather than derived from `value`, or it would vanish the moment
-  // the thumb moved off it. A new off-ladder value from outside (a preset) replaces it.
-  const [extra, setExtra] = useState(value);
-  if (!ladder.includes(value) && value !== extra) setExtra(value);
-  const stops = ladder.includes(extra) ? ladder : [...ladder, extra].sort((a, b) => a - b);
-  const index = nearestIndex(stops, value);
-  return (
-    <GateShell
-      id={id}
-      label={label}
-      display={format(value)}
-      meaning={meaning}
-      disabled={disabled}
-      action={action}
-    >
-      <Slider
-        aria-labelledby={`${id}-label`}
-        // The slider's value is a rung index; announce the rung, "$50K", not "4".
-        getAriaValueText={(_, i) => format(stops[i] ?? value)}
-        value={[index]}
-        min={0}
-        max={stops.length - 1}
-        step={1}
-        disabled={disabled}
-        onValueChange={(next) => {
-          const first = Array.isArray(next) ? next[0] : next;
-          if (typeof first === "number") onChange(stops[first]);
-        }}
-      />
-    </GateShell>
-  );
-}
-
-function LinearSlider({
-  id,
-  label,
-  value,
-  min,
-  max,
-  step = 1,
-  format,
-  meaning,
-  onChange,
-  disabled,
-}: {
-  id: string;
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step?: number;
-  format: (value: number) => string;
-  meaning: string;
-  onChange: (value: number) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <GateShell id={id} label={label} display={format(value)} meaning={meaning} disabled={disabled}>
-      <Slider
-        aria-labelledby={`${id}-label`}
-        getAriaValueText={(_, v) => format(v)}
-        value={[value]}
-        min={min}
-        max={max}
-        step={step}
-        disabled={disabled}
-        onValueChange={(next) => {
-          const first = Array.isArray(next) ? next[0] : next;
-          if (typeof first === "number") onChange(first);
-        }}
-      />
-    </GateShell>
-  );
-}
-
-/** Shared chrome so every gate reads the same way: name, value, control, sentence. */
-function GateShell({
-  id,
-  label,
-  display,
-  meaning,
-  children,
-  disabled,
-  action,
-}: {
-  id: string;
-  label: string;
-  display: string;
-  meaning: string;
-  children: React.ReactNode;
-  disabled?: boolean;
-  action?: React.ReactNode;
-}) {
-  return (
-    // Only the control dims when a gate is off: dimming the whole card took its label and
-    // explanation under 4.5:1, and those are what say why it is off.
-    <div className="rounded-xl border border-border/70 bg-card/30 p-3">
-      <div className="flex items-baseline justify-between gap-3">
-        {/* The slider is named by aria-labelledby; Base UI puts an id on its root div,
-            which a <label htmlFor> cannot label. */}
-        <span id={`${id}-label`} className="text-sm font-medium">
-          {label}
-        </span>
-        <span className="flex items-center gap-2">
-          <output className="tnum font-mono text-sm">{display}</output>
-          {action}
-        </span>
-      </div>
-      {/* No transition on the slider itself — a dragged control must track the
-          finger exactly, and 150ms of easing reads as lag. */}
-      <div className={cn("mt-3", disabled && "opacity-55")}>{children}</div>
-      <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">{meaning}</p>
-    </div>
-  );
-}
-
-// ------------------------------------------------------------- copy helpers
-
-function feedLabel(id: DiscoveryFeedId): string {
-  return DISCOVERY_FEEDS.find((feed) => feed.id === id)?.label.toLowerCase() ?? id;
-}
+// The sentences that read the universe back live in a file with no React in it, so a
+// server component or a test can import them without the controls.
+export { compareToBalanced, universeSentence, universeSummary } from "./universe-copy";
 
 function listSentence(items: string[]): string {
   if (items.length === 0) return "nothing";
   if (items.length === 1) return items[0];
   return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
-}
-
-/**
- * A maximum age, as a person says it. `maxAgeHours` is stored in hours, and a preset
- * that hunts the first fifteen minutes stores 0.25: under an hour it is said in minutes
- * ("15 minutes"), never "0.25 hours".
- */
-function maxAgeLabel(hours: number): string {
-  return hours < 1 ? formatMinutes(Math.max(1, Math.round(hours * 60))) : formatHours(hours);
-}
-
-/** The whole universe as one sentence. Nothing here is estimated or invented. */
-export function universeSentence(universe: UniverseConfig, chains: Chain[]): string {
-  const where = listSentence(chains.map((chain) => (chain === "solana" ? "Solana" : "Base")));
-  const feeds = listSentence(universe.discovery.map(feedLabel));
-  const verdict = VERDICT_META[verdictForScore(universe.minScore)].label.toLowerCase();
-
-  const gates = [
-    `at least ${formatCompactUsd(universe.minLiquidityUsd)} of liquidity`,
-    universe.minHolderCount > 0 ? `${formatHolders(universe.minHolderCount)} holders or more` : null,
-    universe.minAgeMinutes > 0 ? `at least ${formatMinutes(universe.minAgeMinutes)} old` : null,
-    universe.maxAgeHours !== null ? `no older than ${maxAgeLabel(universe.maxAgeHours)}` : null,
-    `top-10 wallets under ${Math.round(universe.maxTop10HolderPct)}%`,
-    `buy tax under ${Math.round(universe.maxBuyTaxPct)}%`,
-  ].filter((entry): entry is string => entry !== null);
-
-  const authorities =
-    universe.requireMintRevoked && universe.requireFreezeRevoked
-      ? " Mint and freeze authorities must both be revoked."
-      : universe.requireMintRevoked
-        ? " The mint authority must be revoked; a live freeze authority is allowed."
-        : universe.requireFreezeRevoked
-          ? " The freeze authority must be revoked; a live mint authority is allowed."
-          : " Live mint and freeze authorities are both allowed — the deployer can print supply or freeze your wallet.";
-
-  const blocked =
-    universe.blocklist.length > 0
-      ? ` ${universe.blocklist.length} token${universe.blocklist.length === 1 ? " is" : "s are"} blocked outright.`
-      : "";
-
-  // Said as what it buys, not what it refuses: "buy nothing scoring under 62 … with at
-  // least $15K of liquidity" read as a ban on exactly the tokens the gates let through.
-  return `On ${where}, from ${feeds}: it only buys tokens scoring ${Math.round(universe.minScore)}+ (${verdict} and up) with ${listSentence(gates)}.${authorities}${blocked}`;
-}
-
-/**
- * The universe in a glance, for a collapsed card. The full sentence runs to four lines
- * and a two-line clamp cut it off mid-rule, so the summary carries only the numbers that
- * decide the most and leaves the rest to the open card.
- */
-export function universeSummary(universe: UniverseConfig, chains: Chain[]): string {
-  const where = chains.map((chain) => (chain === "solana" ? "Solana" : "Base")).join(" + ") || "No chain";
-  const feeds = universe.discovery.length;
-  return [
-    where,
-    `score ${Math.round(universe.minScore)}+`,
-    `${formatCompactUsd(universe.minLiquidityUsd)}+ liquidity`,
-    `${feeds} feed${feeds === 1 ? "" : "s"}`,
-    universe.blocklist.length > 0 ? `${universe.blocklist.length} blocked` : null,
-  ]
-    .filter((part): part is string => part !== null)
-    .join(" · ");
-}
-
-const BALANCED = UNIVERSE_PRESETS.find((preset) => preset.id === "balanced")!.values;
-
-/**
- * How this bar compares with the shipped default. This is the honest version of
- * "40 tokens a day clear this" — we cannot know the count until the agent has
- * actually swept, and inventing one would be worse than saying nothing.
- */
-export function compareToBalanced(universe: UniverseConfig): {
-  tighter: string[];
-  looser: string[];
-  /** The bar may match while the feeds it sweeps do not; that is not "exactly" Balanced. */
-  feedsDiffer: boolean;
-} {
-  const tighter: string[] = [];
-  const looser: string[] = [];
-
-  const note = (label: string, delta: number) => {
-    if (delta > 0) tighter.push(label);
-    else if (delta < 0) looser.push(label);
-  };
-
-  note("score", Math.sign(universe.minScore - BALANCED.minScore));
-  note("liquidity", Math.sign(universe.minLiquidityUsd - BALANCED.minLiquidityUsd));
-  note("holders", Math.sign(universe.minHolderCount - BALANCED.minHolderCount));
-  note("minimum age", Math.sign(universe.minAgeMinutes - BALANCED.minAgeMinutes));
-  note("top-10 share", Math.sign(BALANCED.maxTop10HolderPct - universe.maxTop10HolderPct));
-  note("buy tax", Math.sign(BALANCED.maxBuyTaxPct - universe.maxBuyTaxPct));
-  if (universe.maxAgeHours !== null && BALANCED.maxAgeHours === null) tighter.push("maximum age");
-  if (universe.maxAgeHours === null && BALANCED.maxAgeHours !== null) looser.push("maximum age");
-  note("mint authority", Number(universe.requireMintRevoked) - Number(BALANCED.requireMintRevoked));
-  note("freeze authority", Number(universe.requireFreezeRevoked) - Number(BALANCED.requireFreezeRevoked));
-
-  return { tighter, looser, feedsDiffer: !sameSet(universe.discovery, BALANCED.discovery) };
 }
 
 /** Feeds are a set: the order they were switched on in changes nothing. */
@@ -509,151 +249,142 @@ export function UniverseControls({
           </p>
         </div>
 
-        <div
-          className="rounded-xl border p-4"
-          style={{
+        <Module
+          id={id("min-score")}
+          label="Minimum score"
+          size="hero"
+          spec={SPECS.minScore}
+          value={universe.minScore}
+          slider={{ min: 0, max: 100, step: 1 }}
+          tint={{
             borderColor: verdictTint(verdictMeta.color, 30),
             backgroundColor: verdictTint(verdictMeta.color, 6),
           }}
-        >
-          <div className="flex items-baseline justify-between gap-3">
-            <span id={`${id("min-score")}-label`} className="text-sm font-medium">
-              Minimum score
-            </span>
-            <span className="flex items-baseline gap-2">
-              <output
-                className="tnum font-mono text-2xl font-semibold"
-                style={{ color: verdictMeta.color }}
-              >
-                {Math.round(universe.minScore)}
-              </output>
-              <ScoreBadge total={universe.minScore} verdict={verdict} size="sm" />
-            </span>
-          </div>
+          valueColor={verdictMeta.color}
+          badge={<ScoreBadge total={universe.minScore} verdict={verdict} size="sm" />}
+          footer={<VerdictScale active={verdict} className="mt-3" />}
+          meaning={
+            <>
+              {Math.round(universe.minScore)} = {verdictMeta.label.toLowerCase()}.{" "}
+              {verdictMeta.meaning}
+            </>
+          }
+          onChange={(minScore) => {
+            if (minScore !== null) onUniverse({ minScore });
+          }}
+        />
 
-          <Slider
-            aria-labelledby={`${id("min-score")}-label`}
-            getAriaValueText={(_, v) => `${Math.round(v)} out of 100`}
-            className="mt-3"
-            value={[universe.minScore]}
-            min={0}
-            max={100}
-            step={1}
-            onValueChange={(next) => {
-              const first = Array.isArray(next) ? next[0] : next;
-              if (typeof first === "number") onUniverse({ minScore: first });
+        {/* Liquidity, holders and age are log-ish: the difference between $1k and $5k
+            matters far more than between $500k and $600k. A linear slider over those
+            ranges is a lie, so each one moves along a ladder of numbers a trader would
+            actually type; the value box takes anything in between. */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Module
+            id={id("min-liquidity")}
+            label="Minimum liquidity"
+            spec={SPECS.minLiquidityUsd}
+            slider={{ ladder: LIQUIDITY_LADDER }}
+            value={universe.minLiquidityUsd}
+            meaning={`Below ${sayUsd(universe.minLiquidityUsd)} of pooled depth the agent will not look. Your exit is only as good as this number.`}
+            onChange={(minLiquidityUsd) => {
+              if (minLiquidityUsd !== null) onUniverse({ minLiquidityUsd });
             }}
           />
 
-          <VerdictScale active={verdict} className="mt-3" />
-
-          <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
-            {Math.round(universe.minScore)} = {verdictMeta.label.toLowerCase()}.{" "}
-            {verdictMeta.meaning}
-          </p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <LadderSlider
-            id={id("min-liquidity")}
-            label="Minimum liquidity"
-            ladder={LIQUIDITY_LADDER}
-            value={universe.minLiquidityUsd}
-            format={formatCompactUsd}
-            meaning={`Below ${formatCompactUsd(universe.minLiquidityUsd)} of pooled depth the agent will not look. Your exit is only as good as this number.`}
-            onChange={(minLiquidityUsd) => onUniverse({ minLiquidityUsd })}
-          />
-
-          <LadderSlider
+          <Module
             id={id("min-holders")}
             label="Minimum holders"
-            ladder={HOLDER_LADDER}
+            spec={SPECS.minHolderCount}
+            slider={{ ladder: HOLDER_LADDER }}
             value={universe.minHolderCount}
-            format={(value) => (value === 0 ? "Any" : formatHolders(value))}
             meaning={
               universe.minHolderCount === 0
                 ? "No floor. A token held by four wallets is still on the table."
-                : `Fewer than ${formatHolders(universe.minHolderCount)} wallets holding means nobody has arrived yet.`
+                : `Fewer than ${sayCount(universe.minHolderCount)} wallets holding means nobody has arrived yet.`
             }
-            onChange={(minHolderCount) => onUniverse({ minHolderCount })}
+            onChange={(minHolderCount) => {
+              if (minHolderCount !== null) onUniverse({ minHolderCount });
+            }}
           />
 
-          <LadderSlider
+          <Module
             id={id("min-age")}
             label="Minimum age"
-            ladder={MIN_AGE_LADDER}
+            spec={SPECS.minAgeMinutes}
+            slider={{ ladder: MIN_AGE_LADDER }}
             value={universe.minAgeMinutes}
-            format={(value) => (value === 0 ? "Any" : formatMinutes(value))}
             meaning={
               universe.minAgeMinutes === 0
                 ? "It may buy a token seconds after the pool opens. That is the rug window."
-                : `The cheapest rug filter there is: most snipe-and-dumps are over inside ${formatMinutes(universe.minAgeMinutes)}.`
+                : `The cheapest rug filter there is: most snipe-and-dumps are over inside ${sayMinutes(universe.minAgeMinutes)}.`
             }
-            onChange={(minAgeMinutes) => onUniverse({ minAgeMinutes })}
+            onChange={(minAgeMinutes) => {
+              if (minAgeMinutes !== null) onUniverse({ minAgeMinutes });
+            }}
           />
 
-          <LadderSlider
+          <Module
             id={id("max-age")}
             label="Maximum age"
-            ladder={MAX_AGE_LADDER}
-            value={universe.maxAgeHours ?? 72}
-            disabled={universe.maxAgeHours === null}
-            // The thumb parks at 72h while "Any age" is on; the readout says what is enforced.
-            format={(value) => (universe.maxAgeHours === null ? "Any" : maxAgeLabel(value))}
+            spec={SPECS.maxAgeHours}
+            slider={{ ladder: MAX_AGE_LADDER }}
+            // null is "Any age": the value box says so and stays typable, and the thumb
+            // parks at 72h with the slider off.
+            value={universe.maxAgeHours}
+            sliderRest={72}
+            sliderOff={universe.maxAgeHours === null}
             meaning={
               universe.maxAgeHours === null
                 ? "No ceiling — a token from 2021 is as eligible as one from this morning."
-                : `Anything older than ${maxAgeLabel(universe.maxAgeHours)} is ignored, however well it scores. This is how you hunt only fresh launches.`
+                : `Anything older than ${sayHours(universe.maxAgeHours)} is ignored, however well it scores. This is how you hunt only fresh launches.`
             }
-            onChange={(hours) => onUniverse({ maxAgeHours: hours })}
+            onChange={(maxAgeHours) => onUniverse({ maxAgeHours })}
             action={
-              <button
-                type="button"
-                role="switch"
-                aria-checked={universe.maxAgeHours === null}
-                onClick={() =>
-                  onUniverse({ maxAgeHours: universe.maxAgeHours === null ? 72 : null })
-                }
-                className={cn(
-                  "rounded-md border px-1.5 py-0.5 text-[10px] font-medium",
-                  "transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  universe.maxAgeHours === null
-                    ? "border-primary/50 bg-primary/10 text-primary"
-                    : "border-border text-muted-foreground hover:bg-muted",
-                )}
+              <ModuleAction
+                pressed={universe.maxAgeHours === null}
+                onClick={() => onUniverse({ maxAgeHours: universe.maxAgeHours === null ? 72 : null })}
               >
                 Any age
-              </button>
+              </ModuleAction>
             }
           />
 
-          <LinearSlider
+          <Module
             id={id("top10")}
             label="Top-10 wallet share"
+            spec={SPECS.maxTop10HolderPct}
+            slider={{ min: 5, max: 100, step: 1 }}
             value={universe.maxTop10HolderPct}
-            min={5}
-            max={100}
-            step={1}
-            format={(value) => `${Math.round(value)}%`}
             meaning={`Refuse anything where the ten biggest wallets hold more than ${Math.round(universe.maxTop10HolderPct)}% of supply — they can end the token in one transaction.`}
-            onChange={(maxTop10HolderPct) => onUniverse({ maxTop10HolderPct })}
+            onChange={(maxTop10HolderPct) => {
+              if (maxTop10HolderPct !== null) onUniverse({ maxTop10HolderPct });
+            }}
           />
 
-          <LinearSlider
+          <Module
             id={id("buy-tax")}
             label="Maximum buy tax"
+            spec={SPECS.maxBuyTaxPct}
+            slider={{ min: 0, max: 25, step: 1 }}
             value={universe.maxBuyTaxPct}
-            min={0}
-            max={25}
-            step={1}
-            format={(value) => `${Math.round(value)}%`}
+            // Off without Base. The label and the sentence stay at full contrast: they
+            // are what says why.
+            inactive={!baseEnabled}
+            badge={
+              baseEnabled ? null : (
+                <span className="rounded-md border border-white/[0.12] px-1.5 py-0.5 text-[11px] leading-4 text-muted-foreground">
+                  Base only
+                </span>
+              )
+            }
             meaning={
               baseEnabled
                 ? `A Base token that charges more than ${Math.round(universe.maxBuyTaxPct)}% to buy is skipped. Solana has no transfer tax, so this only bites on Base.`
                 : "Base only — Solana tokens have no transfer tax, so this gate does nothing until you turn Base on."
             }
-            onChange={(maxBuyTaxPct) => onUniverse({ maxBuyTaxPct })}
-            disabled={!baseEnabled}
+            onChange={(maxBuyTaxPct) => {
+              if (maxBuyTaxPct !== null) onUniverse({ maxBuyTaxPct });
+            }}
           />
         </div>
       </section>

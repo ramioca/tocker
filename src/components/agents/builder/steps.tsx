@@ -4,10 +4,10 @@ import { useId, useMemo, useRef, useState, useTransition } from "react";
 import {
   AlertTriangle,
   CircleDollarSign,
+  FlaskConical,
   Info,
   KeyRound,
   Plus,
-  ScrollText,
   Shuffle,
   X,
   type LucideIcon,
@@ -60,8 +60,8 @@ import {
   transfersFor,
 } from "@/lib/wallets/funding";
 import { Field, RiskSlider, StepHeading, Toggle } from "./field";
+import { SPECS } from "./module-specs";
 import { CHOICE_CARD, CHOICE_OFF, CHOICE_ON, IconTile, Mark, TYPE, type Tone } from "./look";
-import { parseBps } from "./parse-value";
 import { slippageMeaning } from "./slippage-copy";
 import { UniverseControls } from "./universe-controls";
 import { StrategyPresetCards } from "./strategy-preset-cards";
@@ -628,7 +628,7 @@ export function ThinkStep({
           min={0}
           max={1.5}
           step={0.1}
-          format={(value) => value.toFixed(1)}
+          spec={SPECS.temperature}
           meaning={
             // Some providers are sent no temperature, or less than is set here. Where
             // that is so the slider says it, rather than describing an effect it will
@@ -649,7 +649,7 @@ export function ThinkStep({
           label="Max steps per run"
           value={draft.config.llm.maxSteps}
           {...LLM_BOUNDS.maxSteps}
-          format={(value) => String(Math.round(value))}
+          spec={SPECS.maxSteps}
           meaning={
             source === "usdc"
               ? `Up to ${stepsAllowed(Math.round(draft.config.llm.maxSteps), "usdc")} steps before the run is cut off: a pay-per-use run stops at ${MAX_PAID_STEPS} whatever this says, and every step is paid for.`
@@ -925,11 +925,11 @@ export function RiskStep({
           value={risk.maxTradeUsd}
           {...RISK_BOUNDS.maxTradeUsd}
           ladder={MAX_TRADE_LADDER}
-          format={(value) => formatUsd(value)}
+          spec={SPECS.maxTradeUsd}
           meaning={
             fundedUsd > 0 && risk.maxTradeUsd > fundedUsd
-              ? `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)} — but that is more than ${startsWith}, so every trade would be refused for lack of cash.${feeNote} Tap the number to type an exact amount.`
-              : `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)}, whatever the model asks for.${feeNote} Tap the number to type an exact amount.`
+              ? `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)} — but that is more than ${startsWith}, so every trade would be refused for lack of cash.${feeNote}`
+              : `A single trade can never move more than ${formatUsd(risk.maxTradeUsd)}, whatever the model asks for.${feeNote}`
           }
           onChange={(maxTradeUsd) => patch({ maxTradeUsd })}
         />
@@ -940,7 +940,7 @@ export function RiskStep({
           value={risk.maxDailyTrades}
           min={1}
           max={100}
-          format={(value) => String(Math.round(value))}
+          spec={SPECS.maxDailyTrades}
           meaning={`Worst case it spends ${formatUsd(risk.maxTradeUsd * Math.round(risk.maxDailyTrades))} of turnover in a day before it is cut off.`}
           onChange={(maxDailyTrades) => patch({ maxDailyTrades: Math.round(maxDailyTrades) })}
         />
@@ -951,7 +951,7 @@ export function RiskStep({
           value={risk.maxPositionPct}
           min={1}
           max={100}
-          format={(value) => `${Math.round(value)}%`}
+          spec={SPECS.maxPositionPct}
           meaning={
             positionCapTooLow
               ? `A ${formatUsd(risk.maxTradeUsd)} trade on ${startsWith} is ${ticketSharePct}% of equity, above this cap — the risk guard would refuse every buy. Set this to at least ${Math.min(100, ticketSharePct)}%, or lower the max per trade.`
@@ -969,7 +969,7 @@ export function RiskStep({
           min={0}
           max={5}
           step={0.05}
-          format={(value) => formatUsd(value)}
+          spec={SPECS.maxDataSpendUsdPerRun}
           meaning={`Once a run has spent ${formatUsd(risk.maxDataSpendUsdPerRun)} of Tocker's data budget, further paid calls are refused and it decides with what it has.`}
           onChange={(maxDataSpendUsdPerRun) => patch({ maxDataSpendUsdPerRun })}
         />
@@ -981,8 +981,9 @@ export function RiskStep({
           min={10}
           max={2_000}
           step={10}
-          format={(value) => `${Math.round(value)} bps`}
-          parse={parseBps}
+          spec={SPECS.slippageBps}
+          // The fifth card, with the longest sentence: full width rather than a hole beside it.
+          className="sm:col-span-2"
           meaning={slippageMeaning(risk.slippageBps)}
           onChange={(slippageBps) => patch({ slippageBps: Math.round(slippageBps) })}
         />
@@ -1161,7 +1162,7 @@ export function ScheduleStep({
 
 /** An icon per funding choice, keyed by the option's value; a value with none shows no tile. */
 const CHOICE_ICON: Record<string, { icon: LucideIcon; tone: Tone }> = {
-  paper: { icon: ScrollText, tone: "plain" },
+  paper: { icon: FlaskConical, tone: "plain" },
   fund: { icon: CircleDollarSign, tone: "blue" },
 };
 
