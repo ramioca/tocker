@@ -6,7 +6,8 @@ import { useSafeReducedMotion } from "./motion";
 type Canvas = typeof import("./hero-shader-canvas").default;
 
 /**
- * A slow aurora in the mark's colours behind the hero (Shaders, MIT, WebGPU).
+ * A slow aurora in the mark’s colours behind the hero (Shaders, MIT, WebGPU), which
+ * bends under a mouse and leaves a faint neon wake (see hero-shader-canvas.tsx).
  *
  * Kept off the critical path and out of the way:
  * - the library loads only after the page is idle, so it never delays the headline;
@@ -58,7 +59,11 @@ export function HeroShader() {
 
   return (
     <div className="lp-hero-shader" data-ready={ready ? "" : undefined} aria-hidden>
-      <Canvas onReady={() => setReady(true)} onUnavailable={() => setFailed(true)} />
+      <Canvas
+        interactive={window.matchMedia("(hover: hover) and (pointer: fine)").matches}
+        onReady={() => setReady(true)}
+        onUnavailable={() => setFailed(true)}
+      />
     </div>
   );
 }
