@@ -54,6 +54,16 @@ function hours(n: number): string {
 }
 
 /**
+ * A limit the owner set, said as they set it: one decimal as above unless that would
+ * misstate the number (an hour and a quarter is "1.25h", not "1.3h"). Time held or left
+ * is a measurement and keeps `hours`.
+ */
+function limitHours(n: number): string {
+  const exact = (x: number) => (Number.isInteger(Math.round(x * 100) / 10) ? x.toFixed(1) : x.toFixed(2));
+  return n < 1 ? `${Math.round(n * 60)}m` : n < 48 ? `${exact(n)}h` : `${exact(n / 24)}d`;
+}
+
+/**
  * The armed exit rules, spelled out as *enforced* rather than advisory.
  *
  * This block replaced two lines of "stop loss guidance". The difference matters: the
@@ -74,7 +84,7 @@ None are configured, so nothing sells your positions but you. Watch your book.`;
     r.trailingStopPct === null
       ? null
       : `  - Trailing stop: ${r.trailingStopPct}% off the peak, armed only once the position is in profit`,
-    r.maxHoldHours === null ? null : `  - Max hold: ${hours(r.maxHoldHours)}`,
+    r.maxHoldHours === null ? null : `  - Max hold: ${limitHours(r.maxHoldHours)}`,
     r.exitScoreBelow === null ? null : `  - Score floor: a holding that rescores below ${r.exitScoreBelow}/100 is sold`,
     r.exitOnLiquidityDropPct === null
       ? null
@@ -123,7 +133,7 @@ export function describeExitWatch(portfolio: Portfolio, config: AgentConfig, now
       }
       if (r.maxHoldHours !== null && p.openedAt !== null) {
         const left = r.maxHoldHours - Math.max(0, (now.getTime() - new Date(p.openedAt).getTime()) / 3_600_000);
-        parts.push(`${left <= 0 ? "past" : hours(left)} ${left <= 0 ? "the" : "left on the"} ${hours(r.maxHoldHours)} max hold`);
+        parts.push(`${left <= 0 ? "past" : hours(left)} ${left <= 0 ? "the" : "left on the"} ${limitHours(r.maxHoldHours)} max hold`);
       }
       if (p.entryScore !== null) {
         parts.push(`entry score ${p.entryScore.toFixed(0)}${p.currentScore === null ? "" : ` → ${p.currentScore.toFixed(0)} now`}`);

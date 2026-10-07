@@ -326,7 +326,9 @@ export function Module({
   const low = stops ? stops[0] : linear.min;
   const high = stops ? stops[stops.length - 1] : linear.max;
 
-  // A note belongs to the value it was said about; once the value moves on, it is gone.
+  // A note belongs to the value it was said about; once the value moves on, it is gone
+  // for good, so a preset that later returns to the same number does not bring it back.
+  if (note !== null && note.value !== value) setNote(null);
   const live = note !== null && note.value === value ? note : null;
   const refused = live?.kind === "refused";
 
@@ -398,7 +400,7 @@ export function Module({
           {label}
         </label>
         {/* Capped so a long entry cannot push the label off; the action wraps under the value. */}
-        <span className="flex max-w-[68%] min-w-0 flex-wrap items-center justify-end gap-2">
+        <span className="flex max-w-[72%] min-w-0 flex-wrap items-center justify-end gap-2">
           {badge}
           {armed ? (
             <ValueField

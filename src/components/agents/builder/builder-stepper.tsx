@@ -35,7 +35,7 @@ function StateBadge({ status, error }: { status: StepStatus; error: boolean }) {
     <span
       data-state={kind}
       className={cn(
-        "absolute -right-1.5 -bottom-1 grid size-3 place-items-center rounded-full bg-background ring-2 ring-background",
+        "absolute -right-2 -bottom-1 grid size-3 place-items-center rounded-full bg-background ring-1 ring-background",
         "transition-[opacity,scale] duration-150",
         EASE,
         "motion-reduce:scale-100",

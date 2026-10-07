@@ -137,6 +137,29 @@ describe("every spec against agentConfigSchema", () => {
 });
 
 describe("ranges", () => {
+  /**
+   * The schema allows far more than the product does. For the linear modules the slider's
+   * ends are written at the call sites, so this table is what stops a typed range from
+   * quietly growing past them.
+   */
+  it.each([
+    ["minScore", 0, 100],
+    ["maxTop10HolderPct", 5, 100],
+    ["maxBuyTaxPct", 0, 25],
+    ["maxDailyTrades", 1, 100],
+    ["maxPositionPct", 1, 100],
+    ["maxDataSpendUsdPerRun", 0, 5],
+    ["slippageBps", 10, 2_000],
+    ["stopLossPct", 1, 90],
+    ["takeProfitPct", 5, 500],
+    ["trailingStopPct", 5, 90],
+    ["exitScoreBelow", 5, 90],
+    ["exitOnLiquidityDropPct", 10, 90],
+    ["temperature", 0, 1.5],
+  ] as const)("%s can be typed from %d to %d and no further", (id, min, max) => {
+    expect([SPECS[id].min, SPECS[id].max]).toEqual([min, max]);
+  });
+
   it("are what each slider reaches", () => {
     const ends = (ladder: readonly number[]) => [ladder[0], ladder[ladder.length - 1]];
     expect([SPECS.minLiquidityUsd.min, SPECS.minLiquidityUsd.max]).toEqual(ends(LIQUIDITY_LADDER));
@@ -171,7 +194,7 @@ describe("ranges", () => {
     for (const [id, spec] of Object.entries(SPECS)) {
       expect(spec.label.length, id).toBeGreaterThan(0);
       expect(spec.min, id).toBeLessThan(spec.max);
-      // "Try 10k or $12,345": each suggestion must itself be accepted.
+      // "Try 10000 or 10k": each suggestion must itself be accepted.
       for (const example of spec.example.split(" or ")) {
         const result = settle(spec, example, null);
         expect(result.status, `${id} ${example}`).toBe("set");

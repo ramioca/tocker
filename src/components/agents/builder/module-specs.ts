@@ -143,7 +143,8 @@ export const SPECS: Record<SpecId, ValueSpec> = {
     precision: 1,
     read: readUsd,
     format: sayUsd,
-    example: "10k or $12,345",
+    // Leads with what a phone's number pad can type; the short form is for a keyboard.
+    example: "10000 or 10k",
     inputMode: "decimal",
   },
   minHolderCount: {

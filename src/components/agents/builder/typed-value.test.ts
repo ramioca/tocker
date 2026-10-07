@@ -91,7 +91,7 @@ function table(name: string, id: SpecId, current: number | null, rows: Row[]): v
 // ------------------------------------------------------------------ tables
 
 const LIQUIDITY_RANGE = "Minimum liquidity goes from $1.0K to $1.0M. Kept $15K.";
-const LIQUIDITY_UNREADABLE = "Could not read that. Try 10k or $12,345. Kept $15K.";
+const LIQUIDITY_UNREADABLE = "Could not read that. Try 10000 or 10k. Kept $15K.";
 
 table("money, compact: Minimum liquidity at $15K", "minLiquidityUsd", 15_000, [
   ["10k", { set: 10_000, shows: "$10K", say: "Set to $10K.", note: false }],
@@ -121,7 +121,7 @@ table("money, compact: Minimum liquidity at $15K", "minLiquidityUsd", 15_000, [
   ["-5k", "unreadable"],
   ["$", "unreadable"],
   ["10kk", "unreadable"],
-  ["any", { refused: "Minimum liquidity needs a number, like 10k or $12,345. Kept $15K." }],
+  ["any", { refused: "Minimum liquidity needs a number, like 10000 or 10k. Kept $15K." }],
 ]);
 
 const TRADE_RANGE = "Max per trade goes from $1.00 to $5,000.00. Kept $100.00.";
