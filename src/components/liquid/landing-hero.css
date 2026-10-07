@@ -315,9 +315,9 @@
     width: 100%;
     margin-top: 32px;
   }
-  /* The eyebrow keeps to one line: the chains go, and the run card under it
-     still names both. */
-  .lp-hero-eyebrow-more {
+  /* The eyebrow keeps to one line: the chains keep their marks, not their names. */
+  .lp-hero-eyebrow .lp-chain-name,
+  .lp-hero-eyebrow .lp-chain-and {
     display: none;
   }
 }

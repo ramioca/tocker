@@ -1,4 +1,5 @@
 import { AppLink } from "./app-link";
+import { Chains } from "./chain-logos";
 import { HeroIntro } from "./hero-intro";
 import { HeroRun } from "./hero-run";
 import { HeroShader } from "./hero-shader";
@@ -29,10 +30,11 @@ export function Hero({ hasSession }: { hasSession: boolean }) {
       <div className="lp-hero-head lp-wrap">
         <p className="lp-hero-eyebrow lp-eyebrow lp-intro">
           <span className="lp-hero-dot" aria-hidden />
-          {/* One item beside the dot, so the two halves keep a word space between them. */}
-          <span>
-            Now open<span className="lp-hero-eyebrow-more"> · Solana and Base</span>
+          <span>Open beta</span>
+          <span className="lp-hero-eyebrow-sep" aria-hidden>
+            ·
           </span>
+          <Chains size={14} />
         </p>
         <h1 id="lp-hero-title" className="lp-h1 lp-intro">
           {/* Two set lines from 640px (each half keeps to one line, and both never fit on one). */}
