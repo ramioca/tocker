@@ -180,9 +180,12 @@ export function toTradeScore(snapshot: TradeScoreSnapshot | null | undefined): T
 /**
  * A trade as `viewer` may see it. Redacted unless the viewer is the agent's owner: the
  * provider error (`visibleError`), the parts of the score snapshot that describe the
- * agent's own rules and paid sources (`visibleScore`), and the thresholds and vendor
- * names a rationale can carry (`visibleRationale`). Defaulting to the non-owner view
- * means a new caller that forgets the argument under-shares instead of leaking.
+ * agent's own rules and paid sources (`visibleScore`), the thresholds and vendor
+ * names a rationale can carry (`visibleRationale`), and who decided an order and when
+ * (the owner or a guard: it says how the owner runs the agent, and no page shows it to
+ * anyone else). `requestedUsd` stays: it is the value every viewer reads on a trade
+ * that did not fill. Defaulting to the non-owner view means a new caller that forgets
+ * the argument under-shares instead of leaking.
  */
 export function toTradeRow(
   row: typeof trades.$inferSelect,
@@ -205,8 +208,8 @@ export function toTradeRow(
     exitReason: (row.exitReason as TradeRow["exitReason"]) ?? null,
     requestedUsd: row.requestedUsd === null ? null : toNum(row.requestedUsd),
     proposedAt: iso(row.proposedAt),
-    decidedAt: iso(row.decidedAt),
-    decidedBy: row.decidedBy,
+    decidedAt: viewer.isOwner ? iso(row.decidedAt) : null,
+    decidedBy: viewer.isOwner ? row.decidedBy : null,
     entryScore: toTradeScore(row.scoreSnapshot)?.total ?? null,
     isPaper: row.isPaper,
     txHash: row.txHash,

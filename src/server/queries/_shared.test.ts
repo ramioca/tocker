@@ -12,7 +12,7 @@ import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { toNumeric } from "@/lib/money";
-import { buildAgentCards, loadAgentAggregates, loadBookMarks } from "./_shared";
+import { buildAgentCards, loadAgentAggregates, loadBookMarks, toTradeRow } from "./_shared";
 
 const DAY = 86_400_000;
 
@@ -90,5 +90,70 @@ describe("loadBookMarks", () => {
     // The mode is the agent's, so a later flip changes which marks count.
     await db.update(schema.agents).set({ mode: "paper" }).where(eq(schema.agents.id, flipped.agentId));
     expect((await loadBookMarks(db, [flipped.agentId])).get(flipped.agentId)).toMatchObject({ mode: "paper", equityUsd: 10_000 });
+  });
+});
+
+describe("toTradeRow, who decided an order", () => {
+  const token = {
+    id: "solana:BONK",
+    chain: "solana" as const,
+    address: "BONK",
+    symbol: "BONK",
+    name: "Bonk",
+    logoUrl: null,
+    decimals: 5,
+    lastPriceUsd: 0.0000027,
+  };
+  const decided = new Date("2026-09-21T10:00:30.000Z");
+  const row = (decidedBy: string) =>
+    ({
+      id: "t1",
+      agentId: "a1",
+      runId: null,
+      ownerId: "u1",
+      chain: "solana",
+      side: "buy",
+      tokenId: token.id,
+      quoteTokenId: "solana:usdc",
+      amountToken: "0",
+      amountUsd: "25",
+      priceUsd: "0",
+      feeUsd: "0",
+      status: "rejected",
+      isPaper: false,
+      txHash: null,
+      rationale: null,
+      scoreSnapshot: null,
+      origin: "agent",
+      exitReason: null,
+      requestedUsd: "25",
+      proposedAt: new Date("2026-09-21T10:00:00.000Z"),
+      decidedAt: decided,
+      decidedBy,
+      error: "Declined by the owner.",
+      createdAt: new Date("2026-09-21T10:00:00.000Z"),
+      filledAt: null,
+    }) as Parameters<typeof toTradeRow>[0];
+
+  it("tells the owner who decided and when", () => {
+    for (const by of ["owner", "guard", "expiry"]) {
+      const trade = toTradeRow(row(by), token, { isOwner: true });
+      expect(trade.decidedBy).toBe(by);
+      expect(trade.decidedAt).toBe(decided.toISOString());
+    }
+  });
+
+  it("sends a visitor neither, whoever decided, and the same row for all three", () => {
+    const sent = ["owner", "guard", "expiry"].map((by) => toTradeRow(row(by), token, { isOwner: false }));
+    for (const trade of sent) {
+      expect(trade.decidedBy).toBeNull();
+      expect(trade.decidedAt).toBeNull();
+      // Still sent: it is the value the Trades tab prints on a row that did not fill.
+      expect(trade.requestedUsd).toBe(25);
+    }
+    expect(sent[1]).toEqual(sent[0]);
+    expect(sent[2]).toEqual(sent[0]);
+    // A caller that forgets to say who is looking gets the visitor's row.
+    expect(toTradeRow(row("owner"), token)).toEqual(sent[0]);
   });
 });

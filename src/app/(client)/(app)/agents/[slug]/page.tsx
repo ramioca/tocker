@@ -153,7 +153,7 @@ export default async function AgentPage({ params, searchParams }: Params) {
               </section>
             </div>
           }
-          trades={<TradesTable agentId={agent.id} agentSlug={agent.slug} />}
+          trades={<TradesTable agentId={agent.id} agentSlug={agent.slug} isOwner={agent.isOwner} />}
           performance={
             analytics ? <PerformancePanel windows={analytics} isOwner={agent.isOwner} /> : null
           }
