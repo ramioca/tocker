@@ -6,8 +6,10 @@ import {
   MAX_MODEL_ID,
   RETIRED_DATA_SOURCE_IDS,
   agentConfigSchema,
+  llmProviderSchema,
   parseAgentConfig,
 } from "./config";
+import { CATALOGUE, CATALOGUE_IDS, PROVIDER_IDS, isProvider } from "./providers";
 
 const withDataSpend = (usd: number) => ({
   ...DEFAULT_AGENT_CONFIG,
@@ -102,6 +104,61 @@ describe("llm.model", () => {
     expect(long.success).toBe(false);
     expect(long.success ? null : long.error.issues[0]?.message).toBe("That does not look like a model id");
     expect(agentConfigSchema.safeParse(withModel("a".repeat(500_000))).success).toBe(false);
+  });
+});
+
+const withProvider = (provider: string, model: string) => ({
+  ...DEFAULT_AGENT_CONFIG,
+  llm: { ...DEFAULT_AGENT_CONFIG.llm, provider, model },
+});
+
+/** The schema's list of providers is the registry's, so the two cannot drift apart. */
+describe("llm.provider", () => {
+  it("accepts every provider a key can be added for, on the model it starts on", () => {
+    expect(llmProviderSchema.options).toEqual([...PROVIDER_IDS]);
+    for (const provider of PROVIDER_IDS) {
+      const parsed = parseAgentConfig(withProvider(provider, CATALOGUE[provider].defaultModel));
+      expect(parsed.llm, provider).toMatchObject({ provider, model: CATALOGUE[provider].defaultModel });
+    }
+  });
+
+  /** A config stored before this change parses to exactly what was stored. */
+  it("reads a config on one of the three there were before as it always did", () => {
+    for (const [provider, model] of [
+      ["anthropic", "claude-sonnet-5-5"],
+      ["openai", "gpt-5"],
+      ["openrouter", "anthropic/claude-sonnet-5.5"],
+    ] as const) {
+      const stored = withProvider(provider, model);
+      expect(parseAgentConfig(stored).llm).toEqual(stored.llm);
+    }
+  });
+
+  it("refuses a provider that has a row but is not switched on, and anything that is not a provider", () => {
+    for (const provider of CATALOGUE_IDS) {
+      // A plain yes or no: the type predicate would leave `provider` with no type once all are enabled.
+      const offered: boolean = isProvider(provider);
+      if (offered) continue;
+      expect(agentConfigSchema.safeParse(withProvider(provider, CATALOGUE[provider].defaultModel)).success, provider).toBe(false);
+    }
+    for (const provider of ["", "cohere", "Anthropic", "constructor", "__proto__", "toString"]) {
+      expect(agentConfigSchema.safeParse(withProvider(provider, "gpt-5")).success, provider).toBe(false);
+    }
+  });
+
+  it("accepts every model id on every row of the registry", () => {
+    for (const provider of CATALOGUE_IDS) {
+      for (const { id } of CATALOGUE[provider].models) expect(parseAgentConfig(withModel(id)).llm.model, `${provider} ${id}`).toBe(id);
+    }
+  });
+
+  /** Some providers put the model id in the request's address; see `MODEL_ID_PATTERN`. */
+  it("refuses a model id that could climb out of a path", () => {
+    for (const model of ["gemini/../../v1/files", "a..b", ".."]) {
+      const parsed = agentConfigSchema.safeParse(withModel(model));
+      expect(parsed.success, model).toBe(false);
+      expect(parsed.success ? null : parsed.error.issues[0]?.message, model).toBe("That does not look like a model id");
+    }
   });
 });
 

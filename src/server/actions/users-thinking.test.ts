@@ -15,6 +15,7 @@ import { nanoid } from "nanoid";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { PROVIDER_UNSUPPORTED } from "@/lib/agent/providers";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { DEFAULT_PAY_PER_USE_MODEL } from "@/lib/x402/inference-types";
 import type { Session } from "@/server/types";
@@ -35,6 +36,7 @@ vi.mock("@/lib/agent/anthropic-workspace", () => ({
 }));
 
 const { addLlmKey, attachKeyToKeylessAgents, removeLlmKey, rotateLlmKey } = await import("./users");
+const { countAgentsKeyFits } = await import("@/server/queries/users");
 
 let db: Db;
 
@@ -75,10 +77,19 @@ async function account() {
   return { userId, keyless: keyless.agentId, paying: paying.agentId, alsoKeyless: alsoKeyless.agentId };
 }
 
-async function keyRow(userId: string): Promise<string> {
+async function keyRow(userId: string, provider: schema.AgentConfig["llm"]["provider"] = "anthropic"): Promise<string> {
   const id = `key_${nanoid(10)}`;
-  await db.insert(schema.llmKeys).values({ id, userId, provider: "anthropic", encryptedKey: "not-a-real-ciphertext", last4: "0000" });
+  await db.insert(schema.llmKeys).values({ id, userId, provider, encryptedKey: "not-a-real-ciphertext", last4: "0000" });
   return id;
+}
+
+/** Sets an agent to think on another provider, as its settings form would. */
+async function setProvider(agentId: string, provider: schema.AgentConfig["llm"]["provider"], model: string): Promise<void> {
+  const row = await agentRow(agentId);
+  await db
+    .update(schema.agents)
+    .set({ config: { ...row.config, llm: { ...row.config.llm, provider, model } } })
+    .where(eq(schema.agents.id, agentId));
 }
 
 async function agentRow(agentId: string) {
@@ -126,6 +137,76 @@ describe("attachKeyToKeylessAgents", () => {
     expect(await attachKeyToKeylessAgents(second)).toEqual({ ok: true, data: { attached: 1 } });
     expect((await agentRow(mine.keyless)).llmKeyId).toBe(first);
   });
+
+  /**
+   * A run goes to the provider of the key, with the model the agent's config names. An
+   * OpenAI key on an agent set to Anthropic would ask OpenAI for a Claude model on every
+   * run, so the key is attached only where the agent is set to the key's own provider.
+   */
+  /** The Security tab's button quotes this count, so it has to be the number the attach then makes true. */
+  it("is offered for exactly the agents it will then attach to", async () => {
+    const mine = await account();
+    await setProvider(mine.alsoKeyless, "openai", "gpt-5");
+    const openai = await keyRow(mine.userId, "openai");
+
+    // Three agents: one set to OpenAI with no key, one set to Anthropic, one that pays per use.
+    expect(await countAgentsKeyFits(mine.userId, "openai")).toBe(1);
+    expect(await countAgentsKeyFits(mine.userId, "anthropic")).toBe(1);
+    expect(await countAgentsKeyFits(mine.userId, "openrouter")).toBe(0);
+    // A provider that is not offered fits nothing: the attach refuses its keys.
+    expect(await countAgentsKeyFits(mine.userId, "not-a-provider")).toBe(0);
+    // Someone else's agents are never counted.
+    expect(await countAgentsKeyFits("did:privy:nobody", "openai")).toBe(0);
+
+    expect(await attachKeyToKeylessAgents(openai)).toEqual({ ok: true, data: { attached: 1 } });
+    expect(await countAgentsKeyFits(mine.userId, "openai")).toBe(0);
+
+    // Under the scripted model nobody is missing a key, so nothing is offered.
+    vi.stubEnv("LLM_MOCK", "1");
+    expect(await countAgentsKeyFits(mine.userId, "anthropic")).toBe(0);
+  });
+
+  it("attaches a key only to agents set to that key's provider", async () => {
+    const mine = await account();
+    await setProvider(mine.alsoKeyless, "openai", "gpt-5");
+    const openai = await keyRow(mine.userId, "openai");
+
+    expect(await attachKeyToKeylessAgents(openai)).toEqual({ ok: true, data: { attached: 1 } });
+
+    expect((await agentRow(mine.alsoKeyless)).llmKeyId).toBe(openai);
+    // Set to Anthropic: left without a key rather than given one it could not think on.
+    expect((await agentRow(mine.keyless)).llmKeyId).toBeNull();
+    const audit = await db.select().from(schema.auditEvents).where(eq(schema.auditEvents.userId, mine.userId));
+    expect(audit.map((event) => event.agentId)).toEqual([mine.alsoKeyless]);
+    expect(audit[0]?.summary).toContain("Attached the OpenAI key ending 0000");
+  });
+
+  it("says why, in words, when none of the agents without a key is set to the key's provider", async () => {
+    const mine = await account();
+    const openrouter = await keyRow(mine.userId, "openrouter");
+
+    expect(await attachKeyToKeylessAgents(openrouter)).toEqual({
+      ok: false,
+      error: "None of your agents without a key are set to OpenRouter. Open each one's settings and choose its provider, model and key there.",
+    });
+    expect((await agentRow(mine.keyless)).llmKeyId).toBeNull();
+    expect((await agentRow(mine.alsoKeyless)).llmKeyId).toBeNull();
+  });
+
+  it("still answers that it attached nothing when there is no agent without a key at all", async () => {
+    const mine = await account();
+    const first = await keyRow(mine.userId);
+    expect(await attachKeyToKeylessAgents(first)).toEqual({ ok: true, data: { attached: 2 } });
+    expect(await attachKeyToKeylessAgents(await keyRow(mine.userId, "openai"))).toEqual({ ok: true, data: { attached: 0 } });
+  });
+
+  /** The column is plain text now, so a row can name a provider that has since been dropped. */
+  it("refuses a key whose provider is no longer one, and attaches it to nothing", async () => {
+    const mine = await account();
+    const stale = await keyRow(mine.userId, "cohere" as never);
+    expect(await attachKeyToKeylessAgents(stale)).toEqual({ ok: false, error: PROVIDER_UNSUPPORTED });
+    expect((await agentRow(mine.keyless)).llmKeyId).toBeNull();
+  });
 });
 
 describe("addLlmKey", () => {
@@ -138,6 +219,19 @@ describe("addLlmKey", () => {
     // Adding a key attaches nothing by itself.
     expect((await agentRow(mine.paying)).llmKeyId).toBeNull();
     expect((await agentRow(mine.keyless)).llmKeyId).toBeNull();
+  });
+
+  /** The offer is the number the attach would attach: agents set to the new key's provider. */
+  it("offers the new key only to agents set to its provider", async () => {
+    const mine = await account();
+    await setProvider(mine.alsoKeyless, "openai", "gpt-5");
+
+    const openai = await addLlmKey({ provider: "openai", key: `sk-proj-${nanoid(40)}${nanoid(40)}` });
+    expect(openai.ok && openai.data.keylessAgents).toBe(1);
+    const anthropic = await addLlmKey({ provider: "anthropic", key: fakeKey() });
+    expect(anthropic.ok && anthropic.data.keylessAgents).toBe(1);
+    const openrouter = await addLlmKey({ provider: "openrouter", key: `sk-or-v1-${nanoid(40)}${nanoid(40)}` });
+    expect(openrouter.ok && openrouter.data.keylessAgents).toBe(0);
   });
 });
 

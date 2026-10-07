@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { listModelsForKey, parseAnthropicModels, parseOpenAiModels } from "./key-models";
+import { CATALOGUE, CATALOGUE_IDS, isProvider, type LlmProvider } from "./providers";
 
 vi.mock("server-only", () => ({}));
 
@@ -140,6 +141,34 @@ describe("listModelsForKey", () => {
 
     expect(result.ok && result.models.map((m) => m.id)).toEqual(["gpt-6.1-sol"]);
     expect(calls[0]).toEqual({ url: "https://api.openai.com/v1/models", headers: { authorization: `Bearer ${KEY}` } });
+  });
+
+  /**
+   * This used to be "if OpenAI, else Anthropic": any other provider's key fell through
+   * and was sent to Anthropic. A provider that is not asked by key is now not asked.
+   */
+  it("sends a key nowhere for a provider that is not asked by key, or is not a provider", async () => {
+    const calls = answer([{ status: 200, body: { data: [{ id: "claude-sonnet-5-5", display_name: "Claude Sonnet 5.5" }], has_more: false } }]);
+    const notAsked = [
+      ...CATALOGUE_IDS.filter((id) => !isProvider(id) || CATALOGUE[id].modelList !== "by-key"),
+      "cohere",
+      "constructor",
+      "",
+    ];
+    expect(notAsked).toContain("openrouter");
+    for (const provider of notAsked) {
+      expect(await listModelsForKey(provider as LlmProvider, KEY), provider).toEqual({ ok: false, reason: "unreachable" });
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  /**
+   * A restricted OpenAI key that may not list models authenticated: it is a key. It
+   * was reported as refused, which told its owner to replace a key that works.
+   */
+  it("does not call a restricted OpenAI key refused because it may not list models", async () => {
+    answer([{ status: 401, body: { error: { message: "You have insufficient permissions for this operation. Missing scopes: api.model.read." } } }]);
+    expect(await listModelsForKey("openai", KEY)).toEqual({ ok: false, reason: "unreachable" });
   });
 
   it("tells a refused key from a provider it could not ask, and never throws", async () => {

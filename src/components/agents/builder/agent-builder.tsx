@@ -10,12 +10,12 @@ import { MORPH_FOCUS } from "@/components/common/focus";
 import { formatUsd } from "@/components/common/format";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { createAgentAction } from "@/components/agents/agent-actions";
+import { providerLabel as providerLabelFor } from "@/lib/agent/providers";
 import {
   BrainStep,
   DataStep,
   FundingStep,
   IdentityStep,
-  PROVIDER_LABELS,
   RiskStep,
   ScheduleStep,
   UniverseStep,
@@ -314,7 +314,7 @@ export function AgentBuilder({
   const runsPerDay = interval === 0 ? 0 : Math.round(1_440 / interval);
   const risk = draft.config.risk;
   const execution = draft.config.execution;
-  const providerLabel = PROVIDER_LABELS[draft.config.llm.provider];
+  const providerLabel = providerLabelFor(draft.config.llm.provider);
   // Pay per use: the run count and the cost are the panel's own estimate, so the commit
   // bar and the Brain section never quote two different numbers for the same schedule.
   const payPerUse = shownSource(draft.config, payPerUseAllowed) === "usdc";

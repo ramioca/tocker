@@ -4,19 +4,21 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  DEFAULT_MODELS,
-  PROVIDER_LABELS,
-  featuredFirst,
-  filterModels,
-  knownModelLabel,
-  priceHint,
-  typedModelId,
-  type LlmProvider,
-  type ModelOption,
-} from "@/lib/agent/models";
+import { filterModels, priceHint, typedModelId, type LlmProvider, type ModelOption } from "@/lib/agent/models";
+import { providerLabel } from "@/lib/agent/providers";
+import { redactSecrets } from "@/lib/security/redact";
 import { cn } from "@/lib/utils";
 import { listKeyModels } from "@/server/actions/users";
+import {
+  listFooter,
+  modelListSource,
+  modelNameOn,
+  publicListUrl,
+  readPublicList,
+  shownModels,
+  type ModelListState,
+  type PublicList,
+} from "./model-list";
 
 /**
  * Which model the agent thinks on.
@@ -27,10 +29,12 @@ import { listKeyModels } from "@/server/actions/users";
  * provider decides whether the id exists; a wrong one fails the first run with the
  * provider's own message.
  *
- * Where the list comes from: with a key selected, Anthropic and OpenAI are asked which
- * models that key can use (`listKeyModels`, on the server; the key never comes here).
- * OpenRouter's catalogue is public and is read live whatever the key. Without a key, or
- * when the provider cannot be asked, the built-in list stands in and says so.
+ * Where the list comes from is the provider's own row in the registry (`model-list.ts`
+ * holds the rule). Some providers are asked which models the selected key can use
+ * (`listKeyModels`, on the server; the key never comes here). Some publish a catalogue,
+ * which is read live whatever the key. The rest have no list that says which models can
+ * call tools, so the built-in one is the picker. Without a key, or when a provider
+ * cannot be reached, the built-in list stands in and the footer says so.
  */
 export function ModelPicker({
   id,
@@ -53,22 +57,28 @@ export function ModelPicker({
   const listRef = useRef<HTMLUListElement>(null);
   const listId = useId();
 
-  // OpenRouter's catalogue is fetched the first time the picker opens on it, and shared
-  // with every other picker on the page.
-  const openRouter = useQuery({
-    queryKey: ["models", "openrouter"],
-    queryFn: async (): Promise<{ models: ModelOption[]; live: boolean }> => {
-      const res = await fetch("/api/models/openrouter");
+  const source = modelListSource(provider);
+  const publicUrl = publicListUrl(provider);
+
+  // A public catalogue (OpenRouter's, and every other provider that publishes one) is
+  // fetched the first time the picker opens on it, and shared with every other picker on
+  // the page. No key is involved: the route reads the provider's list without one.
+  const publicList = useQuery({
+    queryKey: ["models", "public", provider],
+    queryFn: async (): Promise<PublicList> => {
+      if (publicUrl === null) throw new Error("no public list");
+      const res = await fetch(publicUrl);
       if (!res.ok) throw new Error(`models ${res.status}`);
-      return (await res.json()) as { models: ModelOption[]; live: boolean };
+      return readPublicList(await res.json());
     },
-    enabled: open && provider === "openrouter",
+    enabled: open && publicUrl !== null,
     staleTime: 10 * 60_000,
     retry: 1,
   });
 
-  // Anthropic and OpenAI: what this key can use, asked the first time the picker opens
-  // with it. A refusal is an answer too (the built-in list is shown), so it is not retried.
+  // A provider that is asked by key: what this key can use, asked the first time the
+  // picker opens with it. A refusal is an answer too (the built-in list is shown), so it
+  // is not retried.
   const byKey = useQuery({
     queryKey: ["models", "key", keyId, provider],
     queryFn: async (): Promise<{ models: ModelOption[] | null; error: string | null }> => {
@@ -79,22 +89,29 @@ export function ModelPicker({
         ? { models: result.data.models, error: null }
         : { models: null, error: result.ok ? null : result.error };
     },
-    enabled: open && provider !== "openrouter" && Boolean(keyId),
+    enabled: open && source === "by-key" && Boolean(keyId),
     staleTime: 10 * 60_000,
     retry: false,
   });
-  const keyModels = provider !== "openrouter" && keyId ? (byKey.data?.models ?? null) : null;
 
-  const models: readonly ModelOption[] =
-    provider === "openrouter"
-      ? featuredFirst(openRouter.data?.models ?? DEFAULT_MODELS.openrouter, DEFAULT_MODELS.openrouter)
-      : (keyModels ?? DEFAULT_MODELS[provider]);
+  const hasKey = Boolean(keyId);
+  const list: ModelListState = {
+    hasKey,
+    loading: open && (source === "public" ? publicList.isPending : source === "by-key" && hasKey && byKey.isPending),
+    publicList: publicList.data ?? null,
+    keyModels: source === "by-key" && hasKey ? (byKey.data?.models ?? null) : null,
+    // The server's own sentence. Redacted again here because it is about to be shown,
+    // and a sentence about a key is where a key would be if one ever got into it.
+    keyError: byKey.data?.error ? redactSecrets(byKey.data.error) : null,
+  };
+
+  const models = shownModels(provider, list);
   const rows = filterModels(models, query);
   const typed = typedModelId(models, query);
   const rowCount = rows.length + (typed ? 1 : 0);
 
   const current = models.find((model) => model.id === value);
-  const currentLabel = current?.label ?? knownModelLabel(value);
+  const currentLabel = current?.label ?? modelNameOn(provider, value);
 
   // Keep the highlighted row on screen as the arrow keys move it.
   useEffect(() => {
@@ -113,20 +130,7 @@ export function ModelPicker({
     else if (typed && index === rows.length) choose(typed);
   };
 
-  const footer =
-    provider === "openrouter"
-      ? openRouter.isPending && open
-        ? "Loading OpenRouter's list…"
-        : openRouter.data?.live
-          ? `${models.length} models that can run an agent, from OpenRouter's own list.`
-          : "Couldn't reach OpenRouter's list, so this is a short one. Any model id can be typed."
-      : !keyId
-        ? `Pick a key to see every model it can use. Until then this is the built-in list; any model id can be typed.`
-        : byKey.isPending && open
-          ? `Asking ${PROVIDER_LABELS[provider]} what this key can use…`
-          : keyModels
-            ? `${keyModels.length} models this key can use, from ${PROVIDER_LABELS[provider]}.`
-            : `${byKey.data?.error ?? `Couldn't get the list from ${PROVIDER_LABELS[provider]} just now.`} This is the built-in list; any model id can be typed.`;
+  const footer = listFooter(provider, list, models.length);
 
   return (
     <Popover
@@ -242,7 +246,7 @@ export function ModelPicker({
                 Use <span className="font-mono text-[13px]">{typed}</span>
               </span>
               <span className="text-[11px] text-muted-foreground">
-                Not in the list. {PROVIDER_LABELS[provider]} decides whether it exists.
+                Not in the list. {providerLabel(provider)} decides whether it exists.
               </span>
             </li>
           ) : null}

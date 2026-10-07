@@ -36,6 +36,7 @@ import {
 import { applyFill, type PositionState } from "../lib/pnl";
 import { toNumeric } from "../lib/money";
 import { DEFAULT_AGENT_CONFIG } from "../lib/agent/config";
+import { isProvider, providerRow } from "../lib/agent/providers";
 import { universeKey } from "../lib/tokens";
 
 /**
@@ -352,6 +353,37 @@ const SEED_AGENTS: SeedAgentSpec[] = [
     },
   },
 ];
+
+/**
+ * One more agent, on a provider added after the three the agents above use: Fireworks,
+ * whose model ids are long paths. With it a seeded database shows what such an id reads
+ * as on a card, and a model estimate priced from that host's own list.
+ *
+ * It is seeded only while that provider is switched on (`PROVIDER_IDS` in
+ * `src/lib/agent/providers.ts`). An agent on a provider nobody can add a key for could
+ * not have been made in the app, and its config would not pass the config schema.
+ */
+const LATER_PROVIDER: string = "fireworks";
+if (isProvider(LATER_PROVIDER)) {
+  SEED_AGENTS.push({
+    slug: "open-weights",
+    name: "Open Weights",
+    tagline: "An open model on a rented GPU, trading the SOL majors.",
+    ownerHandle: "you",
+    chains: ["solana"],
+    symbols: ["SOL", "JUP"],
+    startingUsd: 5_000,
+    aggression: 0.4,
+    config: {
+      strategyPrompt:
+        "Trade SOL and JUP with the trend. Buy a higher low on rising volume, sell a lower high, and sit out a flat tape. One position at a time.",
+      dataSources: ["cmc-quotes"],
+      risk: { ...EXIT_DEFAULTS, maxTradeUsd: 300, maxDailyTrades: 4, maxPositionPct: 35, maxDataSpendUsdPerRun: 0.1, stopLossPct: 10, takeProfitPct: 25, slippageBps: 100 },
+      schedule: { intervalMinutes: 60 },
+      llm: { provider: LATER_PROVIDER, model: providerRow(LATER_PROVIDER).defaultModel, temperature: 0.3, maxSteps: 10 },
+    },
+  });
+}
 
 const BUY_RATIONALES = [
   "Narrative velocity on $SYM turned positive three ticks running — starting a position.",

@@ -41,7 +41,7 @@ Token discovery and scoring use live market data even in this setup, because Jup
 | Want | Set |
 |---|---|
 | Real logins and wallets | `NEXT_PUBLIC_PRIVY_APP_ID`, `PRIVY_APP_SECRET`, `PRIVY_AUTHORIZATION_PRIVATE_KEY` from https://dashboard.privy.io. Remove `DEV_IMPERSONATE_USER_ID`. |
-| Real LLM | Unset `LLM_MOCK`; users add their Anthropic / OpenAI / OpenRouter key in Settings (encrypted at rest with `ENCRYPTION_KEY`). |
+| Real LLM | Unset `LLM_MOCK`; users add their own API key in Settings, for Anthropic, OpenAI or any other provider switched on in `src/lib/agent/providers.ts` (encrypted at rest with `ENCRYPTION_KEY`, and only ever sent to that provider). |
 | Real x402 data payments | Unset `X402_MOCK` and fund the platform wallets (Settings → Admin → Platform wallets) with USDC on each chain your sources price on. The platform wallet pays; spend is capped per run by the agent's risk config, and at $5 a run whatever that says. |
 | Live trading | Fund the agent wallet, then Settings → Go live (hold to confirm). Trades route through Jupiter Ultra / Privy swaps; the risk guard runs before every order. |
 | Postgres instead of PGlite | `DATABASE_URL=postgres://…` (`docker compose up -d` gives you one on :5433). |

@@ -2,9 +2,10 @@ import Link from "next/link";
 import { ChevronDown, Cpu, Database, Receipt, Zap } from "lucide-react";
 import { formatCount, formatUsd } from "@/components/common/format";
 import { txExplorerUrl } from "@/lib/tokens/links";
-import { resolveModelPrice, THINKING_LATE_LOOK_DAYS } from "@/server/queries/money";
+import { THINKING_LATE_LOOK_DAYS } from "@/server/queries/money";
 import type { MoneySummary, ThinkingStepRow, ThinkingSummary } from "@/server/queries/money";
 import type { CostTotals } from "./cost-totals";
+import { pricesInUse } from "./prices-in-use";
 
 /**
  * What each cost actually is, in sentences.
@@ -289,15 +290,8 @@ export function CostsNote({
 }) {
   const { live } = summary;
   const paper = scope === "paper";
-  // One row per priced model the agents on this page run, in the order they appear.
-  const pricesInUse = [
-    ...new Map(
-      (paper ? summary.paper : live)
-        .map((agent) => resolveModelPrice(agent.model))
-        .filter((price) => price !== null)
-        .map((price) => [price.label, price] as const),
-    ).values(),
-  ];
+  // One row per priced model the agents on this page run, each at its own provider's price.
+  const prices = pricesInUse(paper ? summary.paper : live);
   const totals: CostTotals = override ?? {
     feesUsd: summary.totals.feesUsd,
     dataSpendUsd: summary.totals.dataSpendUsd,
@@ -371,8 +365,8 @@ export function CostsNote({
         <Item icon={Cpu} title="Model tokens (estimate)" amount={formatUsd(totals.modelSpendUsd)}>
           <p>
             {thinking
-              ? "For the runs that used your own key: the charge lands on your own Anthropic or OpenAI account and never passes through Tocker. "
-              : "You bring your own key, so this charge lands on your own Anthropic or OpenAI account and never passes through Tocker. "}
+              ? "For the runs that used your own key: the charge lands on your own account with the provider the key is from and never passes through Tocker. "
+              : "You bring your own key, so this charge lands on your own account with the provider the key is from and never passes through Tocker. "}
             The figure is an <strong>estimate</strong>: each run&rsquo;s recorded input and output tokens at list
             price, for the model the agent is configured with today.
           </p>
@@ -393,11 +387,11 @@ export function CostsNote({
                 at today&rsquo;s choice.
               </p>
               {/* The rates behind this total: the models these agents run, not the whole
-                  price list, which runs to dozens of rows now. */}
-              {pricesInUse.length > 0 ? (
+                  price list, which is every provider's. */}
+              {prices.length > 0 ? (
                 <ul className="tnum flex flex-wrap gap-x-4 gap-y-1 pt-0.5 text-[11px]">
-                  {pricesInUse.map((price) => (
-                    <li key={price.label}>
+                  {prices.map((price) => (
+                    <li key={price.key}>
                       {price.label} <span className="text-foreground/70">${price.inputPerMTok}</span> /{" "}
                       <span className="text-foreground/70">${price.outputPerMTok}</span> per M
                     </li>

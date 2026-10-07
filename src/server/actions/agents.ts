@@ -7,6 +7,7 @@ import { isAdminEmail } from "@/lib/admin";
 import { MAX_AGENT_NAME, agentConfigSchema, type AgentConfigInput } from "@/lib/agent/config";
 import { NO_INFERENCE_HOLD, USDC_NOT_AVAILABLE, canThink, thinkSource, usdcChoiceProblem } from "@/lib/agent/inference";
 import { isLlmMock } from "@/lib/agent/mock-model";
+import { PROVIDER_UNSUPPORTED, isProvider, providerLabel, withArticle, type LlmProvider } from "@/lib/agent/providers";
 import { RUN_REFUSED_WHILE_PAUSED, RUN_REFUSED_WITHOUT_KEY, isRunRefused } from "@/lib/agent/run-gate";
 import { getSession } from "@/lib/auth";
 import { isTradingPaused } from "@/lib/security/kill-switch";
@@ -104,6 +105,23 @@ function firstIssue(error: { issues: Array<{ path: PropertyKey[]; message: strin
 }
 
 /**
+ * Why this key cannot think for an agent set to this provider, as the sentence to show,
+ * or null when it can.
+ *
+ * A run is sent to the provider of the key, with the model the config names. Where the
+ * two disagree the model id means nothing to the host it reaches (Groq is asked for a
+ * Claude model), every run fails, and what a run is estimated to cost is read off the
+ * wrong provider's prices. The forms only offer keys of the chosen provider; this is the
+ * same rule for a stale page or a direct call.
+ */
+function keyProviderProblem(keyProvider: string, configProvider: LlmProvider): string | null {
+  // The column is plain text: a key saved for a provider that has since been dropped.
+  if (!isProvider(keyProvider)) return PROVIDER_UNSUPPORTED;
+  if (keyProvider === configProvider) return null;
+  return `That is ${withArticle(keyProvider)} key, and this agent is set to think on ${providerLabel(configProvider)}. Pick ${withArticle(configProvider)} key, or change the agent's provider to ${providerLabel(keyProvider)}.`;
+}
+
+/**
  * May this account choose pay-per-use thinking. The switches are the environment's
  * (`INFERENCE_USDC`, off unless set), and the admin list is read the way the rest of the
  * app reads it: the session's email against `ADMIN_EMAILS`.
@@ -184,11 +202,13 @@ export async function createAgent(input: CreateAgentInput): Promise<ActionResult
 
   if (llmKeyId) {
     const [key] = await db
-      .select({ id: llmKeys.id })
+      .select({ id: llmKeys.id, provider: llmKeys.provider })
       .from(llmKeys)
       .where(and(eq(llmKeys.id, llmKeyId), eq(llmKeys.userId, session.userId)))
       .limit(1);
     if (!key) return fail("That LLM key does not belong to you");
+    const mismatch = keyProviderProblem(key.provider, config.llm.provider);
+    if (mismatch) return fail(mismatch);
   }
 
   const id = newId("agent");
@@ -380,6 +400,27 @@ export async function updateAgent(id: string, input: Partial<CreateAgentInput>):
     // Asked only of a save that turns pay-per-use on. An agent already on it can still be
     // edited while the switch is off: it cannot run until it is back on, whatever is saved.
     if (before !== "usdc" && !mayPayPerUse(session)) return fail(USDC_NOT_AVAILABLE);
+  }
+  // The key and the provider the config names have to be the same provider's, for an
+  // agent that will think on that key. Asked whenever this save changes either of them,
+  // or puts the agent back on a key. A save that leaves both as they were is let
+  // through even if they already disagreed: it makes nothing worse, and refusing it
+  // would stop an owner changing anything else until that was fixed. An agent that pays
+  // per use is not asked: a key on its row is not used.
+  const keyAfter = input.llmKeyId !== undefined ? input.llmKeyId : agent.llmKeyId;
+  // Read with care: a config saved long ago is whatever was stored. One that names no
+  // provider Tocker has is not judged here; its run is refused where it starts.
+  const providerBefore: unknown = agent.config?.llm?.provider;
+  const providerAfter: unknown = (patch.config ?? agent.config)?.llm?.provider;
+  const pairChanged = keyAfter !== agent.llmKeyId || providerAfter !== providerBefore || before === "usdc";
+  if (after === "key" && keyAfter && pairChanged && isProvider(providerAfter)) {
+    const [key] = await db
+      .select({ provider: llmKeys.provider })
+      .from(llmKeys)
+      .where(and(eq(llmKeys.id, keyAfter), eq(llmKeys.userId, session.userId)))
+      .limit(1);
+    const mismatch = key ? keyProviderProblem(key.provider, providerAfter) : null;
+    if (mismatch) return fail(mismatch);
   }
   if (after === "key" && before === "usdc") {
     // Back on its owner's key: whatever was holding its paid thinking no longer applies.

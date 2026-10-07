@@ -1,4 +1,5 @@
 import type { FaqTab } from "@/components/spectrumui/faq-tabs-card";
+import { PROVIDER_ORDER, providerLabel } from "@/lib/agent/providers";
 import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
 import { inferenceFlags } from "@/lib/x402/inference-types";
 import { BrandLockup } from "./brand";
@@ -52,7 +53,9 @@ const BUDGET = usd2(DEFAULT_DATA_BUDGET_USD);
  *
  * Two more answers are the server's for the same reason: whether an agent needs an API
  * key at all depends on a switch (`thinkingAnswers`). With that switch anywhere but fully
- * on, which is how it ships, they read exactly as they always have.
+ * on, which is how it ships, they read exactly as they always have. The providers they
+ * name are the ones a key can be added for today, read from the registry here, on the
+ * server, so the page cannot name one that is not switched on.
  */
 const faqTabs = (feeUsd: number, thinking: { model: string; start: string }): FaqTab[] => [
   {
@@ -223,7 +226,7 @@ function Faq() {
         title="Before you join."
         lede="What it trades, what it costs and who holds the wallet."
       />
-      <FaqList tabs={faqTabs(feeEnabled() ? platformFeeUsd() : 0, thinkingAnswers(inferenceFlags().stage === "on"))} />
+      <FaqList tabs={faqTabs(feeEnabled() ? platformFeeUsd() : 0, thinkingAnswers(inferenceFlags().stage === "on", PROVIDER_ORDER.map(providerLabel)))} />
     </section>
   );
 }

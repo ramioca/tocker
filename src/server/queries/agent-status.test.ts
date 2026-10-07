@@ -38,6 +38,7 @@ function inputs(overrides: Partial<StatusInputs> = {}): StatusInputs {
     status: "active",
     mode: "paper",
     hasLlmKey: true,
+    provider: "anthropic",
     maxDailyTrades: 10,
     maxTradeUsd: 2,
     maxAgeHours: null,
@@ -118,6 +119,7 @@ describe("classifyRunError", () => {
   it("names an empty Anthropic balance", () => {
     const result = classifyRunError(
       "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+      "anthropic",
     );
     expect(result).toEqual({
       kind: "anthropic_credits",
@@ -130,16 +132,19 @@ describe("classifyRunError", () => {
     expect(
       classifyRunError(
         "This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header with the ID of the workspace to use.",
+        "anthropic",
       )?.kind,
     ).toBe("anthropic_workspace");
     expect(
       classifyRunError(
         "anthropic-workspace-id is required when authenticating with an identity-linked API key",
+        "anthropic",
       )?.kind,
     ).toBe("anthropic_workspace");
     // `explainProviderError` appends a paragraph of advice; the diagnosis must survive it.
     const explained = classifyRunError(
       "anthropic-workspace-id is required when authenticating with an identity-linked API key — This Anthropic key is organization-level and Tocker could not find a workspace it may act in. Under Settings → LLM API keys, add it again with a Workspace ID (Anthropic Console → Settings → Workspaces), or create the key inside a workspace; then select it on the agent.",
+      "anthropic",
     );
     expect(explained?.kind).toBe("anthropic_workspace");
     expect(explained?.title).toBe("This Anthropic key needs a workspace");
@@ -149,19 +154,47 @@ describe("classifyRunError", () => {
     expect(
       classifyRunError(
         "This agent has no LLM API key attached. Add one in Settings and re-select it on the agent.",
+        "anthropic",
       ),
     ).toEqual({
       kind: "no_llm_key",
       title: "No LLM key on this agent",
       detail: "This agent has no LLM API key attached.",
     });
-    expect(classifyRunError("The LLM API key attached to this agent no longer exists.")?.kind).toBe(
+    expect(classifyRunError("The LLM API key attached to this agent no longer exists.", "anthropic")?.kind).toBe(
+      "no_llm_key",
+    );
+    // A missing key is nobody's billing problem: it is named on every provider.
+    expect(classifyRunError("The LLM API key attached to this agent no longer exists.", "groq")?.kind).toBe(
       "no_llm_key",
     );
   });
 
+  it("does not tell an agent on another provider about Anthropic", () => {
+    // The sentences these providers send for an empty balance carry the same two words.
+    const openai = classifyRunError(
+      "Your credit balance is too low. Add credits on the billing page to keep using the API.",
+      "openai",
+    );
+    expect(openai).toEqual({
+      kind: "unknown",
+      title: "The last run failed",
+      detail: "Your credit balance is too low.",
+    });
+    expect(classifyRunError("Insufficient credit balance. Please top up.", "deepseek")?.kind).toBe("unknown");
+    // Nor about a workspace, which only Anthropic keys have.
+    expect(
+      classifyRunError(
+        "anthropic-workspace-id is required when authenticating with an identity-linked API key",
+        "openrouter",
+      )?.kind,
+    ).toBe("unknown");
+    // No provider at all (an agent that pays per use) is not Anthropic either.
+    expect(classifyRunError("Your credit balance is too low.", null)?.kind).toBe("unknown");
+  });
+
   it("does not guess at anything else — it quotes it", () => {
-    const result = classifyRunError("Jupiter Ultra returned 429. Rate limited, try again later.");
+    const result = classifyRunError("Jupiter Ultra returned 429. Rate limited, try again later.", "anthropic");
     expect(result).toEqual({
       kind: "unknown",
       title: "The last run failed",
@@ -170,8 +203,8 @@ describe("classifyRunError", () => {
   });
 
   it("is null when there is no error text", () => {
-    expect(classifyRunError(null)).toBeNull();
-    expect(classifyRunError("")).toBeNull();
+    expect(classifyRunError(null, "anthropic")).toBeNull();
+    expect(classifyRunError("", "anthropic")).toBeNull();
   });
 });
 
@@ -235,6 +268,21 @@ describe("deriveStatus", () => {
       label: "Top up Anthropic",
       href: "https://platform.claude.com/settings/billing",
     });
+
+    // The same sentence on an agent set to another provider: its own words, and its run.
+    for (const provider of ["openai", "deepseek"]) {
+      const other = deriveStatus(
+        inputs({
+          provider,
+          lastRun: { id: "run_9", status: "failed", error: "Your credit balance is too low.", summary: null },
+        }),
+      )[0];
+      expect(other.kind).toBe("run_failed");
+      expect(other.title).toBe("The last run failed");
+      expect(other.detail).toBe("Your credit balance is too low.");
+      expect(other.action).toEqual({ label: "Open the run", href: "/agents/fresh-hunter/runs/run_9" });
+      expect(JSON.stringify(other)).not.toMatch(/anthropic/i);
+    }
 
     const unknown = deriveStatus(
       inputs({
@@ -474,6 +522,20 @@ describe("deriveStatus for an agent that pays for its own thinking", () => {
   function thinking(hold: StatusThinking["hold"] = null): StatusThinking {
     return { ...CONTEXT, hold };
   }
+
+  it("is not sent to Anthropic's billing, though its config still names Anthropic", () => {
+    // The default config names Anthropic; a pay-per-use agent never used that account.
+    const [row] = deriveStatus(
+      inputs({
+        hasLlmKey: false,
+        provider: "anthropic",
+        thinking: thinking(),
+        lastRun: { id: "run_4", status: "failed", error: "Your credit balance is too low.", summary: null },
+      }),
+    );
+    expect(row.title).toBe("The last run failed");
+    expect(row.action).toEqual({ label: "Open the run", href: "/agents/fresh-hunter/runs/run_4" });
+  });
 
   it("never says a key is missing, held or not", () => {
     expect(deriveStatus(inputs({ hasLlmKey: false, thinking: thinking() }))).toEqual([]);

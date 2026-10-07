@@ -1,5 +1,5 @@
 import { agentConfigSchema } from "@/lib/agent/config";
-import { PROVIDER_LABELS } from "@/lib/agent/models";
+import { providerLabel } from "@/lib/agent/providers";
 import { checkUsdc, shownSource } from "@/components/agents/thinking";
 import type { LlmKeyRow } from "@/server/types";
 import type { BuilderDraft } from "./types";
@@ -41,7 +41,7 @@ export function validateDraft(
   // A restored draft can name a key that has since been removed, and a key for another
   // provider would be kept but could never be used: both fail every run, so neither passes.
   else if (!keys.some((key) => key.id === draft.llmKeyId && key.provider === draft.config.llm.provider)) {
-    errors.llmKeyId = `Pick one of your ${PROVIDER_LABELS[draft.config.llm.provider]} keys, or add one.`;
+    errors.llmKeyId = `Pick one of your ${providerLabel(draft.config.llm.provider)} keys, or add one.`;
   }
 
   const parsed = agentConfigSchema.safeParse(draft.config);

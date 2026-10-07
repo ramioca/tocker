@@ -4,6 +4,7 @@ import { AlertTriangle, Coins, KeyRound } from "lucide-react";
 import { formatUsd } from "@/components/common/format";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { Field, RiskSlider } from "@/components/agents/builder/field";
+import { providerNames } from "@/components/agents/provider-choice";
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
 import {
   PAID_STEP_NOT_REFUNDED,
@@ -51,7 +52,7 @@ export function ThinkSourceChoice({
     {
       value: "key",
       icon: <KeyRound aria-hidden className="size-3.5" />,
-      hint: "The model runs on your account with Anthropic, OpenAI or OpenRouter, and they bill you. Any model, and usually the cheaper way to run.",
+      hint: `The model runs on your own account with ${providerNames()}, and they bill you. Any model, and usually the cheaper way to run.`,
       recommended: true,
     },
     {

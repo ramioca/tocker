@@ -156,6 +156,9 @@ const payer = row({
   outputTokens: 0,
 });
 
+/** Markup as the words a reader sees: no tags, one space between words. */
+const flat = (html: string) => html.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
+
 const note = (s: MoneySummary, scope: "live" | "paper" = "live") =>
   renderToStaticMarkup(
     createElement(CostsNote, {
@@ -175,8 +178,19 @@ describe("an owner who has never paid for a step", () => {
     expect(html).toContain("Tocker fee");
     expect(html).toContain("Market data");
     expect(html).toContain("Model tokens (estimate)");
-    expect(html).toContain("You bring your own key, so this charge lands on your own Anthropic or OpenAI account");
+    // No provider is named: the sentence is as true of a Groq key as of an Anthropic one.
+    expect(html).toContain(
+      "You bring your own key, so this charge lands on your own account with the provider the key is from and never passes through Tocker.",
+    );
     expect(html).not.toMatch(/pay per use|Thinking|BlockRun/i);
+  });
+
+  it("is shown the rate of the model each agent runs, as before", () => {
+    const html = flat(note(plain));
+    expect(html).toContain("Claude Sonnet 5.5 $2 / $10 per M");
+    // One model, one line, and no provider beside a name that has one price on the page.
+    expect(html.match(/per M/g)).toHaveLength(1);
+    expect(html).not.toContain(" on Anthropic");
   });
 
   it("sees the table and the headline without a thinking column or figure", () => {
@@ -188,6 +202,35 @@ describe("an owner who has never paid for a step", () => {
     const headline = renderToStaticMarkup(createElement(MoneyHeadline, { summary: plain }));
     expect(headline).not.toMatch(/thinking/i);
     expect(headline).toContain("$0.20 fees · $0.30 data · $1.50 model");
+  });
+});
+
+/**
+ * The same open model is sold by several hosts at different prices. Each agent's rate is
+ * its own provider's, and where one name has two prices on the page each line says whose.
+ */
+describe("an owner whose agents run one model on two providers", () => {
+  const onTogether = row({ id: "t", slug: "tee", name: "Tee", provider: "together", model: "zai-org/GLM-5.3" });
+  const onDeepInfra = row({ id: "d", slug: "dee", name: "Dee", provider: "deepinfra", model: "zai-org/GLM-5.3" });
+  const onFireworks = row({ id: "f", slug: "eff", name: "Eff", provider: "fireworks", model: "accounts/fireworks/models/glm-5p3" });
+
+  it("sees each price once, with the provider it is the price of", () => {
+    const html = flat(note(summary([onTogether, onDeepInfra, onFireworks, row({ provider: "anthropic" })], null)));
+    expect(html).toContain("GLM-5.3 on Together AI $1.4 / $4.4 per M");
+    expect(html).toContain("GLM-5.3 on DeepInfra $0.9 / $4 per M");
+    // A host's long path is named by its own list, and a name with one price stands alone.
+    expect(html).toContain("GLM 5.3 $1.4 / $4.4 per M");
+    expect(html).toContain("Claude Sonnet 5.5 $2 / $10 per M");
+    expect(html).not.toContain("accounts/fireworks");
+    expect(html.match(/per M/g)).toHaveLength(4);
+  });
+
+  it("is told when an agent's model has no price on its own provider, not shown another host's", () => {
+    // Fireworks does not list this id. Together does, and its price must not be borrowed.
+    const unlisted = row({ id: "u", provider: "fireworks", model: "zai-org/GLM-5.3", modelSpendUsd: null });
+    const html = flat(note({ ...summary([unlisted], null), totals: { ...totalsOf([unlisted]), unpricedAgents: 1, pricedAgents: 0 } }));
+    expect(html).not.toContain("per M");
+    expect(html).toContain("1 live agent runs a model with no published price here");
   });
 });
 

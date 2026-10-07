@@ -133,6 +133,8 @@ interface AgentSeed {
   status: AgentCard["status"];
   chains: Chain[];
   model: string;
+  /** Only for a seed whose provider its model id does not give away: see `config`. */
+  provider?: AgentConfig["llm"]["provider"];
   pnlPct: number;
   equity: number;
   trades: number;
@@ -338,11 +340,12 @@ function config(seed: AgentSeed): AgentConfig {
     execution: { mode: index === 3 ? "approve" : "auto", proposalTtlMinutes: 60 },
     schedule: { intervalMinutes: [15, 30, 60, 5, 60, 240, 15, 0][index] },
     llm: {
-      provider: seed.model.startsWith("gpt")
-        ? "openai"
-        : seed.model.includes("/")
-          ? "openrouter"
-          : "anthropic",
+      // Read off the model id, which is enough for the seeds above: each is on one of the
+      // three providers the product started with. No other provider can be told from an
+      // id (several hosts sell one model under one id), so a seed on another names it.
+      provider:
+        seed.provider ??
+        (seed.model.startsWith("gpt") ? "openai" : seed.model.includes("/") ? "openrouter" : "anthropic"),
       model: seed.model,
       temperature: round(0.2 + rand() * 0.6, 1),
       maxSteps: 8 + Math.floor(rand() * 10),

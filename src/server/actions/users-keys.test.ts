@@ -15,6 +15,7 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
+import { KEY_UNSENDABLE } from "@/lib/agent/providers";
 import { setupTestDb } from "@/lib/agent/test-support";
 import type { Session } from "@/server/types";
 
@@ -147,8 +148,11 @@ describe("addLlmKey", () => {
 
   it("refuses what could not be a key: too long, or with a space or a line break in it", async () => {
     await signedInUser();
-    for (const key of ["sk-" + "a1".repeat(300), `${fakeKey()} ${fakeKey()}`, `${fakeKey()}\nlabel`, 12345 as unknown as string]) {
+    for (const key of ["sk-" + "a1".repeat(300), 12345 as unknown as string]) {
       expect(await addLlmKey({ provider: "anthropic", key })).toEqual({ ok: false, error: "That does not look like an API key" });
+    }
+    for (const key of [`${fakeKey()} ${fakeKey()}`, `${fakeKey()}\nlabel`]) {
+      expect(await addLlmKey({ provider: "anthropic", key })).toEqual({ ok: false, error: KEY_UNSENDABLE });
     }
     expect(probeLlmKey).not.toHaveBeenCalled();
   });

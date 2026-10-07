@@ -28,6 +28,11 @@ Migrations are in `drizzle/` and run automatically on deploy via the `vercel-bui
 DATABASE_URL="postgres://..." pnpm db:migrate
 ```
 
+Migration `0011` changes a column's type rather than adding one: `llm_keys.provider` goes
+from a Postgres enum to text. What that locks, and how to go back, is under "The
+database" in "Model providers, in full". Read it before the deploy that carries `0011`:
+it has one query to run first, and a warning about rolling back afterwards.
+
 Seed demo data into a staging database only. Never seed production.
 
 ## 2. Environment variables
@@ -128,6 +133,10 @@ read through it.
   encrypted column to a page or an action result: the owner sees the provider, the label and
   the last four characters, and nobody else sees that a key exists. It is decrypted in two
   places on the server (the run loop, and the owner's model list) and is never logged.
+  From there it is sent to one place only: the host of the provider it was added under.
+  That host is a constant in the code, and no setting, form or stored value can supply
+  an address. Which hosts those are, and the one check that goes to a second host, are
+  in "Model providers, in full" at the end of this document.
   Losing `ENCRYPTION_KEY` makes every saved key unreadable; leaking it together with the
   database exposes them. Keep it in Production only.
 - *Text that could carry a key* is scrubbed (`src/lib/security/redact.ts`): a provider's
@@ -136,9 +145,15 @@ read through it.
   the model, and everything a model publishes go through it before anyone reads them, so rows
   stored earlier are covered too. It removes this deployment's own secret values and anything
   shaped like a credential. It does not recognise a bare wallet private key, which looks the
-  same as a transaction signature.
+  same as a transaction signature. Some providers' keys have no shape to recognise either, so
+  a run that fails also takes its own key out of the error by value before it is stored or
+  sent, and so do the key check and the model list.
 - *A key typed in the wrong place* is refused, not stored: the key's label and workspace id,
   agent names and taglines, profile names and bios, notes and comments.
+- *A key pasted under the wrong provider* is refused before it is sent anywhere, wherever
+  its first characters say whose it is. Where they do not, it is sent once to the provider
+  that was chosen and is not saved when that provider turns it down. The exact rule and
+  its limit are in "Model providers, in full".
 - *The repository itself* is checked by `pnpm test` (`src/lib/security/repo-secrets.test.ts`):
   no tracked env file but `.env.example`, no filled-in secret there, nothing shaped like a live
   credential in any tracked file. That is a second net. **Turn on GitHub's own, once**, under
@@ -212,8 +227,8 @@ they decided something was wrong.
 `src/lib/crypto.ts` (AES-256-GCM, `base64(iv|tag|ciphertext)`, keyed by `ENCRYPTION_KEY`).
 `decryptSecret` is called for two purposes: in `src/lib/agent/run.ts`, inside the run loop
 (`resolveModel`, and the workspace lookup beside it), and in `listKeyModels`
-(`src/server/actions/users.ts`), which asks Anthropic or OpenAI which models a key can use
-when its owner opens the model picker. That action is owner-only, rate limited, and returns
+(`src/server/actions/users.ts`), which asks the key's own provider which models the key can
+use when its owner opens the model picker. That action is owner-only, rate limited, and returns
 model ids and names. The plaintext never reaches a server component, an action result, a run
 transcript or the browser. Only the last four characters are ever
 rendered. Rotation keeps the key's id so agents pointed at it never lose a tick, and
@@ -1022,3 +1037,391 @@ in both directions, which is why the live checklist's gas step **fails** rather 
 when it is under `MIN_PLATFORM_SOL`. That step reports exactly which of these the agent is
 currently standing on, and the Platform card shows the native balance next to the USDC one
 so it is visible before it runs out rather than after.
+
+## Model providers, in full
+
+An agent on its owner's own API key thinks on one of the providers in the registry,
+`src/lib/agent/providers.ts`. The registry is the only list of them. The chooser, the key
+forms, the key check, the model picker, the run and the Money page's prices all read it,
+and the database column that says whose a key is (`llm_keys.provider`) is plain text.
+Nothing here needs an environment variable, and nothing here changes pay-per-use
+thinking (section 5).
+
+**What is switched on is one line.** The registry has a row for each of the nineteen
+providers in the table below. `PROVIDER_IDS`, in the same file, lists the ones a key can
+be added for. A provider that has a row and is not in that list is offered nowhere in the
+app, and a key for it is refused. Anthropic, OpenAI and OpenRouter are the three the
+product launched with. The other sixteen were added together on 2026-10-07, and **none
+of the sixteen has yet been run with a real key**: read "What proven means here" below
+before relying on one.
+
+| Provider | Where its key is made | The host its key is sent to | Models in the picker |
+|---|---|---|---|
+| Anthropic | https://console.anthropic.com/settings/keys | `api.anthropic.com` | asked with the key |
+| OpenAI | https://platform.openai.com/api-keys | `api.openai.com` | asked with the key |
+| OpenRouter | https://openrouter.ai/keys | `openrouter.ai` | its public list |
+| Google Gemini | https://aistudio.google.com/apikey | `generativelanguage.googleapis.com` | asked with the key |
+| xAI | https://console.x.ai/team/default/api-keys | `api.x.ai` | asked with the key |
+| DeepSeek | https://platform.deepseek.com/api_keys | `api.deepseek.com` | asked with the key |
+| Mistral AI | https://console.mistral.ai/home?profile_dialog=api-keys | `api.mistral.ai` | asked with the key |
+| Moonshot AI | https://platform.kimi.ai/console/api-keys | `api.moonshot.ai` | asked with the key |
+| Z.AI | https://z.ai/manage-apikey/apikey-list | `api.z.ai` | built in |
+| Groq | https://console.groq.com/keys | `api.groq.com` | asked with the key |
+| Cerebras | https://cloud.cerebras.ai | `api.cerebras.ai` | its public list |
+| Together AI | https://api.together.ai/settings/projects/~current/api-keys | `api.together.ai` | built in |
+| Fireworks AI | https://app.fireworks.ai/settings/users/api-keys | `api.fireworks.ai` | asked with the key |
+| DeepInfra | https://deepinfra.com/dash/api_keys | `api.deepinfra.com` | its public list |
+| Vercel AI Gateway | https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys | `ai-gateway.vercel.sh` | its public list |
+| Venice | https://venice.ai/settings/api | `api.venice.ai` | its public list |
+| Nebius Token Factory | https://tokenfactory.nebius.com/project/api-keys | `api.tokenfactory.nebius.com` | asked with the key |
+| Novita AI | https://novita.ai/settings/key-management | `api.novita.ai` | its public list |
+| Hugging Face | https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained | `router.huggingface.co`, and `huggingface.co` for the token check alone | its public list |
+
+"Asked with the key": the provider is asked which models this key can use
+(`listKeyModels`). "Its public list": the provider publishes its catalogue and it is read
+with **no key at all**, through a route only a signed-in user can call, and kept in
+memory for an hour. "Built in": the provider has no list that says which models can call
+tools, so the picker shows the registry's own rows. In every case any model id can also
+be typed.
+
+### Seven that were looked at and left out
+
+| Provider | Why it is not offered |
+|---|---|
+| Cohere | Every account starts on a trial key that Cohere does not permit for production or commercial use, and a trial key cannot be told from a production one. On its newer models even a production key is held to trial limits, and production use means talking to its sales team. |
+| MiniMax | Its official client is built on the Anthropic one and reads Anthropic's options, so it would have been sent a prompt-caching option that MiniMax does not document. |
+| SambaNova | Its documentation could not be read (the site turns automated readers away), and it has no free request that says whether a key is good: a key could only be checked by paying for a completion. |
+| Perplexity | Its tool calling needs a client release built on newer AI SDK internals than the ones installed. The release that matches never sends tools. Add it after `ai` is upgraded. |
+| Alibaba Model Studio (Qwen) | Its API address is different for every workspace and region. A user would have to type a host as well as a key, and there is no user-supplied address anywhere in Tocker, on purpose. |
+| NVIDIA NIM | No pay-as-you-go. Its free access is for prototyping only, and production use needs an enterprise licence. |
+| Hyperbolic | Its serverless inference API has been retired. |
+
+### Where a key can go
+
+**A key only ever reaches its own provider's host.** Each row names one `https` origin,
+a constant in the registry. Everything that sends a key reads it from there:
+
+- **A run.** The provider is the one on the key's own row (`llm_keys.provider`), never
+  something the agent's config or a request says. Its client is built with the registry's
+  base URL passed in every time (`modelFor`, `src/lib/agent/providers-server.ts`). Several
+  of these clients would otherwise read one from the environment (`OPENAI_BASE_URL`,
+  `ANTHROPIC_BASE_URL`); with it passed in, no variable set on the deployment can move a
+  user's key to another host. Every request the client then makes goes through a `fetch`
+  that refuses any address off that origin and treats a redirect as an error.
+- **The key check, the model list, and Anthropic's workspace lookup**, the only requests
+  written by hand. All go through one guarded fetch (`providerFetch`,
+  `src/lib/agent/providers-keys.ts`): the address is built from the registry's origin and
+  a path written in the code, checked again to be on that origin, never followed through
+  a redirect, never cached, and dropped after a few seconds. A key always travels in a
+  header, never in an address.
+- **No address comes from outside.** Not from a form, not from a stored row, not from a
+  provider's answer. The one user-chosen string that reaches a request's address is the
+  model id (Google's API takes it in the path), and a model id may not contain `..`.
+
+One row has a second host, and it is said here rather than left to be found. A Hugging
+Face token is used on `router.huggingface.co` (runs, and the public model list). The
+router has no request that says whether a token is good, so when a token is added or
+replaced it is checked once against `https://huggingface.co/api/whoami-v2`: the Hub, the
+site that issued it. That host is a second constant on the row (`keyCheckOrigin`), only
+the key check may use it, and no other row has one.
+
+Three more things hold. An agent cannot be created or saved with a key of a different
+provider from the one its config names, so a model id never reaches a host it means
+nothing to. A saved key whose provider is no longer in `PROVIDER_IDS` is not used: the
+run fails with "This key's provider is no longer supported. Add a key for another
+provider and select it on the agent." and nothing is sent. And a key is still decrypted
+in the same two places as before, the run loop and `listKeyModels`.
+
+**A key pasted under the wrong provider is refused before it is sent.** The check
+(`keyProblem`, in the registry) runs on the server when a key is added and when one is
+replaced, before any request, and in the forms. It knows two things:
+
+- **Whose a prefix is.** A key that starts the way another provider's keys do is refused
+  with a sentence that says whose it looks like: `sk-ant-` (Anthropic), `sk-proj-`,
+  `sk-svcacct-` and `sk-admin-` (OpenAI), `sk-or-` (OpenRouter), `AIza` and `AQ.`
+  (Google), `xai-` (xAI), `gsk_` (Groq), `csk-` (Cerebras), `fw_` (Fireworks), `vck_`
+  (Vercel), `sk_` (Novita), `hf_` (Hugging Face).
+- **Who documents one.** Cerebras and Novita say every key of theirs starts with their
+  prefix, so under those two a key without it is refused as well.
+
+The limit of that check: it only works where a prefix belongs to one provider. A bare
+`sk-` key (an older OpenAI key, a DeepSeek key) and a key with no prefix at all (Mistral,
+Moonshot, Z.AI, Together, DeepInfra, Venice, Nebius) look like each other. Pasted under
+the wrong one of those, such a key **is sent once**, to the provider that was chosen, in
+the key check. That provider answers that it is not one of its keys and the key is not
+saved. (If that provider cannot be reached at that moment, the key is saved as not
+checked, and its first run fails.) No key is refused for its length or its characters,
+because most providers publish neither.
+
+**What a provider says to a bad key differs**, and the key check follows each one's own
+rule. For most, HTTP 401. Google answers 400 with the reason `API_KEY_INVALID`. xAI
+answers 400 "Incorrect API key". A public model list usually says nothing about a key,
+so another free request is used: OpenRouter's key endpoint, Cerebras's list that needs a
+key, Venice's rate limits, Novita's billing balance, Vercel's credits, Hugging Face's
+`whoami-v2`. (DeepInfra's public list does answer 401 to a key it does not know, and is
+its check.) Z.AI is checked on an endpoint its documentation does not list; only a 401
+from it refuses a key. A refusal that is about the network and not the key (Groq's 403
+"Access denied. Please check your network settings.") is never read as a bad key.
+Whenever the answer cannot be read as a yes or a no, the key is saved and shown as not
+checked, exactly as before.
+
+**A provider's own words are cleaned twice.** `redactSecrets` removes anything shaped
+like a credential, and now knows every prefix in the registry. Many of the new keys have
+no shape at all, so a failed run also removes its own key by value, before that, from
+the error it stores and sends (`keyScrubber`); the key check and the model list do the
+same with what they return.
+
+### What "proven" means here
+
+For each of the sixteen, on 2026-10-07:
+
+- **Its documentation** says its models call tools in a multi-step loop, and that anyone
+  can make a key and pay as they go.
+- **Its client package** is the official AI SDK one (or the generic OpenAI-compatible
+  client, where the provider documents that format), at a release built on the same AI
+  SDK internals as the installed `ai`.
+- **Its live API** was sent a request with a made-up key, or with none, and what it
+  answered is the rule the key check now follows. The exceptions: Groq refused the
+  network that request came from before looking at any key, so its "bad key" answer was
+  seen only through a third party's relay. And Venice's, Novita's and Hugging Face's
+  model lists answer the same to any key, so their keys are checked on another request,
+  and that request was not tried: what Venice's says to a bad key is from its
+  documentation, and Novita's and Hugging Face's are taken to be the usual 401.
+- **In tests**, with simulated responses and nothing leaving the machine: for every
+  provider, a two-step conversation with one tool call through its real client, answered
+  in that provider's own format (`src/lib/agent/providers-server.test.ts`), and its key
+  check and model list (`src/lib/agent/providers-keys.test.ts`). The answers are written
+  from each API's documented shape. They show what Tocker sends and where; they cannot
+  show that the provider accepts it.
+
+What that does **not** include:
+
+- **No real key was used on any of the sixteen.** No run, no tool call, no model list
+  read with a key. Each provider's first run with a real key is the proof, and you make
+  it.
+- **The agent's tools on each provider.** A run sends about ten tool definitions, one
+  of them a free-form object and one with no parameters. Whether every provider accepts
+  all of them is known from documentation only.
+- **What comes back to a real key**: each list's real contents, the answer to a
+  well-formed but revoked key, and how each provider words an empty balance.
+- **Prices.** They were read that day and are list prices. They are what an estimate is
+  made from, never what is charged.
+
+To prove one: add a real key under it in Settings and see it accepted (not "could not be
+checked"), open the model picker, then press **Run now** on a paper agent set to its
+default model and read the transcript to the end. A run of several tool calls that
+finishes is the proof for that provider and that model, and for nothing else.
+
+### What an owner will meet, provider by provider
+
+- **Google Gemini.** A free-tier key has low limits, and Google uses what a free-tier key
+  sends to improve its products; a key with billing on has neither. The strategy is part
+  of what is sent. Keys start `AIza` or, made since May 2026, `AQ.`; there are unresolved
+  reports of `AQ.` keys being refused by Google. The agent's temperature setting is not
+  sent (Google advises against lowering it on Gemini 3). Prepaid from $5.
+- **xAI.** Stores API requests and responses for 30 days by default, and says it does
+  not train on them. Prepaid: buy credits before the first run. Grok 4.5 and later
+  always reason, so steps are slower and the reasoning is billed as output.
+- **DeepSeek.** Prepaid top-up. Thinking is on by default and the API ignores a
+  temperature while it is, so none is sent. Its keys start `sk-` like an older OpenAI
+  key, so the two cannot be told apart before sending (see the limit above). Its prices
+  are lower off-peak; the estimate uses the peak rate. Its data-handling terms were not
+  reviewed.
+- **Mistral AI.** A temperature above 1.5 is sent as 1.5. Its rate limits, free and
+  paid, are shown only inside the account, so a 429 cannot be predicted; an agent on a
+  schedule is likely to need pay-as-you-go turned on.
+- **Moonshot AI (Kimi).** Use a key from `platform.kimi.ai`, the global platform; a key
+  from its mainland-China platform does not work. An account that has only made the $1
+  minimum recharge is held to 3 requests a minute and one at a time, too few for a run,
+  until it has added $10 in total. No temperature is sent: Kimi models fix their own.
+- **Z.AI.** Needs a pay-as-you-go balance; a GLM Coding Plan key is for a different
+  endpoint and does not work here. An empty balance arrives as HTTP 429 and reads like a
+  rate limit. A temperature above 1 is sent as 1.
+- **Groq.** Refuses some networks outright, with HTTP 403 "Access denied. Please check
+  your network settings.", before it looks at a key. It did so to the network this was
+  researched from. Whether it accepts requests from your deployment is unknown until a
+  key is added there: if it does not, the key is saved as "could not be checked" and
+  every run on it fails with that message. The free plan allows 8,000 tokens a minute,
+  less than one step needs; use the Developer plan. Limits are per organisation, so two
+  agents ticking in the same minute on one key can meet a 429. Groq rejects a malformed
+  tool call with HTTP 400, which ends that run.
+- **Cerebras.** A key must start `csk-`. Every step is sent an output limit of 8,192
+  tokens, because Cerebras counts a request's whole output allowance against the
+  per-minute limit before it runs. The free trial allows 5 requests a minute; buy
+  credits. It sells two models, and on one of them (`qwen-3.8-27b`, 150,000 tokens a
+  minute) a long run comes close to the limit by itself.
+- **Together AI.** No free tier: buy credits first. The host is `api.together.ai`, the
+  one in Together's documentation.
+- **Fireworks AI.** Model ids are long paths (`accounts/fireworks/models/glm-5p3`); cards
+  and the Money page show the model's name. Its `-latest` aliases move to newer models
+  without notice and are not offered.
+- **DeepInfra.** Its own advice for tool calling is to avoid a system message, and a run
+  sends one. How much that matters on current models is not known.
+- **Vercel AI Gateway.** No temperature is sent for any model, because the gateway marks
+  many of its models, the default among them, as taking none. The free tier covers only
+  some models; the rest need credits on the Vercel team. A key is never empty: with an
+  empty one the gateway's client would use the deployment's own Vercel identity and
+  Tocker would pay, so an empty key is refused before any client is built.
+- **Venice.** Venice puts its own system prompt in front of the agent's unless told not
+  to; a run tells it not to. A key can carry its own spending cap and be refused (402)
+  while the account has a balance.
+- **Nebius Token Factory.** A card is required at sign-up. Only the global host is used.
+  Nebius retires models on a schedule, so prefer the live list over a typed id.
+- **Novita AI.** A key must start `sk_`. Every step is sent an output limit of 8,192
+  tokens, because Novita's reference marks one as required. On a thinking model that
+  limit includes the reasoning.
+- **Hugging Face.** The token needs the permission "Make calls to Inference Providers".
+  A model is served by whichever provider Hugging Face routes to, at that provider's
+  price, and not every one of them supports tools; a typed id can pin one
+  (`model:provider`). The estimate uses the highest price among the providers that do,
+  so it is never low.
+
+Three things are true of several of them. On the hosts that serve Kimi (Together,
+Fireworks, DeepInfra, Venice, Nebius, Novita, Hugging Face) no temperature is sent for a
+Kimi model. A model that always thinks bills its reasoning as output. And every one of
+these companies reads the strategy and transcript of an agent that thinks on it, under
+its own terms, as Anthropic or OpenAI does today.
+
+**On the Money page**, an agent's model estimate is made at the list price on its own
+provider's row. The same model id costs different amounts on different hosts, so the
+price of another host is never borrowed: a model the registry does not list for that
+provider, including one picked from a provider's live list, has no price, and the page
+says so and leaves it out of the total. Prices go stale. Known today: Google's
+`gemini-3.8-flash`, `3.7-flash` and `3.6-flash` list prices double on 2027-01-01, and
+Mistral Large 4 is on a temporary sale (the row carries its list price). Correct a price
+by editing the row.
+
+### The packages
+
+Twelve packages were added, each pinned to an exact version in `package.json` (no `^`):
+
+| Package | Version | For |
+|---|---|---|
+| `@ai-sdk/google` | 4.0.67 | Google Gemini |
+| `@ai-sdk/xai` | 4.0.57 | xAI |
+| `@ai-sdk/deepseek` | 3.0.44 | DeepSeek |
+| `@ai-sdk/groq` | 4.0.40 | Groq |
+| `@ai-sdk/mistral` | 4.0.42 | Mistral AI |
+| `@ai-sdk/cerebras` | 3.0.47 | Cerebras |
+| `@ai-sdk/togetherai` | 3.0.48 | Together AI |
+| `@ai-sdk/fireworks` | 3.0.50 | Fireworks AI |
+| `@ai-sdk/deepinfra` | 3.0.47 | DeepInfra |
+| `@ai-sdk/moonshotai` | 3.0.48 | Moonshot AI |
+| `@ai-sdk/zai` | 3.0.9 | Z.AI |
+| `@ai-sdk/openai-compatible` | 3.0.47 | Venice, Nebius, Novita, Hugging Face |
+
+The Vercel AI Gateway needs none: its client comes with `ai`. Hugging Face's own package
+is deliberately not used: it drops tool results between steps, so an agent's second step
+would never see its first.
+
+**Why exact.** Each of these depends on one exact version of the AI SDK's two internal
+packages, and these releases are the ones built on the versions the installed `ai`
+7.0.97 uses. A `^` would take today's latest of each, which is built on newer internals,
+and the app would then run two copies of them. (`@ai-sdk/deepseek` is one patch ahead on
+purpose and does bring a second copy: 3.0.44 is the first release that handles
+DeepSeek's current model id.) `@ai-sdk/xai`'s latest is also a new major version that
+removes an API. So change a version only on purpose, together with `ai`, in a change of
+its own, and run `pnpm vitest run src/lib/agent/providers-server.test.ts` before it
+ships. The versions of `@ai-sdk/anthropic`, `@ai-sdk/openai` and
+`@openrouter/ai-sdk-provider` were not touched.
+
+### The database
+
+One migration, `drizzle/0011_lonely_ego.sql`, two statements: `llm_keys.provider` becomes
+`text`, and the Postgres enum `llm_provider` is dropped. It runs with the others on a
+production deploy (section 1). Saved keys keep their provider; nothing else in the table
+changes. For the length of the first statement it holds an exclusive lock on `llm_keys`
+and rewrites it: one small table, one row per saved key. The deployment still serving
+while the new one builds keeps working against the changed column. Both the migration
+and that were checked on an in-memory Postgres (PGlite), not on the production database.
+
+The database no longer checks the column, so the code does: every place that reads a
+provider from a form or a row asks the registry first (`isProvider`).
+
+**Before deploying, list the agents this change will stop.** Before this change,
+"attach this key to my agents without one" put the key on every such agent, whatever
+provider the agent's settings named. So an agent can be set to one provider and hold a
+key of another. This change refuses to run such an agent: the run fails with a sentence
+that names both providers and tells the owner to pick a key for the provider the agent
+is set to, or to change the provider. Nothing is sent to either provider. This query
+lists them. It only reads, and it works before and after the migration:
+
+```sql
+select a.slug, a.config #>> '{llm,provider}' as set_to, k.provider::text as key_of
+from agents a
+join llm_keys k on k.id = a.llm_key_id
+where coalesce(a.config #>> '{llm,source}', 'key') <> 'usdc'
+  and (a.config #>> '{llm,provider}') is distinct from k.provider::text;
+```
+
+No rows means nobody is affected. For each row, `set_to` is what the agent's settings
+name and `key_of` is the provider its key belongs to. Fix your own in the agent's
+settings, and tell the other owners before you deploy rather than after their agent
+stops. Agents that pay per use are left out: they run on no key.
+
+Going back is by hand, and only works while no key of a later provider has been saved.
+Run the two statements in one transaction. Checked on the same in-memory Postgres, not
+on production:
+
+```sql
+CREATE TYPE "public"."llm_provider" AS ENUM ('anthropic', 'openai', 'openrouter');
+ALTER TABLE "llm_keys" ALTER COLUMN "provider" SET DATA TYPE "public"."llm_provider" USING "provider"::"public"."llm_provider";
+```
+
+With one row for any other provider the second statement fails ("invalid input value
+for enum") and the column is left as it is.
+
+**Never promote or roll back to a deployment older than this change while `llm_keys`
+holds a row for a provider other than `anthropic`, `openai` or `openrouter`.** The older
+code knows those three and has no answer for a fourth. Its model list
+(`listKeyModels`) decrypts the key and treats every provider that is not OpenAI or
+OpenRouter as Anthropic: it sends the key to `api.anthropic.com` in the `x-api-key`
+header. One owner opening the model list for a Groq key would hand that key to
+Anthropic. Its run loop is not the leak: for a provider it does not know it builds no
+client at all, so the run fails and the key is sent nowhere, but the agent never runs
+either. This was read from the code as it stood before this change, not tried against a
+deployment. Check first:
+
+```sql
+select provider, count(*) from llm_keys group by provider;
+```
+
+**To withdraw the new providers, go forward, not back.** Set `PROVIDER_IDS` in
+`src/lib/agent/providers.ts` back to the three and deploy. The later providers leave the
+chooser, no key can be added for them, and a saved key of theirs is refused before it is
+decrypted ("Adding or removing a provider", below). No key leaves the database.
+
+If the code truly must go back, do it in this order:
+
+1. Deploy forward with `PROVIDER_IDS` set to the three, as above. From then on nobody
+   can save a key the next step would miss.
+2. Delete the later providers' keys:
+
+   ```sql
+   DELETE FROM llm_keys WHERE provider NOT IN ('anthropic','openai','openrouter');
+   ```
+
+   This cannot be undone: the keys are gone and their owners must paste them again. No
+   agent is deleted. `agents.llm_key_id` is `ON DELETE SET NULL`, so each agent that
+   used one of those keys is left with no key. It stops running and its page says it
+   has no key, until its owner picks a provider, a model and a key in its settings.
+   Tell those owners first.
+3. Run the two reverse statements above, in one transaction. With the enum back, the
+   database itself refuses any other provider.
+4. Only then promote or roll back to the older deployment.
+
+### Adding or removing a provider
+
+**Adding one** is a row in the registry and no migration: its id in `CATALOGUE_IDS` and
+its row in `CATALOGUE`, with its one origin, its base URL, its key page, its prefixes
+and its models. TypeScript then refuses to compile until the two server files have their
+entry for it: how its client is built (`providers-server.ts`), and how its key is checked
+and its models listed (`providers-keys.ts`). If its keys have a prefix, add the shape to
+`src/lib/security/redact.ts`; a test fails until you do. Pin its package to an exact
+version. Put its id in `PROVIDER_IDS` last, when it should be offered.
+
+**Removing one** is taking its id out of `PROVIDER_IDS`. It disappears from the chooser,
+no key can be added for it, and saved keys of that provider stop being used: their
+agents' runs fail with the sentence above until the owner picks another provider and
+key. The rows stay in `llm_keys` until their owners delete them. Leave the row in the
+registry if the provider may come back.

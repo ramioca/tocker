@@ -80,7 +80,7 @@ export interface ModelPrice {
 }
 
 /**
- * List prices per million tokens, for the models the builder offers.
+ * List prices per million tokens, for the models Anthropic and OpenAI sell themselves.
  *
  * **This is an estimate, and the page says so in as many words.** Three reasons it can
  * only ever be one:
@@ -90,11 +90,17 @@ export interface ModelPrice {
  *     billed here at the full input rate and the real invoice is lower, sometimes much.
  *  2. The model is read from the agent's config *now*. A run taken last week on a
  *     different model is priced at today's choice.
- *  3. The operator brings their own key, so the actual charge lands on their Anthropic /
- *     OpenAI account at whatever rate their account has. Tocker never sees that bill.
+ *  3. The operator brings their own key, so the actual charge lands on their own account
+ *     with the provider, at whatever rate that account has. Tocker never sees that bill.
  *
- * A model with no entry here contributes `null`, not `0`: "we do not know" and "it was
+ * A model with no known price contributes `null`, not `0`: "we do not know" and "it was
  * free" are different facts and the UI prints them differently.
+ *
+ * This table is not what a price is looked up in. Every provider's prices are on its own
+ * row in `src/lib/agent/providers.ts`, and {@link resolveModelPrice} reads them there,
+ * by provider, because one model id lists at a different price on each host that serves
+ * it. What is kept here is the two makers' own rows by id: the prices an id resolves to
+ * when no provider is named.
  */
 export const MODEL_PRICES: Record<string, ModelPrice> = Object.fromEntries(
   // Anthropic's and OpenAI's own rows. OpenRouter resells the same models at the same
@@ -107,26 +113,44 @@ export const MODEL_PRICES: Record<string, ModelPrice> = Object.fromEntries(
 );
 
 /**
- * Find the price for a model id.
+ * Find the price for a model id, on the provider it is used with.
  *
- * Through the catalogue's own lookup, so the id resolves in any of its spellings: as
- * stored, a dated snapshot or its alias (`claude-haiku-4-5[-20251001]`), and the
- * OpenRouter form (`anthropic/claude-sonnet-5.5`). No prefix guessing: `claude-opus-5-5`
- * is not `claude-opus-5` at a different price, and a model that is not listed is
- * unknown → `null`.
+ * `provider` is the agent's own (`config.llm.provider`), and the price is read from that
+ * provider's own list. The same open model is sold by several hosts under the same id at
+ * different prices (`zai-org/GLM-5.3` is one price on Together and another on
+ * DeepInfra), and a host's long path (`accounts/fireworks/models/glm-5p3`) is in no list
+ * but its own. A price borrowed from another host would be a wrong number, so a model
+ * its own provider does not list is unknown → `null`, which the page says.
+ *
+ * Anthropic, OpenAI and OpenRouter are the exception they always were: the three read
+ * each other's lists, because OpenRouter resells the two makers' models at their list
+ * prices under a longer id. Nothing an agent on one of them was priced at has moved.
+ *
+ * Without a provider the id is read in those three lists only. That is right for the one
+ * caller that has none: a pay-per-use step, whose model is priced at its maker's own
+ * rate ({@link ownKeyPrice}).
+ *
+ * Either way through the catalogue's own lookup, so the id resolves in any of its
+ * spellings: as stored, a dated snapshot or its alias (`claude-haiku-4-5[-20251001]`),
+ * and the OpenRouter form (`anthropic/claude-sonnet-5.5`). No prefix guessing:
+ * `claude-opus-5-5` is not `claude-opus-5` at a different price.
  */
-export function resolveModelPrice(model: string | null | undefined): ModelPrice | null {
-  const known = knownModel(model);
+export function resolveModelPrice(model: string | null | undefined, provider?: string | null): ModelPrice | null {
+  const known = knownModel(model, provider);
   if (!known || known.inputPerMTok === undefined || known.outputPerMTok === undefined) return null;
   return { label: known.label, inputPerMTok: known.inputPerMTok, outputPerMTok: known.outputPerMTok };
 }
 
-/** Token counts × list price. `null` when the model has no published price here. */
+/**
+ * Token counts × list price, at the price of the provider the tokens were bought from
+ * when it is given. `null` when the model has no published price here.
+ */
 export function estimateModelSpendUsd(
   model: string | null | undefined,
   tokens: { inputTokens: number; outputTokens: number },
+  provider?: string | null,
 ): number | null {
-  const price = resolveModelPrice(model);
+  const price = resolveModelPrice(model, provider);
   if (!price) return null;
   const input = Math.max(0, tokens.inputTokens) / 1_000_000;
   const output = Math.max(0, tokens.outputTokens) / 1_000_000;
@@ -138,11 +162,15 @@ export function estimateModelSpendUsd(
 /**
  * The list price a model's tokens are billed at on an owner's own key.
  *
- * The catalogue above first. A pay-per-use model the catalogue does not list (the
- * builder offers no direct Google key, so the Gemini rows are not in it) is priced at
- * the per-token list rate the pay-per-use table carries for it, which is the model
- * maker's own published price and what an OpenRouter key is billed. Anything else is
- * unknown, and `null`.
+ * Anthropic's, OpenAI's and OpenRouter's lists first: that is where a pay-per-use id, in
+ * the gateway's spelling (`anthropic/claude-haiku-4.5`), resolves. A pay-per-use model
+ * none of those three lists (the Gemini rows) is priced at the per-token list rate the
+ * pay-per-use table carries for it, which is the model maker's own published price and
+ * what an OpenRouter key is billed. Anything else is unknown, and `null`.
+ *
+ * No provider is passed, on purpose. The comparison is with the model's maker, not with
+ * whichever host an owner might buy the same model from, so this answer does not move
+ * when a provider is added.
  */
 export function ownKeyPrice(model: string | null | undefined): ModelPrice | null {
   const listed = resolveModelPrice(model);
@@ -560,6 +588,13 @@ export interface MoneyAgentRow {
   mode: AgentMode;
   status: AgentStatus;
   model: string;
+  /**
+   * The provider `model` is bought from on the owner's key (`config.llm.provider`), and
+   * so the list its price is read in. `getMoney` always sets it. It is optional so that
+   * a row made without one is priced as every row was before providers had their own
+   * lists: in Anthropic's, OpenAI's and OpenRouter's.
+   */
+  provider?: string | null;
   /** Cash + positions at the last mark. Null only when nothing has ever been recorded. */
   equityUsd: number | null;
   cashUsd: number | null;
@@ -1199,6 +1234,11 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     const fund = funding.get(row.id);
     const fundedAtMs = fund && fund.firstAt !== null ? Number(fund.firstAt) * 1000 : Number.NaN;
     const model = row.config?.llm?.model ?? "";
+    // Whose price list the key-run tokens are read in. The config's provider is the one
+    // its key is for: an agent is not saved with a key of another provider. (One saved
+    // before that was checked can only pair two of the first three, which read each
+    // other's prices.)
+    const provider = row.config?.llm?.provider ?? null;
     const source = thinkSource(row.config);
     const paidForThinking = thinkingByAgent.get(row.id);
     // A pay-per-use agent that never ran on a key has no tokens to estimate: that is a
@@ -1225,6 +1265,7 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
       mode: row.mode,
       status: row.status,
       model,
+      provider,
       equityUsd: book.equityUsd,
       cashUsd: book.cashUsd,
       positionsUsd: book.positionsUsd,
@@ -1235,7 +1276,7 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
       feesAccruedUsd: fee.accrued,
       dataSpendUsd: spend.total,
       dataSpendSimulatedUsd: spend.simulated,
-      modelSpendUsd: nothingOnAKey ? 0 : estimateModelSpendUsd(model, run),
+      modelSpendUsd: nothingOnAKey ? 0 : estimateModelSpendUsd(model, run, provider),
       inputTokens: run.inputTokens,
       outputTokens: run.outputTokens,
       thinkSource: source,

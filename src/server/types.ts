@@ -4,6 +4,7 @@
  * but keep existing fields stable.
  */
 import type { AgentConfig } from "@/db/schema";
+import type { LlmProvider } from "@/lib/agent/providers";
 
 export type Chain = "solana" | "base";
 export type AgentMode = "paper" | "live";
@@ -382,7 +383,7 @@ export interface UserProfile extends UserCard {
 
 export interface LlmKeyRow {
   id: string;
-  provider: "anthropic" | "openai" | "openrouter";
+  provider: LlmProvider;
   label: string | null;
   last4: string;
   createdAt: string;

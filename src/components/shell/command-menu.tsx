@@ -19,9 +19,11 @@ import {
   Wallet,
 } from "lucide-react";
 import { SearchPalette, type SearchPaletteItem as CommandItem } from "@/components/common/search-palette";
+import { PROVIDER_ORDER } from "@/lib/agent/providers";
 import { cn } from "@/lib/utils";
 import { chainLabelFor } from "@/lib/wallets/funding";
 import type { CommandIndex } from "./command-index";
+import { providerSearchWords } from "./provider-words";
 
 type TokenHit = CommandIndex["tokens"][number];
 type AgentHit = CommandIndex["agents"][number];
@@ -59,6 +61,13 @@ const SEARCH_DEBOUNCE_MS = 150;
 
 /** A palette row plus the text a query is matched against. */
 type Row = CommandItem & { keywords: string };
+
+/**
+ * The providers a key can be added for, as the words someone types to find where keys
+ * live. From the registry's enabled list, so a provider is findable here from the day it
+ * is switched on and not before.
+ */
+const PROVIDER_WORDS = providerSearchWords(PROVIDER_ORDER);
 
 /**
  * The registry palette matches a query against title, description *and* category, so
@@ -251,7 +260,8 @@ export function CommandMenu({
         id: "nav-settings",
         title: "Settings",
         description: "LLM keys, profile, notifications",
-        keywords: "api key openai anthropic llm security sign out logout kill switch",
+        // The first words are as they always were, so what found this row still does.
+        keywords: `api key openai anthropic llm security sign out logout kill switch ${PROVIDER_WORDS}`,
         category: "Pages",
         icon: <Settings className="h-4 w-4" />,
         action: go("/settings"),

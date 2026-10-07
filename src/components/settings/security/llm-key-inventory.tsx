@@ -14,25 +14,53 @@ import { attachKeyToKeylessAgents, removeLlmKey, rotateLlmKey } from "@/server/a
 import type { LlmKeyDetail } from "@/lib/security/types";
 import { cn } from "@/lib/utils";
 import { MORPH_FOCUS, enterSubmits, useMorphAction } from "../use-morph-action";
-import { mismatchedProvider, wrongProviderOnRotate } from "@/lib/agent/key-prefix";
-
-// The server refuses anything shorter (src/server/actions/users.ts), so the client does too.
-const KEY_MIN = 16;
+import { keyRefusal, shownKeyError } from "@/components/agents/provider-choice";
+import { providerLabel } from "@/lib/agent/providers";
 
 function agentsWithoutKey(n: number): string {
   return n === 1 ? "1 agent now has no key and cannot run." : `${n} agents now have no key and cannot run.`;
 }
 
-const PROVIDER_LABEL: Record<LlmKeyDetail["provider"], string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-  openrouter: "OpenRouter",
-};
+/**
+ * What the "agents have no key" notice offers. Pure, so the promise can be tested.
+ *
+ * Attaching is offered only with exactly one key, where it is unambiguous, and only for
+ * the agents that key fits: `attachKeyToKeylessAgents` attaches to agents whose settings
+ * name the key's provider and to no others. So the button quotes that count, never the
+ * count of every agent without a key, and is not shown when the key fits none of them.
+ */
+export type KeylessOffer =
+  | { kind: "none" }
+  | { kind: "add" }
+  | { kind: "pick" }
+  | { kind: "attach"; label: string };
+
+export function keylessOffer(input: {
+  keylessAgents: number;
+  /** Of those, the ones set to the only key's provider. */
+  attachable: number;
+  keyCount: number;
+  /** The last four characters of the only key, when there is exactly one. */
+  onlyKeyLast4: string | null;
+}): KeylessOffer {
+  if (input.keylessAgents <= 0) return { kind: "none" };
+  if (input.keyCount === 0) return { kind: "add" };
+  if (input.keyCount !== 1 || input.onlyKeyLast4 === null || input.attachable <= 0) return { kind: "pick" };
+  const key = `the key ending ${input.onlyKeyLast4}`;
+  // Every agent without a key fits: "it" and "them" are exact. Otherwise say how many.
+  if (input.attachable >= input.keylessAgents) {
+    return { kind: "attach", label: `Attach ${key} to ${input.keylessAgents === 1 ? "it" : "them"}` };
+  }
+  return {
+    kind: "attach",
+    label: `Attach ${key} to ${input.attachable === 1 ? "the 1 agent" : `the ${input.attachable} agents`} it fits`,
+  };
+}
 
 // Names the row's actions. Two keys from one provider otherwise gave two identical
 // "Rotate" and "Hold to revoke" buttons, with nothing to say which key each one acts on.
 function keyA11yName(key: LlmKeyDetail) {
-  const base = `${PROVIDER_LABEL[key.provider]} key ending ${key.last4}`;
+  const base = `${providerLabel(key.provider)} key ending ${key.last4}`;
   return key.label ? `${key.label}, ${base}` : base;
 }
 
@@ -50,11 +78,17 @@ export function LlmKeyInventory({
   keys: initial,
   isAdmin = false,
   keylessAgents = 0,
+  attachableAgents = 0,
 }: {
   keys: LlmKeyDetail[];
   isAdmin?: boolean;
   /** How many of the owner's agents have no key and so cannot run; read on the server. */
   keylessAgents?: number;
+  /**
+   * Of those, how many the only key can be attached to: the ones set to its provider.
+   * Read on the server, and only when there is exactly one key; zero otherwise.
+   */
+  attachableAgents?: number;
 }) {
   const router = useRouter();
   const [keys, setKeys] = useState(initial);
@@ -126,7 +160,7 @@ export function LlmKeyInventory({
       }
       removeRow(key);
       const detached = result.data.detachedAgents;
-      toast.success(`Revoked the ${PROVIDER_LABEL[key.provider]} key ending ${key.last4}`, {
+      toast.success(`Revoked the ${providerLabel(key.provider)} key ending ${key.last4}`, {
         description: detached > 0 ? agentsWithoutKey(detached) : "No agent was using it.",
       });
       router.refresh();
@@ -135,6 +169,12 @@ export function LlmKeyInventory({
 
   // One key: attaching it is unambiguous, so offer it here. Several: each agent picks.
   const onlyKey = keys.length === 1 ? keys[0] : null;
+  const offer = keylessOffer({
+    keylessAgents,
+    attachable: attachableAgents,
+    keyCount: keys.length,
+    onlyKeyLast4: onlyKey?.last4 ?? null,
+  });
   const attachOnlyKey = () => {
     if (!onlyKey || attaching) return;
     setAttaching(true);
@@ -164,7 +204,7 @@ export function LlmKeyInventory({
             {keylessAgents === 1 ? "1 agent has no key" : `${keylessAgents} agents have no key`}
             <span className="text-muted-foreground"> and can&rsquo;t run.</span>
           </span>
-          {onlyKey ? (
+          {offer.kind === "attach" ? (
             <button
               type="button"
               onClick={attachOnlyKey}
@@ -172,11 +212,9 @@ export function LlmKeyInventory({
               aria-busy={attaching || undefined}
               className="inline-flex h-8 items-center rounded-md border border-border px-2.5 text-xs font-medium transition-[background-color,transform,opacity] duration-150 hover:bg-muted active:scale-[0.97] disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
-              {attaching
-                ? "Attaching…"
-                : `Attach the key ending ${onlyKey.last4} to ${keylessAgents === 1 ? "it" : "them"}`}
+              {attaching ? "Attaching…" : offer.label}
             </button>
-          ) : keys.length === 0 ? (
+          ) : offer.kind === "add" ? (
             <Link href="/settings#keys" className="rounded text-xs underline underline-offset-2 hover:text-foreground focus-ring">
               Add a key
             </Link>
@@ -209,10 +247,10 @@ export function LlmKeyInventory({
                 */}
                 <div className="min-w-0 grow basis-48">
                   <p className="truncate text-sm font-medium">
-                    {key.label ?? `${PROVIDER_LABEL[key.provider]} key`}
+                    {key.label ?? `${providerLabel(key.provider)} key`}
                   </p>
                   <p className="tnum mt-0.5 truncate font-mono text-xs text-muted-foreground">
-                    {PROVIDER_LABEL[key.provider]} · ••••{key.last4}
+                    {providerLabel(key.provider)} · ••••{key.last4}
                   </p>
                   <dl className="mt-2 grid gap-x-6 gap-y-1 text-xs sm:grid-cols-3">
                     <div className="flex gap-1.5">
@@ -289,7 +327,7 @@ export function LlmKeyInventory({
                 <RotateForm
                   keyId={key.id}
                   providerId={key.provider}
-                  provider={PROVIDER_LABEL[key.provider]}
+                  provider={providerLabel(key.provider)}
                   agentCount={key.agentCount}
                   onDone={(last4) => {
                     setKeys((current) => current.map((k) => (k.id === key.id ? { ...k, last4 } : k)));
@@ -342,21 +380,20 @@ function RotateForm({
 
   const submit = async () => {
     setError(null);
-    if (value.trim().length < KEY_MIN) {
-      setError("That doesn’t look like a full API key — paste the whole thing.");
+    // Too short; or another provider's key, which rotation cannot take: it keeps the
+    // provider, so that key would take every agent on this one down at its next run, and
+    // be saved when the provider can't be reached. Refused before anything is sent.
+    const refusal = keyRefusal(providerId, value, "rotate");
+    if (refusal) {
+      setError(refusal);
       throw new Error("invalid key");
-    }
-    // Rotation keeps the provider, so another provider's key would take every agent on
-    // this one down at its next run — and be saved when that provider can't be reached.
-    const other = mismatchedProvider(value, providerId);
-    if (other) {
-      setError(wrongProviderOnRotate(other, providerId));
-      throw new Error("wrong provider");
     }
     const result = await rotateLlmKey({ id: keyId, key: value.trim() });
     if (!result.ok) {
-      setError(result.error);
-      throw new Error(result.error);
+      // The new key is still in the field, so it can be taken out of whatever came back.
+      const message = shownKeyError(result.error, value);
+      setError(message);
+      throw new Error(message);
     }
     const description = `Now ending ${result.data.last4}.${
       agentCount > 0 ? ` ${agentCount} agent${agentCount === 1 ? "" : "s"} kept running.` : ""

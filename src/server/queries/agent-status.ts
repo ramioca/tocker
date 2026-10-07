@@ -181,8 +181,16 @@ export interface RunErrorClass {
  * the provider's own first sentence and sends the operator to the run, which has the
  * transcript. Guessing at a fourth diagnosis is worse than showing the sentence: the
  * operator can read, and a confident wrong label sends them to the wrong screen.
+ *
+ * `provider` is who the agent thinks on (`config.llm.provider`), or null when it pays
+ * per use. Two of the three fixes are Anthropic's own, so they are named for an
+ * Anthropic agent only: "credit balance" is a phrase other providers use too, and an
+ * OpenAI or DeepSeek owner sent to Anthropic's billing page has been sent nowhere.
  */
-export function classifyRunError(text: string | null | undefined): RunErrorClass | null {
+export function classifyRunError(
+  text: string | null | undefined,
+  provider: string | null | undefined,
+): RunErrorClass | null {
   // The stored error is whatever broke, in its own words; rows written before errors
   // were scrubbed on the way in can still carry the key a provider echoed.
   const raw = redactSecrets((text ?? "").trim());
@@ -191,12 +199,13 @@ export function classifyRunError(text: string | null | undefined): RunErrorClass
 
   // Anthropic's own words for an empty balance. Checked before the workspace test:
   // a topped-up organization key can hit either, and the balance is the cheaper fix.
-  if (/credit balance/i.test(raw)) {
+  const onAnthropic = provider === "anthropic";
+  if (onAnthropic && /credit balance/i.test(raw)) {
     return { kind: "anthropic_credits", title: "Anthropic credits are out", detail: sentence };
   }
   // The same predicate `run.ts` uses to decide whether to go looking for a workspace,
   // so the banner and the run loop can never disagree about what this error is.
-  if (isWorkspaceScopeError(raw)) {
+  if (onAnthropic && isWorkspaceScopeError(raw)) {
     return {
       kind: "anthropic_workspace",
       title: "This Anthropic key needs a workspace",
@@ -255,6 +264,11 @@ export interface StatusInputs {
   status: "draft" | "active" | "paused" | "error";
   mode: "paper" | "live";
   hasLlmKey: boolean;
+  /**
+   * The provider the agent's settings name (`config.llm.provider`). Decides whose
+   * billing page a failed run is sent to; ignored for an agent that pays per use.
+   */
+  provider: string | null;
   /**
    * Set for an agent that pays for its own thinking (`config.llm.source` is `"usdc"`);
    * absent or null for a key agent, whose status is then exactly what it was.
@@ -321,7 +335,8 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
   // words, and says nothing at all while the hold row above is already saying it.
   const failedRun = input.lastRun?.status === "failed" ? input.lastRun : null;
   const stopped = thinking && failedRun?.stopReason ? failedRun.stopReason : null;
-  const failure = failedRun && !stopped ? classifyRunError(failedRun.error) : null;
+  // An agent that pays per use is on nobody's key, whatever provider its config still names.
+  const failure = failedRun && !stopped ? classifyRunError(failedRun.error, thinking ? null : input.provider) : null;
   if (failedRun && stopped && thinking && !thinking.hold) {
     const words = stopWords(stopped, thinkingContext(thinking));
     push({
@@ -764,6 +779,7 @@ export async function getAgentStatus(agentId: string, viewerId?: string | null):
       mode: agent.mode,
       // Mock mode runs without a key, so the banner must not say one is missing.
       hasLlmKey: agent.llmKeyId !== null || isLlmMock(),
+      provider: config.llm.provider,
       thinking: payPerUse
         ? {
             model: payPerUseModelLabel(thinkingModel(config)),

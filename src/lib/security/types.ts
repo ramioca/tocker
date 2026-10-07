@@ -1,16 +1,20 @@
 /**
  * The view-model types the security screens render.
  *
- * They live in their own module, with no imports at all, because every other file
- * in `src/lib/security/` is `server-only` — it reads the database, or Privy, or
- * `process.env`. A client component that needs one of these shapes must not have
+ * They live in their own module, with no import that can reach a secret, because every
+ * other file in `src/lib/security/` is `server-only` — it reads the database, or Privy,
+ * or `process.env`. A client component that needs one of these shapes must not have
  * even a type-level edge to a module that can reach a secret: `import type` is
  * erased by TypeScript, but relying on that erasure means one refactor from `type`
  * to a value import silently pulls a server module into a browser bundle.
  *
  * The server modules re-export everything here, so importing the type from either
  * place is correct on the server; only client components have to come here.
+ *
+ * The one import is the provider id, from the provider registry: a module that itself
+ * imports nothing and reads no secret, and that client components already use.
  */
+import type { LlmProvider } from "@/lib/agent/providers";
 
 // ---------------------------------------------------------------------- MFA
 
@@ -41,7 +45,7 @@ export interface MfaStatus {
 
 export interface LlmKeyDetail {
   id: string;
-  provider: "anthropic" | "openai" | "openrouter";
+  provider: LlmProvider;
   label: string | null;
   /** Last four characters only. Never more, on any surface. */
   last4: string;
