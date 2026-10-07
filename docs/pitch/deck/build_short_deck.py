@@ -201,60 +201,7 @@ write("gtm", section(
     ml=-6,
 ))
 
-# ---------- competition: startup landscape ----------
-def chip(name, fact=""):
-    f = f'<p style="font-size:20px;color:{DIM};white-space:nowrap">{fact}</p>' if fact else ""
-    return (f'<div style="display:flex;flex-direction:row;align-items:baseline;gap:10px;padding:9px 16px;'
-            f'border:1px solid {HAIR};border-radius:12px;background:#0a0a0b">'
-            f'<p style="font-size:24px;color:{FG};white-space:nowrap">{name}</p>{f}</div>')
-
-
-def seg(lbl, what, chips):
-    return (f'<div style="flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:14px;border-top:1px solid {HAIR};padding:26px 0 0 0">'
-            f"{label(lbl, ';font-size:22px;letter-spacing:3px')}"
-            f'<p style="font-size:26px;line-height:1.3;color:{MID};height:68px;text-wrap:balance">{what}</p>'
-            f'<div style="display:flex;flex-direction:row;flex-wrap:wrap;gap:10px">{"".join(chips)}</div></div>')
-
-
-def edge(n, title, sub):
-    return (f'<div style="flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:6px">'
-            f'<div style="display:flex;flex-direction:row;align-items:baseline;gap:12px">'
-            f'<p style="{MONO};font-size:22px;color:{DIM}">{n}</p>'
-            f'<p style="font-size:30px;font-weight:600;letter-spacing:-0.5px;line-height:1.2;color:{FG}">{title}</p></div>'
-            f'<p style="font-size:24px;line-height:1.3;color:{MID};padding:0 0 0 40px">{sub}</p></div>')
-
-
-landscape_body = (
-    f'{SPACER}\n<div style="display:flex;flex-direction:column;gap:30px">'
-    '<div style="display:flex;flex-direction:row;gap:32px">'
-    + seg("Perps agents", "Autonomous agents on Hyperliquid perps.",
-          [chip("Senpi", "$4M+ seed"), chip("Minara"), chip("Wallet V"), chip("Cod3x")])
-    + seg("Autonomous on-chain", "Agents with their own wallet, running 24/7.",
-          [chip("Fere AI", "$1.3M seed"), chip("Velvet Capital"), chip("Wayfinder")])
-    + seg("Chat-to-trade", "You chat, then approve each trade.",
-          [chip("Nansen AI", "$500M+ traded"), chip("Bankr"), chip("Ask Gina"), chip("HeyElsa")])
-    + seg("Open-source agent kits", "Kits you host, fund and wire yourself.",
-          [chip("OpenClaw"), chip("Solana Agent Kit"), chip("ElizaOS"), chip("Sailor")])
-    + "</div>"
-    + f'<div style="display:flex;flex-direction:column;gap:22px;padding:26px 28px 28px;border:1px solid rgba(244,244,241,0.5);border-radius:20px;background:rgba(244,244,241,0.05)">'
-    + f'<div style="display:flex;flex-direction:row;align-items:baseline;gap:16px">'
-    f'<p style="font-size:44px;font-weight:600;letter-spacing:-1.2px;line-height:1;color:{FG}">Tocker</p>'
-    f'<p style="{MONO};font-size:20px;letter-spacing:2px;text-transform:uppercase;color:{MID}">Private beta · autonomous trading, full stack</p></div>'
-    + '<div style="display:flex;flex-direction:row;gap:32px">'
-    + edge("01", "USDC inference", "Pays per model call (next)")
-    + edge("02", "x402 alpha", "Buys data per call, no plans")
-    + edge("03", "Filters and gates", "Advanced, on every token")
-    + edge("04", "Social trading", "Public record, private strategy")
-    + "</div></div></div>"
-)
-
-write("competition", section(
-    "competition", "Competitive landscape", "Startups built agents. We built the stack.",
-    landscape_body,
-    "Public docs and press, Oct 2026 · Senpi: TFN · Fere: GlobeNewswire · Nansen: The Block · Solana Agent Kit: GitHub · Sailor: sail.money · Tocker’s own read",
-    "Here's the startup landscape. Perps agents like Senpi trade one venue. Autonomous agents like Fere run their own wallet. Chat agents like Nansen AI and Bankr wait for your click. Open-source kits like OpenClaw make you host and wire everything. Tocker is the full stack: it pays for its own inference in USDC, next; buys alpha per call over x402; filters every token; and trades in public while the strategy stays private.",
-    ml=-6,
-))
+# competition slide: generated separately by comp-a-work/gen.py (Series A comparison table)
 
 
 # ---------- team ----------
