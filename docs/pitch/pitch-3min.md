@@ -1,34 +1,34 @@
-# Tocker — 3-minute pitch (short deck, v4)
+# Tocker — 3-minute pitch (short deck, v5)
 
-~476 words, about 3:05 at 155 wpm. Sam is an illustrative composite, not a real user. [pause] marks a beat.
-Reviewed by a VC-partner critic, a designer and a code-level fact-check (Oct 7, 2026).
+~483 words, about 3:05 at 155 wpm. Sam is an illustrative composite, not a real user. [pause] marks a beat.
+Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition is a category landscape (exchange agents, perps agents, on-chain chat agents, agent rails) with Tocker's answer to each gap.
 
 ## cover
-Three a.m. A trader, call her Sam, sees a new token trending. She buys. Minutes later, it's worth nothing. The wallets that bought first? Insiders. [pause] Sam isn't dumb. She's outgunned. I'm [name], and this is Tocker: the infrastructure for agentic trading.
+Three a.m. A trader, call her Sam, sees a new token trending. She buys. Minutes later, it's worth nothing. The wallets that bought first? Insiders. [pause] Sam isn't dumb. She's outgunned. I'm Rami, and this is Tocker: the infrastructure for agentic trading.
 
 ## problem
-Sam has two problems. No edge: in 2024, nine in ten pump.fun traders lost money or made under a hundred dollars, against twenty-one thousand new tokens a day. And no rails: to run her own agent she'd wire twenty-plus APIs, every chain, wallet, data feed, model and venue, then host it around the clock.
+Sam has two problems. No edge: in 2024, nine in ten pump.fun traders lost money or made under a hundred dollars, with twenty-one thousand new tokens a day. No rails: her own agent means wiring twenty-plus services, then running them around the clock. I know. I wired them.
 
 ## solution
-Tocker fixes both. The edge: the agent pays per call for smart-money, launch and sell-check data, and ten hard gates in code can veto any buy. The rails: one integration for wallet, data, inference and execution, on your own AI key or, next, USDC per call. Solana and Base today, Polymarket and tokenized stocks next.
+Tocker fixes both. The edge: paid smart-money, launch and sell-check data, and ten hard gates in code that can veto any buy. The rails: one integration for wallet, data, inference and execution, hosted 24/7 on your own AI key, with USDC per call next. Solana and Base today, Polymarket and tokenized stocks next.
 
 ## product
-Here's Sam's agent. One line of English: liquid Solana memes, smart money buying, holders rising, take forty, stop at fifteen. In this sample it scans BONK and POPCAT and skips both, below her floor. WIF scores eighty-one, clears all ten gates, and it buys a hundred dollars, exits set in code.
+Here's Sam's agent. One line of English: liquid Solana memes, smart money buying, holders rising, take forty, stop at fifteen. It skips BONK and POPCAT, below her floor. WIF scores eighty-one, clears all ten gates, and buys a hundred dollars, with exits set in code.
 
 ## alpha
-Can AI even trade? Last October, six frontier models traded real money, and four lost over thirty percent. A raw model trades blind, so Sam's agent buys answers, a few cents each over x402, from what just launched to whether it can actually sell. About seven to eleven cents a token.
+Can AI even trade? Last October, six frontier models traded real money; four lost over thirty percent. A raw model trades blind, so Sam's agent buys answers over x402, from what just launched to whether insiders hold the supply: seven to eleven cents a token, only on tokens that pass the free checks.
 
 ## business
-Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees: nine hundred forty million to trading bots at one percent a trade, the rest to launchpads. We'll charge zero point two.
+Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We plan to charge zero point two percent: twenty cents on a hundred dollars.
 
 ## competition
-Agents went mainstream this year. Robinhood has over a hundred and fifty thousand agentic accounts. But those agents trade only what their venue lists. On-chain, Nansen, Fere and Bankr leave the buy to the model or your click, and wallets block scams, not bad buys. Nobody we found pairs any token with hard gates on the token.
+Here's the landscape. Agents went mainstream this year: Robinhood has over a hundred and fifty thousand agentic accounts, but exchange agents trade only what their venue lists. Perps agents live on one venue. On-chain chat agents reach any token, but the model or your click decides. Rails make you wire the rest. Tocker runs the whole loop, and its gates can say no.
 
 ## gtm
-And every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score; the strategy stays private. Followers launch their own, and next, creators earn a fee share. Today that's memecoins, five billion dollars a week on Solana at the August peak. Next, Polymarket and tokenized stocks.
+Every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score, never the strategy. Followers launch their own; next, creators earn a fee share. Today that's memecoins, five billion dollars a week on Solana at the August peak. Next Polymarket, then tokenized stocks.
 
 ## team
-Why me? I lead product and growth at BlockRun, the leading x402 gateway, so I know these rails. I founded Sorbet, a neobank that raised a million dollars and moves five million a month. And I worked on AI at Deloitte's Omnia.
+Why me? I lead product and growth at BlockRun, the leading x402 gateway, so I know these rails. I founded Sorbet, a neobank that raised a million dollars and moves five million a month. I worked on AI at Deloitte's Omnia. And I shipped Tocker in under four weeks.
 
 ## thanks
 Tocker is in private beta on Solana and Base. [pause] Back to Sam. Same token. Same three a.m. This time she's asleep, and her agent said no. [pause] Tocker. Your agent trades while you sleep. Thank you.
