@@ -129,6 +129,12 @@ export interface ProviderRow {
   fixedSampling?: readonly string[];
   /** Set only where the provider needs an output limit on every request. */
   maxOutputTokens?: number;
+  /**
+   * Set where the provider's API refuses a tool whose parameter is an object with no
+   * declared properties (Gemini does). One of the agent's tools takes such a parameter;
+   * for these providers it is declared as JSON in a string instead, which every API takes.
+   */
+  freeFormParams?: "json-string";
   /** One line under the chooser, for something a new account runs into. */
   note?: string;
 }
@@ -281,6 +287,8 @@ export const CATALOGUE: Readonly<Record<CatalogueId, ProviderRow>> = {
     ],
     // Google advises leaving Gemini 3 at its own temperature: a lower one can make it loop.
     temperature: "omit",
+    // Gemini's function declarations want every object parameter to name its properties.
+    freeFormParams: "json-string",
     note: "A free-tier key has low limits, and Google may use what it is sent to improve its products. A key with billing turned on has neither.",
   },
 

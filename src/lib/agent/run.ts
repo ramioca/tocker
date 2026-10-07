@@ -72,7 +72,7 @@ import { RunLogger } from "./logger";
 import { createMockModel, isLlmMock } from "./mock-model";
 import { getAgentWallets, getPortfolio, snapshotEquity } from "./portfolio";
 import { buildSystemPrompt, buildTickPrompt, type RecentTrade } from "./prompts";
-import { PROVIDER_UNSUPPORTED, isProvider, type LlmProvider } from "./providers";
+import { PROVIDER_UNSUPPORTED, isProvider, providerLabel, providerRow, withArticle, type LlmProvider } from "./providers";
 import { callOptionsFor, keyScrubber, modelFor, noScrub, type KeyScrub } from "./providers-server";
 import { RUN_DEFERRED, RunRefusedError } from "./run-gate";
 import { buildTools, type RunAgentRecord, type RunContext } from "./tools";
@@ -168,6 +168,14 @@ export async function resolveModel(
   // it is decrypted, and never sent to whichever provider happens to come next.
   const provider: unknown = row.provider;
   if (!isProvider(provider)) throw new Error(PROVIDER_UNSUPPORTED);
+  // The key decides the host and the settings decide the model id. When they name
+  // different providers the model id means nothing to that host; say so here rather
+  // than send it and store whatever the provider answers.
+  if (provider !== agent.config.llm.provider) {
+    throw new Error(
+      `This agent's key is ${withArticle(provider)} key, but its settings name ${providerLabel(agent.config.llm.provider)}. Open the agent's settings and choose a key for the provider it is set to, or change the provider.`,
+    );
+  }
 
   // The decrypted key stays in this scope and is never logged or persisted.
   const apiKey = decryptSecret(row.encryptedKey);
@@ -194,8 +202,10 @@ export async function resolveModel(
  * A provider's error, with the one sentence that says what to do when we know it.
  * Everything else passes through untouched.
  */
-export function explainProviderError(message: string): string {
-  if (/anthropic-workspace-id/i.test(message)) {
+export function explainProviderError(message: string, provider: LlmProvider | null = "anthropic"): string {
+  // Advice about an Anthropic key belongs only under a run that used one. A Claude model
+  // reached through another provider can produce the same words about a key that is not ours.
+  if (provider === "anthropic" && /anthropic-workspace-id/i.test(message)) {
     return `${message} — This Anthropic key is organization-level and Tocker could not find a workspace it may act in. Under Settings → LLM API keys, add it again with a Workspace ID (Anthropic Console → Settings → Workspaces), or create the key inside a workspace; then select it on the agent.`;
   }
   return message;
@@ -622,6 +632,8 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
   // Set once the model is built from a key. Until then no key has been read, and what
   // `resolveModel` throws has already had it taken out.
   let scrub: KeyScrub = noScrub;
+  // Whose key the run thought on, once that is known. Null for a run with no key.
+  let keyProvider: LlmProvider | null = null;
 
   /** Ends a pay-per-use run that stopped on one of its own limits: a normal end, as far as it got. */
   const finishAtLimit = async (reason: InferenceStopReason, paid: InferencePayContext): Promise<RunAgentResult> => {
@@ -673,7 +685,10 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
 
     const thought = await resolveModel({ ownerId: agentRow.ownerId, llmKeyId: agentRow.llmKeyId, config }, pay);
     scrub = thought.scrub;
+    keyProvider = thought.provider;
     const model = thought.model;
+    // Read by `buildTools` below: some providers refuse a free-form object parameter.
+    ctx.freeFormParamsAsJson = thought.provider ? providerRow(thought.provider).freeFormParams === "json-string" : false;
     // What each step sends beside the prompt and the tools. A key agent: what its key's
     // provider takes (`callOptionsFor`), which for Anthropic is its prompt caching. A run
     // with no key (pay-per-use, the scripted model) is sent what it always was; the
@@ -932,7 +947,7 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
         : null;
     const message = recovered
       ? `${raw} — Tocker found this key's workspace (${recovered}) and saved it on the key. The agent runs again on the next tick.`
-      : explainProviderError(raw);
+      : explainProviderError(raw, keyProvider);
     await logger.log({ kind: "error", payload: { error: message } });
     await logger.flush();
 

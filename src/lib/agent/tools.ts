@@ -73,9 +73,47 @@ export interface RunContext {
   finished: { summary: string | null };
   tradeIds: string[];
   postIds: string[];
+  /**
+   * Set for a provider whose API refuses a tool parameter that is an object with no
+   * declared properties (`freeFormParams` in the provider registry). The one such
+   * parameter, `query_data_source.params`, is then declared as JSON in a string.
+   */
+  freeFormParamsAsJson?: boolean;
 }
 
 const chainSchema = z.enum(["solana", "base"]);
+
+const freeFormParams = z.record(z.string(), z.unknown());
+
+/**
+ * How `query_data_source.params` is declared to the model: an object of whatever the
+ * source asks for, or, for a provider that refuses an object with no declared
+ * properties, that same object as JSON in a string.
+ */
+export function freeFormParamsSchema(asJson: boolean) {
+  return asJson
+    ? z.string().default("{}").describe('Source-specific parameters, as a JSON object written in a string, e.g. {"query":"..."}')
+    : freeFormParams.default({}).describe("Source-specific parameters");
+}
+
+/**
+ * Pure: a source's parameters as the model sent them, as an object. A model may send the
+ * object itself or, where the tool was declared that way, the same object as JSON in a
+ * string. Anything else is null, and the tool says what it needs.
+ */
+export function readFreeFormParams(value: unknown): Record<string, unknown> | null {
+  if (value === undefined || value === null || value === "") return {};
+  let candidate: unknown = value;
+  if (typeof value === "string") {
+    try {
+      candidate = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  const parsed = freeFormParams.safeParse(candidate);
+  return parsed.success && !Array.isArray(candidate) ? parsed.data : null;
+}
 
 type ToolOutcome = Record<string, unknown>;
 
@@ -516,10 +554,15 @@ export function buildTools(ctx: RunContext): ToolSet {
         "Buy data from one of your configured sources over x402. Costs real money against your per-run data budget. `params` must match the source's schema (see the system prompt) — several sources take a `mode` that selects both the endpoint and the price, so read the description before you call one.",
       inputSchema: z.object({
         sourceId: z.string().min(1).describe("Registry id of an enabled source, e.g. 'x-search'"),
-        params: z.record(z.string(), z.unknown()).default({}).describe("Source-specific parameters"),
+        params: freeFormParamsSchema(ctx.freeFormParamsAsJson === true),
       }),
       execute: logged(ctx, "query_data_source", async (input) => {
-        const parsed = z.object({ sourceId: z.string(), params: z.record(z.string(), z.unknown()).default({}) }).parse(input);
+        const { sourceId } = z.object({ sourceId: z.string() }).parse(input);
+        // Read either form whichever was declared: a model handed the string form can
+        // still send the object, and the other way round.
+        const params = readFreeFormParams(input.params);
+        if (params === null) return fail("`params` must be a JSON object (or that object as JSON in a string).");
+        const parsed = { sourceId, params };
         const source = getDataSource(parsed.sourceId);
         if (!source) {
           return fail(`There is no data source "${parsed.sourceId.slice(0, 64)}".`, { enabled: allowedSources });

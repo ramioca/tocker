@@ -142,8 +142,10 @@ describe("resolveModel", () => {
     const { userId, agentId } = await seedAgent(db);
     const key = plaintext();
     const llmKeyId = await attachKey(userId, agentId, key);
-    const { model, provider, scrub } = await resolveModel({ ownerId: userId, llmKeyId, config: DEFAULT_AGENT_CONFIG });
-    expect(typeof model === "string" ? model : model.modelId).toBe(DEFAULT_AGENT_CONFIG.llm.model);
+    // The agent is set to the provider its key is for, as every save now makes sure.
+    const config = { ...DEFAULT_AGENT_CONFIG, llm: { ...DEFAULT_AGENT_CONFIG.llm, provider: "openai" as const, model: "gpt-5" } };
+    const { model, provider, scrub } = await resolveModel({ ownerId: userId, llmKeyId, config });
+    expect(typeof model === "string" ? model : model.modelId).toBe("gpt-5");
     expect(provider).toBe("openai");
     expect(scrub(`refused ${key} here`)).toBe(`refused ${REDACTED} here`);
   });
@@ -160,16 +162,29 @@ describe("resolveModel", () => {
   });
 
   /**
-   * The host is chosen by the key's own row. An agent whose config names another
-   * provider must not carry the key there.
+   * The key decides the host and the settings decide the model id. When they name
+   * different providers the key is never carried to the provider the settings name, and
+   * the model id is never sent to a host it means nothing to: the run is refused with a
+   * sentence, before anything is sent.
    */
-  it("builds the model for the provider the key was saved for, whatever the agent's config says", async () => {
+  it("refuses a key for one provider on an agent set to another, and sends nothing", async () => {
     const { userId, agentId } = await seedAgent(db);
     const llmKeyId = await attachKey(userId, agentId, plaintext(), "openai", "gpt-5", "anthropic");
     const config = { ...DEFAULT_AGENT_CONFIG, llm: { ...DEFAULT_AGENT_CONFIG.llm, provider: "anthropic" as const, model: "gpt-5" } };
-    const { model, provider } = await resolveModel({ ownerId: userId, llmKeyId, config });
-    expect(provider).toBe("openai");
-    expect(typeof model === "string" ? model : model.provider).toMatch(/^openai\./);
+    let requests = 0;
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      requests += 1;
+      return new Response("{}", { status: 500 });
+    }) as typeof fetch;
+    try {
+      await expect(resolveModel({ ownerId: userId, llmKeyId, config })).rejects.toThrow(
+        "This agent's key is an OpenAI key, but its settings name Anthropic.",
+      );
+    } finally {
+      globalThis.fetch = real;
+    }
+    expect(requests).toBe(0);
   });
 
   /** The column is plain text now. A provider that was dropped is still in old rows. */
