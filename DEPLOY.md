@@ -4,7 +4,7 @@
 
 | Decision | Why it matters |
 |---|---|
-| **Hobby or Pro** | Hobby works for a private test deploy, with three hard limits: cron jobs run **once per day maximum** (a 5-minute schedule *fails the deployment*), functions are capped at **60 seconds**, and Hobby teams **cannot connect to Git organization repositories** — the repo must be personal. `vercel.json` ships Hobby-safe: no `crons` block, 60s functions. Scheduling comes from `.github/workflows/cron.yml` instead, which runs every 5 minutes on either plan. |
+| **Hobby or Pro** | Hobby works for a private test deploy, with three hard limits: cron jobs run **once per day maximum** (a 5-minute schedule *fails the deployment*), functions are capped at **60 seconds**, and Hobby teams **cannot connect to Git organization repositories** — the repo must be personal. `vercel.json` ships for **Pro**: a `crons` block and 300s functions. For Hobby, remove the `crons` block and lower every `maxDuration` to 60 (in `vercel.json` and the route files), and take scheduling from `.github/workflows/cron.yml`, which runs every 5 minutes on either plan. |
 | **Postgres provider** | PGlite is a local file and cannot run on serverless — every write is lost when the instance recycles. `/api/health` returns 503 if production is still on PGlite. Use Neon (free tier is enough to start), Supabase, or Vercel Postgres. |
 | **Shaders licence** | The `shaders` package is proprietary: free for personal and evaluation use, but **any public-facing deployment requires a Pro or Team licence** from shaders.com. The landing hero falls back to a static gradient when the shader is absent, so the site works either way. |
 
@@ -14,9 +14,9 @@ Vercel's fair use guidelines restrict Hobby to **non-commercial personal use**. 
 
 ### Agent runs and the 60-second cap
 
-Every due agent runs inside the cron invocation that picked it up. With a real model and several tool calls a single run can take tens of seconds, so on a 60s function the batch has to stay small. `CRON_MAX_AGENTS` controls it and defaults to **5**; set it to `2` on Hobby if runs are timing out, and raise `maxDuration` back to 300 in `vercel.json` and the three route files once you are on Pro. Past a few dozen active agents this belongs in a queue rather than a serverless function either way.
+Every due agent runs inside the cron invocation that picked it up. With a real model and several tool calls a single run can take tens of seconds, so on a 60s function the batch has to stay small. `CRON_MAX_AGENTS` controls it and defaults to **5**; set it to `2` on Hobby if runs are timing out, and keep `maxDuration` at 300 in `vercel.json` and the route files on Pro. Past a few dozen active agents this belongs in a queue rather than a serverless function either way.
 
-A **pay-per-use** run (section 5) is a different size: every model step is a quote, a signature and a paid request, and a run is not started at all unless 250 seconds of its invocation remain. On a 60s function it therefore never starts; it simply stays due. Pay-per-use needs Pro, Fluid compute and the 300s `maxDuration` that `vercel.json` already names.
+A **pay-per-use** run (section 5) is a different size: every model step is a quote, a signature and a paid request. **Do not set `INFERENCE_USDC` on a deployment where any function that runs an agent has less than 300 seconds.** The code cannot see the limit a function really has. It counts every clock of a paid run from one constant, 300 seconds (`RUN_ROUTE_MAX_DURATION_S` in `src/lib/agent/inference.ts`): a run is started only while 250 of those seconds remain, and it stops paying at 285. On a function the platform ends at 60 seconds the run would therefore still **start**, in the first 50 seconds like anywhere else, pay for steps, and be frozen by the platform mid-step, possibly with a payment signed; its run row stays `running` until the reaper fails it ten minutes later, nothing holds the agent or moves its next run, and once that row is reaped it starts and pays again, up to its daily limit. Three files run an agent and each says `export const maxDuration = 300` as a number, because Next reads that value from the source text and takes nothing else: `src/app/api/cron/tick/route.ts`, `src/app/api/agents/[id]/run/route.ts` and the agent page, `src/app/(client)/(app)/agents/[slug]/page.tsx` (its **Run now** is a server action, which takes the page's limit). `vercel.json` names 300 for the two route handlers as well. `src/lib/agent/invocation-limit.test.ts` reads all of them and fails when one says anything but 300, so lowering one for Hobby, as the paragraph above describes, fails `pnpm test`: that failure is the reminder that pay-per-use must stay off there. Pay-per-use needs Pro, Fluid compute and those 300 seconds.
 
 ## 1. Database
 
@@ -476,6 +476,25 @@ Where it shows:
   paid. Max drawdown adds back the same proven payments and nothing else: a withdrawal
   still reads as a fall on that one figure, as it always has, and the equity line itself
   is the wallet's real balance, thinking included.
+
+  **When** a proven payment is netted matters as much as whether. A P&L is measured
+  between two marks of the book, and a mark is the wallet as it was read. The money
+  leaves some seconds after the payment is signed, so a flow dated at the signature ran
+  ahead of it: a mark read in between did not hold the fall yet, and the step's price
+  read as a gain until the next mark. Two rules close that. A payment's flow is dated
+  when its step was **resolved** (its answer and receipt arrived, or the reconciler
+  reached its verdict), and never later than two minutes after the signature: a signed
+  transfer has about a minute to land before its blockhash lapses, so by then it has
+  landed or never will. And **no mark is written for a live
+  pay-per-use agent while one of its paid steps is in flight**: signed in the last two
+  minutes, and not resolved before the wallet was read. The equity line has no point
+  there; a run's own last mark is taken after its last step has resolved (and is left
+  out as well when that step was left without an outcome), and the marks pass comes
+  round again in five minutes. So no mark stands between a payment leaving
+  the wallet and its flow, and a step's price is not read as a gain, either at once or
+  later, when that mark is where a 7-day or 30-day figure starts. A payment signed at or
+  before the book's first live mark is never a flow at all. What this still takes on
+  trust is under "Known limits" below.
 - **Runs.** The owner's run list shows what the ledger *counted as charged* for each
   pay-per-use run, written when the run ends. Counted is not confirmed: the figure
   includes steps whose payment is still being checked. When the reconciler proves a step
@@ -511,9 +530,10 @@ In the order one step runs (`src/lib/x402/inference-fetch.ts`, reached only thro
    signature is then recorded in the ledger, which is given 3 seconds to do it: if the
    ledger does not answer in that time nothing is sent, and the step stops as "The wallet
    did not sign" (`signature_failed`), so a database that is stalling shows up as that
-   stop and can trip the signature breaker. The run's clock is read once more after
-   that; if the paid request no longer fits before the deadline, nothing is sent. Either
-   way a row can be left `signed` with no payment behind it; the reconciler gives it back.
+   stop and counts toward the signature breaker (five such stops, from at least two
+   accounts). The run's clock is read once more after that; if the paid request no
+   longer fits before the deadline, nothing is sent. Either way a row can be left
+   `signed` with no payment behind it; the reconciler gives it back.
 6. The paid request is sent **once**. Whatever happens after that, no second payment is
    made for the step. From here the step counts as charged until the chain says
    otherwise. The gateway's word decides one thing only: an answered step's row gets a
@@ -550,7 +570,7 @@ In the order one step runs (`src/lib/x402/inference-fetch.ts`, reached only thro
 | `INFERENCE_OWNER_DAILY_USD` | environment | `25` | One account, one UTC day. |
 | `INFERENCE_PLATFORM_DAILY_USD` | environment | `2` | Every agent together, one UTC day. `0` refuses everything. |
 | **Admin halt** | database, from Settings → Admin | off | Read before every signature. No deploy. |
-| Breaker pause | database, automatic | none | 3 steps paid (or maybe paid) with no answer, from 2 or more accounts, in 15 minutes: 30 minutes. Accounts, not agents: one owner's agents count once, so one account cannot pause everyone. 5 gateway failures or 5 signature failures in 10 minutes: 15 minutes. Any pin mismatch: 30 minutes. Clears itself; an admin can end it early. |
+| Breaker pause | database, automatic | none | 3 steps paid (or maybe paid) with no answer, from 2 or more accounts, in 15 minutes: 30 minutes. 5 gateway failures or 5 signature failures, from 2 or more accounts, in 10 minutes: 15 minutes. Accounts, not agents, in all three: one owner's agents count as one account however many they are, so one account cannot pause everyone, and while only one account is switched on (stage 2) none of the three can trip. Any pin mismatch, from anyone: 30 minutes. Clears itself; an admin can end it early. |
 | Per-step ceiling | code | the lower of the step cap and 2 × Tocker's own estimate + $0.002 | The estimate is made from the model's list price, not from the quote. |
 | Per-run limit | the owner, per agent | what the builder suggests: about twice a typical run on the chosen model (`$0.15` on the default model, `$0.45` on Claude Haiku 4.5) | Range $0.05 to $2. |
 | Per-day limit | the owner, per agent | what the builder suggests: every scheduled run with a quarter to spare, and at least `$3` | Range $0.50 to $50. The builder's form refuses a schedule whose estimate exceeds it. Whatever was saved, the limit itself is what is enforced, when each payment is reserved. |
@@ -565,6 +585,18 @@ It also depends on things section 2 already asks for: `SOLANA_RPC_URL`, `X402_MO
 unset, the Privy authorization key, and an agent whose **wallet policy has been applied**
 (Wallet budget card in the agent's settings): an agent with no policy is not allowed to
 pay.
+
+**The wallet's own limit must be at least the price of a step.** The policy refuses to
+sign any USDC transfer above the limit it was written with: the agent's largest trade
+size, which every save of the agent's settings writes into it again. The builder, the
+settings form and the Wallet budget card all keep that at `$1` or more, well above the
+`$0.25` a step may cost, but the server accepts any positive trade size.
+A wallet whose limit is below the step ceiling (`INFERENCE_MAX_STEP_USD`) would refuse
+to sign, so its run is not started at all: the check before a run holds the agent with
+"The wallet's limit is below the price of a step" (`wallet_limit_low`), tells its owner
+once, and backs off like any other hold an owner must fix, until the largest trade size
+is raised. Nothing is quoted, reserved or signed for such an agent, so it adds nothing
+to the signature breaker's count.
 
 **`SOLANA_RPC_URL` must be your own provider's URL, and the code does not check that it
 is.** The pay path refuses one thing only: an empty value (the agent is held with
@@ -689,8 +721,7 @@ the concurrency test passes.
    mode, and a local `.env` copied from `.env.example` carries `X402_MOCK=1`, the public
    RPC and a local database: an env file fills in whatever the shell leaves unset, so
    unsetting `X402_MOCK` in the shell does nothing, and a forgotten `DATABASE_URL` would
-   audit the wrong ledger. (The script's own usage line shows a `--env-file` form. Do not
-   use it here.)
+   audit the wrong ledger.
    The first argument is an agent's slug, its id, or a Solana wallet address; `--hours`
    takes up to 744. The connection string and the RPC URL are secrets: keep that line
    out of your shell history. It is read-only: it runs SELECTs and RPC reads and changes
@@ -724,9 +755,12 @@ the concurrency test passes.
    The headers are the ones the rules read, by name, with short cleaned values (an x402
    receipt is shown decoded, as `{success: ..., transaction: "..."}`); "nothing about the
    payment or the model" when there were none. The verdict is one of `this payment's
-   transaction id, settled`, `not settled` or `no proof of settlement`. Find the lines in
-   the Vercel logs of the function that ran the agent (`/api/cron/tick`, or the run
-   route for a run started by hand) and copy them out.
+   transaction id, settled`, `not settled` or `no proof of settlement`. Find the lines by
+   searching the Vercel function logs for `[inference] run`, and copy them out. They are
+   under the function that ran the agent: `/api/cron/tick` for a scheduled run, and the
+   agent's own page, `/agents/<slug>`, for a run started with **Run now** (that button is
+   a server action, served by the page's function). Only a run started from the go-live
+   wizard is under `/api/agents/[id]/run`.
    - the **receipt header**: which of `PAYMENT-RESPONSE`, `X-Payment-Response`,
      `X-Payment-Receipt` and `X-Payment-Settled` arrive on a paid answer, what is in
      them, and **how each line was read**. If every line reads `no proof of settlement`,
@@ -751,9 +785,11 @@ the concurrency test passes.
       next step must stop with nothing signed, and the agent must show "Pay-per-use is
       paused". You are told once.
    2. **Clear it and prove the agent pays again.** On the same card press **Clear the
-      halt**, then **Yes, let payments resume**. Press **Run now** on the agent: a run
-      started by hand is checked at once, whatever the hold says, so the hold lifts and
-      the run pays. Do not go on until a run has paid again.
+      halt**, then **Yes, let payments resume**. (If the card answers "The reason
+      changed since this page was loaded", it has redrawn itself with the reason as it
+      now stands: read it and press the two buttons again.) Press **Run now** on the
+      agent: a run started by hand is checked at once, whatever the hold says, so the
+      hold lifts and the run pays. Do not go on until a run has paid again.
    3. **The empty wallet.** Withdraw the agent's USDC to your own wallet, then press
       **Run now**. No run starts, the agent is held with "Add USDC to keep thinking",
       and you are told once, not on every tick.
@@ -780,17 +816,44 @@ they show handles: copy it from the Privy dashboard, or read it with
 every day. Before this stage: correct the receipt and reroute rules if stage 2's log
 lines showed the headers arrive differently from BlockRun's documentation, and leave the
 payment packages at the versions stage 2 ran on (they are already pinned exactly; see
-above). The concurrency test belongs to stage 1 and must already have passed. Go on only
-with zero ledger-and-chain differences across the week and unconfirmed payments under 1%.
+above). The concurrency test belongs to stage 1 and must already have passed. Two things
+are new at this stage because a second account exists. The three breakers that count
+accounts (steps with no answer, gateway failures, signature failures) can now trip, which
+they could not with one account. And the scheduler's ceiling described under stage 4
+already applies: at most five pay-per-use runs start in one pass, and the rest wait for
+the next, so keep this stage to a handful of pay-per-use agents. Go on only with zero
+ledger-and-chain differences across the week and unconfirmed payments under 1%.
 
-**Stage 4. Everyone.** `INFERENCE_USDC=on`, and raise `INFERENCE_PLATFORM_DAILY_USD` by
-hand (`250` to begin with). At `on` the landing page's FAQ changes two answers ("Which AI
-model runs it?" and "What do I need to start?") to say an agent can pay per use: read
-them in `src/components/liquid/defaults.ts` first. The per-response log line of stage 2
-stops at `on`. Nothing on the Money page depends on the switch: an owner who has never
-paid for a step reads the Costs heading as it always was ("Three different bills, only
-one of which we collect."), and an owner whose page has the Thinking line reads "Four
-different bills".
+**Stage 4. Everyone.**
+
+1. **Before the switch: lift the scheduler's ceiling.** This is a code change, and
+   `INFERENCE_USDC=on` is not set until it has shipped. As the code stands
+   (`tickDueAgents` in `src/lib/agent/scheduler.ts`, whose comment has the detail), **at
+   most five pay-per-use runs start in one pass of `/api/cron/tick`**: five every five
+   minutes, sixty an hour, for the whole platform. A paid run is started only in the
+   first fifty seconds of its invocation, and the second batch of five starts when the
+   slowest run of the first has ended, which is nearly always later than that. A
+   pay-per-use agent picked beyond those five is put off. It stays due and is picked
+   first again next pass, but it has used one of this pass's slots (`CRON_MAX_AGENTS`; at
+   its default of 5 a pass is a single batch and nobody is put off, so this bites as soon
+   as that is raised). So a backlog of twenty such agents, from different owners, leaves
+   no slot in a pass of twenty for an agent on a key until it drains, and above roughly
+   sixty hourly pay-per-use agents it never drains: agents on a key, which is the
+   existing product, stop being picked. Nothing is lost or paid twice by this, and it
+   cannot be reached while only the owner is switched on. Change one of two things in
+   `tickDueAgents`, with a test: take no more than five pay-per-use agents into a pass,
+   so the other slots go to agents on a key; or run the pay-per-use batch alongside the
+   first batch of key agents.
+2. **Then the switch.** `INFERENCE_USDC=on`, and raise `INFERENCE_PLATFORM_DAILY_USD` by
+   hand (`250` to begin with).
+
+At `on` the landing page's FAQ changes two answers ("Which AI model runs it?" and "What
+do I need to start?") to say an agent can pay per use: read them in
+`src/components/liquid/defaults.ts` first. The per-response log line of stage 2 stops at
+`on`. Nothing on the Money page depends on the switch: an owner who has never paid for a
+step reads the Costs heading as it always was ("Three different bills, only one of which
+we collect."), and an owner whose page has the Thinking line reads "Four different
+bills".
 
 ### How to stop it
 
@@ -825,10 +888,60 @@ ledger row behind it, and the ledger throws it (as `ledger`) when a payment is r
 on a row whose amount was already given back. The reason names the transaction, and
 what is found while the halt is on is added to that reason. Read all of it before
 clearing: clearing tells the reconciler that the transactions the reason names have
-been looked at, so those do not halt again, while one it never named still does. A
-transfer to the gateway that is **not** shaped like a payment (no memo, or the wallet
-paid its own fee: an owner's own transfer to that address) halts nobody; it is logged and
-that one agent is put on hold.
+been looked at, so those do not halt again, while one it never named still does. The
+admin page does not redraw itself, so a clear says which reason the page was showing,
+and the server compares that with the reason stored at that moment. If something was
+added in between, the clear is refused ("The reason changed since this page was loaded.
+Reload and read it before clearing."), the halt stays on and nothing is acknowledged:
+the card draws itself again with the whole reason, and the two buttons are pressed again
+over that. A transfer to the gateway that is **not** shaped like a payment (no memo, or
+the wallet paid its own fee: an owner's own transfer to that address) halts nobody; it is
+logged and that one agent is put on hold.
+
+### Known limits, left as they are on purpose
+
+Each of these is how the code behaves today, was looked at, and was left. None loses
+money or pays twice.
+
+- **Only the first batch of a pass runs pay-per-use agents.** At most five pay-per-use
+  runs start in one pass of the tick cron, and the ones put off still use that pass's
+  slots. It cannot be reached while only the owner is switched on, and lifting it is
+  step 1 of stage 4, where it is described in full.
+- **The hold-back is one figure for both chains.** A live pay-per-use agent keeps two
+  run limits and the wallet floor out of its buys. An agent that trades Solana **and**
+  Base has one cash figure for both, so that amount comes off the total and not off the
+  Solana wallet that pays for the thinking: with `$2` on Solana and `$10` on Base, a `$2`
+  buy on Solana still clears and empties the wallet the hold-back was meant to protect.
+  The agent is then held with "Add USDC to keep thinking" at its next run although it
+  holds USDC on Base, and its owner is told to add USDC on Solana. Closing it needs cash
+  per chain in the risk guard, which is a change to every buy path. An agent that trades
+  Solana alone does not have it, and the first-trade preset keeps a pay-per-use agent on
+  Solana alone.
+- **A schedule expected to cost more than the daily limit is refused by the form, and
+  only by the form.** The builder and the agent's settings form will not save one (the
+  estimate is made from list prices). The server makes no such check: a config that
+  reaches it some other way with such a schedule is accepted, and the form then refuses
+  every later save until the limit or the schedule is changed. The daily limit itself is
+  enforced whatever was saved, when each payment is reserved, so such an agent stops for
+  the day when it reaches it.
+- **A payment that got no verdict in seven days stays as it is.** It remains counted as
+  charged against the limits of the day it was reserved on and is shown as "could not be
+  checked in time". If it did land, its amount stays in the agent's P&L as a loss and
+  outside the Thinking total for good, because nothing nets a payment that is not
+  proven. Only `scripts/inference-audit.ts` shows what the chain says about it, and no
+  action in the app resolves such a row.
+- **What the timing of a mark still takes on trust.** No mark is written while a paid
+  step is in flight, and a payment's flow is dated when it was resolved (see P&L above).
+  Both rest on a transfer that the gateway's receipt calls settled being visible to
+  **your own** RPC node by the time the wallet is next read, and a run's last mark is
+  read moments after its last step. If your node trails the gateway's by longer than
+  that, the mark does not yet hold the last step's fall while its flow is already before
+  it, and the agent's P&L reads that one step's price high until the next mark, five
+  minutes at most. The same holds for an answered step with no receipt whose transfer
+  lands after its answer. The "settle order" item of stage 2, step 5 is what shows
+  whether this happens; if it does, the fix is to put a mark off for a few seconds after
+  a step resolves, in `paidStepInFlight` (`src/lib/agent/portfolio.ts`). It also rests on
+  the servers' clocks agreeing to well under a second.
 
 ### What is NOT proven until real funds move
 
@@ -847,8 +960,9 @@ that one agent is put on hold.
   chosen.
 - **Privy accepting the payment under the live wallet policy.** The policy denies a USDC
   transfer above the agent's cap and allows the rest, so a payment of a cent should
-  pass. The stage 1 signature test is the first evidence; whether Privy rate-limits or
-  bills per signature is unknown.
+  pass. (A cap below what a step may cost never gets as far as a signature: the run is
+  not started. See "The wallet's own limit" above.) The stage 1 signature test is the
+  first evidence; whether Privy rate-limits or bills per signature is unknown.
 - **The reroute rule.** It discards an answer when the gateway's fallback headers say
   another model served it. Those headers are documented; none has been seen on a paid
   answer.

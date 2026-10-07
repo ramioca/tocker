@@ -531,7 +531,7 @@ describe("deriveStatus for an agent that pays for its own thinking", () => {
   it("offers Run now only for a reason the owner can clear themselves", () => {
     const detail = (reason: InferenceStopReason) =>
       deriveStatus(inputs({ hasLlmKey: false, thinking: thinking({ reason, until: holdUntil(reason, 1, NOW) }) }))[0].detail;
-    for (const reason of ["needs_funds", "agent_day_cap", "no_wallet", "no_policy", "model_unavailable"] as const) {
+    for (const reason of ["needs_funds", "agent_day_cap", "no_wallet", "no_policy", "wallet_limit_low", "model_unavailable"] as const) {
       expect(detail(reason), reason).toContain("Once it is fixed, Run now starts it straight away.");
     }
     for (const reason of ["owner_day_cap", "request_limit", "platform_day_cap", "halted", "paused", "paid_no_answer"] as const) {

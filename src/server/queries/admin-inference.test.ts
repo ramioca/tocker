@@ -297,9 +297,41 @@ describe("getAdminInference", () => {
     const breakers = Object.fromEntries((await getAdminInference(payer.userId, NOW)).breakers.map((row) => [row.rule, row]));
     // Two unconfirmed and one paid_no_answer inside 15 minutes, from two accounts.
     expect(breakers.unanswered).toMatchObject({ count: 3, accounts: 2, accountsThreshold: 2, threshold: 3, windowMinutes: 15, tripped: true });
-    expect(breakers.gateway).toMatchObject({ count: 2, threshold: 5, windowMinutes: 10, tripped: false });
-    expect(breakers.signature).toMatchObject({ count: 1, threshold: 5, tripped: false });
-    expect(breakers.pin_mismatch).toMatchObject({ count: 0, threshold: 1, tripped: false });
+    // The gateway and signature rules count accounts too: these all came from one.
+    expect(breakers.gateway).toMatchObject({ count: 2, accounts: 1, accountsThreshold: 2, threshold: 5, windowMinutes: 10, tripped: false });
+    expect(breakers.signature).toMatchObject({ count: 1, accounts: 1, accountsThreshold: 2, threshold: 5, tripped: false });
+    // One pin mismatch is enough, from anyone: no account figure is shown for it.
+    expect(breakers.pin_mismatch).toMatchObject({ count: 0, accounts: null, accountsThreshold: null, threshold: 1, tripped: false });
+  });
+
+  it("counts accounts, not runs, toward the signature and gateway breakers, as the ledger's own rule does", async () => {
+    // One account, three agents, runs its wallets would not sign: far more than the five
+    // that used to pause everyone. The ledger does not pause for it, so the card must
+    // not say "tripped", and must show why: one account.
+    const owner = await seedAgent(db, { config: { llm: USDC_LLM } });
+    const fleet = [owner, await addAgent(owner.userId, { llm: USDC_LLM }), await addAgent(owner.userId, { llm: USDC_LLM })];
+    const later = new Date(NOW.getTime() + 120 * MINUTE);
+    const at = (minutes: number) => new Date(later.getTime() - minutes * MINUTE);
+    const stopped = (agent: Seeded, reason: string, minutes: number) =>
+      db.insert(schema.agentRuns).values({ id: nanoid(), agentId: agent.agentId, trigger: "schedule", status: "failed", stopReason: reason, createdAt: at(minutes), finishedAt: at(minutes) });
+    for (const [n, agent] of fleet.entries()) {
+      await stopped(agent, "signature_failed", n + 1);
+      await stopped(agent, "signature_failed", n + 2);
+      await stopped(agent, "quote_failed", n + 1);
+      await stopped(agent, "gateway_error", n + 2);
+    }
+
+    // Read two hours on, when this file's other stopped runs have left every window.
+    const byRule = async () => Object.fromEntries((await getAdminInference(owner.userId, later)).breakers.map((row) => [row.rule, row]));
+    let breakers = await byRule();
+    expect(breakers.signature).toMatchObject({ count: 6, accounts: 1, accountsThreshold: 2, threshold: 5, tripped: false });
+    expect(breakers.gateway).toMatchObject({ count: 6, accounts: 1, accountsThreshold: 2, threshold: 5, tripped: false });
+
+    // A second account stopping the same way is what trips it, and the card says two.
+    await stopped(payer, "signature_failed", 1);
+    breakers = await byRule();
+    expect(breakers.signature).toMatchObject({ count: 7, accounts: 2, tripped: true });
+    expect(breakers.gateway).toMatchObject({ count: 6, accounts: 1, tripped: false });
   });
 
   it("counts accounts, not agents, toward the unanswered breaker, as the ledger's own rule does", async () => {
@@ -460,7 +492,8 @@ describe("getAdminInference", () => {
     // The halt outranks the pause.
     expect(halted).toMatchObject({ halted: true, stops: "halted", haltReason: "ledger and chain disagree on one wallet", updatedBy: "@admin" });
 
-    await setInferenceHalt({ halted: false, reason: null, by: "@admin" });
+    // Cleared the way the page clears it: by sending back the reason this query returned.
+    await setInferenceHalt({ halted: false, reason: null, by: "@admin", seenReason: halted.haltReason });
     const cleared = (await getAdminInference(payer.userId, NOW)).control;
     expect(cleared).toMatchObject({ halted: false, haltReason: null, stops: "paused" });
     expect(cleared.haltClearedAt).not.toBeNull();

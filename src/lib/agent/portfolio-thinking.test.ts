@@ -178,6 +178,21 @@ describe("a live agent that pays per use", () => {
     expect(toRiskPortfolio(portfolio).cashUsd).toBe(0);
   });
 
+  /**
+   * `snapshotEquity` writes no mark while one of the agent's paid steps is in flight, and
+   * it tells "in flight" from when the wallet was read. That moment is noted before the
+   * first wallet is asked: a payment that had not landed by then is not in the balance.
+   */
+  it("notes the moment before its wallets were read, for the mark that may be taken from this book", async () => {
+    const agent = await liveAgent({ paysPerUse: true, solana: 5, base: 2 });
+    const before = Date.now();
+    const portfolio = await getPortfolio(agent.agentId);
+    const after = Date.now();
+    expect(portfolio.cashReadAt).toBeInstanceOf(Date);
+    expect(portfolio.cashReadAt!.getTime()).toBeGreaterThanOrEqual(before);
+    expect(portfolio.cashReadAt!.getTime()).toBeLessThanOrEqual(after);
+  });
+
   it("holds back nothing from an empty wallet, and reports no reserve", async () => {
     const agent = await liveAgent({ paysPerUse: true, solana: 0 });
     const portfolio = await getPortfolio(agent.agentId);
@@ -193,6 +208,8 @@ describe("a live agent on its owner's key", () => {
 
     expect(portfolio.thinkingReserveUsd).toBeUndefined();
     expect("thinkingReserveUsd" in portfolio).toBe(false);
+    // Nor a read time: nothing about its marks depends on the pay-per-use ledger.
+    expect("cashReadAt" in portfolio).toBe(false);
     expect(portfolio.cashUsd).toBeCloseTo(7, 6);
     expect(toRiskPortfolio(portfolio).cashUsd).toBeCloseTo(7, 6);
   });

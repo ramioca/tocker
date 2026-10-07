@@ -185,20 +185,29 @@ export function holdUntil(reason: InferenceStopReason, strikes: number, now: Dat
 /**
  * When pay-per-use is paused for everyone, and for how long.
  *
+ * Three of the four rules count ACCOUNTS as well as events, and need at least two. A pause
+ * stops every agent on the platform, so it must rest on something more than one account's
+ * bad luck, or one account's doing: an owner can make their own runs stop as often as
+ * they like (a wallet limit set too low to sign, a wallet that cannot pay), and may have
+ * any number of agents to do it with. One account's failures hold that account's agents,
+ * each on its own back-off, and nobody else's.
+ *
  *  - `unanswered`: steps that were paid for (or may have been) and got no answer, from
- *    more than one ACCOUNT, mean the gateway is taking money and not serving. Counted by
- *    owner, not by agent: the rule exists so that one account's bad luck (or one account's
- *    doing) cannot stop everyone, and one account may have several agents.
+ *    more than one account, mean the gateway is taking money and not serving.
  *  - `gateway` and `signature`: runs that stopped before any payment because the gateway
- *    or the wallet would not do its part. Nothing was lost, but every further run would
- *    stop the same way.
+ *    or the wallet would not do its part, from more than one account. Nothing was lost,
+ *    but every further run would stop the same way.
  *  - `pin_mismatch`: the gateway asked to be paid in a way that is not the pinned one.
- *    One is enough.
+ *    One is enough, from anyone: what the gateway asks for is not the owner's to choose.
+ *
+ * While only one account is switched on, the first three cannot trip at all. That is the
+ * rule working: with one account there is nobody else to protect, and its own agents
+ * are held by their own stops.
  */
 export const BREAKER_RULES = {
   unanswered: { rows: 3, owners: 2, windowMinutes: 15, pauseMinutes: 30 },
-  gateway: { failures: 5, windowMinutes: 10, pauseMinutes: 15 },
-  signature: { failures: 5, windowMinutes: 10, pauseMinutes: 15 },
+  gateway: { failures: 5, owners: 2, windowMinutes: 10, pauseMinutes: 15 },
+  signature: { failures: 5, owners: 2, windowMinutes: 10, pauseMinutes: 15 },
   pin_mismatch: { failures: 1, windowMinutes: 30, pauseMinutes: 30 },
 } as const;
 
@@ -219,8 +228,14 @@ export interface BreakerEvidence {
    * (an older reader of this type) is counted by agent, which can only trip sooner.
    */
   payments: ReadonlyArray<{ status: string; agentId: string | null; ownerId?: string | null; at: Date }>;
-  /** Runs that stopped, by when they finished, with the reason they recorded. */
-  stops: ReadonlyArray<{ reason: string | null; at: Date }>;
+  /**
+   * Runs that stopped, by when they finished, with the reason they recorded and the
+   * account whose agent it was. A stop that names no owner cannot be told from another
+   * that names none: all such count as ONE account, so they cannot pause everyone by
+   * themselves. (There is no falling back to the agent here: several agents of one
+   * account stopping is exactly what these rules must not pause everyone for.)
+   */
+  stops: ReadonlyArray<{ reason: string | null; at: Date; ownerId?: string | null }>;
 }
 
 export interface BreakerTrip {
@@ -238,6 +253,15 @@ function within(at: Date, now: Date, windowMinutes: number): boolean {
 
 function latest(times: readonly Date[]): number {
   return times.reduce((max, at) => Math.max(max, at.getTime()), 0);
+}
+
+/**
+ * How many accounts a list of stopped runs came from, as the rules count them: distinct
+ * owners, and every stop that names no owner together as one more. The admin card shows
+ * this same figure beside each rule, so what it shows is what trips.
+ */
+export function stopAccounts(stops: ReadonlyArray<{ ownerId?: string | null }>): number {
+  return new Set(stops.map((stop) => (stop.ownerId ? `owner:${stop.ownerId}` : "unknown"))).size;
 }
 
 /**
@@ -269,20 +293,22 @@ export function breakerTrips(evidence: BreakerEvidence, now: Date): BreakerTrip[
     evidence.stops.filter((stop) => stop.reason !== null && reasons.includes(stop.reason) && within(stop.at, now, windowMinutes));
 
   const gateway = stopsOf(["quote_failed", "gateway_error"], BREAKER_RULES.gateway.windowMinutes);
-  if (gateway.length >= BREAKER_RULES.gateway.failures) {
+  const gatewayAccounts = stopAccounts(gateway);
+  if (gateway.length >= BREAKER_RULES.gateway.failures && gatewayAccounts >= BREAKER_RULES.gateway.owners) {
     trips.push({
       rule: "gateway",
       pauseUntil: new Date(latest(gateway.map((stop) => stop.at)) + BREAKER_RULES.gateway.pauseMinutes * MINUTE_MS),
-      reason: `${gateway.length} runs stopped because the gateway did not answer within ${BREAKER_RULES.gateway.windowMinutes} minutes`,
+      reason: `${gateway.length} runs from ${gatewayAccounts} accounts stopped because the gateway did not answer within ${BREAKER_RULES.gateway.windowMinutes} minutes`,
     });
   }
 
   const signature = stopsOf(["signature_failed"], BREAKER_RULES.signature.windowMinutes);
-  if (signature.length >= BREAKER_RULES.signature.failures) {
+  const signatureAccounts = stopAccounts(signature);
+  if (signature.length >= BREAKER_RULES.signature.failures && signatureAccounts >= BREAKER_RULES.signature.owners) {
     trips.push({
       rule: "signature",
       pauseUntil: new Date(latest(signature.map((stop) => stop.at)) + BREAKER_RULES.signature.pauseMinutes * MINUTE_MS),
-      reason: `${signature.length} runs stopped because the wallet did not sign within ${BREAKER_RULES.signature.windowMinutes} minutes`,
+      reason: `${signature.length} runs from ${signatureAccounts} accounts stopped because the wallet did not sign within ${BREAKER_RULES.signature.windowMinutes} minutes`,
     });
   }
 

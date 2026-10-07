@@ -244,6 +244,16 @@ function isSimulated(env: Record<string, string | undefined>): boolean {
 }
 
 /**
+ * Whether a wallet whose policy caps a payment at `perTxUsd` would sign one step of up to
+ * `stepUsd`. Compared the way the policy itself is written: in whole micro-dollars, and
+ * the policy refuses a transfer ABOVE its cap, so a limit equal to the step's price signs.
+ */
+export function walletStepLimit(perTxUsd: unknown, stepUsd: number): "ok" | "low" | "unknown" {
+  if (typeof perTxUsd !== "number" || !Number.isFinite(perTxUsd) || perTxUsd < 0) return "unknown";
+  return Math.round(perTxUsd * 1_000_000) < Math.round(stepUsd * 1_000_000) ? "low" : "ok";
+}
+
+/**
  * Every reason a pay-per-use run must not start, in the order an owner would want to
  * hear them. Called before any run row is created, for scheduled and manual runs alike.
  *
@@ -312,6 +322,19 @@ export async function preflightInference(input: PreflightInput, deps: PreflightD
     // 6. The wallet's own limit. Without a policy the wallet signs whatever it is shown.
     const policy = agent.walletBudget?.policyIds?.solana;
     if (typeof policy !== "string" || policy.trim() === "") return stop("no_policy", "no Solana policy id on the agent");
+    //    And with one, it refuses to sign any USDC transfer above the limit the policy was
+    //    written with (`budgetRules`, src/lib/wallets/index.ts). A limit below what one
+    //    step may cost would let the run start, quote and reserve, and then stop at the
+    //    signature every time: nothing paid, and a `signature_failed` run that the
+    //    breakers count. Only the forms keep the trade size at a dollar or more; the
+    //    server takes any positive figure. So such a run is refused here, before a
+    //    run row exists and long before anything is asked to sign, as something its owner
+    //    puts right. A limit that is on record but is not a number says nothing about what
+    //    the wallet would sign, and in doubt this check refuses: saving the risk settings
+    //    writes it again.
+    const walletLimit = walletStepLimit(agent.walletBudget?.perTxUsd, caps.stepUsd);
+    if (walletLimit === "unknown") return stop("no_policy", "the wallet limit on record is not a number");
+    if (walletLimit === "low") return stop("wallet_limit_low", "the wallet's per-payment limit is below what one step may cost");
 
     // 7. Enough USDC for a whole run, after what it already owes and the floor it keeps.
     const read = deps.readUsdc ?? ((address: string) => readSolanaUsdc(address, rpcUrl));

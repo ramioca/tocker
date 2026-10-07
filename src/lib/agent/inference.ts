@@ -141,12 +141,33 @@ export function thinkingReserveUsd(config: LlmConfig): number {
 
 // ---------- one run's clocks and steps ----------
 
-/** Every route that runs an agent is allowed this long (`maxDuration` 300). */
-export const INVOCATION_LIMIT_MS = 300_000;
+/**
+ * How long the platform lets a function that runs an agent live, in seconds: the
+ * `maxDuration` of every route that can start a run (the tick cron, the run route, and
+ * the agent page, whose Run now is a server action).
+ *
+ * The routes cannot import this. Next reads `maxDuration` out of a route's source text
+ * when it builds, and takes a number written there and nothing else: a name is "Unknown
+ * identifier", an error in a production build. So each of those files says `300` itself,
+ * and `invocation-limit.test.ts` reads them (and `vercel.json`) and fails when one that
+ * runs an agent says anything else.
+ *
+ * That test is the only thing that ties the two together, and it matters: nothing below
+ * can see the limit a function really has. Every clock a pay-per-use run keeps is counted
+ * against this figure. On a function the platform ends sooner (a 60-second one, say) a
+ * paid run would still be started, and would be frozen with a payment in flight.
+ */
+export const RUN_ROUTE_MAX_DURATION_S = 300;
+/** The same, in milliseconds: what one invocation has, from the moment it began. */
+export const INVOCATION_LIMIT_MS = RUN_ROUTE_MAX_DURATION_S * 1000;
 /** A pay-per-use run stops paying this long after its invocation began, whatever its own clock says. */
-export const INVOCATION_PAY_UNTIL_MS = 285_000;
+export const INVOCATION_PAY_UNTIL_MS = INVOCATION_LIMIT_MS - 15_000;
 
-/** Whether enough of the invocation is left to start a pay-per-use run in it. */
+/**
+ * Whether enough of the invocation is left to start a pay-per-use run in it, measured
+ * against {@link INVOCATION_LIMIT_MS}: the limit the routes are written with, not one
+ * read from the platform.
+ */
 export function fitsInvocation(invocationStartedAt: number, now: number): boolean {
   return invocationStartedAt + INVOCATION_LIMIT_MS - now >= MIN_INVOCATION_REMAINING_MS;
 }
@@ -159,6 +180,19 @@ export function fitsInvocation(invocationStartedAt: number, now: number): boolea
 export function payDeadlineAt(modelStartedAt: number, invocationStartedAt: number, runTimeoutMs: number): number {
   return Math.min(modelStartedAt + runTimeoutMs, invocationStartedAt + INVOCATION_PAY_UNTIL_MS);
 }
+
+/**
+ * How long after its signature a payment can still be in flight: answered or not, landed
+ * or not. The paid request is given a minute, and the transfer it carries is built on a
+ * recent blockhash, which the chain honours for about a minute too. The reconciler
+ * leaves a row alone for the same two minutes (`RECONCILE_AFTER_MS`) for that reason.
+ *
+ * Two things read it, both so that a public P&L never counts a step's price as a gain:
+ * the book is not marked while a step signed this recently has no outcome
+ * (`snapshotEquity`), and a payment's flow is dated no later than this after its
+ * signature (`thinkingFlowAtSql`).
+ */
+export const PAYMENT_IN_FLIGHT_MS = 2 * 60_000;
 
 /** The steps a pay-per-use run may take before the one that wraps it up. */
 export function paidStepLimit(config: LlmConfig): number {

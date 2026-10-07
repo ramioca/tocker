@@ -331,6 +331,8 @@ export function InferenceCard({ data }: { data: AdminInference }) {
 
       <InferenceControls
         halted={control.halted}
+        // The same text the "Admin halt" entry above prints: a clear says it read this.
+        haltReason={control.halted ? control.haltReason : null}
         paused={control.stops === "paused"}
         wallets={data.wallets.map((wallet) => ({
           walletId: wallet.walletId,

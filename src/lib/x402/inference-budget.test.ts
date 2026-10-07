@@ -11,6 +11,7 @@ import {
   dayCapStop,
   holdUntil,
   nextUtcMidnight,
+  stopAccounts,
   type BreakerEvidence,
   type InferenceDayUsage,
 } from "./inference-budget";
@@ -311,35 +312,81 @@ describe("breakers", () => {
     expect(breakerDecision(answered, NOW)).toBeNull();
   });
 
-  it("pauses 15 minutes on 5 gateway failures within 10 minutes, counting both reasons together", () => {
+  it("pauses 15 minutes on 5 gateway failures from 2 accounts within 10 minutes, counting both reasons together", () => {
     const stops = [
-      { reason: "quote_failed", at: minutesAgo(9) },
-      { reason: "gateway_error", at: minutesAgo(7) },
-      { reason: "quote_failed", at: minutesAgo(5) },
-      { reason: "gateway_error", at: minutesAgo(4) },
+      { reason: "quote_failed", ownerId: "one", at: minutesAgo(9) },
+      { reason: "gateway_error", ownerId: "one", at: minutesAgo(7) },
+      { reason: "quote_failed", ownerId: "two", at: minutesAgo(5) },
+      { reason: "gateway_error", ownerId: "one", at: minutesAgo(4) },
     ];
     expect(breakerDecision({ payments: [], stops }, NOW)).toBeNull();
-    const trip = breakerDecision({ payments: [], stops: [...stops, { reason: "quote_failed", at: minutesAgo(1) }] }, NOW);
+    const trip = breakerDecision({ payments: [], stops: [...stops, { reason: "quote_failed", ownerId: "one", at: minutesAgo(1) }] }, NOW);
     expect(trip?.rule).toBe("gateway");
+    expect(trip?.reason).toBe("5 runs from 2 accounts stopped because the gateway did not answer within 10 minutes");
     expect(trip?.pauseUntil.getTime()).toBe(minutesAgo(1).getTime() + 15 * MINUTE);
   });
 
-  it("pauses 15 minutes on 5 signature failures within 10 minutes, and not on 4, nor on older ones", () => {
-    const recent = [1, 2, 3, 4].map((n) => ({ reason: "signature_failed", at: minutesAgo(n) }));
+  it("pauses 15 minutes on 5 signature failures from 2 accounts within 10 minutes, and not on 4, nor on older ones", () => {
+    const recent = [1, 2, 3, 4].map((n) => ({ reason: "signature_failed", ownerId: n === 4 ? "two" : "one", at: minutesAgo(n) }));
     expect(breakerDecision({ payments: [], stops: recent }, NOW)).toBeNull();
-    expect(breakerDecision({ payments: [], stops: [...recent, { reason: "signature_failed", at: minutesAgo(11) }] }, NOW)).toBeNull();
-    const trip = breakerDecision({ payments: [], stops: [...recent, { reason: "signature_failed", at: minutesAgo(6) }] }, NOW);
+    expect(breakerDecision({ payments: [], stops: [...recent, { reason: "signature_failed", ownerId: "one", at: minutesAgo(11) }] }, NOW)).toBeNull();
+    const trip = breakerDecision({ payments: [], stops: [...recent, { reason: "signature_failed", ownerId: "one", at: minutesAgo(6) }] }, NOW);
     expect(trip?.rule).toBe("signature");
+    expect(trip?.reason).toBe("5 runs from 2 accounts stopped because the wallet did not sign within 10 minutes");
     expect(trip?.pauseUntil.getTime()).toBe(minutesAgo(1).getTime() + 15 * MINUTE);
+  });
+
+  describe("one account cannot pause everyone", () => {
+    // An owner can make their own runs stop before any payment as often as they like (a
+    // wallet limit too low to sign under, say), with as many agents as they like, and at
+    // no cost. That holds their agents. It must not stop anybody else's.
+    it("through the signature rule, however many of its runs the wallet refused to sign", () => {
+      const oneAccount = Array.from({ length: 40 }, (_, n) => ({ reason: "signature_failed", ownerId: "one", at: new Date(NOW.getTime() - n * 10_000) }));
+      expect(breakerTrips({ payments: [], stops: oneAccount }, NOW)).toEqual([]);
+      expect(breakerDecision({ payments: [], stops: oneAccount }, NOW)).toBeNull();
+      // The same failures from a second account as well are what the rule is for.
+      const second = { reason: "signature_failed", ownerId: "two", at: minutesAgo(1) };
+      expect(breakerDecision({ payments: [], stops: [...oneAccount, second] }, NOW)?.rule).toBe("signature");
+    });
+
+    it("through the gateway rule", () => {
+      const oneAccount = [1, 2, 3, 4, 5, 6].map((n) => ({ reason: n % 2 ? "quote_failed" : "gateway_error", ownerId: "one", at: minutesAgo(n) }));
+      expect(breakerDecision({ payments: [], stops: oneAccount }, NOW)).toBeNull();
+      expect(breakerDecision({ payments: [], stops: [...oneAccount, { reason: "gateway_error", ownerId: "two", at: minutesAgo(2) }] }, NOW)?.rule).toBe("gateway");
+    });
+
+    it("and the second account has to be inside the window too", () => {
+      const stops = [
+        ...[1, 2, 3, 4, 5].map((n) => ({ reason: "signature_failed", ownerId: "one", at: minutesAgo(n) })),
+        { reason: "signature_failed", ownerId: "two", at: minutesAgo(11) },
+      ];
+      expect(breakerDecision({ payments: [], stops }, NOW)).toBeNull();
+    });
+
+    it("stops that name no owner are one account between them, never several", () => {
+      // A reader of the evidence that does not say whose run it was cannot pause anyone with it.
+      const nameless: BreakerEvidence["stops"] = [1, 2, 3, 4, 5, 6].map((n) => ({ reason: "signature_failed", at: minutesAgo(n) }));
+      expect(breakerDecision({ payments: [], stops: nameless }, NOW)).toBeNull();
+      expect(breakerDecision({ payments: [], stops: nameless.map((stop) => ({ ...stop, ownerId: null })) }, NOW)).toBeNull();
+      // With one named account beside them there are two.
+      expect(breakerDecision({ payments: [], stops: [...nameless, { reason: "signature_failed", ownerId: "one", at: minutesAgo(1) }] }, NOW)?.rule).toBe("signature");
+      expect(stopAccounts(nameless)).toBe(1);
+      expect(stopAccounts([{ ownerId: "one" }, { ownerId: "one" }, { ownerId: "two" }, {}])).toBe(3);
+      expect(stopAccounts([])).toBe(0);
+    });
+
+    it("a pin mismatch still needs only one: what the gateway asks for is not an owner's to choose", () => {
+      expect(breakerDecision({ payments: [], stops: [{ reason: "pin_mismatch", ownerId: "one", at: minutesAgo(4) }] }, NOW)?.rule).toBe("pin_mismatch");
+    });
   });
 
   it("does not add gateway failures and signature failures together", () => {
     const mixed = [
-      { reason: "quote_failed", at: minutesAgo(1) },
-      { reason: "gateway_error", at: minutesAgo(2) },
-      { reason: "signature_failed", at: minutesAgo(3) },
-      { reason: "signature_failed", at: minutesAgo(4) },
-      { reason: "signature_failed", at: minutesAgo(5) },
+      { reason: "quote_failed", ownerId: "one", at: minutesAgo(1) },
+      { reason: "gateway_error", ownerId: "two", at: minutesAgo(2) },
+      { reason: "signature_failed", ownerId: "one", at: minutesAgo(3) },
+      { reason: "signature_failed", ownerId: "two", at: minutesAgo(4) },
+      { reason: "signature_failed", ownerId: "three", at: minutesAgo(5) },
     ];
     expect(breakerDecision({ payments: [], stops: mixed }, NOW)).toBeNull();
   });
@@ -373,8 +420,8 @@ describe("breakers", () => {
     const evidence: BreakerEvidence = {
       payments: [],
       stops: [
-        ...[1, 2, 3, 4, 5].map((n) => ({ reason: "quote_failed", at: minutesAgo(n) })),
-        { reason: "pin_mismatch", at: minutesAgo(8) },
+        ...[1, 2, 3, 4, 5].map((n) => ({ reason: "quote_failed", ownerId: n === 5 ? "two" : "one", at: minutesAgo(n) })),
+        { reason: "pin_mismatch", ownerId: "one", at: minutesAgo(8) },
       ],
     };
     expect(breakerTrips(evidence, NOW).map((trip) => trip.rule).sort()).toEqual(["gateway", "pin_mismatch"]);
@@ -382,11 +429,11 @@ describe("breakers", () => {
     expect(breakerDecision(evidence, NOW)?.rule).toBe("pin_mismatch");
   });
 
-  it("keeps the numbers the brief names, counting the two as accounts", () => {
+  it("keeps the numbers the brief names, with two accounts behind every rule but the pin mismatch", () => {
     expect(BREAKER_RULES).toEqual({
       unanswered: { rows: 3, owners: 2, windowMinutes: 15, pauseMinutes: 30 },
-      gateway: { failures: 5, windowMinutes: 10, pauseMinutes: 15 },
-      signature: { failures: 5, windowMinutes: 10, pauseMinutes: 15 },
+      gateway: { failures: 5, owners: 2, windowMinutes: 10, pauseMinutes: 15 },
+      signature: { failures: 5, owners: 2, windowMinutes: 10, pauseMinutes: 15 },
       pin_mismatch: { failures: 1, windowMinutes: 30, pauseMinutes: 30 },
     });
   });

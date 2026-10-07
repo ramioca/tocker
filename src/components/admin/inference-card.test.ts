@@ -12,6 +12,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { AdminInference } from "@/server/queries/admin";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => undefined }) }));
+/** What the card handed its controls, each time it was drawn. The controls themselves are the real ones. */
+const handedToControls: Array<{ halted: boolean; haltReason: string | null }> = [];
+vi.mock("./inference-controls", async (original) => {
+  const real = await original<typeof import("./inference-controls")>();
+  return {
+    ...real,
+    InferenceControls: (props: Parameters<typeof real.InferenceControls>[0]) => {
+      handedToControls.push({ halted: props.halted, haltReason: props.haltReason });
+      return real.InferenceControls(props);
+    },
+  };
+});
 // The real module is a set of server actions; the card only needs their names to exist.
 vi.mock("@/server/actions/admin", () => ({
   setInferenceHaltAction: vi.fn(),
@@ -55,8 +67,8 @@ function data(overrides: Partial<AdminInference> = {}): AdminInference {
     control: { halted: false, haltReason: null, haltClearedAt: null, pausedUntil: null, pauseReason: null, updatedBy: null, updatedAt: null, stops: null },
     breakers: [
       { rule: "unanswered", count: 1, accounts: 1, accountsThreshold: 2, threshold: 3, windowMinutes: 15, tripped: false },
-      { rule: "gateway", count: 0, accounts: null, accountsThreshold: null, threshold: 5, windowMinutes: 10, tripped: false },
-      { rule: "signature", count: 0, accounts: null, accountsThreshold: null, threshold: 5, windowMinutes: 10, tripped: false },
+      { rule: "gateway", count: 0, accounts: 0, accountsThreshold: 2, threshold: 5, windowMinutes: 10, tripped: false },
+      { rule: "signature", count: 0, accounts: 0, accountsThreshold: 2, threshold: 5, windowMinutes: 10, tripped: false },
       { rule: "pin_mismatch", count: 0, accounts: null, accountsThreshold: null, threshold: 1, windowMinutes: 30, tripped: false },
     ],
     holds: [],
@@ -135,9 +147,23 @@ describe("the figures", () => {
       }),
     );
     expect(html).toContain("3 from 2 accounts in 15 min · pauses at 3 from 2 accounts · tripped");
-    // The rules that need only a count say nothing about accounts.
-    expect(html).toContain("0 in 10 min · pauses at 5<");
+    // The gateway and signature rules need two accounts as well, and the card says so.
+    expect(html).toContain("0 from 0 accounts in 10 min · pauses at 5 from 2 accounts<");
+    // The one rule that needs only a count says nothing about accounts.
+    expect(html).toContain("0 in 30 min · pauses at 1<");
     expect(html).toContain("4 · Add USDC to keep thinking");
+  });
+
+  it("shows one account's signature failures as what they are: many runs, one account, nothing tripped", () => {
+    const html = render(
+      data({
+        breakers: data().breakers.map((breaker) =>
+          breaker.rule === "signature" ? { ...breaker, count: 12, accounts: 1, tripped: false } : breaker,
+        ),
+      }),
+    );
+    expect(html).toContain("12 from 1 account in 10 min · pauses at 5 from 2 accounts<");
+    expect(html).not.toContain("· tripped");
   });
 });
 
@@ -199,6 +225,29 @@ describe("rows still open", () => {
     expect(html).toContain("for 6 hours from when a row was written");
     expect(html).toContain("looked at again only now and then, until 7 days old, and after that not at all");
     expect(html).toContain("scripts/inference-audit.ts");
+  });
+});
+
+describe("what a clear of the halt is told the page showed", () => {
+  const last = () => handedToControls[handedToControls.length - 1];
+
+  it("is the reason the card prints, character for character", () => {
+    const reason = "[2 findings] USDC went from an agent wallet to the gateway with no ledger row. Transaction 5h…k, wallet 9x…Q.\n | also (reconciler): a second finding";
+    const html = render(withControl({ halted: true, stops: "halted", haltReason: reason, updatedBy: "reconciler", updatedAt: "2026-10-06T12:00:00.000Z" }));
+    expect(last()).toEqual({ halted: true, haltReason: reason });
+    // And it is on the page for the admin to read, whole.
+    expect(html).toContain("a second finding");
+    expect(html).toContain("If something has been added to the reason since this page was drawn, the clear");
+  });
+
+  it("is none when the card prints that no reason was recorded, and none when no halt is on", () => {
+    const html = render(withControl({ halted: true, stops: "halted", haltReason: null }));
+    expect(html).toContain("No reason was recorded.");
+    expect(last()).toEqual({ halted: true, haltReason: null });
+
+    // Off: nothing is shown as a reason, whatever the row still holds.
+    render(withControl({ halted: false, haltReason: "left over from before" }));
+    expect(last()).toEqual({ halted: false, haltReason: null });
   });
 });
 

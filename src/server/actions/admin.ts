@@ -7,7 +7,7 @@ import { recordAudit } from "@/lib/security/audit";
 import { limiter, RATE_LIMITS } from "@/lib/security/rate-limit";
 import { dbErrorForLog, looksLikeSecret, redactSecrets } from "@/lib/security/redact";
 import { controlStop } from "@/lib/x402/inference-budget";
-import { clearInferencePause, readInferenceControl, setInferenceHalt } from "@/lib/x402/inference-ledger";
+import { HaltClearRefused, MAX_HALT_REASON, clearInferencePause, readInferenceControl, setInferenceHalt } from "@/lib/x402/inference-ledger";
 import { probeInferenceSignature } from "@/lib/x402/paidFetch";
 import { findAgentSolanaWallet, getAdminBalances, resetAdminBalanceCache } from "@/server/queries/admin";
 import type { ActionResult } from "@/server/types";
@@ -69,10 +69,20 @@ const HALT_REASON_MAX = 300;
  * week later) has to know whether it is safe to clear. Clearing is the action that lets
  * money move again, so it is as deliberate as halting and is written to the audit log
  * with the same care. Neither changes any cap, any agent or any wallet.
+ *
+ * A clear also acknowledges every transaction the halt's reason names, and the reconciler
+ * adds findings to that reason while the halt is on. The admin's page does not redraw
+ * itself, so a clear says what it was looking at: `seenReason` is the reason exactly as
+ * the page printed it (null when it printed none). The ledger compares it with the
+ * reason stored at the moment of the clear, under a lock, and refuses when they differ:
+ * a finding nobody has read is never acknowledged. A clear that carries no `seenReason`
+ * is refused whenever a halt with a reason is on. It is compared and nothing else: it is
+ * not stored, not logged and not put in the audit log.
  */
 export async function setInferenceHaltAction(input: {
   halted: boolean;
   reason?: string | null;
+  seenReason?: string | null;
 }): Promise<ActionResult<{ halted: boolean }>> {
   const session = await getSession();
   if (!session || !isAdminEmail(session.email)) return NOT_FOUND;
@@ -87,9 +97,14 @@ export async function setInferenceHaltAction(input: {
   if (looksLikeSecret(typed)) return { ok: false, error: "That reason looks like it contains a key or a secret. Leave it out." };
   const reason = typed === "" ? null : redactSecrets(typed);
   const by = `@${session.handle}`;
+  // What the page showed, for a clear only. Anything that is not text or an explicit
+  // "none" is "did not say", which the ledger refuses while a halt with a reason is on.
+  const seenReason = input.halted ? undefined : input.seenReason === null ? null : typeof input.seenReason === "string" ? input.seenReason : undefined;
+  // Longer than any reason the page can print: it is not what a page showed.
+  if (typeof seenReason === "string" && seenReason.length > MAX_HALT_REASON) return { ok: false, error: new HaltClearRefused("changed").message };
 
   try {
-    await setInferenceHalt({ halted: input.halted, reason, by });
+    await setInferenceHalt(input.halted ? { halted: true, reason, by } : { halted: false, reason, by, seenReason });
     // Read back rather than assumed: the page is about to say what the next payment will
     // be told, and that has to be what the ledger now holds.
     const control = await readInferenceControl();
@@ -97,6 +112,9 @@ export async function setInferenceHaltAction(input: {
       return { ok: false, error: "The switch was written but reads back differently. Reload and check before relying on it." };
     }
   } catch (err) {
+    // Refused, not failed: the halt is still on and nothing was written. The sentence is
+    // the ledger's own, and says what to do.
+    if (err instanceof HaltClearRefused) return { ok: false, error: err.message };
     console.error(`[admin] could not set the pay-per-use halt: ${dbErrorForLog(err)}`);
     return {
       ok: false,

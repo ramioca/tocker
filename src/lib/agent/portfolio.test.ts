@@ -4,7 +4,10 @@ import { nanoid } from "nanoid";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { DEFAULT_AGENT_CONFIG } from "./config";
+import { PAYMENT_IN_FLIGHT_MS } from "./inference";
 import { applyFill } from "@/lib/trading/positions";
+import { RECONCILE_AFTER_MS } from "@/lib/x402/inference-reconcile";
+import { INFERENCE_GATEWAY, PAID_TIMEOUT_MS, utcDay, type InferencePaymentStatus } from "@/lib/x402/inference-types";
 import * as prices from "@/lib/trading/prices";
 import { seedKnownTokens, tokenId, USDC_SOLANA } from "@/lib/trading/tokens";
 import { describePortfolio, effectiveTicketUsd, getPortfolio, snapshotEquity, spendableCashUsd, toRiskPortfolio, type Portfolio } from "./portfolio";
@@ -189,7 +192,7 @@ describe("what is held back for thinking", () => {
       amountUsd: 9.9,
       reason: "cash $10.00 minus the $0.10 Tocker fee charged on the fill",
     });
-    expect(describePortfolio(plain, config)).not.toMatch(/held back/);
+    expect(describePortfolio(plain, config)).not.toMatch(/held back|kept back/);
   });
 
   it("comes out of what the risk guard may spend, and not out of equity", () => {
@@ -210,27 +213,58 @@ describe("what is held back for thinking", () => {
     const held = book({ mode: "live", cashUsd: 10, equityUsd: 10, thinkingReserveUsd: 0.55 });
     const ticket = effectiveTicketUsd(held, config);
     expect(ticket.amountUsd).toBeCloseTo(9.35, 6);
-    expect(ticket.reason).toBe("cash $10.00 minus the $0.55 held back to pay for thinking and the $0.10 Tocker fee charged on the fill");
+    expect(ticket.reason).toBe(
+      "the $9.45 of your cash that is available to trade (part of your cash is kept back to pay for your thinking) minus the $0.10 Tocker fee charged on the fill",
+    );
+    // With no fee the same words stand alone.
+    vi.stubEnv("PLATFORM_FEE_USD", "0");
+    expect(effectiveTicketUsd(held, config).reason).toBe(
+      "the $9.45 of your cash that is available to trade (part of your cash is kept back to pay for your thinking)",
+    );
+    vi.stubEnv("PLATFORM_FEE_USD", "0.10");
 
     const said = describePortfolio(held, config);
     expect(said).toMatch(/Cash: \$10\.00/);
-    expect(said).toMatch(/\$0\.55 is held back to pay for your own thinking/);
-    expect(said).toMatch(/\$9\.45 is available to trade/);
+    expect(said).toContain("Part of that cash is kept back to pay for your own thinking and cannot be spent on a buy: $9.45 is available to trade.");
   });
 
   /**
-   * The figure is worked out from a limit only the owner may read, and the model that is
-   * told it writes text anyone can read. It is told so, in the words the prompt already
-   * uses for its other thresholds.
+   * How much is kept back is twice the owner's limit for one run plus a fixed floor, so
+   * the figure gives that limit away, and the limit is the owner's private setting. The
+   * model that reads its book writes text anyone can read (a rationale, a post, its
+   * summary), and nothing strips a dollar amount out of that. So the figure is not handed
+   * to the model at all: not in its book, and not in the reason for its ceiling. It used
+   * to be in both, with only a sentence asking the model not to repeat it.
    */
-  it("is told to the model as private: never to be stated in a rationale, a post or its summary", () => {
+  it("never tells the model how much is kept back: only that some is, and what it may trade with", () => {
+    vi.stubEnv("PLATFORM_FEE_USD", "0.10");
+    // Figures chosen so the amount kept back appears nowhere else in the book.
+    for (const [cashUsd, reserve, spendable] of [
+      [10, 0.85, "9.15"],
+      [20, 4.25, "15.75"],
+      [5, 0.35, "4.65"],
+    ] as const) {
+      const held = book({ mode: "live", cashUsd, equityUsd: cashUsd, thinkingReserveUsd: reserve });
+      const figure = reserve.toFixed(2);
+      for (const text of [describePortfolio(held, config), effectiveTicketUsd(held, config).reason]) {
+        expect(text, text).not.toContain(figure);
+        expect(text, text).toContain(`$${spendable}`);
+        expect(text, text).toMatch(/kept back to pay for your (own )?thinking/);
+      }
+    }
+  });
+
+  it("asks the model to keep it, and the amount it may trade with, out of anything public", () => {
     const held = book({ mode: "live", cashUsd: 10, equityUsd: 10, thinkingReserveUsd: 0.85 });
     const line = describePortfolio(held, config)
       .split("\n")
-      .find((text) => text.includes("held back to pay for your own thinking"));
-    expect(line).toMatch(/never state it in a rationale, a post or your summary/);
+      .find((text) => text.includes("kept back to pay for your own thinking"));
+    // Cash is in the book and on chain, so cash less what may be traded is the amount itself.
+    expect(line).toMatch(/never mention it, or the amount available to trade, in a rationale, a post or your summary\.$/);
     // Nothing of the kind is said to an agent that holds nothing back.
-    expect(describePortfolio(book({ mode: "live", cashUsd: 10, equityUsd: 10 }), config)).not.toMatch(/never state it/);
+    const plain = describePortfolio(book({ mode: "live", cashUsd: 10, equityUsd: 10 }), config);
+    expect(plain).not.toMatch(/never mention it/);
+    expect(plain).not.toMatch(/kept back/);
   });
 
   it("is not held back from a paper agent, whose cash is not what pays", async () => {
@@ -240,5 +274,135 @@ describe("what is held back for thinking", () => {
     const portfolio = await getPortfolio(paper.agentId);
     expect(portfolio.thinkingReserveUsd).toBeUndefined();
     expect(toRiskPortfolio(portfolio).cashUsd).toBe(portfolio.cashUsd);
+    // Its marks are of a notional book, which no payment moves: they are never put off.
+    expect("cashReadAt" in portfolio).toBe(false);
   });
 });
+
+/**
+ * A live agent that pays for its own thinking is not marked while one of its paid steps
+ * is in flight.
+ *
+ * A step's price leaves the wallet seconds after it is signed for, and is taken back out
+ * of the P&L as a flow dated when the step was resolved. A mark read in between holds,
+ * or does not hold, a payment whose flow is on one side of it or the other; where the
+ * two disagree, the step's price reads as a gain nobody made (at once, or when that mark
+ * is later the baseline a window is measured from). No mark, no disagreement: the next
+ * marks pass is five minutes away. `thinking-flows.test.ts` has the reading side.
+ */
+describe("a paid step in flight when the wallet was read", () => {
+  const SECOND = 1_000;
+  const USDC_LLM = { ...DEFAULT_AGENT_CONFIG.llm, source: "usdc" as const, usdc: { model: "google/gemini-2.5-flash", maxUsdPerRun: 0.3, maxUsdPerDay: 3 } };
+  const payingLive = () => seedAgent(db, { mode: "live", config: { llm: USDC_LLM } });
+
+  /** One ledger row for a step signed `signedMs` before the wallet was read at `readAt` (negative: after it). */
+  async function step(
+    agent: { agentId: string; userId: string },
+    readAt: Date,
+    signedMs: number,
+    status: InferencePaymentStatus,
+    resolvedMs: number | null,
+  ) {
+    const signedAt = new Date(readAt.getTime() - signedMs);
+    await db.insert(schema.inferencePayments).values({
+      id: nanoid(),
+      ownerId: agent.userId,
+      agentId: agent.agentId,
+      runId: `run_${nanoid(8)}`,
+      seq: 0,
+      requestHash: "0".repeat(64),
+      chain: "solana",
+      network: INFERENCE_GATEWAY.solana.network,
+      host: INFERENCE_GATEWAY.solana.host,
+      model: USDC_LLM.usdc.model,
+      payerWalletId: `wallet_${agent.agentId}`,
+      payerAddress: `Agent${agent.agentId}`,
+      payTo: INFERENCE_GATEWAY.solana.payTo[0],
+      asset: INFERENCE_GATEWAY.solana.asset,
+      quotedUsd: "0.020000",
+      status,
+      budgetDay: utcDay(signedAt),
+      // Reserved a moment before it was signed, as the pay path does.
+      createdAt: new Date(signedAt.getTime() - 2 * SECOND),
+      signedAt,
+      resolvedAt: resolvedMs === null ? null : new Date(readAt.getTime() + resolvedMs),
+    });
+  }
+
+  const marksOf = async (agentId: string) => db.select().from(schema.equitySnapshots).where(eq(schema.equitySnapshots.agentId, agentId));
+  const liveBook = (agentId: string, readAt: Date | null) =>
+    book({ agentId, mode: "live", cashUsd: 25, equityUsd: 25, ...(readAt ? { cashReadAt: readAt } : {}) });
+
+  it("writes no mark while a step is signed for and has no outcome yet", async () => {
+    const agent = await payingLive();
+    const readAt = new Date();
+    await step(agent, readAt, 10 * SECOND, "signed", null);
+
+    expect(await snapshotEquity(liveBook(agent.agentId, readAt))).toBe(false);
+    expect(await marksOf(agent.agentId)).toHaveLength(0);
+  });
+
+  it("writes none either when the step was resolved only after the wallet was read", async () => {
+    const agent = await payingLive();
+    const readAt = new Date(Date.now() - 5 * SECOND);
+    // Signed before the read, answered and proven three seconds after it: by the time the
+    // mark would be written the row looks finished, and the balance may not hold it.
+    await step(agent, readAt, 10 * SECOND, "settled", 3 * SECOND);
+    expect(await snapshotEquity(liveBook(agent.agentId, readAt))).toBe(false);
+
+    // Resolved at the very instant of the read counts as after it.
+    const other = await payingLive();
+    await step(other, readAt, 10 * SECOND, "paid_no_answer", 0);
+    expect(await snapshotEquity(liveBook(other.agentId, readAt))).toBe(false);
+    expect(await marksOf(other.agentId)).toHaveLength(0);
+  });
+
+  it("covers a step whose request failed, for as long as its transfer could still land", async () => {
+    const agent = await payingLive();
+    const readAt = new Date();
+    await step(agent, readAt, 90 * SECOND, "unconfirmed", null);
+    expect(await snapshotEquity(liveBook(agent.agentId, readAt))).toBe(false);
+  });
+
+  it("marks the book once the step is resolved, which is where a run's own last mark is taken", async () => {
+    const agent = await payingLive();
+    const readAt = new Date();
+    await step(agent, readAt, 20 * SECOND, "settled", -1);
+    await step(agent, readAt, 40 * SECOND, "paid_no_answer", -15 * SECOND);
+    await step(agent, readAt, 60 * SECOND, "not_charged", -30 * SECOND);
+
+    expect(await snapshotEquity(liveBook(agent.agentId, readAt))).toBe(true);
+    expect(await marksOf(agent.agentId)).toHaveLength(1);
+  });
+
+  it("does not wait on a step signed longer ago than a transfer can take to land", async () => {
+    const agent = await payingLive();
+    const readAt = new Date();
+    // Left open by a process that died, or waiting hours for the reconciler: if it
+    // landed, it landed before this read. A book is never left unmarked over it.
+    await step(agent, readAt, PAYMENT_IN_FLIGHT_MS + SECOND, "signed", null);
+    await step(agent, readAt, 3 * 60 * 60 * SECOND, "unconfirmed", null);
+    expect(await snapshotEquity(liveBook(agent.agentId, readAt))).toBe(true);
+
+    // The same two minutes the reconciler leaves a row to its own request, and longer
+    // than that request is allowed to take.
+    expect(PAYMENT_IN_FLIGHT_MS).toBe(RECONCILE_AFTER_MS);
+    expect(PAYMENT_IN_FLIGHT_MS).toBeGreaterThan(PAID_TIMEOUT_MS);
+  });
+
+  it("is about that agent's own steps, and reads nothing for a book that was not read as a paying agent's", async () => {
+    const paying = await payingLive();
+    const bystander = await payingLive();
+    const readAt = new Date();
+    await step(paying, readAt, 10 * SECOND, "signed", null);
+
+    // Another agent's step in flight is nothing to this one.
+    expect(await snapshotEquity(liveBook(bystander.agentId, readAt))).toBe(true);
+    // A book with no read time on it (every key agent's, every paper agent's) is marked
+    // as it always was, whatever the ledger holds for that agent.
+    expect(await snapshotEquity(liveBook(paying.agentId, null))).toBe(true);
+    expect(await snapshotEquity(book({ agentId: paying.agentId, mode: "paper", cashReadAt: readAt }))).toBe(true);
+    expect(await marksOf(paying.agentId)).toHaveLength(2);
+  });
+});
+

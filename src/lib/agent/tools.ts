@@ -747,10 +747,11 @@ export function buildTools(ctx: RunContext): ToolSet {
             // proposals add up to money the last approval would then be refused for.
             // For every other agent it is its cash, and this sentence is what it was.
             const purseUsd = spendableCashUsd(portfolio);
-            const heldUsd = portfolio.thinkingReserveUsd ?? 0;
+            // How much is kept back is not said to the model, here or in its book: the
+            // figure follows a limit only the owner may read (see `describePortfolio`).
             const purseWords =
-              heldUsd > 0
-                ? `cash $${purseUsd.toFixed(2)} (after the $${heldUsd.toFixed(2)} held back to pay for thinking)`
+              (portfolio.thinkingReserveUsd ?? 0) > 0
+                ? `cash available to trade $${purseUsd.toFixed(2)} (part of your cash is kept back to pay for your thinking)`
                 : `cash $${purseUsd.toFixed(2)}`;
             const affordable = purseUsd - committedUsd - feeUsd;
             if (parsed.amountUsd > affordable + 1e-9) {

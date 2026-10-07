@@ -334,6 +334,37 @@ describe("holds", () => {
     expect(waits).toEqual([15, 30, 60, 120, 360, 360, 360]);
   });
 
+  /**
+   * A wallet whose own limit is below a step's price is the owner's to put right, like an
+   * empty wallet or a missing policy. It is held the same way: it counts against the
+   * agent, backs off by strikes, and is said to the owner.
+   */
+  it("holds a wallet limit below a step's price exactly as it holds the other things an owner must fix", () => {
+    expect(INFERENCE_STOPS.wallet_limit_low).toBe("owner");
+    expect(holdsAgent("wallet_limit_low")).toBe(true);
+    expect(countsAsStrike("wallet_limit_low")).toBe(true);
+    expect(stopOutcome("wallet_limit_low")).toEqual({ status: "failed", hold: true });
+
+    const waits: number[] = [];
+    for (let strikes = 0; strikes < 7; strikes += 1) {
+      const state: HoldState = { ...none, inferenceStrikes: strikes };
+      const held = nextHold(state, "wallet_limit_low", NOW);
+      waits.push(minutesFrom(NOW, held.inferenceHoldUntil));
+      for (const reason of ["needs_funds", "no_wallet", "no_policy", "model_unavailable"] as const) {
+        const other = nextHold(state, reason, NOW);
+        expect(held.inferenceHoldUntil, reason).toEqual(other.inferenceHoldUntil);
+        expect(held.inferenceStrikes, reason).toBe(other.inferenceStrikes);
+        expect(held.notify, reason).toBe(other.notify);
+      }
+    }
+    expect(waits).toEqual([15, 30, 60, 120, 360, 360, 360]);
+
+    // Said once, and said again when it replaces a reason that was not the owner's to fix.
+    const told: HoldState = { ...none, inferenceHold: "signature_failed", inferenceStrikes: 1, inferenceNotifiedAt: NOW };
+    expect(nextHold(told, "wallet_limit_low", NOW).notify).toBe(true);
+    expect(nextHold({ ...told, inferenceHold: "wallet_limit_low" }, "wallet_limit_low", NOW).notify).toBe(false);
+  });
+
   describe("a hold that is nobody's fault", () => {
     const NO_FAULT = ["halted", "paused", "flag_off", "platform_day_cap", "transfer_check"] as const;
 

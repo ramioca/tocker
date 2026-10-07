@@ -13,7 +13,8 @@
  *     thinking spend written again from the ledger: the one thing this route writes
  *     outside the ledger's own tables and an agent's hold.
  *  2. Breakers: pause pay-per-use for everyone if enough runs or payments ended badly
- *     lately (`applyInferenceBreakers`).
+ *     lately, for more than one account (`applyInferenceBreakers`). One account's own
+ *     failures hold its own agents and pause nobody else.
  *  3. Holds: look again at pay-per-use agents whose hold has run its time, so a funded
  *     wallet or a new day puts them back on the schedule (`recheckInferenceHolds`,
  *     owned by the run loop; skipped when that build does not have it).

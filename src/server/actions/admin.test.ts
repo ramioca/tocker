@@ -12,10 +12,13 @@
  *  - nobody but an admin can touch any of it, and a refusal looks like nothing is there;
  *  - a halt cannot be thrown without a reason, and stops the very next reservation;
  *  - clearing it is what lets money move again, and is recorded;
+ *  - a clear is a clear of the reason the admin's page showed: one whose reason has grown
+ *    since is refused, and nothing in it is acknowledged;
  *  - the signature test signs only with a wallet the server looked up, and nothing a
  *    probe says reaches the browser unredacted.
  */
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { Keypair } from "@solana/web3.js";
 import { desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Db } from "@/db";
@@ -23,7 +26,7 @@ import * as schema from "@/db/schema";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { limiter } from "@/lib/security/rate-limit";
 import { controlStop } from "@/lib/x402/inference-budget";
-import { createInferenceLedger, pauseInferenceUntil, readInferenceControl } from "@/lib/x402/inference-ledger";
+import { MAX_HALT_REASON, createInferenceLedger, haltInferenceOnce, pauseInferenceUntil, readInferenceControl } from "@/lib/x402/inference-ledger";
 import { INFERENCE_GATEWAY, type InferenceCaps } from "@/lib/x402/inference-types";
 import type { Session } from "@/server/types";
 
@@ -43,6 +46,8 @@ vi.mock("@/lib/x402/paidFetch", () => ({
 }));
 
 const { clearInferencePauseAction, refreshAdminBalancesAction, setInferenceHaltAction, testInferenceSignatureAction } = await import("./admin");
+// The query the admin page is drawn from: a clear sends back what it returned.
+const { getAdminInference } = await import("@/server/queries/admin");
 
 let db: Db;
 let agent: { userId: string; agentId: string; slug: string };
@@ -85,6 +90,11 @@ function reserveOne() {
   });
 }
 
+/** The halt's reason exactly as the admin page is given it, at this moment. */
+async function reasonOnThePage(): Promise<string | null> {
+  return (await getAdminInference(ADMIN.userId)).control.haltReason;
+}
+
 async function auditRows() {
   return db.select().from(schema.auditEvents).where(eq(schema.auditEvents.userId, ADMIN.userId)).orderBy(desc(schema.auditEvents.createdAt));
 }
@@ -103,6 +113,10 @@ beforeAll(async () => {
   });
   await db.insert(schema.users).values({ id: ADMIN.userId, handle: ADMIN.handle, displayName: "Admin" });
 }, 120_000);
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 beforeEach(async () => {
   vi.unstubAllEnvs();
@@ -202,8 +216,10 @@ describe("setInferenceHaltAction", () => {
     await setInferenceHaltAction({ halted: true, reason: "checking one wallet" });
     expect(await reserveOne()).toEqual({ ok: false, reason: "halted" });
 
-    // No reason is needed to clear; a note is kept when one is given.
-    expect(await setInferenceHaltAction({ halted: false, reason: "audit script: ledger equals chain" })).toEqual({
+    // No reason is needed to clear; a note is kept when one is given. What is needed is
+    // the reason the page showed, sent back as the page was given it.
+    expect(await reasonOnThePage()).toBe("checking one wallet");
+    expect(await setInferenceHaltAction({ halted: false, reason: "audit script: ledger equals chain", seenReason: await reasonOnThePage() })).toEqual({
       ok: true,
       data: { halted: false },
     });
@@ -224,10 +240,142 @@ describe("setInferenceHaltAction", () => {
   it("does not end a breaker's pause by clearing a halt", async () => {
     await pauseInferenceUntil(new Date(Date.now() + 10 * 60_000), "tripped");
     await setInferenceHaltAction({ halted: true, reason: "looking at it" });
-    await setInferenceHaltAction({ halted: false });
+    expect(await setInferenceHaltAction({ halted: false, seenReason: "looking at it" })).toMatchObject({ ok: true });
 
     expect(controlStop(await readInferenceControl(), new Date())).toBe("paused");
     expect(await reserveOne()).toEqual({ ok: false, reason: "paused" });
+  });
+});
+
+describe("clearing a halt whose reason the page did not show", () => {
+  /** A transaction id of the real length, made at run time from public halves. */
+  const txId = () => `${Keypair.generate().publicKey.toBase58()}${Keypair.generate().publicKey.toBase58()}`.slice(0, 87);
+  const finding = (id: string) => `USDC went from an agent wallet to the gateway with no ledger row. Transaction ${id}, wallet ${Keypair.generate().publicKey.toBase58()}.`;
+  const CHANGED = "The reason changed since this page was loaded. Reload and read it before clearing.";
+
+  it("refuses when a finding was added after the page was drawn, and acknowledges neither", async () => {
+    const [first, second] = [txId(), txId()];
+    // 12:00. The reconciler halts, naming one transaction.
+    await haltInferenceOnce(finding(first), "reconciler", first);
+    // 12:03. The admin opens the page, reads it, and goes to check the transaction on chain.
+    const page = await reasonOnThePage();
+    expect(page).toContain(first);
+    // 12:06. The next pass finds a second unexplained transfer and adds it to the stored reason.
+    await haltInferenceOnce(finding(second), "reconciler", second);
+    // 12:10. The admin presses the two buttons on the page drawn at 12:03.
+    const res = await setInferenceHaltAction({ halted: false, reason: "checked it on chain", seenReason: page });
+
+    expect(res).toEqual({ ok: false, error: CHANGED });
+    const control = await readInferenceControl();
+    expect(control).toMatchObject({ halted: true, updatedBy: "reconciler", haltAcknowledged: [] });
+    expect(control.haltReason).toContain(second);
+    // Money still does not move, and nothing says a halt was cleared.
+    expect(await reserveOne()).toEqual({ ok: false, reason: "halted" });
+    expect(await auditRows()).toEqual([]);
+
+    // Reloaded, the page shows both. That clear is accepted, and acknowledges both.
+    const reloaded = await reasonOnThePage();
+    expect(reloaded).toContain(first);
+    expect(reloaded).toContain(second);
+    expect(await setInferenceHaltAction({ halted: false, reason: "checked both", seenReason: reloaded })).toEqual({ ok: true, data: { halted: false } });
+    expect(await readInferenceControl()).toMatchObject({ halted: false, haltAcknowledged: [first, second] });
+    expect((await auditRows()).map((row) => row.kind)).toEqual(["kill_switch_off"]);
+  });
+
+  it("refuses a clear that does not say what the page showed, whatever is sent in its place", async () => {
+    const id = txId();
+    await haltInferenceOnce(finding(id), "reconciler", id);
+    for (const seenReason of [undefined, 42, true, {}, ["a reason"]]) {
+      const res = await setInferenceHaltAction({ halted: false, seenReason } as unknown as { halted: boolean });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error).toContain("Reload and read it before clearing.");
+    }
+    // "The page showed no reason" is a claim like any other, and it is not what is stored.
+    expect(await setInferenceHaltAction({ halted: false, seenReason: null })).toEqual({ ok: false, error: CHANGED });
+    expect(await setInferenceHaltAction({ halted: false, seenReason: "" })).toEqual({ ok: false, error: CHANGED });
+    expect(await readInferenceControl()).toMatchObject({ halted: true, haltAcknowledged: [] });
+    expect(await auditRows()).toEqual([]);
+  });
+
+  it("refuses a page that is stale the other way: the halt it shows was cleared, or cleared and thrown again", async () => {
+    const [first, second] = [txId(), txId()];
+    await haltInferenceOnce(finding(first), "reconciler", first);
+    const page = await reasonOnThePage();
+    // Another admin clears it from their own page.
+    expect((await setInferenceHaltAction({ halted: false, seenReason: page })).ok).toBe(true);
+    await db.delete(schema.auditEvents);
+    expect(await setInferenceHaltAction({ halted: false, seenReason: page })).toEqual({ ok: false, error: CHANGED });
+
+    await haltInferenceOnce(finding(second), "reconciler", second);
+    expect(await setInferenceHaltAction({ halted: false, seenReason: page })).toEqual({ ok: false, error: CHANGED });
+    expect(await readInferenceControl()).toMatchObject({ halted: true, haltAcknowledged: [first] });
+    expect(await auditRows()).toEqual([]);
+  });
+
+  it("accepts exactly what the page was given, for a reason grown to its full length", async () => {
+    // The query that draws the page and the ledger that checks the clear must agree on
+    // every character, or no halt with a long reason could ever be cleared.
+    const ids = Array.from({ length: 24 }, txId);
+    await haltInferenceOnce(finding(ids[0]), "reconciler", ids[0]);
+    for (const id of ids.slice(1)) await haltInferenceOnce(`${finding(id)} ${"-".repeat(120)}`, "reconciler", id);
+    const page = await reasonOnThePage();
+    expect(page!.length).toBeGreaterThan(3000);
+    expect(page!.length).toBeLessThanOrEqual(MAX_HALT_REASON);
+
+    expect(await setInferenceHaltAction({ halted: false, seenReason: page })).toEqual({ ok: true, data: { halted: false } });
+    const named = page!.match(/[1-9A-HJ-NP-Za-km-z]{64,90}/g) ?? [];
+    expect(named.length).toBeGreaterThan(5);
+    expect((await readInferenceControl()).haltAcknowledged).toEqual(named);
+  });
+
+  it("is refused for a reason that changed and for nothing else: a breaker's pause written since the page was drawn does not refuse it", async () => {
+    const id = txId();
+    await haltInferenceOnce(finding(id), "reconciler", id);
+    const page = await reasonOnThePage();
+    const before = (await db.select().from(schema.inferenceControl))[0];
+    // The breakers write to the same row, every five minutes while they are tripped. That
+    // moves the row's time and changes nothing an admin has to read before clearing.
+    await pauseInferenceUntil(new Date(Date.now() + 20 * 60_000), "5 runs from 2 accounts stopped because the gateway did not answer within 10 minutes");
+    expect((await db.select().from(schema.inferenceControl))[0].updatedAt.getTime()).toBeGreaterThanOrEqual(before.updatedAt.getTime());
+
+    expect(await setInferenceHaltAction({ halted: false, seenReason: page })).toEqual({ ok: true, data: { halted: false } });
+    expect((await readInferenceControl()).haltAcknowledged).toEqual([id]);
+    // The pause is the breakers' own and still stands.
+    expect(controlStop(await readInferenceControl(), new Date())).toBe("paused");
+  });
+
+  it("only ever compares what is sent back: it is not stored, not logged and not in the audit log", async () => {
+    const logged: string[] = [];
+    for (const method of ["error", "warn", "info", "log"] as const) vi.spyOn(console, method).mockImplementation((...args: unknown[]) => void logged.push(args.join(" ")));
+    const id = txId();
+    await haltInferenceOnce(finding(id), "reconciler", id);
+    const MARK = "TEXT-ONLY-THE-BROWSER-SENT";
+
+    expect((await setInferenceHaltAction({ halted: false, seenReason: `${await reasonOnThePage()} ${MARK}` })).ok).toBe(false);
+    // Longer than any reason a page can print: refused as it stands.
+    expect(await setInferenceHaltAction({ halted: false, seenReason: `${MARK}${"x".repeat(MAX_HALT_REASON)}` })).toEqual({ ok: false, error: CHANGED });
+    expect((await setInferenceHaltAction({ halted: false, reason: "all read", seenReason: await reasonOnThePage() })).ok).toBe(true);
+
+    expect(JSON.stringify(await db.select().from(schema.inferenceControl))).not.toContain(MARK);
+    expect(JSON.stringify(await db.select().from(schema.auditEvents))).not.toContain(MARK);
+    expect(logged.join("\n")).not.toContain(MARK);
+    // And the audit entry for the clear carries the admin's note, never the reason sent back.
+    const [audit] = await auditRows();
+    expect(audit.summary).toBe("Cleared the halt on pay-per-use thinking: all read");
+    expect(JSON.stringify(audit)).not.toContain(id);
+  });
+
+  it("has nothing to compare when no halt is on: saying it was looked at is still recorded", async () => {
+    expect(await setInferenceHaltAction({ halted: false })).toEqual({ ok: true, data: { halted: false } });
+    expect((await readInferenceControl()).haltClearedAt).not.toBeNull();
+  });
+
+  it("asks nothing of a halt: stopping never needs to say what was shown", async () => {
+    const id = txId();
+    await haltInferenceOnce(finding(id), "reconciler", id);
+    // An admin halting over a halt that is already on, from a page that showed something else.
+    expect(await setInferenceHaltAction({ halted: true, reason: "halting by hand as well", seenReason: "something else" })).toEqual({ ok: true, data: { halted: true } });
+    expect((await readInferenceControl()).halted).toBe(true);
   });
 });
 

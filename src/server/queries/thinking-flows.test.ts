@@ -28,8 +28,10 @@ import { eq, sql } from "drizzle-orm";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { PAYMENT_IN_FLIGHT_MS } from "@/lib/agent/inference";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { toNumeric } from "@/lib/money";
+import { flowsBetween } from "@/lib/pnl";
 import { INFERENCE_GATEWAY, utcDay, type InferencePaymentStatus } from "@/lib/x402/inference-types";
 
 /** What each live agent's wallet answers with. No entry: the read fails, as an outage does. */
@@ -572,6 +574,121 @@ describe("a live agent that pays for its own thinking", () => {
     // All time is measured from the first mark, with the whole dollar after it.
     expect((await everySurface(agent)).card.pnlUsd).toBeCloseTo(0, 9);
     expect((await getAgentWindowPnl(agent.agentId, "all"))!.pnlUsd).toBeCloseTo(0, 9);
+  });
+
+  /**
+   * A step's price leaves the wallet some seconds after it is signed for, and its answer
+   * (with the receipt that proves it) arrives some seconds after that. A mark can fall
+   * anywhere in between. Dated at the SIGNATURE, the flow was before a mark that did not
+   * hold the fall yet, and the card, the leaderboard and the all-time figure read the
+   * step's price as a gain until the next mark. Dated when it was resolved, it is after
+   * that mark whichever way the mark read the wallet.
+   */
+  describe("a mark taken while one paid step was in flight", () => {
+    const SECOND = 1_000;
+    /** Signed, marked two seconds later at `markEquity`, and proven by its answer ten seconds after the signature. */
+    async function stepAcrossAMark(markEquity: number) {
+      const agent = await payPerUse("live");
+      const signedAt = new Date(Date.now() - 4 * MINUTE);
+      const markedAt = new Date(signedAt.getTime() + 2 * SECOND);
+      const resolvedAt = new Date(signedAt.getTime() + 10 * SECOND);
+      await mark(agent.agentId, ago(3), 25);
+      await payment(agent, signedAt, 0.02, "settled", { resolvedAt });
+      await mark(agent.agentId, markedAt, markEquity);
+      return { agent, signedAt, markedAt, resolvedAt };
+    }
+
+    it("is not read as a gain when the mark was read before the transfer landed", async () => {
+      const { agent, markedAt, resolvedAt } = await stepAcrossAMark(25);
+
+      // The flow is dated when the step was resolved, which is after the mark.
+      const flows = (await loadMoneyFlows(db, [agent.agentId])).get(agent.agentId) ?? [];
+      expect(flows).toHaveLength(1);
+      expect(Number(flows[0].at)).toBe(resolvedAt.getTime());
+      expect(Number(flows[0].at)).toBeGreaterThan(markedAt.getTime());
+
+      // Dated at its signature it was before the mark and netted from it: 25 − (25 − 0.02) = +0.02.
+      const card = (await loadAgentAggregates(db, [agent.agentId])).get(agent.agentId)!;
+      expect(card.pnlUsd).toBeCloseTo(0, 9);
+      // It is kept apart as money that moved since the mark, for a reader holding a fresher balance.
+      expect(card.flowSinceMarkUsd).toBeCloseTo(-0.02, 9);
+      const seen = await everySurface(agent);
+      expect(seen.leaderboard.pnlUsd).toBeCloseTo(0, 9);
+      expect(seen.home.pnlUsd).toBeCloseTo(0, 9);
+
+      // The next mark holds the fall, with the flow before it: still nothing made or lost.
+      await mark(agent.agentId, ago(0.0001), 24.98);
+      expect((await everySurface(agent)).card.pnlUsd).toBeCloseTo(0, 9);
+    });
+
+    it("reads as that step's price lost, never gained, when the mark already held the fall", async () => {
+      const { agent, markedAt } = await stepAcrossAMark(24.98);
+
+      // The one way this dating can err: a mark that has the fall, with the flow still
+      // ahead of it. A few cents of loss until the next mark.
+      const card = (await loadAgentAggregates(db, [agent.agentId])).get(agent.agentId)!;
+      expect(card.pnlUsd).toBeCloseTo(-0.02, 9);
+      expect(card.pnlUsd!).toBeLessThanOrEqual(0);
+
+      await mark(agent.agentId, ago(0.0001), 24.98);
+      expect((await everySurface(agent)).card.pnlUsd).toBeCloseTo(0, 9);
+      // (Measured FROM the mark in the middle the same flow would read as a gain. No such
+      // mark is written by the app: `snapshotEquity` skips a book with a step in flight,
+      // which `portfolio.test.ts` holds it to.)
+      const flows = (await loadMoneyFlows(db, [agent.agentId])).get(agent.agentId) ?? [];
+      expect(flowsBetween(flows, markedAt, new Date()).netUsd).toBeCloseTo(-0.02, 9);
+    });
+
+    it("leaves out a step that was in flight across the book's FIRST mark, which every all-time figure keeps for good", async () => {
+      for (const firstEquity of [24.6, 25]) {
+        const agent = await payPerUse("live");
+        const signedAt = ago(3);
+        // The first live mark, five seconds into a step that is resolved five seconds later.
+        await payment(agent, signedAt, 0.4, "settled", { resolvedAt: new Date(signedAt.getTime() + 10 * SECOND) });
+        await mark(agent.agentId, new Date(signedAt.getTime() + 5 * SECOND), firstEquity);
+        await mark(agent.agentId, ago(0.01), 24.6);
+
+        // Signed before the first mark: no flow, although it is dated after that mark.
+        expect((await loadMoneyFlows(db, [agent.agentId])).get(agent.agentId) ?? []).toEqual([]);
+        // Had it been one, a first mark that already lacked the 0.40 would read +0.40 for
+        // good. Left out, the figure is right when the mark held the fall and a loss when
+        // it did not. Never a gain.
+        const pnl = (await everySurface(agent)).card.pnlUsd!;
+        expect(pnl).toBeCloseTo(firstEquity === 24.6 ? 0 : -0.4, 9);
+        expect(pnl).toBeLessThanOrEqual(1e-9);
+      }
+    });
+
+    it("dates a payment the reconciler proved hours later at two minutes after its signature, not at the verdict", async () => {
+      const agent = await payPerUse("live");
+      const signedAt = ago(1);
+      const hourLater = new Date(signedAt.getTime() + HOUR);
+      const verdict = new Date(signedAt.getTime() + 3 * HOUR);
+      await mark(agent.agentId, ago(2), 25);
+      // Signed, no answer, and found on chain three hours on. It had landed within the
+      // minute or two a signed transfer can take, so every mark since then holds the fall.
+      await payment(agent, signedAt, 0.5, "paid_no_answer", { resolvedAt: verdict, txHash: TX });
+      await mark(agent.agentId, hourLater, 24.5);
+      await mark(agent.agentId, ago(0.01), 24.5);
+
+      const flows = (await loadMoneyFlows(db, [agent.agentId])).get(agent.agentId) ?? [];
+      expect(flows).toHaveLength(1);
+      expect(Number(flows[0].at)).toBe(signedAt.getTime() + PAYMENT_IN_FLIGHT_MS);
+      expect((await everySurface(agent)).card.pnlUsd).toBeCloseTo(0, 9);
+      // Dated at the verdict it would sit after the mark an hour in, and a figure measured
+      // from that mark (which already lacks the 0.50) would read +0.50.
+      expect(flowsBetween(flows, hourLater, new Date()).netUsd).toBeCloseTo(0, 9);
+    });
+
+    it("never dates a flow before the payment was signed, whatever the row's two times say", async () => {
+      const agent = await payPerUse("live");
+      const signedAt = ago(1);
+      await mark(agent.agentId, ago(2), 25);
+      await payment(agent, signedAt, 0.1, "settled", { resolvedAt: new Date(signedAt.getTime() - HOUR) });
+      await mark(agent.agentId, ago(0.01), 24.9);
+      const flows = (await loadMoneyFlows(db, [agent.agentId])).get(agent.agentId) ?? [];
+      expect(flows.map((flow) => Number(flow.at))).toEqual([signedAt.getTime()]);
+    });
   });
 
   it("puts a payment made at the very instant of a mark inside that mark", async () => {

@@ -174,7 +174,7 @@ async function main(): Promise<number> {
   }
 
   if (!chain.complete) {
-    console.log("\n! The wallet's history could not be read completely for this window (the node returned none, it was too long, or the node would not return a transaction).");
+    console.log("\n! The wallet's history could not be read completely for this window (the node returned none, it was too long, or the node would not return a transaction, or returned one without the balances it is read from).");
     console.log("  What is listed above is real, but absence of a difference is not proven. Try a shorter --hours, or another endpoint if it returned nothing.");
     return 2;
   }

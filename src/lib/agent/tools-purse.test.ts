@@ -165,8 +165,12 @@ describe("place_trade in approval mode: one purse", () => {
     const refused = await agent.propose(2);
     expect(refused).toMatchObject({ ok: false, unaffordable: true });
     expect(Number(refused.affordableUsd)).toBeCloseTo(1.65, 6);
-    expect(String(refused.reason)).toContain("cash $15.75 (after the $4.25 held back to pay for thinking)");
-    expect(String(refused.reason)).toContain("at most $1.65 is left for this one");
+    expect(refused.reason).toBe(
+      "Not affordable alongside what is already proposed: cash available to trade $15.75 (part of your cash is kept back to pay for your thinking), $14.00 already awaiting your owner's decision, $0.10 fee per fill — at most $1.65 is left for this one. Shrink it to fit or skip it; the set has to add up to the cash you hold.",
+    );
+    // How much is kept back follows a limit only the owner may read, and the model that
+    // reads this refusal writes public text: the figure is nowhere in what it is handed.
+    expect(JSON.stringify(refused)).not.toContain("4.25");
     // Nothing new was proposed: the one already waiting is still the only one.
     expect(await agent.proposals()).toHaveLength(1);
 

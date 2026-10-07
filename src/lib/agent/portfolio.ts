@@ -24,8 +24,8 @@
 import { isDustPosition } from "@/lib/trading/positions";
 import { nanoid } from "nanoid";
 import { exitDistances } from "@/lib/pnl";
-import { and, eq, gte } from "drizzle-orm";
-import { agents, equitySnapshots, getDb, positions, tokens, trades, wallets } from "@/db";
+import { and, eq, gt, gte, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { agents, equitySnapshots, getDb, inferencePayments, positions, tokens, trades, wallets } from "@/db";
 import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { Position, TokenRef } from "@/server/types";
 import type { AgentWalletRef } from "@/lib/x402/types";
@@ -37,7 +37,8 @@ import { loadCachedScores } from "@/lib/trading/score-cache";
 import { toTokenRef } from "@/lib/trading/tokens";
 import { sizeCeiling, type RiskPortfolio } from "@/lib/trading/risk";
 import { readSizing } from "@/lib/trading/sizing";
-import { thinkingReserveUsd } from "./inference";
+import { dbErrorForLog } from "@/lib/security/redact";
+import { PAYMENT_IN_FLIGHT_MS, thinkSource, thinkingReserveUsd } from "./inference";
 
 export interface Portfolio {
   agentId: string;
@@ -63,6 +64,12 @@ export interface Portfolio {
    * not on top of it. Absent or zero for every other agent.
    */
   thinkingReserveUsd?: number;
+  /**
+   * Set only for a live agent that pays for its own thinking: the moment just before its
+   * wallets were read for this book. `snapshotEquity` uses it to tell whether one of the
+   * agent's paid steps was in flight at that read. Absent for every other agent.
+   */
+  cashReadAt?: Date;
 }
 
 /**
@@ -222,10 +229,15 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
   let cashReadFailed = false;
   let cashUsd: number;
   let heldForThinking = 0;
+  let cashReadAt: Date | null = null;
   if (agent.mode === "paper") {
     cashUsd = await getPaperCash(agentId);
   } else {
-    const live = await getLiveCash(await getAgentWallets(agentId));
+    const walletRefs = await getAgentWallets(agentId);
+    // Noted before the first wallet is asked, and only for an agent that pays for its own
+    // thinking: a payment that had not landed by now is not in the balances below.
+    if (thinkSource(agent.config) === "usdc") cashReadAt = new Date();
+    const live = await getLiveCash(walletRefs);
     cashReadFailed = !live.complete;
     cashUsd = netLiveCashUsd(live.usd, await accruedFeesUsd(agentId));
     // A live agent that pays for its own thinking keeps two runs' worth of it out of its
@@ -266,7 +278,54 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
     startingUsd: Number(agent.paperStartingUsd),
     cashReadFailed,
     ...(heldForThinking > 0 ? { thinkingReserveUsd: heldForThinking } : {}),
+    ...(cashReadAt ? { cashReadAt } : {}),
   };
+}
+
+/**
+ * Whether one of the agent's paid steps was in flight when its wallet was read at
+ * `readAt`: signed within `PAYMENT_IN_FLIGHT_MS` of that moment, and either not resolved
+ * yet or resolved only afterwards.
+ *
+ * Such a payment's transfer may or may not be in the balance that was read, and nothing
+ * here can tell which. A row resolved BEFORE the read is not in flight: the receipt that
+ * resolved it says its transfer had settled, so the balance holds it. (That is taken on
+ * the gateway's word, and for an answered step with no receipt on no word at all:
+ * `thinkingFlowAtSql` says what follows if it is wrong.) Nor is a row signed longer ago
+ * than a transfer can take to land, whatever its status: if it landed at all, it landed
+ * before the read.
+ *
+ * Never throws. If the ledger cannot be read the answer is "no", and the mark is written
+ * as it always was: a mark that may sit on the wrong side of one step's price is better
+ * than a book with no marks.
+ */
+async function paidStepInFlight(agentId: string, readAt: Date): Promise<boolean> {
+  try {
+    const db = await getDb();
+    const from = new Date(readAt.getTime() - PAYMENT_IN_FLIGHT_MS);
+    const until = new Date(readAt.getTime() + PAYMENT_IN_FLIGHT_MS);
+    const rows = await db
+      .select({ id: inferencePayments.id })
+      .from(inferencePayments)
+      .where(
+        and(
+          eq(inferencePayments.agentId, agentId),
+          // The ledger's index is on (agent, created). A row is written, then signed, so
+          // one signed in the window was created no earlier than a little before it.
+          gte(inferencePayments.createdAt, new Date(from.getTime() - PAYMENT_IN_FLIGHT_MS)),
+          isNotNull(inferencePayments.signedAt),
+          gt(inferencePayments.signedAt, from),
+          // A signature dated far ahead of this clock is a broken clock, not a payment in flight.
+          lte(inferencePayments.signedAt, until),
+          or(isNull(inferencePayments.resolvedAt), gte(inferencePayments.resolvedAt, readAt)),
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  } catch (err) {
+    console.warn(`[portfolio] ${agentId}: could not tell whether a paid step was in flight: ${dbErrorForLog(err)}`);
+    return false;
+  }
 }
 
 /**
@@ -305,10 +364,27 @@ export function toRiskPortfolio(portfolio: Portfolio): RiskPortfolio {
  *    read, `cashUsd` understates the book by however much is in it — and a point drawn
  *    on that says the agent lost everything at 14:05 and got it back at 14:10. Missing
  *    the point is the honest outcome; the next pass is five minutes away.
+ *
+ * And one rule for a live agent that pays for its own thinking, on the same principle:
+ *
+ *  - **A paid step in flight is a gap too.** Each step's price leaves the wallet some
+ *    seconds after it is signed for, and is taken back out of the P&L as a flow dated
+ *    when the step was resolved (`thinkingFlowAtSql`, src/server/queries/_shared.ts). A
+ *    mark read between the two holds, or does not hold, a payment whose flow falls on
+ *    one side of it or the other, and the two need not agree: the step's price then
+ *    reads as a gain nobody made, at once or when that mark is later a window's
+ *    baseline. So while one of the agent's steps is in flight (`paidStepInFlight`) no
+ *    mark is written. A step is in flight for seconds, a run's last mark is taken after
+ *    its last step has resolved, and the marks pass comes round again in five minutes.
+ *    Every other agent's mark is written exactly as before: nothing is read for it.
  */
 export async function snapshotEquity(portfolio: Portfolio): Promise<boolean> {
   if (portfolio.cashReadFailed) {
     console.warn(`[portfolio] ${portfolio.agentId}: skipping equity snapshot — a live balance read failed`);
+    return false;
+  }
+  if (portfolio.mode === "live" && portfolio.cashReadAt && (await paidStepInFlight(portfolio.agentId, portfolio.cashReadAt))) {
+    console.warn(`[portfolio] ${portfolio.agentId}: skipping equity snapshot: a paid step was in flight when the wallet was read`);
     return false;
   }
   const db = await getDb();
@@ -342,10 +418,15 @@ export function effectiveTicketUsd(
   const equity = portfolio.equityUsd > 0 ? portfolio.equityUsd : portfolio.cashUsd;
   // What the risk guard will compare a buy with (`toRiskPortfolio`), so the number the
   // model is told is the number it has.
-  const held = portfolio.thinkingReserveUsd ?? 0;
   const spendable = spendableCashUsd(portfolio);
+  // How MUCH is kept back for thinking is never put into words. It is worked out from a
+  // limit only the owner may read (twice the limit for one run, plus a fixed floor), and
+  // this sentence goes to a model whose rationale, posts and summary are public. The
+  // model is told that part of its cash is kept back, and what it may trade with.
   const cashWords =
-    held > 0 ? `cash $${portfolio.cashUsd.toFixed(2)} minus the $${held.toFixed(2)} held back to pay for thinking` : `cash $${portfolio.cashUsd.toFixed(2)}`;
+    (portfolio.thinkingReserveUsd ?? 0) > 0
+      ? `the $${spendable.toFixed(2)} of your cash that is available to trade (part of your cash is kept back to pay for your thinking)`
+      : `cash $${portfolio.cashUsd.toFixed(2)}`;
 
   const limits: Array<{ amountUsd: number; reason: string }> = [
     {
@@ -354,10 +435,7 @@ export function effectiveTicketUsd(
     },
     {
       amountUsd: Math.max(0, spendable - feeUsd),
-      reason:
-        feeUsd > 0
-          ? `${cashWords} ${held > 0 ? "and" : "minus"} the $${feeUsd.toFixed(2)} Tocker fee charged on the fill`
-          : cashWords,
+      reason: feeUsd > 0 ? `${cashWords} minus the $${feeUsd.toFixed(2)} Tocker fee charged on the fill` : cashWords,
     },
   ];
   if (equity > 0) {
@@ -392,12 +470,14 @@ export function describePortfolio(portfolio: Portfolio, config: AgentConfig): st
         : ""),
   ];
   if ((portfolio.thinkingReserveUsd ?? 0) > 0) {
-    // Said plainly, or a model that sees $5.00 of cash and a $4.20 ceiling goes looking for the rest.
-    // And said to be private: the figure is worked out from a limit only the owner may
-    // read, and a rationale, a post and a summary are public.
+    // Said plainly, or a model that sees $5.00 of cash and a $4.20 ceiling goes looking
+    // for the rest. But the amount kept back is NOT said: it is worked out from a limit
+    // only the owner may read, and what this model writes (a rationale, a post, its
+    // summary) is public. It is given the one figure it sizes with, and asked to keep
+    // that out of public text too, because cash less that figure is the amount itself.
     lines.push(
-      `Of that cash, $${(portfolio.thinkingReserveUsd ?? 0).toFixed(2)} is held back to pay for your own thinking and cannot be spent on a buy: $${spendableCashUsd(portfolio).toFixed(2)} is available to trade.` +
-        " The amount held back follows a limit your owner set: like your other thresholds, never state it in a rationale, a post or your summary.",
+      `Part of that cash is kept back to pay for your own thinking and cannot be spent on a buy: $${spendableCashUsd(portfolio).toFixed(2)} is available to trade.` +
+        " How much is kept back follows a limit your owner set: like your other thresholds, never mention it, or the amount available to trade, in a rationale, a post or your summary.",
     );
   }
   if (portfolio.cashReadFailed) {

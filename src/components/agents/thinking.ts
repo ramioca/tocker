@@ -367,6 +367,10 @@ export function stopFix(reason: InferenceStopReason): StopFix {
       return { label: "Add Solana", hash: "#universe" };
     case "no_policy":
       return { label: "Set the wallet limit", hash: "#budget" };
+    case "wallet_limit_low":
+      // The wallet's limit is written from the largest trade size ("Max per trade", under
+      // Risk), and saving that form is what writes it again and has the hold looked at.
+      return { label: "Raise the trade size", hash: "#risk" };
     case "model_unavailable":
     case "rerouted":
       return { label: "Pick a model", hash: "#thinking" };

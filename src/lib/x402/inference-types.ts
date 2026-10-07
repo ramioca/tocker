@@ -237,6 +237,7 @@ export const INFERENCE_STOPS = {
   manual_limit: "owner",
   no_wallet: "owner",
   no_policy: "owner",
+  wallet_limit_low: "owner",
   model_unavailable: "owner",
   flag_off: "platform",
   halted: "platform",
@@ -310,6 +311,8 @@ export function describeInferenceStop(
       return { title: "This agent has no Solana wallet", detail: "Pay-per-use thinking is paid from the agent's Solana wallet. Add Solana to this agent's chains, or switch it to your own API key." };
     case "no_policy":
       return { title: "Wallet limit not set", detail: "This agent's wallet has no spending limit applied yet, so it is not allowed to pay for anything. Save the agent's risk settings to apply one." };
+    case "wallet_limit_low":
+      return { title: "The wallet's limit is below the price of a step", detail: "This agent's wallet may not send more than its largest trade size in one payment, and that is less than one step of thinking can cost, so the wallet would refuse to pay. Raise the largest trade size in the agent's settings, or switch it to your own API key." };
     case "model_unavailable":
       return { title: "Model no longer offered", detail: `${context.model ?? "The chosen model"} is no longer offered for pay-per-use. Pick another model in the agent's settings.` };
     case "flag_off":

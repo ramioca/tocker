@@ -6,9 +6,11 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
+import { nanoid } from "nanoid";
 import type { Db } from "@/db";
-import { inferenceBudgetDays, inferenceControl, inferencePayments } from "@/db/schema";
-import { setupTestDb } from "@/lib/agent/test-support";
+import { agentRuns, agents, inferenceBudgetDays, inferenceControl, inferencePayments } from "@/db/schema";
+import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { createInferenceLedger } from "@/lib/x402/inference-ledger";
 import { INFERENCE_GATEWAY } from "@/lib/x402/inference-types";
 
@@ -85,6 +87,7 @@ beforeEach(async () => {
   await db.delete(inferencePayments);
   await db.delete(inferenceBudgetDays);
   await db.delete(inferenceControl);
+  await db.delete(agentRuns);
   inferenceModule = WITHOUT_RECHECK;
   vi.stubEnv("CRON_SECRET", SECRET);
   // Mock mode, as in local dev and CI: the reconciler must not reach for a chain.
@@ -279,6 +282,35 @@ describe("GET /api/cron/inference", () => {
     const body = await (await call()).json();
     expect(body.breakers).toEqual({ tripped: null, pausedUntil: null });
     expect(await db.select().from(inferenceControl)).toHaveLength(0);
+  });
+
+  it("does not pause everyone over one account's runs its wallets would not sign, and does once a second account's stop the same way", async () => {
+    // One account, five agents, each run stopped before any payment because the wallet
+    // refused to sign: what a wallet limit set below the price of a step produces, at no
+    // cost, as often as the account likes.
+    const owner = await seedAgent(db);
+    const fleet = [owner.agentId];
+    for (let n = 0; n < 4; n += 1) {
+      const id = nanoid();
+      await db.insert(agents).values({ id, ownerId: owner.userId, slug: `fleet-${nanoid(6)}`, name: "Fleet", mode: "live", status: "active", isPublic: true, config: DEFAULT_AGENT_CONFIG });
+      fleet.push(id);
+    }
+    const at = new Date(Date.now() - 60_000);
+    const stopped = (agentId: string) => db.insert(agentRuns).values({ id: nanoid(), agentId, trigger: "schedule", status: "failed", stopReason: "signature_failed", createdAt: at, finishedAt: at });
+    for (const agentId of fleet) {
+      await stopped(agentId);
+      await stopped(agentId);
+    }
+
+    const alone = await (await call()).json();
+    expect(alone.breakers).toEqual({ tripped: null, pausedUntil: null });
+    expect(await db.select().from(inferenceControl)).toHaveLength(0);
+
+    const other = await seedAgent(db);
+    await stopped(other.agentId);
+    const both = await (await call()).json();
+    expect(both.breakers.tripped).toBe("signature");
+    expect(new Date(both.breakers.pausedUntil).getTime()).toBeGreaterThan(Date.now() + 13 * 60_000);
   });
 
   it("answers POST the same way", async () => {

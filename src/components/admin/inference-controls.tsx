@@ -36,21 +36,45 @@ function Problem({ children }: { children: React.ReactNode }) {
   );
 }
 
-function HaltSwitch({ halted }: { halted: boolean }) {
+/**
+ * What one press of the halt switch asks the server for.
+ *
+ * A clear says which reason this page was showing: clearing acknowledges every
+ * transaction the stored reason names, the reconciler adds findings to that reason while
+ * the halt is on, and this page does not redraw itself. The server compares what is sent
+ * here with what is stored at that moment and refuses when they differ. A halt carries
+ * no such thing: stopping is always safe.
+ */
+export function haltRequest(next: boolean, typed: string, seenReason: string | null): Parameters<typeof setInferenceHaltAction>[0] {
+  return next ? { halted: true, reason: typed } : { halted: false, reason: typed, seenReason };
+}
+
+function HaltSwitch({ halted, shownReason }: { halted: boolean; shownReason: string | null }) {
   const router = useRouter();
   const id = useId();
   const [pending, start] = useTransition();
   const [reason, setReason] = useState("");
   const [armed, setArmed] = useState(false);
+  // The reason on screen at the first press of a clear. The second press clears THAT
+  // reason and no other: if the page was redrawn in between with more in it, the server
+  // refuses, and the two presses start again over what is now shown.
+  const [seen, setSeen] = useState<string | null>(shownReason);
   const [error, setError] = useState<string | null>(null);
 
   const send = (next: boolean) =>
     start(async () => {
       setError(null);
       // A network throw would otherwise land on the route's error boundary.
-      const res = await setInferenceHaltAction({ halted: next, reason }).catch(() => UNREACHABLE);
+      const res = await setInferenceHaltAction(haltRequest(next, reason, seen)).catch(() => UNREACHABLE);
       if (!res.ok) {
         setError(res.error);
+        if (!next) {
+          // A clear that did not happen is withdrawn whole, and the page drawn again: the
+          // usual cause is a reason that has grown, and it has to be read before the
+          // first press can be made again.
+          setArmed(false);
+          router.refresh();
+        }
         return;
       }
       setReason("");
@@ -89,7 +113,15 @@ function HaltSwitch({ halted }: { halted: boolean }) {
               {pending ? "Clearing…" : "Yes, let payments resume"}
             </Button>
           ) : (
-            <Button type="button" variant="outline" disabled={pending} onClick={() => setArmed(true)}>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={() => {
+                setSeen(shownReason);
+                setArmed(true);
+              }}
+            >
               <Play aria-hidden />
               Clear the halt
             </Button>
@@ -109,7 +141,8 @@ function HaltSwitch({ halted }: { halted: boolean }) {
       {halted ? (
         <p className="text-xs leading-5 text-muted-foreground">
           Clearing acknowledges the transactions the reason above names. Anything it does not name halts pay-per-use
-          again when it is next seen.
+          again when it is next seen. If something has been added to the reason since this page was drawn, the clear
+          is refused and nothing is acknowledged: read what was added, then clear.
         </p>
       ) : null}
       {error ? <Problem>{error}</Problem> : null}
@@ -254,17 +287,24 @@ function SignatureTest({ wallets }: { wallets: ProbeWallet[] }) {
 
 export function InferenceControls({
   halted,
+  haltReason,
   paused,
   wallets,
 }: {
   halted: boolean;
+  /**
+   * The halt's reason exactly as the card prints it above these controls (null when it
+   * prints none, or no halt is on). A clear sends it back, so the server can tell a
+   * clear of what was read from a clear of a reason that has grown since.
+   */
+  haltReason: string | null;
   /** A breaker's pause is in force right now. */
   paused: boolean;
   wallets: ProbeWallet[];
 }) {
   return (
     <div className="space-y-6">
-      <HaltSwitch halted={halted} />
+      <HaltSwitch halted={halted} shownReason={halted ? haltReason : null} />
       {paused ? <EndPause /> : null}
       <SignatureTest wallets={wallets} />
     </div>

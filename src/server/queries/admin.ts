@@ -60,9 +60,10 @@ import {
   BREAKER_STOP_REASONS,
   breakerTrips,
   controlStop,
+  stopAccounts,
   type BreakerRule,
 } from "@/lib/x402/inference-budget";
-import { MAX_HALT_REASON, readInferenceControl } from "@/lib/x402/inference-ledger";
+import { haltReasonAsShown, readInferenceControl } from "@/lib/x402/inference-ledger";
 import { GIVE_UP_AFTER_MS, LATE_LOOK_MS } from "@/lib/x402/inference-reconcile";
 import {
   AGENT_DAY_REQUESTS,
@@ -1006,9 +1007,10 @@ export interface AdminInference {
   };
   /**
    * What the breakers are looking at, per rule: how much of it there is, and what trips
-   * it. `accounts` is set for the one rule that also needs its evidence to come from more
+   * it. `accounts` is set for the rules that also need their evidence to come from more
    * than one account (`accountsThreshold` of them): distinct owners, as the ledger's own
-   * rule counts them, so two agents of one owner are one.
+   * rules count them, so two agents of one owner are one. That is every rule but the pin
+   * mismatch, which one is enough for.
    */
   breakers: Array<{
     rule: BreakerRule;
@@ -1153,10 +1155,14 @@ export async function getAdminInference(adminUserId: string, now: Date = new Dat
       .where(and(inArray(inferencePayments.status, [...BREAKER_PAYMENT_STATUSES]), gte(inferencePayments.createdAt, lookback)))
       .limit(500),
 
+    // With the owner of each stopped run's agent, as `applyInferenceBreakers` reads it:
+    // the gateway and signature rules count accounts too.
     db
-      .select({ reason: agentRuns.stopReason, finishedAt: agentRuns.finishedAt, createdAt: agentRuns.createdAt })
+      .select({ reason: agentRuns.stopReason, ownerId: agents.ownerId, finishedAt: agentRuns.finishedAt, createdAt: agentRuns.createdAt })
       .from(agentRuns)
+      .innerJoin(agents, eq(agents.id, agentRuns.agentId))
       .where(and(inArray(agentRuns.stopReason, [...BREAKER_STOP_REASONS]), gte(agentRuns.createdAt, lookback)))
+      .orderBy(desc(agentRuns.createdAt))
       .limit(500),
 
     db
@@ -1207,12 +1213,14 @@ export async function getAdminInference(adminUserId: string, now: Date = new Dat
     // With the owner on each row: the unanswered rule counts accounts, not agents, and
     // without it this card would call a pause the ledger itself would not set.
     payments: badPayments.map((row) => ({ status: row.status, agentId: row.agentId, ownerId: row.ownerId, at: row.signedAt ?? row.createdAt })),
-    stops: badStops.map((row) => ({ reason: row.reason, at: row.finishedAt ?? row.createdAt })),
+    stops: badStops.map((row) => ({ reason: row.reason, ownerId: row.ownerId, at: row.finishedAt ?? row.createdAt })),
   };
   const tripped = new Set(breakerTrips(evidence, now).map((trip) => trip.rule));
   const within = (at: Date, minutes: number) => now.getTime() - at.getTime() < minutes * 60_000;
   const stopsOf = (reasons: readonly string[], minutes: number) =>
-    evidence.stops.filter((stop) => stop.reason !== null && reasons.includes(stop.reason) && within(stop.at, minutes)).length;
+    evidence.stops.filter((stop) => stop.reason !== null && reasons.includes(stop.reason) && within(stop.at, minutes));
+  const gatewayStops = stopsOf(["quote_failed", "gateway_error"], BREAKER_RULES.gateway.windowMinutes);
+  const signatureStops = stopsOf(["signature_failed"], BREAKER_RULES.signature.windowMinutes);
   const unanswered = evidence.payments.filter((payment) => within(payment.at, BREAKER_RULES.unanswered.windowMinutes));
 
   const counts: Record<InferenceOpenStatus, number> = { reserved: 0, signed: 0, unconfirmed: 0, answered_unproven: 0 };
@@ -1271,8 +1279,9 @@ export async function getAdminInference(adminUserId: string, now: Date = new Dat
     control: {
       halted: control.halted,
       // In full: clearing a halt acknowledges every transaction its reason names, so the
-      // admin must be able to read all of it, not the first lines.
-      haltReason: shown(control.haltReason, MAX_HALT_REASON),
+      // admin must be able to read all of it, not the first lines. By the ledger's own
+      // function: a clear is accepted only when it sends back exactly this text.
+      haltReason: haltReasonAsShown(control.haltReason),
       haltClearedAt: control.haltClearedAt ? control.haltClearedAt.toISOString() : null,
       pausedUntil: control.pausedUntil ? control.pausedUntil.toISOString() : null,
       pauseReason: shown(control.pauseReason),
@@ -1292,25 +1301,25 @@ export async function getAdminInference(adminUserId: string, now: Date = new Dat
       },
       {
         rule: "gateway",
-        count: stopsOf(["quote_failed", "gateway_error"], BREAKER_RULES.gateway.windowMinutes),
-        accounts: null,
-        accountsThreshold: null,
+        count: gatewayStops.length,
+        accounts: stopAccounts(gatewayStops),
+        accountsThreshold: BREAKER_RULES.gateway.owners,
         threshold: BREAKER_RULES.gateway.failures,
         windowMinutes: BREAKER_RULES.gateway.windowMinutes,
         tripped: tripped.has("gateway"),
       },
       {
         rule: "signature",
-        count: stopsOf(["signature_failed"], BREAKER_RULES.signature.windowMinutes),
-        accounts: null,
-        accountsThreshold: null,
+        count: signatureStops.length,
+        accounts: stopAccounts(signatureStops),
+        accountsThreshold: BREAKER_RULES.signature.owners,
         threshold: BREAKER_RULES.signature.failures,
         windowMinutes: BREAKER_RULES.signature.windowMinutes,
         tripped: tripped.has("signature"),
       },
       {
         rule: "pin_mismatch",
-        count: stopsOf(["pin_mismatch"], BREAKER_RULES.pin_mismatch.windowMinutes),
+        count: stopsOf(["pin_mismatch"], BREAKER_RULES.pin_mismatch.windowMinutes).length,
         accounts: null,
         accountsThreshold: null,
         threshold: BREAKER_RULES.pin_mismatch.failures,

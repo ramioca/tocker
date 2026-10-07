@@ -10,12 +10,13 @@ import { nanoid } from "nanoid";
 import type { Db } from "@/db";
 import { agentRuns, agents, inferenceBudgetDays, inferenceControl, inferencePayments } from "@/db/schema";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
-import { CLOSED_UNCHECKED_DETAIL, createInferenceLedger, haltInferenceOnce, readInferenceControl, setInferenceHalt } from "./inference-ledger";
+import { CLOSED_UNCHECKED_DETAIL, createInferenceLedger, haltInferenceOnce, haltReasonAsShown, readInferenceControl, setInferenceHalt } from "./inference-ledger";
 import {
   GIVE_UP_AFTER_MS,
   LATE_LOOK_MS,
   NOT_CHARGED_AFTER_MS,
   RECONCILE_AFTER_MS,
+  RECONCILE_LIMITS,
   STALE_RESERVED_MS,
   STRAY_HOLD_MS,
   baseUnitsOf,
@@ -28,6 +29,7 @@ import {
   transactionBlockTime,
   transactionFeePayer,
   transactionMemos,
+  transactionWasRead,
   usdcMovement,
   type InferenceChainReader,
   type SignatureEntry,
@@ -131,11 +133,16 @@ async function openRow(
   return { id: reserved.paymentId, payer, account: payerTokenAccount(payer, MINT)!, memo: memo ?? "", blockhash: blockhash ?? "" };
 }
 
-/** An admin clears the halt (or says "looked at it" with none on) at `at`. */
+/**
+ * An admin clears the halt (or says "looked at it" with none on) at `at`. They have the
+ * reason in front of them: the clear carries what the page printed, which is the only
+ * clear the ledger accepts while a halt with a reason is on.
+ */
 async function adminClears(at: Date, reason: string | null = "looked at it"): Promise<void> {
+  const seenReason = haltReasonAsShown((await readInferenceControl()).haltReason);
   vi.useFakeTimers({ now: at, toFake: ["Date"] });
   try {
-    await setInferenceHalt({ halted: false, reason, by: "admin-1" });
+    await setInferenceHalt({ halted: false, reason, by: "admin-1", seenReason });
   } finally {
     vi.useRealTimers();
   }
@@ -1058,12 +1065,7 @@ describe("a transfer the ledger does not know", () => {
     expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).halted).toBe(true);
 
     // The admin looks, and switches pay-per-use back on, two minutes after the transfer.
-    vi.useFakeTimers({ now: ago(1), toFake: ["Date"] });
-    try {
-      await setInferenceHalt({ halted: false, reason: null, by: "admin-1" });
-    } finally {
-      vi.useRealTimers();
-    }
+    await adminClears(ago(1), null);
     const again = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
     // Still seen and still counted, but it does not take the platform down a second time.
     expect(again).toMatchObject({ unknownTransfers: 1, halted: false });
@@ -1808,6 +1810,385 @@ describe("a transfer the node reports with no block time", () => {
   });
 });
 
+describe("a transaction the node returns without its metadata", () => {
+  /** What the RPC may return for a transaction whose status it has dropped: all of it but `meta`. */
+  const withoutMeta = (tx: unknown) => ({ ...(tx as Record<string, unknown>), meta: null });
+
+  it("is unread, not empty: a payment that landed is not called not charged", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(OLD), quotedUsd: 0.04 });
+    chain.expire(row.blockhash);
+    // The history lists the payment under the row's memo, with no error on it. The node
+    // returns the transaction itself with `meta: null`. Both reads are alike.
+    const whole = paymentTx({ payer: row.payer, units: 40_000, memo: row.memo });
+    const signature = chain.land(row.account, { memo: row.memo, at: ago(OLD - 1), tx: withoutMeta(whole) });
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+      expect(counts).toMatchObject({ examined: 1, charged: 0, notCharged: 0, waiting: 1, halted: false });
+    }
+    expect(await rowOf(row.id)).toMatchObject({ status: "unconfirmed", resolvedAt: null, txHash: null });
+    // The amount is still held against the caps: nothing was given back.
+    expect(await heldUsd("agent", "agent-1")).toBe(0.04);
+    expect(await heldUsd("platform", "all")).toBe(0.04);
+    // Seen and unread is not absent, so absence was never weighed.
+    expect(chain.count("blockhashValid")).toBe(0);
+
+    // Returned whole, it is the payment, and the row is settled on that.
+    chain.transactions.set(signature, whole);
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ charged: 1, notCharged: 0 });
+    expect(await rowOf(row.id)).toMatchObject({ status: "paid_no_answer", txHash: signature });
+  });
+
+  it("leaves the window incomplete when the history reports no memo for it either", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(OLD) });
+    chain.expire(row.blockhash);
+    // A node that does not index memos, and returns the transaction without its metadata:
+    // its instructions still show the memo, and nothing shows what it moved.
+    chain.land(row.account, { memo: row.memo, reportedMemo: null, at: ago(OLD - 1), tx: withoutMeta(paymentTx({ payer: row.payer, units: 10_000, memo: row.memo })) });
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ charged: 0, notCharged: 0, waiting: 1 });
+    expect((await rowOf(row.id)).status).toBe("unconfirmed");
+    expect(await heldUsd("agent", "agent-1")).toBe(0.01);
+  });
+
+  it("is unread too when its metadata is there and the balances it is read from are not", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(OLD), quotedUsd: 0.04 });
+    chain.expire(row.blockhash);
+    const whole = paymentTx({ payer: row.payer, units: 40_000, memo: row.memo }) as { meta: Record<string, unknown> };
+    // Succeeded, logs and all, and neither list of token balances.
+    const stripped = { ...whole, meta: { err: null, logMessages: whole.meta.logMessages } };
+    chain.land(row.account, { memo: row.memo, at: ago(OLD - 1), tx: stripped });
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ charged: 0, notCharged: 0, waiting: 1 });
+    expect((await rowOf(row.id)).status).toBe("unconfirmed");
+    expect(await heldUsd("agent", "agent-1")).toBe(0.04);
+  });
+
+  it("is unchecked to the watch for transfers the ledger does not know: it may be one", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(OLD) });
+    chain.expire(row.blockhash);
+    // Under a memo no row holds. Read whole it would be USDC going to the gateway.
+    chain.land(row.account, { memo: "f".repeat(32), at: ago(5), tx: withoutMeta(paymentTx({ payer: row.payer, units: 70_000, memo: "f".repeat(32) })) });
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+    expect(counts).toMatchObject({ unchecked: 1, notCharged: 0, waiting: 1, halted: false });
+    expect((await rowOf(row.id)).status).toBe("unconfirmed");
+  });
+
+  it("does not prove an answered row unpaid either", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ status: "settled", signedAt: ago(OLD), quotedUsd: 0.02 });
+    chain.expire(row.blockhash);
+    chain.land(row.account, { memo: row.memo, at: ago(OLD - 1), tx: withoutMeta(paymentTx({ payer: row.payer, units: 20_000, memo: row.memo })) });
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ confirmed: 0, notCharged: 0, waiting: 1 });
+    expect(await rowOf(row.id)).toMatchObject({ status: "settled", txHash: null });
+    expect(await heldUsd("agent", "agent-1")).toBe(0.02);
+  });
+
+  it("is told from a transaction that was read by its metadata alone", () => {
+    const whole = paymentTx({ payer: newAddress(), units: 1, memo: null });
+    expect(transactionWasRead(whole)).toBe(true);
+    // A failed transaction was read: it has metadata, and the metadata says it failed.
+    expect(transactionWasRead(paymentTx({ payer: newAddress(), units: 1, memo: null, err: { InstructionError: [0, "Custom"] } }))).toBe(true);
+    expect(transactionWasRead(withoutMeta(whole))).toBe(false);
+    expect(transactionWasRead({ transaction: {} })).toBe(false);
+    expect(transactionWasRead({ meta: "not an object" })).toBe(false);
+    // Metadata that leaves out the balances a movement is read from says no more than none.
+    expect(transactionWasRead({ meta: { err: null } })).toBe(false);
+    expect(transactionWasRead({ meta: { err: null, preTokenBalances: [] } })).toBe(false);
+    expect(transactionWasRead({ meta: { err: null, preTokenBalances: [], postTokenBalances: [] } })).toBe(true);
+    // Unless it says the transaction failed: that is an answer, and nothing moved.
+    expect(transactionWasRead({ meta: { err: { InstructionError: [0, "Custom"] } } })).toBe(true);
+    expect(transactionWasRead(null)).toBe(false);
+    expect(transactionWasRead(undefined)).toBe(false);
+    expect(transactionWasRead("a string")).toBe(false);
+  });
+});
+
+describe("the pass's allowance of transaction reads, shared between wallets", () => {
+  /** What a stranger can send a wallet's token account for the price of a fee: dust that reports no memo. Each has to be read to learn that. */
+  function dustWithNoMemo(chain: ReturnType<typeof fakeChain>, row: Fixture, howMany: number): void {
+    for (let n = 0; n < howMany; n += 1) chain.land(row.account, { reportedMemo: null, at: ago(2), tx: paymentTx({ payer: newAddress(), payTo: row.payer, units: 1, memo: null }) });
+  }
+  /** A stranger's dust carrying a memo of their choosing. */
+  const copyOf = (to: string, memo: string) => paymentTx({ payer: newAddress(), payTo: to, units: 1, memo });
+
+  it("is not used up by one wallet's memo-less transactions before another wallet's own payments are read", async () => {
+    const chain = fakeChain();
+    // Wallet B: one payment landed with its answer lost, one answered with no receipt.
+    // Both are on chain, each listed with its memo.
+    const lost = await openRow({ signedAt: ago(5), agentId: "agent-b" });
+    const answered = await openRow({ payer: lost.payer, status: "settled", signedAt: ago(6), agentId: "agent-b", quotedUsd: 0.02 });
+    const lostPayment = chain.land(lost.account, { memo: lost.memo, at: ago(5), tx: paymentTx({ payer: lost.payer, units: 10_000, memo: lost.memo }) });
+    const answeredPayment = chain.land(lost.account, { memo: answered.memo, at: ago(6), tx: paymentTx({ payer: lost.payer, units: 20_000, memo: answered.memo }) });
+    // Wallet A's row is the newest, so A is read first. A stranger has sent it more dust
+    // than the whole pass may read.
+    const dusted = await openRow({ signedAt: ago(3), agentId: "agent-a" });
+    dustWithNoMemo(chain, dusted, RECONCILE_LIMITS.txFetches + 5);
+
+    // With the limits a real pass runs under.
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+
+    expect(counts).toMatchObject({ examined: 3, charged: 1, confirmed: 1, halted: false });
+    expect(await rowOf(lost.id)).toMatchObject({ status: "paid_no_answer", txHash: lostPayment });
+    expect(await rowOf(answered.id)).toMatchObject({ status: "settled", txHash: answeredPayment });
+    // A's dust did use up the shared allowance, and A's own row waits, as it must.
+    const fetched = chain.calls.filter((call) => call.method === "transaction").map((call) => call.args[0]);
+    expect(fetched).toHaveLength(RECONCILE_LIMITS.txFetches + 2);
+    expect((await rowOf(dusted.id)).status).toBe("unconfirmed");
+  });
+
+  it("gets a row past a copy of its memo that came first, even with the shared allowance spent", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(3) });
+    // Someone who saw the payment before it landed put its memo on a transaction of
+    // their own, which the chain placed first.
+    chain.land(row.account, { memo: row.memo, at: ago(3), tx: copyOf(row.payer, row.memo) });
+    const real = chain.land(row.account, { memo: row.memo, at: ago(2), tx: paymentTx({ payer: row.payer, units: 10_000, memo: row.memo }) });
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { txFetches: 0 } });
+    expect(counts).toMatchObject({ charged: 1, decoys: 1, waiting: 0, halted: false });
+    expect(await rowOf(row.id)).toMatchObject({ status: "paid_no_answer", txHash: real });
+  });
+
+  it("gives each row only so many reads of its own: past them it waits on the shared allowance like anything else", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(3) });
+    for (let n = 0; n < RECONCILE_LIMITS.ownFetches + 2; n += 1) chain.land(row.account, { memo: row.memo, at: ago(3), tx: copyOf(row.payer, row.memo) });
+    const real = chain.land(row.account, { memo: row.memo, at: ago(2), tx: paymentTx({ payer: row.payer, units: 10_000, memo: row.memo }) });
+
+    const starved = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { txFetches: 0 } });
+    expect(starved).toMatchObject({ charged: 0, waiting: 1, halted: false });
+    expect(chain.count("transaction")).toBe(RECONCILE_LIMITS.ownFetches);
+    expect((await rowOf(row.id)).status).toBe("unconfirmed");
+
+    // With the shared allowance to draw on, it reads through them and finds the payment.
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ charged: 1, decoys: RECONCILE_LIMITS.ownFetches + 2 });
+    expect(await rowOf(row.id)).toMatchObject({ status: "paid_no_answer", txHash: real });
+  });
+
+  it("spends none of a row's own reads on transactions that do not carry its memo", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(OLD) });
+    chain.expire(row.blockhash);
+    dustWithNoMemo(chain, row, 4);
+    // No allowance at all: the dust cannot be read, so the window is incomplete and nothing is decided.
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { txFetches: 0 } });
+    expect(counts).toMatchObject({ notCharged: 0, waiting: 1 });
+    expect(chain.count("transaction")).toBe(0);
+  });
+});
+
+describe("a payment the ledger already holds, listed by the node with no block time", () => {
+  /** A payment as it sits in a wallet's history when the node has no time for it: it is then in every window, however old. */
+  function timelessPayment(chain: ReturnType<typeof fakeChain>, account: string, payer: string, memo: string, signature = newSignature()): string {
+    return chain.land(account, { signature, memo, blockTime: null, tx: paymentTx({ payer, units: 10_000, memo, feePayer: newAddress() }) });
+  }
+
+  it("is not taken for a transfer with no ledger row, however old its row is", async () => {
+    const chain = fakeChain();
+    const payer = newAddress();
+    // Three hours ago: paid, answered and settled with its transaction id.
+    const oldSignature = newSignature();
+    const old = await openRow({ payer, signedAt: ago(180), status: "settled", txHash: oldSignature });
+    // Three minutes ago: an open row, which is what brings this wallet into the pass.
+    const open = await openRow({ payer, signedAt: ago(3) });
+    timelessPayment(chain, open.account, payer, old.memo, oldSignature);
+    const paid = chain.land(open.account, { memo: open.memo, at: ago(3), tx: paymentTx({ payer, units: 10_000, memo: open.memo }) });
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+      expect(counts).toMatchObject({ unknownTransfers: 0, strayTransfers: 0, mismatches: 0, halted: false });
+    }
+    expect(await db.select().from(inferenceControl)).toHaveLength(0);
+    expect(await rowOf(open.id)).toMatchObject({ status: "paid_no_answer", txHash: paid });
+    // The settled row is untouched.
+    expect(await rowOf(old.id)).toMatchObject({ status: "settled", txHash: oldSignature });
+  });
+
+  it("does not make the window unfit to show absence: it is a payment the ledger counts, like any other", async () => {
+    const chain = fakeChain();
+    const payer = newAddress();
+    const old = await openRow({ payer, signedAt: ago(180), status: "settled", txHash: newSignature() });
+    const row = await openRow({ payer, signedAt: ago(OLD), quotedUsd: 0.04 });
+    chain.expire(row.blockhash);
+    timelessPayment(chain, row.account, payer, old.memo);
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+    expect(counts).toMatchObject({ notCharged: 1, unknownTransfers: 0, halted: false });
+    expect((await rowOf(row.id)).status).toBe("not_charged");
+  });
+
+  it("still halts, naming the row, when the old row is one the ledger gave back", async () => {
+    const chain = fakeChain();
+    const payer = newAddress();
+    const returned = await openRow({ payer, signedAt: ago(180) });
+    await db.update(inferencePayments).set({ status: "not_charged" }).where(eq(inferencePayments.id, returned.id));
+    const open = await openRow({ payer, signedAt: ago(3), blockhash: null });
+    const signature = timelessPayment(chain, open.account, payer, returned.memo);
+
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+    expect(counts).toMatchObject({ unknownTransfers: 1, halted: true });
+    const reason = (await readInferenceControl()).haltReason ?? "";
+    // Not "no ledger row": the ledger has the row, and holds it as never charged.
+    expect(reason).toContain(`ledger row ${returned.id}`);
+    expect(reason).toContain("not_charged");
+    expect(reason).toContain(signature);
+  });
+
+  it("still halts over a memo that wallet never had a row for, whoever else has one", async () => {
+    const chain = fakeChain();
+    // Another wallet's settled payment: its memo is public, and is no account of THIS wallet's transfer.
+    const someoneElses = await openRow({ signedAt: ago(180), status: "settled", txHash: newSignature(), agentId: "agent-2", ownerId: "owner-2" });
+    const open = await openRow({ signedAt: ago(3), blockhash: null });
+    const signature = timelessPayment(chain, open.account, open.payer, someoneElses.memo);
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+    expect(counts).toMatchObject({ unknownTransfers: 1, halted: true });
+    const reason = (await readInferenceControl()).haltReason ?? "";
+    expect(reason).toContain("no ledger row");
+    expect(reason).toContain(signature);
+  });
+});
+
+describe("a clear that lands while a pass is running", () => {
+  it("is not undone by that pass: the transaction it acknowledged is not halted over again", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(4), blockhash: null });
+    const transfer = chain.land(row.account, { memo: "f".repeat(32), at: ago(3), tx: paymentTx({ payer: row.payer, units: 70_000, memo: "f".repeat(32), feePayer: newAddress() }) });
+    expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).halted).toBe(true);
+    const shown = haltReasonAsShown((await readInferenceControl()).haltReason);
+    expect(shown).toContain(transfer);
+
+    // The next pass reads the control row (halt on, nothing acknowledged) and sets off
+    // for the wallet. While it is on its way, the admin clears the halt they have read.
+    const read = chain.reader.signaturesFor;
+    let clears = 0;
+    chain.reader.signaturesFor = async (address, options) => {
+      if (clears === 0) {
+        clears += 1;
+        await setInferenceHalt({ halted: false, reason: "looked at it", by: "admin-1", seenReason: shown });
+      }
+      return read(address, options);
+    };
+    const during = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+
+    // Still seen, still counted, and the clear stands.
+    expect(clears).toBe(1);
+    expect(during).toMatchObject({ unknownTransfers: 1, halted: false });
+    const control = await readInferenceControl();
+    expect(control).toMatchObject({ halted: false, updatedBy: "admin-1", haltAcknowledged: [transfer] });
+    // And on the passes after it.
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ unknownTransfers: 1, halted: false });
+    expect((await readInferenceControl()).halted).toBe(false);
+  });
+
+  it("does not shield a transfer the cleared reason never named", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(4), blockhash: null });
+    const unexplained = (memo: string, at: Date) => chain.land(row.account, { memo, at, tx: paymentTx({ payer: row.payer, units: 70_000, memo, feePayer: newAddress() }) });
+    const first = unexplained("f".repeat(32), ago(3));
+    expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).halted).toBe(true);
+    const shown = haltReasonAsShown((await readInferenceControl()).haltReason);
+
+    const read = chain.reader.signaturesFor;
+    let second = "";
+    chain.reader.signaturesFor = async (address, options) => {
+      if (second === "") {
+        // Cleared mid-pass, and a new transfer lands in the same moment.
+        await setInferenceHalt({ halted: false, reason: null, by: "admin-1", seenReason: shown });
+        second = unexplained("c".repeat(32), new Date(NOW.getTime() - 30_000));
+      }
+      return read(address, options);
+    };
+    const during = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+    expect(during).toMatchObject({ unknownTransfers: 2, halted: true });
+    const control = await readInferenceControl();
+    expect(control.haltReason).toContain(second);
+    expect(control.haltReason).not.toContain(first);
+    expect(control.haltAcknowledged).toEqual([first]);
+  });
+});
+
+describe("a payment that is not the one its row describes", () => {
+  /** A pass during which the one write to the control row fails, as a database that cannot be reached for a moment does. */
+  async function passWithTheHaltFailing(chain: ReturnType<typeof fakeChain>): Promise<unknown> {
+    const failing = vi.spyOn(db, "insert").mockImplementationOnce(() => {
+      throw new Error("Failed query: insert into inference_control (halt_reason) values ($1) params: secret-parameter");
+    });
+    try {
+      return await reconcileInferencePayments({ now: NOW, reader: chain.reader }).then(
+        () => null,
+        (err: unknown) => err,
+      );
+    } finally {
+      failing.mockRestore();
+    }
+  }
+
+  it("is not made final before its halt is on record: a halt that cannot be written leaves the row for the next pass", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(3), quotedUsd: 0.01 });
+    const wrong = chain.land(row.account, { memo: row.memo, at: ago(3), tx: paymentTx({ payer: row.payer, units: 250_000, memo: row.memo }) });
+
+    expect(await passWithTheHaltFailing(chain)).toBeInstanceOf(Error);
+
+    // No halt was thrown, and the row is exactly as it was: open, counted, its memo still to be looked for.
+    expect(await db.select().from(inferenceControl)).toHaveLength(0);
+    expect(await rowOf(row.id)).toMatchObject({ status: "unconfirmed", txHash: null, resolvedAt: null });
+    expect(await heldUsd("agent", "agent-1")).toBe(0.01);
+
+    // So the next pass finds the same transaction, halts over it, and only then closes the row.
+    const next = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+    expect(next).toMatchObject({ charged: 1, mismatches: 1, halted: true });
+    expect((await readInferenceControl()).haltReason).toContain(wrong);
+    expect(await rowOf(row.id)).toMatchObject({ status: "paid_no_answer", txHash: wrong });
+    // Once closed it is not raised a second time.
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ mismatches: 0, halted: false });
+  });
+
+  it("the same for an answered row: its transaction id is not written until the halt is", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ status: "settled", signedAt: ago(3), quotedUsd: 0.01 });
+    const wrong = chain.land(row.account, { memo: row.memo, at: ago(3), tx: paymentTx({ payer: row.payer, units: 250_000, memo: row.memo }) });
+
+    expect(await passWithTheHaltFailing(chain)).toBeInstanceOf(Error);
+    expect(await rowOf(row.id)).toMatchObject({ status: "settled", txHash: null });
+    expect((await readInferenceControl()).halted).toBe(false);
+
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ confirmed: 1, mismatches: 1, halted: true });
+    expect(await rowOf(row.id)).toMatchObject({ status: "settled", txHash: wrong });
+  });
+
+  it("waits, open, while a halt is on whose reason has no room for it, and is raised once that halt is cleared", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(3), quotedUsd: 0.01 });
+    const wrong = chain.land(row.account, { memo: row.memo, at: ago(3), tx: paymentTx({ payer: row.payer, units: 250_000, memo: row.memo }) });
+    await haltInferenceOnce("first evidence", "ledger");
+    for (let n = 0; n < 40; n += 1) await haltInferenceOnce(`finding ${n} ${"-".repeat(300)}`, "ledger");
+
+    // Found, and it cannot be put where the admin will read it. Closing the row now
+    // would mean no pass ever looks at this transaction again.
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ mismatches: 1, charged: 0, waiting: 1, halted: false });
+    expect((await readInferenceControl()).haltReason).not.toContain(wrong);
+    expect(await rowOf(row.id)).toMatchObject({ status: "unconfirmed", txHash: null });
+
+    // The admin clears what they were shown. This finding was not in it, so it halts.
+    await adminClears(ago(1));
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ mismatches: 1, charged: 1, halted: true });
+    expect((await readInferenceControl()).haltReason).toContain(wrong);
+    expect(await rowOf(row.id)).toMatchObject({ status: "paid_no_answer", txHash: wrong });
+  });
+
+  it("is closed in the same pass when a halt is already on and has room: the finding is in its reason", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(3), quotedUsd: 0.01 });
+    await setInferenceHalt({ halted: true, reason: "an admin is checking one wallet", by: "admin-1" });
+    const wrong = chain.land(row.account, { memo: row.memo, at: ago(3), tx: paymentTx({ payer: row.payer, units: 250_000, memo: row.memo }) });
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ mismatches: 1, charged: 1, halted: false });
+    expect((await readInferenceControl()).haltReason).toContain(wrong);
+    expect(await rowOf(row.id)).toMatchObject({ status: "paid_no_answer", txHash: wrong });
+  });
+});
+
 describe("rows the pay path leaves with no money behind them", () => {
   /** A step that keeps its place, so an amount returned twice would show as a counter below it. */
   const KEPT_USD = 0.05;
@@ -2242,6 +2623,32 @@ describe("readGatewayPayments", () => {
     const unread = chain.land(account, { memo: "gone", at: ago(2) });
     expect(chain.transactions.has(unread)).toBe(false);
     expect((await readGatewayPayments(chain.reader, payer, ago(60))).complete).toBe(false);
+  });
+
+  it("does not take a transaction returned without its metadata for one that paid nothing", async () => {
+    const chain = fakeChain();
+    const payer = newAddress();
+    const account = payerTokenAccount(payer, MINT)!;
+    const whole = paymentTx({ payer, units: 10_000, memo: "a".repeat(32) });
+    const signature = chain.land(account, { memo: "a".repeat(32), at: ago(10), tx: { ...(whole as Record<string, unknown>), meta: null } });
+    const read = await readGatewayPayments(chain.reader, payer, ago(60));
+    // Not listed as a payment, and the read says it is not the whole picture.
+    expect(read).toMatchObject({ payments: [], complete: false, transactionsRead: 1 });
+    chain.transactions.set(signature, whole);
+    expect(await readGatewayPayments(chain.reader, payer, ago(60))).toMatchObject({ complete: true, payments: [expect.objectContaining({ signature, paid: BigInt(10_000) })] });
+  });
+
+  it("places a transfer the history lists with no time by the transaction's own time", async () => {
+    const chain = fakeChain();
+    const payer = newAddress();
+    const account = payerTokenAccount(payer, MINT)!;
+    const landedAt = seconds(ago(200));
+    chain.land(account, { memo: "a".repeat(32), blockTime: null, tx: paymentTx({ payer, units: 10_000, memo: "a".repeat(32), blockTime: landedAt }) });
+    chain.land(account, { memo: "b".repeat(32), blockTime: null, tx: paymentTx({ payer, units: 20_000, memo: "b".repeat(32) }) });
+    const read = await readGatewayPayments(chain.reader, payer, ago(60));
+    // Both are in the read (neither could be placed outside the window by the history
+    // alone). The first carries its own time, so whoever compares can see it is old.
+    expect(read.payments.map((payment) => payment.blockTime).sort()).toEqual([landedAt, null].sort());
   });
 
   it("throws on an address that is not one, and passes an RPC failure on", async () => {

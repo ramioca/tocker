@@ -66,14 +66,26 @@
  * A halt names the transaction it was thrown over, and findings made while it is on are
  * added to its reason. Clearing the halt acknowledges the transactions that reason named,
  * by id, and nothing else: those do not halt again, and anything that was never named
- * does, whenever it landed.
+ * does, whenever it landed. Whether a transaction has been acknowledged is asked of the
+ * stored row by the statement that throws the halt, so a clear that lands while a pass is
+ * running is not undone by that pass. And a finding is put where an admin will read it
+ * before the row it is about is made final: a row is closed over a wrong payment only
+ * once the halt for it is on record.
+ *
+ * A transaction the node returns without its metadata (`meta: null`), or without the
+ * token balances what it did is read from, has not been read. It is never taken for one
+ * that moved nothing: it leaves its row waiting and its window incomplete, exactly as a
+ * transaction the node did not return does.
  *
  * A row no verdict could be reached on within `GIVE_UP_AFTER_MS` is closed: it stays
  * counted as charged, says so, and is looked at again now and then for `LATE_LOOK_MS`
  * in case the chain can be read after all. A cap is never given back on a guess.
  *
  * Bounded work per pass (rows, wallets, RPC calls, transactions fetched, wall-clock time)
- * and no chain access at all in mock mode or without `SOLANA_RPC_URL`.
+ * and no chain access at all in mock mode or without `SOLANA_RPC_URL`. The allowance of
+ * transactions is shared by every wallet in the pass, except that each row in hand has a
+ * few reads of its own for transactions carrying its memo: what one wallet's history
+ * costs must not decide whether another wallet's payment is read.
  */
 import { PublicKey } from "@solana/web3.js";
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
@@ -83,7 +95,7 @@ import { associatedTokenAddress } from "@/lib/wallets/solana-transfer";
 import {
   closeUncheckedPayments,
   confirmSettled,
-  haltInferenceOnce,
+  raiseInferenceHalt,
   readInferenceControl,
   releaseStaleReserved,
   resolveInferencePayment,
@@ -141,9 +153,19 @@ export const RECONCILE_LIMITS = {
   /** History pages per read, and entries per page. */
   pages: 3,
   pageSize: 200,
-  /** RPC calls of every kind, and of those, whole transactions fetched. */
+  /** RPC calls of every kind, and of those, whole transactions fetched for anything but a row's own memo. */
   rpcCalls: 150,
   txFetches: 40,
+  /**
+   * Transactions carrying a row's OWN memo that are fetched outside `txFetches`, per row.
+   * `txFetches` is one allowance for the whole pass, and anyone can use it up by sending
+   * dust that reports no memo to one wallet. The transaction that settles a row must not
+   * wait behind that, in that wallet or in any other, so each row in hand has these
+   * reads to itself. The first is the payment unless someone copied the memo onto an
+   * earlier transaction; the rest are for getting past such copies. Bounded by the rows
+   * in hand, and each is still an RPC call counted in `rpcCalls`.
+   */
+  ownFetches: 3,
   /** After this many failed calls the RPC is treated as down and the pass stops asking. */
   rpcErrors: 3,
   /** No new RPC call starts after this much wall-clock time. */
@@ -349,6 +371,28 @@ export function transactionFeePayer(tx: unknown): string | null {
 }
 
 /**
+ * Whether what a node returned for a transaction can be read for what it did.
+ *
+ * What a transaction did to a wallet is read from the token balances the node recorded
+ * before and after it (`usdcMovement`). The RPC may return a transaction without them:
+ * with `meta: null` (a node that keeps the transaction and has dropped its status), or
+ * with metadata that leaves the two balance lists out. Such a transaction says nothing
+ * about balances. It is not a transaction that moved nothing, it is one this node could
+ * not tell us about, and it is treated exactly like one the node did not return.
+ *
+ * A transaction the metadata says FAILED was read whatever else is missing: it moved
+ * nothing. Every transaction in a token account's history touches a token account, so a
+ * node that records balances at all has both lists for it (they may be empty).
+ */
+export function transactionWasRead(tx: unknown): boolean {
+  if (tx === null || typeof tx !== "object") return false;
+  const meta = (tx as { meta?: unknown }).meta as { err?: unknown; preTokenBalances?: unknown; postTokenBalances?: unknown } | null | undefined;
+  if (meta === null || typeof meta !== "object") return false;
+  if (meta.err) return true;
+  return Array.isArray(meta.preTokenBalances) && Array.isArray(meta.postTokenBalances);
+}
+
+/**
  * Whether a transfer has the shape of a payment this server's client builds: it carries
  * a memo, and the wallet did not pay its own fee (the gateway does). The client verifies
  * both on the signed bytes before it sends anything, so a transfer that lacks either was
@@ -497,6 +541,8 @@ class Pass {
   /** Wallets already held this pass. */
   private readonly held = new Set<string>();
   private txFetches = 0;
+  /** Fetches made for a row's own memo outside the shared allowance, by memo. */
+  private readonly ownReads = new Map<string, number>();
   private readonly deadlineAt: number;
 
   constructor(
@@ -531,14 +577,29 @@ class Pass {
     return this.counts.rpcErrors >= this.limits.rpcErrors;
   }
 
-  /** A transaction, fetched at most once per pass. Undefined when the pass may not fetch another; null when the node has none. */
-  async transaction(signature: string): Promise<unknown | null | undefined> {
+  /**
+   * A transaction, fetched at most once per pass. Undefined when the pass may not fetch
+   * another; null when the node has none, or returned it without what it did (no `meta`,
+   * or none of the balances it is read from): either way it was not read, and every
+   * caller treats null as unread, never as empty.
+   *
+   * `ownMemo` is given when the transaction carries the memo of a row in hand. Each row
+   * has `limits.ownFetches` such reads outside the shared allowance; past them, and for
+   * every other transaction, the shared allowance (`limits.txFetches`) is what is left.
+   */
+  async transaction(signature: string, ownMemo?: string): Promise<unknown | null | undefined> {
     if (this.transactions.has(signature)) return this.transactions.get(signature);
-    if (this.txFetches >= this.limits.txFetches) return undefined;
-    this.txFetches += 1;
+    const ownUsed = ownMemo === undefined ? null : (this.ownReads.get(ownMemo) ?? 0);
+    if (ownMemo !== undefined && ownUsed !== null && ownUsed < this.limits.ownFetches) {
+      this.ownReads.set(ownMemo, ownUsed + 1);
+    } else {
+      if (this.txFetches >= this.limits.txFetches) return undefined;
+      this.txFetches += 1;
+    }
     const tx = await this.ask(() => this.reader.transaction(signature));
-    this.transactions.set(signature, tx ?? null);
-    return tx ?? null;
+    const read = transactionWasRead(tx) ? tx : null;
+    this.transactions.set(signature, read);
+    return read;
   }
 
   /**
@@ -552,9 +613,11 @@ class Pass {
    * the chain's, and a 128-bit memo is the payment's whichever clock is right.
    *
    * `first` are the memos of the rows in hand. The oldest transaction carrying each is
-   * read before any other: a pass may fetch only so many transactions, anyone can fill
-   * an account's history with transfers that report no memo, and those must not use up
-   * the allowance before the one transaction that can settle a row has been read.
+   * read before any other, and outside the allowance the pass shares between wallets: a
+   * pass may fetch only so many transactions, anyone can fill an account's history with
+   * transfers that report no memo, and those must not use up the allowance (in this
+   * wallet, or in one read earlier in the pass) before the one transaction that can settle
+   * a row has been read.
    */
   async history(
     address: string,
@@ -595,7 +658,7 @@ class Pass {
       for (let index = seen.length - 1; index >= 0; index -= 1) {
         const entry = seen[index];
         if (entry.failed || entry.memoText === null || !entry.memoText.includes(memo)) continue;
-        await this.transaction(entry.signature);
+        await this.transaction(entry.signature, memo);
         break;
       }
     }
@@ -652,10 +715,21 @@ class Pass {
    * front of anyone, and clearing a halt over something else must not wave it through.
    * It also means a transaction the node reports with no time on it needs no special
    * case. While a halt is already on, the ledger adds the finding to its reason instead.
+   *
+   * The ids read when the pass began save the statement for a transaction acknowledged
+   * long ago. They are not what decides: a clear can land while the pass is running, so
+   * the ledger asks again, of the stored row, in the statement that throws the halt.
+   *
+   * Returns whether the finding is on record where an admin will read it (or already
+   * has): false only when a halt was on and its reason had no room for this, or could not
+   * be written. A caller about to make the evidence unfindable waits on false. Rejects
+   * when the halt itself could not be written.
    */
-  async halt(reason: string, evidence: Evidence): Promise<void> {
-    if (this.acknowledgedIds.has(evidence.signature)) return;
-    if (await haltInferenceOnce(reason, "reconciler")) this.counts.halted = true;
+  async halt(reason: string, evidence: Evidence): Promise<boolean> {
+    if (this.acknowledgedIds.has(evidence.signature)) return true;
+    const outcome = await raiseInferenceHalt(reason, "reconciler", evidence.signature);
+    if (outcome === "thrown") this.counts.halted = true;
+    return outcome !== "unrecorded";
   }
 
   /**
@@ -740,6 +814,41 @@ async function knownMemos(payerAddress: string, since: Date): Promise<KnownRow[]
   return rows.flatMap((row) => (row.memo ? [{ id: row.id, memo: row.memo, status: row.status }] : []));
 }
 
+/**
+ * A row of this wallet whose memo `memoText` carries, however old the row is.
+ *
+ * `knownMemos` reads the rows young enough to be in the window. A node can list a payment
+ * with no time on it, which keeps it in every window whatever its age, and a payment the
+ * ledger settled hours ago must not then pass for one it has never heard of. Asked only
+ * for a transfer that reached the gateway and matched no row in the window, which is
+ * rare, so the whole of the wallet's history in the ledger is searched.
+ *
+ * A memo too short to be the payment client's is not searched for: it could match by
+ * accident. When the text carries the memos of several rows, one the ledger does NOT
+ * count as charged is returned ahead of one it does: that the wallet paid under it is
+ * the finding.
+ */
+async function rowForMemo(payerAddress: string, memoText: string): Promise<KnownRow | undefined> {
+  const text = memoText.trim().slice(0, 4000);
+  if (text.length < MIN_MEMO_LENGTH) return undefined;
+  const db = await getDb();
+  const rows = await db
+    .select({ id: inferencePayments.id, memo: inferencePayments.memo, status: inferencePayments.status })
+    .from(inferencePayments)
+    .where(
+      and(
+        eq(inferencePayments.payerAddress, payerAddress),
+        isNotNull(inferencePayments.memo),
+        sql`length(${inferencePayments.memo}) >= ${MIN_MEMO_LENGTH}`,
+        sql`strpos(${text}::text, ${inferencePayments.memo}) > 0`,
+      ),
+    )
+    .orderBy(desc(inferencePayments.createdAt))
+    .limit(10);
+  const known = rows.flatMap((row) => (row.memo ? [{ id: row.id, memo: row.memo, status: row.status }] : []));
+  return known.find((row) => !(ACCOUNTED as readonly string[]).includes(row.status)) ?? known[0];
+}
+
 /** A payment of this wallet's that the ledger holds a transaction id for: it is on chain, so a read of the window must show it. */
 interface ProvenPayment {
   txHash: string;
@@ -802,7 +911,7 @@ async function watchForUnknownTransfers(pass: Pass, payerAddress: string, seen: 
   let clean = true;
   for (const entry of seen) {
     if (entry.failed) continue;
-    const row = entry.memoText === null ? undefined : known.find((candidate) => entry.memoText!.includes(candidate.memo));
+    let row = entry.memoText === null ? undefined : known.find((candidate) => entry.memoText!.includes(candidate.memo));
     // The usual case: a payment the ledger already counts as charged. (A decoy carrying
     // that memo is passed over here too, which is right: it is not a payment at all.)
     if (row && (ACCOUNTED as readonly string[]).includes(row.status)) continue;
@@ -818,6 +927,16 @@ async function watchForUnknownTransfers(pass: Pass, payerAddress: string, seen: 
       return !moved.failed && moved.paid > BigInt(0) && moved.received > BigInt(0);
     });
     if (!paysGateway) continue;
+
+    // It reached the gateway and no row in the window explains it. The window is cut by
+    // time, and this entry may have none on it (the node lists it with no block time, so
+    // it is in every window however old it is). Before it is called a transfer with no
+    // ledger row, the ledger is asked for its memo with no limit on the row's age: a
+    // payment settled hours ago is not an unknown one, and must not halt everyone.
+    if (!row) {
+      row = await rowForMemo(payerAddress, [entry.memoText ?? "", ...transactionMemos(tx)].join(" "));
+      if (row && (ACCOUNTED as readonly string[]).includes(row.status)) continue;
+    }
 
     clean = false;
     const evidence: Evidence = { signature: entry.signature, blockTime: entry.blockTime ?? transactionBlockTime(tx) };
@@ -863,7 +982,7 @@ async function findPayment(pass: Pass, row: CheckedRow, seen: readonly Seen[]): 
   for (let index = seen.length - 1; index >= 0; index -= 1) {
     const hit = seen[index];
     if (hit.failed || hit.memoText === null || !hit.memoText.includes(row.memo)) continue;
-    const tx = await pass.transaction(hit.signature);
+    const tx = await pass.transaction(hit.signature, row.memo);
     if (tx === undefined || tx === null) {
       unread = true;
       continue;
@@ -882,21 +1001,28 @@ async function findPayment(pass: Pass, row: CheckedRow, seen: readonly Seen[]): 
   return inexact ?? { outcome: "absent" };
 }
 
-/** A row's payment was found on chain. Record it, and raise it if it is not the payment the row describes. */
+/**
+ * A row's payment was found on chain. Raise it if it is not the payment the row
+ * describes, then record it. In that order: recording makes the row final and its memo
+ * accounted for, after which no pass looks at the transaction again. So the finding has
+ * to be where an admin will read it BEFORE the row is closed. When the halt cannot be
+ * written this throws, and when a halt is already on with no room for the finding this
+ * returns false: either way the row stays open, still counted as charged, and the next
+ * pass finds the same transaction and raises it again.
+ */
 async function recordFound(pass: Pass, row: CheckedRow, found: Extract<Found, { outcome: "paid" }>): Promise<boolean> {
   const { hit, moved } = found;
-  const recorded =
-    row.kind === "open"
-      ? await resolveInferencePayment(row.id, { charged: true, txHash: hit.signature, detail: "Found on chain by its memo. No answer was recorded." }, pass.now)
-      : await confirmSettled(row.id, hit.signature);
   if (!found.exact) {
     pass.counts.mismatches += 1;
-    await pass.halt(
+    const onRecord = await pass.halt(
       `Ledger row ${row.id} was quoted ${baseUnitsOf(row.quotedUsd)} base units to ${row.payTo}; transaction ${hit.signature} took ${moved.paid} from the wallet and ${moved.received} reached that address.`,
       { signature: hit.signature, blockTime: hit.blockTime ?? transactionBlockTime(found.tx) },
     );
+    if (!onRecord) return false;
   }
-  return recorded;
+  return row.kind === "open"
+    ? resolveInferencePayment(row.id, { charged: true, txHash: hit.signature, detail: "Found on chain by its memo. No answer was recorded." }, pass.now)
+    : confirmSettled(row.id, hit.signature);
 }
 
 /** Everything for one wallet: the rows in hand, and the watch for transfers the ledger does not know. */
@@ -1195,7 +1321,7 @@ export interface ChainPayment {
 
 export interface GatewayPaymentsRead {
   payments: ChainPayment[];
-  /** False when the node returned no history at all, the history was longer than the bounds, or a transaction in it could not be read. */
+  /** False when the node returned no history at all, the history was longer than the bounds, or a transaction in it could not be read (not returned, or returned without what it did). */
   complete: boolean;
   transactionsRead: number;
 }
@@ -1258,7 +1384,8 @@ export async function readGatewayPayments(
     }
     const tx = await reader.transaction(entry.signature);
     transactionsRead += 1;
-    if (tx === null || tx === undefined) {
+    // One the node returns without what it did is no more read than one it does not return.
+    if (!transactionWasRead(tx)) {
       complete = false;
       continue;
     }
@@ -1268,7 +1395,8 @@ export async function readGatewayPayments(
       if (!moved.failed && moved.paid > BigInt(0) && moved.received > BigInt(0)) paid = moved.paid;
     }
     if (paid === BigInt(0)) continue;
-    payments.push({ signature: entry.signature, paid, memoText: [entry.memo ?? "", ...transactionMemos(tx)].join(" "), blockTime: entry.blockTime });
+    // A history entry with no time on it is placed by the transaction's own, when it has one.
+    payments.push({ signature: entry.signature, paid, memoText: [entry.memo ?? "", ...transactionMemos(tx)].join(" "), blockTime: entry.blockTime ?? transactionBlockTime(tx) });
   }
   return { payments, complete, transactionsRead };
 }

@@ -482,6 +482,7 @@ const FIXABLE_NOW: ReadonlySet<string> = new Set([
   "agent_day_cap",
   "no_wallet",
   "no_policy",
+  "wallet_limit_low",
   "model_unavailable",
 ]);
 

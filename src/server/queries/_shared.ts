@@ -17,7 +17,7 @@ import {
   type Db,
 } from "@/db";
 import type { TradeScoreSnapshot } from "@/db/schema";
-import { thinkingModel } from "@/lib/agent/inference";
+import { PAYMENT_IN_FLIGHT_MS, thinkingModel } from "@/lib/agent/inference";
 import { closedSells, type AnalyticsFill } from "@/lib/analytics";
 import { toNum, toNumOrNull } from "@/lib/money";
 import { flowsBetween, pnlNetOfFlows, type MoneyFlow } from "@/lib/pnl";
@@ -465,6 +465,9 @@ export function withdrawnUsdc(metadata: Record<string, unknown> | null | undefin
  *
  * Until a row is proven its amount is in no Thinking total and stays in the P&L as it
  * fell out of the wallet: a few cents of loss, never a gain.
+ *
+ * Proven is one half of that. The other is WHEN the flow is dated, which decides the side
+ * of each mark it falls on: see {@link thinkingFlowAtSql}.
  */
 export function thinkingProvenSql() {
   return sql<boolean>`(${inferencePayments.status} = 'paid_no_answer' or (${inferencePayments.status} = 'settled' and ${inferencePayments.txHash} is not null))`;
@@ -484,14 +487,66 @@ export function thinkingPaidUsdSql() {
   return sql<string>`coalesce(${inferencePayments.settledUsd}, ${inferencePayments.quotedUsd})`;
 }
 
-/** When a ledger row's payment was made: its signature, or the row's own time before there was one. */
+/**
+ * When a ledger row's payment was signed, or the row's own time before there was a
+ * signature. This is what a list of payments is ordered and dated by (the Money page),
+ * and it is NOT when the money left: see {@link thinkingFlowAtSql} for that.
+ */
 export function thinkingPaidAtSql() {
   return sql<Date>`coalesce(${inferencePayments.signedAt}, ${inferencePayments.createdAt})`;
 }
 
 /**
+ * The moment a proven payment's flow is dated: when the row was resolved, and never later
+ * than `PAYMENT_IN_FLIGHT_MS` after its signature.
+ *
+ * A payment is signed, lands on chain some seconds later, and is resolved when its answer
+ * (with the gateway's receipt) arrives, or when the reconciler reaches a verdict on it.
+ * Every reader of a flow asks which side of a mark it falls on, and the mark's equity is
+ * the wallet as it was read. Dated at the SIGNATURE the flow ran ahead of the money: a
+ * mark read between the two did not hold the fall yet, the flow was already before it,
+ * and the step's price read as a gain nobody made until the next mark. So the flow is
+ * dated at a moment by which the transfer has landed:
+ *
+ *  - `resolved_at`, for a row its own request resolved. The receipt that proves the row
+ *    says the transfer settled, so it is on chain by then;
+ *  - at most two minutes after the signature, for a row the reconciler resolved later
+ *    (minutes or hours later). A signed transfer cannot land after its blockhash has
+ *    lapsed, which takes about a minute, so by then it had landed; dating it at the
+ *    verdict would instead put it after marks that already hold the fall.
+ *
+ * The first moves a flow later than its transfer, never earlier. Later is a mark that
+ * holds the fall with the flow still ahead of it. A reader ending on that mark shows the
+ * step's price as a loss until the next one; a reader STARTING from it (a window's
+ * baseline, the book's first mark) would show it as a gain. Two rules close that, so
+ * neither can be read from a mark the app writes:
+ *
+ *  - `snapshotEquity` writes no mark while one of the agent's paid steps is in flight
+ *    (signed in the last two minutes and not resolved before the wallet was read). No
+ *    mark then stands between a payment's signature and this date, and the two dates
+ *    cannot disagree about any mark.
+ *  - a payment SIGNED at or before the book's first mark is no flow at all
+ *    (`loadThinkingFlows`), whatever this date is: that is the one baseline every
+ *    all-time figure keeps for good, and a payment in flight across it is left in the
+ *    P&L as a few cents of loss.
+ *
+ * What is still taken on trust: that a transfer the gateway's receipt calls settled is
+ * already visible to OUR node when the wallet is next read. A mark read in a gap between
+ * the two would count the step as a gain until the next mark.
+ */
+export function thinkingFlowAtSql() {
+  const signed = thinkingPaidAtSql();
+  // A server constant, never input. Written into the statement, not bound: the expression
+  // is used in more than one place of one query, and each bound use is its own parameter.
+  const inFlight = sql.raw(`interval '${Math.round(PAYMENT_IN_FLIGHT_MS / 1000)} seconds'`);
+  // Never before the signature either, whatever a row's two times say.
+  return sql<Date>`greatest(${signed}, least(coalesce(${inferencePayments.resolvedAt}, ${signed}), ${signed} + ${inFlight}))`;
+}
+
+/**
  * What each live agent paid for its own thinking, as flows: one row per run and per
- * stretch between two marks of the book, dated at the last payment in it.
+ * stretch between two marks of the book, dated at the last payment in it. A payment's
+ * date is {@link thinkingFlowAtSql}: when it was resolved, not when it was signed.
  *
  * Per run and not per step because a run pays for up to twenty-one steps inside a few
  * minutes, so its total nets the same and is a tenth of the rows. But never across a
@@ -505,9 +560,14 @@ export function thinkingPaidAtSql() {
  * only payments between the same two marks are added up. A flow dated exactly at a mark
  * is inside that mark, as `flowsBetween` reads it, hence "strictly".
  *
- * A payment with no mark before it (made at or before the book's first mark, or by an
- * agent never marked) is no flow at all: every reader measures from a mark at or after
- * the first, so that money is already inside it.
+ * A payment SIGNED at or before the book's first mark (or made by an agent never marked)
+ * is no flow at all: every reader measures from a mark at or after the first, so that
+ * money is already inside it. This one test is on the signature and not on the flow's
+ * date, on purpose. A payment signed before that mark and resolved after it was in
+ * flight across it, and which side its transfer landed on is not known. Counted as a
+ * flow, a transfer that had already landed would be netted from a mark that already
+ * lacked it: a gain nobody made, in every all-time figure, for good. Left out, the worst
+ * case is the same few cents read as a loss.
  *
  * Only payments proven to have left the wallet ({@link thinkingProvenSql}).
  *
@@ -534,7 +594,10 @@ export function thinkingPaidAtSql() {
  *    going live: 430 ms looked up per payment, 40 ms this way.
  */
 async function loadThinkingFlows(db: Db, ids: string[]): Promise<Array<{ agentId: string; atMs: number | string | bigint; usd: string }>> {
-  const paidAt = thinkingPaidAtSql();
+  // Two moments of one payment: when its flow is dated, and when it was signed. The first
+  // places it between two marks; the second decides whether it is a flow at all.
+  const paidAt = thinkingFlowAtSql();
+  const signedAt = thinkingPaidAtSql();
   // The live agents among `ids` that have a proven payment, each with the first snapshot
   // of the book it is running now: the same row `loadBookMarks` measures all-time P&L
   // from. Null for an agent never marked.
@@ -591,14 +654,17 @@ async function loadThinkingFlows(db: Db, ids: string[]): Promise<Array<{ agentId
       .where(
         and(
           thinkingProvenSql(),
-          // Strictly after the book's first mark: a payment at that instant is inside the
-          // mark. An agent never marked has no first mark, and nothing is after nothing.
-          sql`${paidAt} > ${payers.firstAt}`,
+          // Signed strictly after the book's first mark: a payment at that instant is
+          // inside the mark, and one signed before it and resolved after it is left out
+          // (see above). An agent never marked has no first mark, and nothing is after
+          // nothing.
+          sql`${signedAt} > ${payers.firstAt}`,
         ),
       ),
   );
-  // No filter on `markBefore`: every payment that reaches here is after the first mark,
-  // so there is always a mark before it (see the note above on why none is added).
+  // No filter on `markBefore`: every payment that reaches here was signed after the first
+  // mark and is dated no earlier than its signature, so there is always a mark before it
+  // (see the note above on why none is added).
   return db
     .with(payers, paid)
     .select({

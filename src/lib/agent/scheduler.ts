@@ -171,14 +171,16 @@ async function liftDueHolds(now: Date): Promise<number> {
  *  - every pay-per-use agent picked beyond those is put off (`RUN_DEFERRED`). It keeps
  *    its place as due and is picked first again next pass, but it has used one of this
  *    pass's `limit` slots, so a backlog of twenty of them, from different owners, leaves
- *    no slot for a key agent until it drains.
+ *    no slot for a key agent until it drains. (The cron's own default `limit` is one
+ *    batch, `CRON_MAX_AGENTS` 5, where nobody is put off: this bites once that is raised.)
  *
  * Nothing is lost or paid twice by this, and it cannot be reached while pay-per-use is
  * open to its owner alone. It is a ceiling to lift before it is open to everyone
- * (DEPLOY.md, stage 4): either take no more than `BATCH_SIZE` pay-per-use agents into a
- * pass, so the other slots go to key agents, or run the pay-per-use batch alongside the
- * first key batch. Neither is done here: the pass is the scheduler every key agent runs
- * on, and reshaping it belongs with the stage that needs it.
+ * (DEPLOY.md, stage 4, where lifting it is step 1, before the switch): either take no
+ * more than `BATCH_SIZE` pay-per-use agents into a pass, so the other slots go to key
+ * agents, or run the pay-per-use batch alongside the first key batch. Neither is done
+ * here: the pass is the scheduler every key agent runs on, and reshaping it belongs with
+ * the stage that needs it. `inference-runbook.test.ts` holds that page to this comment.
  */
 export async function tickDueAgents(
   limit = 20,

@@ -15,11 +15,12 @@ import * as schema from "@/db/schema";
 import type { AgentConfig } from "@/db/schema";
 import { toNumeric } from "@/lib/money";
 import { seedKnownTokens, tokenId, USDC_SOLANA } from "@/lib/trading/tokens";
-import { pauseInference, setInferenceHalt, clearInferencePause } from "@/lib/x402/inference-ledger";
+import { clearInferencePause, haltReasonAsShown, pauseInference, readInferenceControl, setInferenceHalt } from "@/lib/x402/inference-ledger";
 import { usdcAccountOf, SPL_TOKEN_PROGRAM } from "@/lib/x402/inference-pins";
 import {
   AGENT_DAY_REQUESTS,
   DEFAULT_PAY_PER_USE_MODEL,
+  HARD_STEP_CAP_USD,
   INFERENCE_GATEWAY,
   INFERENCE_STOPS,
   OWNER_DAY_MANUAL_RUNS,
@@ -44,6 +45,7 @@ import {
   readSolanaUsdc,
   recheckInferenceHolds,
   releaseInferenceHold,
+  walletStepLimit,
   type PreflightDeps,
   type PreflightResult,
 } from "./inference-gate";
@@ -111,6 +113,15 @@ async function payingAgent(
       .where(eq(schema.agents.id, seeded.agentId));
   }
   return { ...seeded, address };
+}
+
+/**
+ * Clear the admin's halt the way the admin page does: a clear says which reason its
+ * caller was shown, and is refused when that is not the reason stored.
+ */
+async function clearHalt() {
+  const shown = haltReasonAsShown((await readInferenceControl()).haltReason);
+  await setInferenceHalt({ halted: false, reason: null, by: "admin", seenReason: shown });
 }
 
 async function rowOf(agentId: string) {
@@ -247,7 +258,7 @@ describe("preflightInference: one test per refusal", () => {
     expect(reasonOf(result)).toBe("halted");
     expect(reads).toEqual([]);
 
-    await setInferenceHalt({ halted: false, reason: null, by: "admin" });
+    await clearHalt();
     expect((await check(agent.agentId)).result.ok).toBe(true);
   });
 
@@ -348,6 +359,69 @@ describe("preflightInference: one test per refusal", () => {
     const { result, reads } = await check(agent.agentId);
     expect(reasonOf(result)).toBe("no_policy");
     expect(reads).toEqual([]);
+  });
+
+  /**
+   * The wallet's policy refuses to sign a USDC transfer above the limit it was written
+   * with (the agent's largest trade size). The settings form keeps that at a dollar or
+   * more; the server takes any positive figure. Set below a step's price, every run used
+   * to start, quote and reserve, and then stop at the signature: nothing paid, and a
+   * `signature_failed` run the breaker counted. Five agents of one account, re-run after
+   * every save, kept pay-per-use paused for everyone at no cost. Such a run now never
+   * starts.
+   */
+  it("wallet_limit_low: the wallet's own limit is below what one step may cost, and nothing further is looked at", async () => {
+    const agent = await payingAgent();
+    const limit = (perTxUsd: number) =>
+      db.update(schema.agents).set({ walletBudget: { perTxUsd, policyIds: { solana: "pol_low" } } }).where(eq(schema.agents.id, agent.agentId));
+
+    for (const perTxUsd of [0, 0.001, 0.05, HARD_STEP_CAP_USD - 0.000001]) {
+      await limit(perTxUsd);
+      for (const trigger of ["schedule", "manual"] as const) {
+        const { result, reads } = await check(agent.agentId, { trigger });
+        expect(reasonOf(result), `${perTxUsd} ${trigger}`).toBe("wallet_limit_low");
+        // Refused before the wallet's balance was asked for: long before a quote, a
+        // reservation or a signature.
+        expect(reads).toEqual([]);
+        if (!result.ok && result.kind === "stop") {
+          expect(result.title).toBe(describeInferenceStop("wallet_limit_low").title);
+          expect(result.detail).toBe(describeInferenceStop("wallet_limit_low").detail);
+        }
+      }
+    }
+    expect(INFERENCE_STOPS.wallet_limit_low).toBe("owner");
+
+    // The policy refuses a transfer ABOVE its limit, so a limit equal to the dearest step signs.
+    for (const perTxUsd of [HARD_STEP_CAP_USD, 1, 100]) {
+      await limit(perTxUsd);
+      expect((await check(agent.agentId)).result.ok, String(perTxUsd)).toBe(true);
+    }
+  });
+
+  it("wallet_limit_low: measured against the step ceiling this deployment runs with, not the default", async () => {
+    const agent = await payingAgent();
+    await db.update(schema.agents).set({ walletBudget: { perTxUsd: 0.05, policyIds: { solana: "pol_low" } } }).where(eq(schema.agents.id, agent.agentId));
+    expect(reasonOf((await check(agent.agentId)).result)).toBe("wallet_limit_low");
+    // With no step allowed above five cents, a five-cent limit refuses none of them.
+    const lowered = { ...LIVE_ENV, INFERENCE_MAX_STEP_USD: "0.05" };
+    const passed = (await check(agent.agentId, { env: lowered })).result;
+    expect(passed.ok).toBe(true);
+    if (passed.ok) expect(passed.caps.stepUsd).toBe(0.05);
+    expect(walletStepLimit(0.05, 0.05)).toBe("ok");
+    expect(walletStepLimit(0.049999, 0.05)).toBe("low");
+  });
+
+  it("no_policy: a limit on record that is not a number says nothing about what the wallet would sign", async () => {
+    const agent = await payingAgent();
+    for (const perTxUsd of [null, "5", -1]) {
+      const walletBudget = { perTxUsd, policyIds: { solana: "pol_odd" } } as unknown as schema.WalletBudget;
+      await db.update(schema.agents).set({ walletBudget }).where(eq(schema.agents.id, agent.agentId));
+      const { result, reads } = await check(agent.agentId);
+      expect(reasonOf(result), String(perTxUsd)).toBe("no_policy");
+      expect(reads).toEqual([]);
+    }
+    expect(walletStepLimit(undefined, 0.25)).toBe("unknown");
+    expect(walletStepLimit(Number.NaN, 0.25)).toBe("unknown");
   });
 
   it("needs_funds: the wallet does not cover a whole run above the floor", async () => {
@@ -465,13 +539,17 @@ describe("preflightInference: mock mode", () => {
     expect(result.simulated).toBe(true);
     expect(result.payer.walletId.startsWith("paper_")).toBe(true);
     expect(reads).toEqual([]);
+
+    // Nor the wallet's own limit: no wallet is asked to sign anything.
+    await db.update(schema.agents).set({ walletBudget: { perTxUsd: 0.001, policyIds: { solana: "pol_low" } } }).where(eq(schema.agents.id, agent.agentId));
+    expect((await check(agent.agentId, { env: MOCK_ENV, usdc: 0 })).result.ok).toBe(true);
   });
 
   it("still applies the switches, the model list, the day limits and the need for a Solana wallet", async () => {
     const agent = await payingAgent({ wallet: "paper", policy: false, usdc: { maxUsdPerDay: 1 } });
     await setInferenceHalt({ halted: true, reason: "drill", by: "admin" });
     expect(reasonOf((await check(agent.agentId, { env: MOCK_ENV })).result)).toBe("halted");
-    await setInferenceHalt({ halted: false, reason: null, by: "admin" });
+    await clearHalt();
 
     await setDay("agent", agent.agentId, { usd: 1 });
     expect(reasonOf((await check(agent.agentId, { env: MOCK_ENV })).result)).toBe("agent_day_cap");
@@ -779,7 +857,7 @@ describe("recheckInferenceHolds", () => {
     expect(minutesAfter(at, halted.inferenceHoldUntil)).toBe(15);
     expect(await noticesFor(agent.userId)).toHaveLength(1);
 
-    await setInferenceHalt({ halted: false, reason: null, by: "admin" });
+    await clearHalt();
     at = new Date(at.getTime() + 16 * 60_000);
     expect(await recheckInferenceHolds(25, at, deps(10))).toEqual({ checked: 1, cleared: 1, extended: 0, failed: 0 });
 
@@ -911,6 +989,79 @@ describe("admitInferenceRun", () => {
     expect(admitted).toEqual({ ok: false, kind: "later" });
     expect((await rowOf(agent.agentId)).inferenceHold).toBeNull();
     expect(await noticesFor(agent.userId)).toHaveLength(0);
+  });
+
+  /**
+   * The whole of the abuse, end to end: a wallet limit below a step's price, a run
+   * started by hand, settings saved to have the hold looked at again at once. No run is
+   * let in at any point, so nothing reaches the signature and nothing is left for the
+   * signature breaker to count; the hold backs off like any other its owner must fix.
+   */
+  it("never lets in a run whose wallet would refuse to sign a step: held, told once, and backing off", async () => {
+    // A look at holds looks at every held agent in the table, so this case starts with none held.
+    await db.update(schema.agents).set({ inferenceHold: null, inferenceHoldSince: null, inferenceHoldUntil: null, inferenceStrikes: 0, inferenceNotifiedAt: null });
+    const agent = await payingAgent();
+    const setLimit = (perTxUsd: number) =>
+      db.update(schema.agents).set({ walletBudget: { perTxUsd, policyIds: { solana: "pol_low" } } }).where(eq(schema.agents.id, agent.agentId));
+    await setLimit(0.001);
+    let balanceRead = false;
+    const funded: PreflightDeps = {
+      env: LIVE_ENV,
+      readUsdc: async () => {
+        balanceRead = true;
+        return 10;
+      },
+    };
+
+    const first = await admitInferenceRun(await rowOf(agent.agentId), { trigger: "manual", now: NOW }, funded);
+    expect(first).toMatchObject({ ok: false, kind: "stop", reason: "wallet_limit_low", detail: describeInferenceStop("wallet_limit_low").detail });
+    let row = await rowOf(agent.agentId);
+    expect(row.inferenceHold).toBe("wallet_limit_low");
+    expect(row.inferenceStrikes).toBe(1);
+    expect(minutesAfter(NOW, row.inferenceHoldUntil)).toBe(15);
+    let notices = await noticesFor(agent.userId);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.title).toBe(`Test Agent: ${describeInferenceStop("wallet_limit_low").title}`);
+    expect(notices[0]?.body).toContain("Raise the largest trade size");
+
+    // Run now again and again: the same answer, the hold where it was, nothing more said,
+    // and none of them counted as a run started by hand.
+    for (let i = 1; i <= 5; i += 1) {
+      const again = await admitInferenceRun(await rowOf(agent.agentId), { trigger: "manual", now: new Date(NOW.getTime() + i * 60_000) }, funded);
+      expect(again).toMatchObject({ ok: false, kind: "stop", reason: "wallet_limit_low" });
+    }
+    // A scheduled run inside the hold is not even checked.
+    expect(await admitInferenceRun(await rowOf(agent.agentId), { trigger: "schedule", now: new Date(NOW.getTime() + 6 * 60_000) }, funded)).toMatchObject({
+      ok: false,
+      reason: "wallet_limit_low",
+    });
+    row = await rowOf(agent.agentId);
+    expect(row.inferenceStrikes).toBe(1);
+    expect(minutesAfter(NOW, row.inferenceHoldUntil)).toBe(15);
+    expect(await noticesFor(agent.userId)).toHaveLength(1);
+    expect(await db.select().from(schema.inferenceBudgetDays)).toHaveLength(0);
+    expect(balanceRead).toBe(false);
+
+    // Saving the settings has the hold looked at again at once (`updateAgent` sets its
+    // time to now). With the limit still too low the hold stays, and waits longer.
+    const saved = new Date(NOW.getTime() + 7 * 60_000);
+    await db.update(schema.agents).set({ inferenceHoldUntil: saved }).where(eq(schema.agents.id, agent.agentId));
+    expect(await recheckInferenceHolds(25, saved, funded)).toMatchObject({ checked: 1, cleared: 0, extended: 1 });
+    row = await rowOf(agent.agentId);
+    expect(row.inferenceHold).toBe("wallet_limit_low");
+    expect(row.inferenceStrikes).toBe(2);
+    expect(minutesAfter(saved, row.inferenceHoldUntil)).toBe(30);
+    notices = await noticesFor(agent.userId);
+    expect(notices).toHaveLength(1);
+
+    // The owner raises the trade size, which writes the wallet's limit again: the next
+    // look lifts the hold and a run is let in.
+    await setLimit(1);
+    const fixed = new Date(saved.getTime() + 31 * 60_000);
+    expect(await recheckInferenceHolds(25, fixed, funded)).toMatchObject({ checked: 1, cleared: 1 });
+    expect((await rowOf(agent.agentId)).inferenceHold).toBeNull();
+    expect((await admitInferenceRun(await rowOf(agent.agentId), { trigger: "schedule", now: fixed }, funded)).ok).toBe(true);
+    expect(balanceRead).toBe(true);
   });
 
   it("is never run with the switch unset: the agent is held and told to use a key", async () => {

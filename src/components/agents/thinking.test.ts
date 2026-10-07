@@ -454,6 +454,8 @@ describe("what each stop says and where its fix is", () => {
     expect(stopFix("agent_day_cap")).toEqual({ label: "Raise the limit", hash: "#thinking" });
     expect(stopFix("no_wallet")).toEqual({ label: "Add Solana", hash: "#universe" });
     expect(stopFix("no_policy")).toEqual({ label: "Set the wallet limit", hash: "#budget" });
+    // The wallet's limit is written from the largest trade size, which is under Risk.
+    expect(stopFix("wallet_limit_low")).toEqual({ label: "Raise the trade size", hash: "#risk" });
     expect(stopFix("model_unavailable")).toEqual({ label: "Pick a model", hash: "#thinking" });
     expect(stopFix("paid_no_answer")).toEqual({ label: "See the charge", path: "/money" });
     expect(stopFix("paused")).toEqual({ label: "Open settings", hash: "#thinking" });
@@ -594,6 +596,27 @@ describe("a run's thinking line, as the run list words it", () => {
     // The contract's sentence for it is already conditional, and is not replaced.
     expect(shown.stop).toEqual({ kind: thinking.stop!.kind, title: thinking.stop!.title, detail: thinking.stop!.detail });
     expect(shown.sentence).toBeNull();
+  });
+
+  /**
+   * A rerouted step was signed for, and its answer was thrown away. Whether it was
+   * charged is decided afterwards, so the sentence says where a charge would show and
+   * does not say there is one. The banner and the notification print the contract's own
+   * sentence; the run list prints it unchanged, so this holds all three to it.
+   */
+  it("says where the charge for a rerouted step would show, without saying the step was charged", () => {
+    const WHERE = "If that step was charged, it is listed under Money.";
+    for (const context of [{}, { model: "Gemini 2.5 Flash" }]) {
+      const said = describeInferenceStop("rerouted", context);
+      expect(said.title).toBe("A different model answered");
+      expect(said.detail.endsWith(WHERE), said.detail).toBe(true);
+      expect(said.detail).toContain("The answer was not used and the run stopped.");
+      expect(said.detail).not.toMatch(CLAIMS_PAID);
+    }
+    const shown = runThinkingShown(runThinking({ ...row, stopReason: "rerouted" })!);
+    expect(shown.stop!.title).toBe("A different model answered");
+    expect(shown.stop!.detail).toContain(WHERE);
+    expect(stopWords("rerouted").detail).toContain(WHERE);
   });
 
   it("has nothing in question when the run was charged nothing", () => {
