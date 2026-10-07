@@ -2,7 +2,9 @@
 
 import { useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
+import { usePathname } from "next/navigation";
 import { useSession } from "@/hooks/use-session";
+import { onboardingSuppressedOn } from "./suppress";
 
 /*
  * The modal, its three steps and the key form behind them are a first-run surface:
@@ -31,8 +33,11 @@ const isDismissed = () => {
  * Mounted from the app layout in place of the modal. It rules out what can be ruled
  * out without a request — signed out, or dismissed on this device — and hands the
  * rest (does this account have a key yet?) to the modal, which still decides for
- * itself. `?onboarding=1` forces it, as it always has. `ownedAgentCount` comes from the
- * server layout so an owner is asked only for the missing key, not walked through setup.
+ * itself. `?onboarding=1` forces it, as it always has. On the builder it stays closed
+ * unless forced (`./suppress`): that page asks for the key itself, on its Brain step.
+ * Nothing is written when it is held back, so it still opens on the next page that is not
+ * the builder. `ownedAgentCount` comes from the server layout so an owner is asked only
+ * for the missing key, not walked through setup.
  * `payPerUseAllowed` comes from there too: whether this viewer may build an agent that
  * needs no key, which changes what the modal says a key is for.
  *
@@ -49,12 +54,21 @@ export function OnboardingGate({
   const { ready, session } = useSession();
   const forced = useSyncExternalStore(noSubscribe, isForced, () => false);
   const dismissed = useSyncExternalStore(noSubscribe, isDismissed, () => true);
-  const candidate = forced || (ready && session !== null && !dismissed);
+  const suppressed = onboardingSuppressedOn(usePathname());
+  const candidate = forced || (!suppressed && ready && session !== null && !dismissed);
 
   // Latched: dismissing writes the flag this reads, and unmounting the modal then
   // would cut its exit transition off mid-way.
   const [mounted, setMounted] = useState(false);
   if (candidate && !mounted) setMounted(true);
 
-  return mounted ? <OnboardingModal ownedAgentCount={ownedAgentCount} payPerUseAllowed={payPerUseAllowed} /> : null;
+  // The mount is latched, so the modal may already be on its way from the page before:
+  // it is told when this page holds it back, and does not open here either.
+  return mounted ? (
+    <OnboardingModal
+      ownedAgentCount={ownedAgentCount}
+      payPerUseAllowed={payPerUseAllowed}
+      suppressed={suppressed && !forced}
+    />
+  ) : null;
 }

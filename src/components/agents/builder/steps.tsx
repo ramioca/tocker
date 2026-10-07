@@ -53,6 +53,8 @@ import { Field, RiskSlider, StepHeading, Toggle } from "./field";
 import { parseBps } from "./parse-value";
 import { slippageMeaning } from "./slippage-copy";
 import { UniverseControls } from "./universe-controls";
+import { StrategyPresetCards } from "./strategy-preset-cards";
+import { applyPresetTo, presetChanges, presetFacts } from "./strategy-presets";
 import { SimpleSelect } from "./simple-select";
 import {
   AVATAR_SEEDS,
@@ -110,9 +112,9 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
       </Field>
 
       <Field
-        label="Tagline"
+        label="Tagline · optional"
         htmlFor="agent-tagline"
-        hint="One line. What is its edge, in the words you would use to a friend?"
+        hint="One line on its edge."
       >
         <Input
           id="agent-tagline"
@@ -123,8 +125,8 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
         />
       </Field>
 
-      <Field label="Avatar" hint="Generated for you. No upload needed.">
-        <div className="flex flex-wrap items-center gap-2">
+      <Field label="Avatar · optional" hint="Picked for you.">
+        <div className="flex flex-wrap items-center gap-2 max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:py-1">
           {AVATAR_SEEDS.map((seed) => {
             const active = draft.avatarSeed === seed;
             return (
@@ -184,7 +186,7 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
       <Toggle
         id="agent-public"
         label="Public"
-        description="Anyone can see its trades, its PnL and the one-line reason behind each one. Your strategy, your universe rules, your key and your wallets stay yours — there is no way for anyone to copy this agent."
+        description="Anyone can see its trades, its PnL and the one-line reason for each. Your strategy, rules and wallets stay private, and nobody can copy it."
         checked={draft.isPublic}
         onChange={(isPublic) => update({ isPublic })}
       />
@@ -420,56 +422,21 @@ export function ttlLabel(minutes: number): string {
   return minutes < 60 || minutes % 60 !== 0 ? `${minutes} min` : `${minutes / 60} h`;
 }
 
-const CHAIN_NAMES: Record<Chain, string> = { solana: "Solana", base: "Base" };
+/** The two labels the preset sentences borrow, so a card and a toast say "every 5 min" alike. */
+const PRESET_LABELS = { interval: intervalLabel, ttl: ttlLabel };
 
-/**
- * What a strategy preset changed besides the prompt, in the words of the cards below.
- * A preset rewrites whatever its way of trading needs in one tap — chains, sources, even
- * the schedule — and those cards are collapsed, so the toast is where that gets said.
- */
-function presetChanges(before: BuilderDraft["config"], next: BuilderDraft["config"]): string[] {
-  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-  const changes: string[] = [];
-  if (!same([...before.chains].sort(), [...next.chains].sort())) {
-    changes.push(
-      next.chains.length === 1
-        ? `${CHAIN_NAMES[next.chains[0]]} only`
-        : next.chains.map((chain) => CHAIN_NAMES[chain]).join(" and "),
-    );
-  }
-  if (!same([...before.dataSources].sort(), [...next.dataSources].sort())) {
-    changes.push(`${next.dataSources.length} data source${next.dataSources.length === 1 ? "" : "s"}`);
-  }
-  if (!same(before.universe, next.universe)) changes.push("its universe");
-  if (!same(before.risk, next.risk)) changes.push("its risk limits");
-  if (!same(before.schedule, next.schedule)) {
-    changes.push(intervalLabel(next.schedule.intervalMinutes).toLowerCase());
-  }
-  if (!same(before.execution, next.execution)) {
-    changes.push(
-      next.execution.mode === "approve"
-        ? `ask first, ${ttlLabel(next.execution.proposalTtlMinutes)} window`
-        : "trades on its own",
-    );
-  }
-  return changes;
-}
-
-export function BrainStep({
+export function ThinkStep({
   draft,
   update,
   updateConfig,
   errors,
   llmKeys,
   onKeyAdded,
-  feeUsd = 0,
   payPerUseAllowed = false,
   hideHeading,
 }: StepProps & {
   llmKeys: LlmKeyRow[];
   onKeyAdded: (key: LlmKeyRow) => void;
-  /** Tocker's flat fee per fill, from the server; 0 when it is off. */
-  feeUsd?: number;
   /** The server's answer for this viewer. False: no choice is shown, only the key fields. */
   payPerUseAllowed?: boolean;
 }) {
@@ -498,52 +465,6 @@ export function BrainStep({
     });
     updateConfig(change.config);
     setScheduleMovedFrom(change.scheduleMovedFrom);
-  };
-  /** The chip under the pointer or focus, whose blurb the line under the row shows. */
-  const [hintedPreset, setHintedPreset] = useState<string | null>(null);
-  const pressedPreset = STRATEGY_PRESETS.find((preset) => preset.prompt === draft.config.strategyPrompt) ?? null;
-  const shownPreset = STRATEGY_PRESETS.find((preset) => preset.id === hintedPreset) ?? pressedPreset;
-  // A preset that sets a small ticket also decides how much of every trade the flat fee
-  // takes, and its paper record starts that far under water. Said with the blurb, from
-  // the preset's own size and the server's fee, so neither number is written twice.
-  const presetFeeNote = (preset: StrategyPreset): string => {
-    const ticket = preset.risk?.maxTradeUsd;
-    const pct = ticket === undefined ? null : feeSharePct(ticket, feeUsd);
-    return ticket === undefined || pct === null
-      ? ""
-      : ` At ${formatUsd(ticket)} a trade, Tocker's flat ${formatUsd(feeUsd)} fee per fill is ${pct}% each way.`;
-  };
-
-  const applyPreset = (preset: StrategyPreset) => {
-    const before = draft.config;
-    const next: BuilderDraft["config"] = {
-      ...before,
-      strategyPrompt: preset.prompt,
-      chains: preset.chains,
-      dataSources: preset.dataSources,
-      // A preset that is a whole way of trading also sets what it needs;
-      // one that only carries a prompt leaves the other steps as they are.
-      ...(preset.universe ? { universe: { ...before.universe, ...preset.universe } } : {}),
-      ...(preset.risk ? { risk: { ...before.risk, ...preset.risk } } : {}),
-      ...(preset.execution ? { execution: preset.execution } : {}),
-      ...(preset.schedule ? { schedule: preset.schedule } : {}),
-    };
-    const changes = presetChanges(before, next);
-    const replacedPrompt = before.strategyPrompt.trim() !== "" && before.strategyPrompt !== preset.prompt;
-    updateConfig(next);
-    if (!replacedPrompt && changes.length === 0) return;
-    // The draft autosaves 400ms later, so without this a hand-written strategy was gone
-    // for good the moment a chip was tapped to see what it did.
-    toast(`${preset.label} applied`, {
-      description: [
-        replacedPrompt ? "Replaced the strategy prompt." : null,
-        changes.length > 0 ? `Also set: ${changes.join(" · ")}.` : null,
-      ]
-        .filter(Boolean)
-        .join(" "),
-      action: { label: "Undo", onClick: () => updateConfig(before) },
-      duration: 8_000,
-    });
   };
 
   return (
@@ -671,7 +592,7 @@ export function BrainStep({
           everyone, so the sliders live one level down (the values still show). */}
       <details className="group rounded-xl border border-border/60 bg-card/20 px-3.5 py-2.5">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground [&::-webkit-details-marker]:hidden">
-          <span>Model tuning</span>
+          <span>Model tuning · optional</span>
           <span className="tnum font-mono text-xs">
             temp {draft.config.llm.temperature.toFixed(1)} · {Math.round(draft.config.llm.maxSteps)} steps
           </span>
@@ -717,61 +638,86 @@ export function BrainStep({
         />
         </div>
       </details>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ strategy
+
+export function StrategyStep({
+  draft,
+  updateConfig,
+  errors,
+  feeUsd = 0,
+}: StepProps & {
+  /** Tocker's flat fee per fill, from the server; 0 when it is off. */
+  feeUsd?: number;
+}) {
+  const pressedPreset = STRATEGY_PRESETS.find((preset) => preset.prompt === draft.config.strategyPrompt) ?? null;
+  // A preset that sets a small ticket also decides how much of every trade the flat fee
+  // takes, and its paper record starts that far under water. Said with the blurb, from
+  // the preset's own size and the server's fee, so neither number is written twice.
+  const presetFeeNote = (preset: StrategyPreset): string => {
+    const ticket = preset.risk?.maxTradeUsd;
+    const pct = ticket === undefined ? null : feeSharePct(ticket, feeUsd);
+    return ticket === undefined || pct === null
+      ? ""
+      : ` At ${formatUsd(ticket)} a trade, Tocker's flat ${formatUsd(feeUsd)} fee per fill is ${pct}% each way.`;
+  };
+
+  const applyPreset = (preset: StrategyPreset) => {
+    const before = draft.config;
+    const next = applyPresetTo(before, preset);
+    const changes = presetChanges(before, next, PRESET_LABELS);
+    const replacedPrompt = before.strategyPrompt.trim() !== "" && before.strategyPrompt !== preset.prompt;
+    updateConfig(next);
+    if (!replacedPrompt && changes.length === 0) return;
+    // The draft autosaves 400ms later, so without this a hand-written strategy was gone
+    // for good the moment a card was tapped to see what it did.
+    toast(`${preset.label} applied`, {
+      description: [
+        replacedPrompt ? "Replaced the strategy prompt." : null,
+        changes.length > 0 ? `Also set: ${changes.join(" · ")}.` : null,
+      ]
+        .filter(Boolean)
+        .join(" "),
+      action: { label: "Undo", onClick: () => updateConfig(before) },
+      duration: 8_000,
+    });
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="space-y-2">
+        <StrategyPresetCards
+          presets={STRATEGY_PRESETS}
+          pressedId={pressedPreset?.id ?? null}
+          // Read from the same merge a tap would write, so the line cannot promise an
+          // agent the preset does not make.
+          factsLine={(preset) => presetFacts(applyPresetTo(draft.config, preset), PRESET_LABELS)}
+          feeNote={presetFeeNote}
+          onApply={applyPreset}
+        />
+        {/* Screen readers get the same promise from each card's own description, so this
+            line stays out of their way. */}
+        <p aria-hidden className="text-[11px] leading-4 text-muted-foreground">
+          A preset replaces the prompt and sets what it needs. You can undo it.
+        </p>
+      </div>
 
       <Field
         label="Strategy"
         htmlFor="strategy-prompt"
         error={errors.strategyPrompt}
-        hint="These are your agent's standing instructions. Be specific about entries, exits and what it must never do."
+        hint="Standing instructions: when to enter, when to exit, what never to do."
       >
         <div className="space-y-2">
-          <div className="flex flex-wrap gap-1.5" onMouseLeave={() => setHintedPreset(null)}>
-            {STRATEGY_PRESETS.map((preset) => {
-              const active = pressedPreset?.id === preset.id;
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  aria-pressed={active}
-                  aria-describedby={`strategy-preset-${preset.id}-blurb`}
-                  onClick={() => applyPreset(preset)}
-                  onFocus={() => setHintedPreset(preset.id)}
-                  onBlur={() => setHintedPreset(null)}
-                  onMouseEnter={() => setHintedPreset(preset.id)}
-                  className={cn(
-                    "rounded-lg border px-2.5 py-1 text-xs",
-                    "transition-[border-color,background-color,color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    active
-                      ? "border-primary/50 bg-primary/8 text-foreground"
-                      : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  {preset.label}
-                </button>
-              );
-            })}
-          </div>
-          {/* Visible, not a `title`: a tooltip never shows on touch, and what a chip does
-              is the thing to know before tapping it. Screen readers get each chip's own
-              blurb through aria-describedby, so this line stays out of their way. */}
-          <p aria-hidden className="text-[11px] leading-4 text-muted-foreground">
-            {shownPreset
-              ? `${shownPreset.blurb}${presetFeeNote(shownPreset)}`
-              : "Each preset replaces the prompt below and sets what its way of trading needs. You can undo it."}
-          </p>
-          {STRATEGY_PRESETS.map((preset) => (
-            <span key={preset.id} id={`strategy-preset-${preset.id}-blurb`} hidden>
-              {preset.blurb}
-              {presetFeeNote(preset)} Replaces the strategy prompt; you can undo it.
-            </span>
-          ))}
           <Textarea
             id="strategy-prompt"
             value={draft.config.strategyPrompt}
             aria-invalid={Boolean(errors.strategyPrompt)}
             aria-describedby={errors.strategyPrompt ? "strategy-prompt-error" : undefined}
-            rows={9}
+            rows={6}
             onChange={(event) => updateConfig({ strategyPrompt: event.target.value })}
             // No text size of its own: the primitive's 16px on phones (iOS zooms into any
             // smaller field) and 14px from md. A "text-xs" here only ever reached phones.
@@ -995,7 +941,7 @@ export function RiskStep({
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-medium">Exit rules</h3>
+        <h3 id="risk-exits" tabIndex={-1} className="scroll-mt-24 text-sm font-medium">Exit rules</h3>
         <p className="text-xs text-muted-foreground">
           Enforced every five minutes by the exit engine, whether or not the model is running. A stop that waits for a human is not a stop.
         </p>
@@ -1014,7 +960,7 @@ export function ScheduleStep({
   hideHeading,
   payPerUseAllowed = false,
 }: StepProps & {
-  /** The server's answer for this viewer; see `BrainStep`. */
+  /** The server's answer for this viewer; see `ThinkStep`. */
   payPerUseAllowed?: boolean;
 }) {
   // On pay per use each choice says what it is expected to cost on the chosen model.

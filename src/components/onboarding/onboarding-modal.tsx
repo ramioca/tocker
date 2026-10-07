@@ -44,12 +44,22 @@ const KEY_ONLY: readonly Step[] = ["key"];
 export function OnboardingModal({
   ownedAgentCount = 0,
   payPerUseAllowed = false,
+  suppressed = false,
 }: {
   ownedAgentCount?: number;
   payPerUseAllowed?: boolean;
+  /** True on a page that asks for the key itself (the builder): do not open over it. */
+  suppressed?: boolean;
 }) {
   const { ready, session } = useSession();
   const [open, setOpen] = useState(false);
+  // Read when the key check answers, which can be a page later than when it was asked.
+  // A ref, not a dependency: moving to another page must not ask again, and a modal
+  // that is already open stays open.
+  const suppressedRef = useRef(suppressed);
+  useEffect(() => {
+    suppressedRef.current = suppressed;
+  }, [suppressed]);
   // In-memory dismissal so the modal never reopens mid-session even when
   // localStorage is unavailable (private mode, sandboxed webviews).
   const dismissedRef = useRef(false);
@@ -100,7 +110,7 @@ export function OnboardingModal({
 
     shouldOpen()
       .then((show) => {
-        if (!show) return;
+        if (!show || suppressedRef.current) return;
         // `?onboarding=1` always forces the full flow; otherwise an owner skips straight
         // to the key their agents need.
         if (!forced && ownedAgentCount > 0) {
