@@ -114,7 +114,7 @@ export function ApprovalDemo() {
         <span className="lp-ap-foot-text">
           <span className="lp-ap-foot-title">Ask before trades</span>
           <span className="lp-ap-foot-note">
-            {ask ? "On by default: it proposes, you decide. Rule exits never wait." : "Off: it trades on its own."}
+            {ask ? "On by default: it proposes, you decide. Rule exits never wait." : "Off: it trades on its own, every run, on schedule."}
           </span>
         </span>
         <AnimatedSwitch
