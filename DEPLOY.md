@@ -955,9 +955,18 @@ money or pays twice.
   the paid request left as "paid, or in doubt", never pays twice for it, and lets the
   chain decide. None of that has been seen happen.
 - **Tool calling on the paid models.** A run is many tool-calling steps. Not one of the
-  five offered models has been run with tools through this gateway, because that needs a
-  payment; two of the five had no measured traffic on the gateway the day they were
-  chosen.
+  offered models has been run with tools through this gateway, because that needs a
+  payment; several had no measured traffic on the gateway the day they were chosen.
+  The list (`PAY_PER_USE_MODELS` in `src/lib/x402/inference-types.ts`) is eleven models
+  that answer without thinking first. Claude Sonnet 5.5 and Opus 5.5 are sent no
+  temperature, because those models refuse a request that sets one; whether the gateway
+  passes that through as expected is also unproven. Models that think before they answer
+  (the GPT-5 and GPT-6 families, Gemini 2.5 Pro and 3, Grok 4, DeepSeek V4 and others)
+  are left out until a paid run has shown one working: their thinking is spent out of the
+  answer's token limit, and a step that ends with no usable answer has still been paid
+  for. To add a model: put it in that list with its list price, run
+  `pnpm tsx scripts/inference-quote.ts`, and add it only if its quote is at or under the
+  estimate (or record what the gateway adds per step in `stepSurchargeUsd`).
 - **Privy accepting the payment under the live wallet policy.** The policy denies a USDC
   transfer above the agent's cap and allows the rest, so a payment of a cent should
   pass. (A cap below what a step may cost never gets as far as a signature: the run is

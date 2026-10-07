@@ -54,6 +54,7 @@ import {
   NO_NEW_STEP_AFTER_MS,
   describeInferenceStop,
   newPayCounters,
+  payPerUseModel,
   type InferencePayContext,
   type InferenceStopReason,
 } from "@/lib/x402/inference-types";
@@ -705,7 +706,9 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
       system,
       prompt,
       tools,
-      temperature: config.llm.temperature,
+      // A pay-per-use model that refuses a temperature is sent none: a request the
+      // provider turns down after payment is a step paid for and not answered.
+      temperature: pay && payPerUseModel(pay.model)?.omitTemperature ? undefined : config.llm.temperature,
       // Anthropic prompt caching, automatic mode: a top-level `cache_control` asks the
       // API to cache the whole prefix on every step, so a 20-step tick re-reads its
       // tools, system prompt and growing transcript at a tenth of the input price

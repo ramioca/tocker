@@ -590,7 +590,7 @@ describe("how an agent thinks: its own key, or pay per use", () => {
 
       const noBlock = { ...DEFAULT_AGENT_CONFIG, llm: { ...DEFAULT_AGENT_CONFIG.llm, source: "usdc" as const } };
       expect(await createWith(noBlock)).toMatchObject({ ok: false, error: expect.stringMatching(/needs a model/) });
-      expect(await createWith(payPerUse({ model: "anthropic/claude-opus-5.5" }))).toMatchObject({ ok: false, error: expect.stringMatching(/no longer offered/) });
+      expect(await createWith(payPerUse({ model: "openai/gpt-5.5" }))).toMatchObject({ ok: false, error: expect.stringMatching(/no longer offered/) });
       expect(await createWith(payPerUse({ maxUsdPerRun: 2, maxUsdPerDay: 1 }))).toMatchObject({ ok: false, error: expect.stringMatching(/daily thinking limit/) });
       // The payment leaves the agent's Solana wallet, and a Base-only agent has none.
       expect(await createWith(payPerUse({}, { chains: ["base"] }))).toEqual({ ok: false, error: describeInferenceStop("no_wallet").detail });

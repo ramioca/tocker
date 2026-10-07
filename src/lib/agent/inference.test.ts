@@ -110,7 +110,7 @@ describe("choosing pay-per-use", () => {
   });
 
   it("refuses a model that is not offered", () => {
-    expect(usdcChoiceProblem(usdc({ model: "anthropic/claude-opus-5.5" }))).toMatch(/no longer offered/);
+    expect(usdcChoiceProblem(usdc({ model: "openai/gpt-5.5" }))).toMatch(/no longer offered/);
   });
 
   it("refuses a day limit under the limit for one run", () => {
