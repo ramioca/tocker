@@ -2,7 +2,7 @@
 
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { RotateCcw } from "lucide-react";
+import { Bot, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { createAgentAction } from "@/components/agents/agent-actions";
@@ -24,6 +24,8 @@ import { validateDraft } from "./validate";
 import { BuilderStepper, type StepView } from "./builder-stepper";
 import { CommitBar } from "./commit-bar";
 import { CommitSentence } from "./commit-sentence";
+import { EASE, FOCUS, ReadyPips, TYPE } from "./look";
+import { ReviewReady } from "./review-ready";
 import {
   BUILDER_STEPS,
   type BuilderStepId,
@@ -66,6 +68,7 @@ import {
   recordFundingIntents,
   settleFundingIntent,
 } from "@/server/actions/wallets";
+import { AgentAvatar } from "@/components/common/agent-avatar";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -77,6 +80,7 @@ import {
 } from "@/components/ui/dialog";
 import type { AgentConfig } from "@/db/schema";
 import type { Chain, DataSourceInfo, LlmKeyRow } from "@/server/types";
+import { cn } from "@/lib/utils";
 
 /**
  * Eight steps, none of them a gate: a name, a strategy, the four groups of rules (where it
@@ -589,7 +593,7 @@ export function AgentBuilder({
       <FundingRetryDialog retry={fundingRetry} onRetry={retryFunding} onSkip={skipFunding} />
     ) : null}
     <div
-      className="mx-auto w-full max-w-[1120px] px-4 py-6 sm:px-6"
+      className="mx-auto w-full max-w-[1120px] px-4 pt-3 pb-6 sm:px-6 sm:pt-6"
       onPointerDownCapture={() => {
         lastInput.current = "pointer";
       }}
@@ -600,15 +604,19 @@ export function AgentBuilder({
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
-      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-8 xl:grid-cols-[minmax(0,1fr)_400px] xl:gap-10">
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-8 xl:grid-cols-[minmax(0,1fr)_400px] xl:gap-12">
         {/* The form. 672px is the width every control in it was built for. */}
         <div ref={columnRef} className="mx-auto w-full max-w-2xl min-w-0 scroll-mt-20 lg:mx-0">
-          <div className="flex items-center justify-between gap-3">
-            <h1 className="text-lg font-semibold tracking-tight">New agent</h1>
+          {/* The page's name is a label: the step's title below is the one large line. */}
+          <div className="flex min-h-11 items-center justify-between gap-3 sm:min-h-7">
+            <h1 className="flex items-center gap-2 text-[13px] leading-5 font-medium text-foreground">
+              <Bot aria-hidden className="size-4 text-primary" />
+              New agent
+            </h1>
             {restored ? (
               // Say why the form is already filled in, next to the way out of it.
-              <div className="flex items-center gap-2">
-                <p className="text-xs text-muted-foreground">
+              <div className="flex items-center gap-1 sm:gap-2">
+                <p className={cn(TYPE.caption, "text-muted-foreground")}>
                   <span className="sm:hidden">Draft restored</span>
                   <span className="hidden sm:inline">Restored your unsaved draft</span>
                 </p>
@@ -628,33 +636,44 @@ export function AgentBuilder({
                     // heading rather than falling back to the page.
                     goTo({ step: "name" }, "auto");
                   }}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  // 44px tall on a phone, where it has no border to say so.
+                  className={cn(
+                    "inline-flex h-11 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground sm:h-7 sm:border sm:border-border",
+                    "transition-[color,background-color,scale] duration-150",
+                    EASE,
+                    "hover:bg-muted hover:text-foreground active:scale-[0.97] motion-reduce:active:scale-100",
+                    "disabled:pointer-events-none disabled:opacity-50",
+                    FOCUS,
+                  )}
                 >
-                  <RotateCcw aria-hidden className="size-3" />
+                  <RotateCcw aria-hidden className="size-3.5" />
                   Start over
                 </button>
               </div>
             ) : null}
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
+          {/* On a phone the introduction is read once, on the first step: after that the
+              space is the form's. */}
+          <p className={cn("mt-1 text-[13px] leading-5 text-muted-foreground", step !== "name" && "max-sm:hidden")}>
             <span className="sm:hidden">A name, a strategy, a way to think. The rest is already set.</span>
             <span className="hidden sm:inline">
               Three things are yours to decide: a name, a strategy, a way to think. Everything else is already set.
             </span>
           </p>
 
-          <div className="mt-6">
+          <div className="mt-1 sm:mt-6">
             <BuilderStepper
               steps={steps}
               current={step}
               onGo={(id, via) => goTo({ step: id }, via)}
               disabled={creating}
+              animate={nav.animate}
             />
           </div>
 
           {/* A minimum height, so a short step never makes the page shorter than the
               viewport and the bar below does not jump between steps. */}
-          <div className="mt-8 min-h-[calc(100dvh-16rem)]">
+          <div className="mt-2 min-h-[calc(100dvh-16rem)]">
             <StepPanel
               {...panel("name")}
               title="Name it"
@@ -684,9 +703,14 @@ export function AgentBuilder({
               {...panel("hunts")}
               title="Where it hunts"
               lead={
-                fix("hunts")
-                  ? "Which tokens it is allowed to look at. It needs a look before you can create."
-                  : "Which tokens it is allowed to look at. Already set: change it only if you want to."
+                fix("hunts") ? (
+                  "Which tokens it is allowed to look at. It needs a look before you can create."
+                ) : (
+                  <>
+                    Which tokens it is allowed to look at.
+                    <span className="max-sm:hidden"> Already set: change it only if you want to.</span>
+                  </>
+                )
               }
               now={universeSummary(draft.config.universe as AgentConfig["universe"], draft.config.chains)}
             >
@@ -697,9 +721,14 @@ export function AgentBuilder({
               {...panel("data")}
               title="Data it buys"
               lead={
-                fix("data")
-                  ? "What it pays to read before it decides. It needs a look before you can create."
-                  : "What it pays to read before it decides. Already set: change it only if you want to."
+                fix("data") ? (
+                  "What it pays to read before it decides. It needs a look before you can create."
+                ) : (
+                  <>
+                    What it pays to read before it decides.
+                    <span className="max-sm:hidden"> Already set: change it only if you want to.</span>
+                  </>
+                )
               }
               now={dataSummary(facts)}
             >
@@ -710,9 +739,14 @@ export function AgentBuilder({
               {...panel("limits")}
               title="Risk limits"
               lead={
-                fix("limits")
-                  ? "Enforced in code before any trade. One of them needs a look before you can create."
-                  : "Enforced in code before any trade. Already set: change them only if you want to."
+                fix("limits") ? (
+                  "Enforced in code before any trade. One of them needs a look before you can create."
+                ) : (
+                  <>
+                    Enforced in code before any trade.
+                    <span className="max-sm:hidden"> Already set: change them only if you want to.</span>
+                  </>
+                )
               }
               // The fee closes the line: this is the one sentence about trades that is on
               // screen before any control, and nothing else in the builder names the fee.
@@ -725,9 +759,14 @@ export function AgentBuilder({
               {...panel("schedule")}
               title="Schedule & mode"
               lead={
-                fix("schedule")
-                  ? "How often it runs and whether it asks you first. It needs a look before you can create."
-                  : "How often it runs and whether it asks you first. Already set: change it only if you want to."
+                fix("schedule") ? (
+                  "How often it runs and whether it asks you first. It needs a look before you can create."
+                ) : (
+                  <>
+                    How often it runs and whether it asks you first.
+                    <span className="max-sm:hidden"> Already set: change it only if you want to.</span>
+                  </>
+                )
               }
               now={scheduleSummary(draft, facts, LABELS)}
             >
@@ -763,11 +802,13 @@ export function AgentBuilder({
               lead="Check the card, choose how to fund it, then create."
             >
               <div className="space-y-6">
+                <ReviewReady items={card.ready} onGo={goFromCard} disabled={creating} />
+
                 {/* On the last step because it decides what the user signs when they press
                     Create, and that button is on this screen. */}
                 <section aria-labelledby="step-create-funding" className="space-y-4">
                   <div>
-                    <h3 id="step-create-funding" className="text-sm font-medium">
+                    <h3 id="step-create-funding" className={TYPE.heading}>
                       Funding
                     </h3>
                     <NowLine text={fundingSummary(draft, facts)} className="mt-2" />
@@ -786,9 +827,10 @@ export function AgentBuilder({
         </div>
 
         {/* The agent card, in its own column from lg, so nothing the form does moves it.
-            The height stops it sliding under the bar below. */}
+            The height stops it sliding under the bar below. The padding leaves room for the
+            card's shadow, and the mask fades the cut instead of slicing a row in half. */}
         <div className="hidden lg:block">
-          <div className="lg:sticky lg:top-20 lg:max-h-[calc(100dvh-11rem)] lg:overflow-y-auto">
+          <div className="scrollbar-thin lg:sticky lg:top-20 lg:-mx-4 lg:max-h-[calc(100dvh-11rem)] lg:overflow-y-auto lg:px-4 lg:pb-8 lg:[mask-image:linear-gradient(to_bottom,black_calc(100%-24px),transparent)]">
             <AgentPreview {...previewProps} reveal />
           </div>
         </div>
@@ -819,6 +861,26 @@ export function AgentBuilder({
         signing={<CommitSentence draft={draft} facts={facts} part="signing" />}
         // The same words the strip carries on the other steps, where a signature is coming.
         signingShort={draft.funding.mode === "fund" ? commitShortLine(draft, facts) : null}
+        // The agent beside Create, from lg. Hidden from a screen reader there: the card and
+        // the tiles above already say all of it.
+        identity={
+          <span className="flex items-center gap-2.5">
+            <AgentAvatar seed={cardDraft.avatarSeed} name={cardDraft.name.trim() || "Unnamed agent"} size="sm" />
+            <span className="min-w-0">
+              <span
+                className={cn(
+                  "block max-w-40 truncate text-sm leading-5 font-medium",
+                  cardDraft.name.trim() ? null : "text-muted-foreground",
+                )}
+              >
+                {cardDraft.name.trim() || "Unnamed agent"}
+              </span>
+              <span className={cn(TYPE.caption, "flex items-center gap-2 text-muted-foreground")}>
+                {readyCount} of {ready.length} ready <ReadyPips ready={ready.map((item) => item.ready)} />
+              </span>
+            </span>
+          </span>
+        }
         peek={
           <PreviewPeek
             draft={cardDraft}

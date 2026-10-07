@@ -1,14 +1,32 @@
-import { Check } from "lucide-react";
+import {
+  CircleDollarSign,
+  Clock,
+  Globe,
+  Hand,
+  PenLine,
+  Sparkles,
+  Sprout,
+  Timer,
+  TrendingUp,
+  Undo2,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CHOICE_CARD, CHOICE_OFF, CHOICE_ON, HAIR, IconTile, Mark, TYPE, type Tone } from "./look";
 import { CUSTOM_STRATEGY } from "./strategy-presets";
 import type { StrategyPreset } from "./types";
 
-const CARD =
-  "flex min-h-11 flex-col gap-1.5 rounded-xl border p-3 text-left " +
-  "transition-[border-color,background-color,scale] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97] " +
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-const CARD_ON = "border-primary/50 bg-primary/8";
-const CARD_OFF = "border-border/70 bg-card/30 hover:border-border hover:bg-card/60";
+/** An icon and a hue per preset, so four ways of trading can be told apart at a glance. */
+const LOOK: Record<string, { icon: LucideIcon; tone: Tone }> = {
+  momentum: { icon: TrendingUp, tone: "violet" },
+  "sentiment-contrarian": { icon: Undo2, tone: "pink" },
+  "first-fifteen": { icon: Timer, tone: "blue" },
+  "fresh-launch": { icon: Sprout, tone: "cyan" },
+};
+const FALLBACK: { icon: LucideIcon; tone: Tone } = { icon: Sparkles, tone: "plain" };
+// The facts line joins four facts in a fixed order: chains, interval, ticket, mode.
+const FACT_ICONS = [Globe, Clock, CircleDollarSign, Hand] as const;
 
 /**
  * The strategy presets as cards: what each one is, and a line of facts about the agent
@@ -38,10 +56,13 @@ export function StrategyPresetCards({
 }) {
   const custom = `strategy-preset-${CUSTOM_STRATEGY.id}`;
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
+    <div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
       {presets.map((preset) => {
         const active = pressedId === preset.id;
         const base = `strategy-preset-${preset.id}`;
+        const look = LOOK[preset.id] ?? FALLBACK;
+        const facts = factsLine(preset).split(" · ");
+        const fee = feeNote(preset).trim();
         return (
           <button
             key={preset.id}
@@ -52,51 +73,83 @@ export function StrategyPresetCards({
             aria-labelledby={`${base}-label`}
             aria-describedby={`${base}-blurb ${base}-facts`}
             onClick={() => onApply(preset)}
-            className={cn(CARD, active ? CARD_ON : CARD_OFF)}
+            className={cn(CHOICE_CARD, active ? CHOICE_ON : CHOICE_OFF)}
           >
-            <span className="flex items-center gap-1.5">
-              <span id={`${base}-label`} className="text-sm font-medium">
+            <span className="flex items-center gap-2.5">
+              <IconTile tone={look.tone}>
+                <look.icon strokeWidth={2} />
+              </IconTile>
+              <span id={`${base}-label`} className={cn(TYPE.heading, "min-w-0 flex-1")}>
                 {preset.label}
               </span>
-              {active ? <Check aria-hidden className="size-3.5 text-primary" /> : null}
+              <Mark on={active} />
             </span>
-            <span id={`${base}-blurb`} className="text-xs leading-relaxed text-muted-foreground">
+            <span id={`${base}-blurb`} className="text-[13px] leading-5 text-pretty text-muted-foreground">
               {preset.blurb}
-              {feeNote(preset)}
+              {/* The fee sentence on its own line. The space before it is for the spoken
+                  description, which would otherwise run the two sentences together. */}
+              {fee ? (
+                <>
+                  {" "}
+                  <span className="tnum mt-1.5 block text-xs leading-[18px] text-foreground/80">{fee}</span>
+                </>
+              ) : null}
               <span className="sr-only"> Replaces the strategy prompt; you can undo it.</span>
             </span>
             {/* Pushed to the foot, so the facts of two cards in a row sit on one line
-                whatever the length of their blurbs. */}
+                whatever the length of their blurbs. A line breaks between facts, never
+                inside one. */}
             <span
               id={`${base}-facts`}
-              className="tnum mt-auto pt-0.5 font-mono text-[11px] leading-4 text-muted-foreground"
+              className={cn(TYPE.caption, "mt-auto flex flex-wrap gap-x-3 gap-y-1 border-t pt-3 text-muted-foreground", HAIR)}
             >
-              {factsLine(preset)}
+              {facts.map((fact, index) => {
+                // Icons only when the line has the four facts they were drawn for.
+                const Icon =
+                  facts.length === 4 ? (index === 3 && fact !== "asks first" ? Zap : FACT_ICONS[index]) : null;
+                return (
+                  <span key={index} className="inline-flex items-center gap-1 whitespace-nowrap">
+                    {Icon ? <Icon aria-hidden className="size-3 shrink-0 opacity-70" /> : null}
+                    {fact}
+                    {index < facts.length - 1 ? <span className="sr-only"> · </span> : null}
+                  </span>
+                );
+              })}
             </span>
           </button>
         );
       })}
       {/* The blank slate: across both columns and dashed, so it reads as an empty page
-          and not as a fifth way of trading. */}
+          and not as a fifth way of trading. One row from sm, stacked on phones. */}
       <button
         type="button"
         aria-pressed={customPressed}
         aria-labelledby={`${custom}-label`}
         aria-describedby={`${custom}-blurb ${custom}-facts`}
         onClick={onCustom}
-        className={cn(CARD, "border-dashed sm:col-span-2", customPressed ? CARD_ON : CARD_OFF)}
+        className={cn(
+          CHOICE_CARD,
+          "border-dashed sm:col-span-2 sm:flex-row sm:items-center",
+          customPressed ? CHOICE_ON : CHOICE_OFF,
+        )}
       >
-        <span className="flex items-center gap-1.5">
-          <span id={`${custom}-label`} className="text-sm font-medium">
+        <span className="flex items-center gap-2.5 sm:contents">
+          <IconTile tone="plain">
+            <PenLine strokeWidth={2} />
+          </IconTile>
+          <span id={`${custom}-label`} className={cn(TYPE.heading, "min-w-0 flex-1 sm:flex-none")}>
             {CUSTOM_STRATEGY.label}
           </span>
-          {customPressed ? <Check aria-hidden className="size-3.5 text-primary" /> : null}
+          <Mark on={customPressed} className="sm:order-last" />
         </span>
-        <span id={`${custom}-blurb`} className="text-xs leading-relaxed text-muted-foreground">
+        <span id={`${custom}-blurb`} className="text-[13px] leading-5 text-muted-foreground sm:flex-1">
           {CUSTOM_STRATEGY.blurb}
           <span className="sr-only"> Clears the strategy prompt; you can undo it.</span>
         </span>
-        <span id={`${custom}-facts`} className="tnum pt-0.5 font-mono text-[11px] leading-4 text-muted-foreground">
+        <span
+          id={`${custom}-facts`}
+          className={cn(TYPE.caption, "text-muted-foreground max-sm:border-t max-sm:pt-3", HAIR)}
+        >
           {CUSTOM_STRATEGY.facts}
         </span>
       </button>

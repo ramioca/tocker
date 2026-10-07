@@ -6,6 +6,7 @@ import { AgentAvatar } from "@/components/common/agent-avatar";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { FOCUS, HAIR, TYPE } from "../look";
 import type { BuilderDraft } from "../types";
 
 export interface PreviewPeekProps {
@@ -24,7 +25,8 @@ export interface PreviewPeekProps {
 
 /**
  * The agent card where there is no room for a column: a strip in the bottom bar (avatar,
- * name, the one-line cost text) that opens a bottom sheet holding the full card.
+ * name, the one-line cost text) that opens a bottom sheet holding the full card. On the
+ * last step (`compact`) it keeps the avatar and the name and drops the cost text.
  *
  * The strip is hidden from `lg`, where the card has its own column. From `sm` the bar
  * has room for the whole cost sentence, so the strip drops its own one-line copy of it.
@@ -52,21 +54,22 @@ export function PreviewPeek({ draft, readyCount, shortLine, compact, disabled = 
           // 48px, the height of the bar's own buttons, so the bar never changes height.
           // max-w-full: a button sizes to its content, and the name must truncate inside
           // whatever room the bar gives the strip.
-          "flex h-12 max-w-full items-center gap-2.5 rounded-xl text-left lg:hidden",
-          "transition-[background-color,scale] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted/40 active:scale-[0.97] disabled:pointer-events-none",
-          "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-          compact ? "shrink-0 px-1" : "w-full min-w-0 flex-1 pr-1 sm:w-auto sm:flex-none",
+          "flex h-12 max-w-full items-center gap-2.5 rounded-xl border bg-white/[0.04] px-2 text-left lg:hidden",
+          HAIR,
+          "transition-[background-color,scale] duration-150 ease-[var(--ease-out-strong)] hover:bg-white/[0.07] active:scale-[0.97] motion-reduce:active:scale-100 disabled:pointer-events-none",
+          FOCUS,
+          "w-full min-w-0 flex-1 sm:w-auto sm:flex-none",
         )}
       >
         <AgentAvatar seed={draft.avatarSeed} name={name} size="sm" />
-        {compact ? null : (
-          <span className="min-w-0 flex-1">
-            <span className={cn("block truncate text-sm leading-5 font-medium", draft.name.trim() ? null : "text-muted-foreground")}>
-              {name}
-            </span>
-            <span className="tnum block truncate text-xs leading-4 text-muted-foreground sm:hidden">{shortLine}</span>
+        <span className="min-w-0 flex-1">
+          <span className={cn("block truncate text-sm leading-5 font-medium", draft.name.trim() ? null : "text-muted-foreground")}>
+            {name}
           </span>
-        )}
+          {compact ? null : (
+            <span className={cn(TYPE.caption, "block truncate text-muted-foreground sm:hidden")}>{shortLine}</span>
+          )}
+        </span>
         <ChevronUp aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       </button>
 
@@ -75,13 +78,16 @@ export function PreviewPeek({ draft, readyCount, shortLine, compact, disabled = 
           side="bottom"
           showCloseButton={false}
           finalFocus={() => !wentSomewhere.current}
-          className="max-h-[85dvh] gap-0 overflow-y-auto rounded-t-2xl pb-[env(safe-area-inset-bottom)]"
+          // Opaque, with no backdrop blur: a translucent sheet lets the bar's button glow
+          // through its corner.
+          className="max-h-[85dvh] gap-0 overflow-y-auto rounded-t-2xl bg-popover pb-[env(safe-area-inset-bottom)] [-webkit-backdrop-filter:none] [backdrop-filter:none]"
         >
-          <SheetHeader className="pb-0">
-            <SheetTitle>Your agent</SheetTitle>
+          {/* The title is the small label; the agent's name below is the only large line. */}
+          <SheetHeader className="px-4 pt-4 pb-0">
+            <SheetTitle className={TYPE.kicker}>Your agent</SheetTitle>
           </SheetHeader>
           {/* The sheet is already the surface and already says "Your agent", so the card
-              inside drops its own border, fill and kicker. Every button in the card goes
+              inside drops its own border, fill, shadow, lit edge and kicker. Every button in the card goes
               to a place on the page (`data-go`), and the sheet would cover that place. */}
           <div
             onClick={(event) => {
@@ -89,14 +95,14 @@ export function PreviewPeek({ draft, readyCount, shortLine, compact, disabled = 
               wentSomewhere.current = true;
               setOpen(false);
             }}
-            className="[&_[data-preview-kicker]]:hidden [&>aside]:rounded-none [&>aside]:border-0 [&>aside]:bg-transparent"
+            className="[&_[data-card-edge]]:hidden [&_[data-preview-kicker]]:hidden [&>aside]:rounded-none [&>aside]:border-0 [&>aside]:bg-transparent [&>aside]:shadow-none"
           >
             {children}
           </div>
           {/* The sheet's own close button is 28px; on a phone this one is the way out, so
               it is 44. After the card in the page, as that one was, so the sheet still
               opens with focus on the card. */}
-          <SheetClose render={<Button variant="ghost" size="icon" className="absolute top-1.5 right-1.5 size-11" />}>
+          <SheetClose render={<Button variant="ghost" size="icon" className="absolute top-1.5 right-1.5 size-11 rounded-full" />}>
             <X aria-hidden />
             <span className="sr-only">Close</span>
           </SheetClose>
