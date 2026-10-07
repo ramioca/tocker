@@ -17,6 +17,8 @@ import { LANDING_DEFAULTS, MODE_WORDS } from "./defaults";
  */
 
 export const SAMPLE_AGENT = "momentum-scout";
+/** Its avatar: one of the builder's preset seeds. */
+export const SAMPLE_AVATAR_SEED = "aurora";
 export const SAMPLE_PROMPT = "Momentum on Solana and Base: buy when volume and holders both accelerate.";
 export const SAMPLE_MODE = MODE_WORDS[LANDING_DEFAULTS.mode];
 export const SAMPLE_FLOOR = LANDING_DEFAULTS.minScore;
@@ -40,11 +42,16 @@ export const SAMPLE_ROWS = [
   { coin: "SUPER INU", chain: "Solana", score: 58 },
 ] as const satisfies readonly SampleRow[];
 
-/** The rest of what it scored: fresh Solana candidates, never named, all under the floor. */
-export const SAMPLE_OTHER_SCORES = [55, 49, 44] as const;
+/** The rest of what it scored, all under the floor: listed on the score board, counted elsewhere. */
+export const SAMPLE_OTHERS = [
+  { coin: "BRETT", chain: "Base", score: 55 },
+  { coin: "BONK", chain: "Solana", score: 49 },
+  { coin: "WIF", chain: "Solana", score: 44 },
+] as const satisfies readonly SampleRow[];
+export const SAMPLE_OTHER_SCORES = SAMPLE_OTHERS.map((r) => r.score);
 
 /** Tokens score_token scored in full this run. */
-export const SAMPLE_SCORED = SAMPLE_ROWS.length + SAMPLE_OTHER_SCORES.length;
+export const SAMPLE_SCORED = SAMPLE_ROWS.length + SAMPLE_OTHERS.length;
 
 export const clearsFloor = (score: number) => score >= SAMPLE_FLOOR;
 
@@ -62,7 +69,7 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
  * this carries everything it shows: the strategy first, then the run.
  */
 export const HERO_LABEL =
-  `Sample run by ${SAMPLE_AGENT}, paper, ${SAMPLE_MODE}, every ${SAMPLE_EVERY_MIN} minutes. ` +
+  `Sample run by ${SAMPLE_AGENT}, ${SAMPLE_MODE}, every ${SAMPLE_EVERY_MIN} minutes. ` +
   `Its strategy, visible only to its owner: “${SAMPLE_PROMPT}” ` +
   `At ${SAMPLE_RUN_AT} it screened ${SAMPLE_FOUND} candidates and scored ${SAMPLE_SCORED} against a floor of ${SAMPLE_FLOOR}: ` +
   SAMPLE_ROWS.map((r) => `${r.coin} on ${r.chain} ${r.score}, ${clearsFloor(r.score) ? `buy $${SAMPLE_TRADE_USD}` : "skip"}`).join("; ") +

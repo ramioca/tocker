@@ -7,6 +7,7 @@ import { redactSecrets } from "@/lib/security/redact";
 import { visibleRationale } from "./visibility";
 import { missingKeySql } from "@/lib/agent/inference-gate";
 import { isLlmMock } from "@/lib/agent/mock-model";
+import { isProvider } from "@/lib/agent/providers";
 import { mutedKinds, sanitizePrefs, type NotificationPrefs } from "@/lib/notifications/prefs";
 
 async function readPrefs(db: Db, userId: string): Promise<NotificationPrefs> {
@@ -138,6 +139,29 @@ export async function countKeylessAgents(userId: string): Promise<number> {
     .from(agents)
     // A key agent with no key. An agent that pays per use has none and needs none.
     .where(and(eq(agents.ownerId, userId), missingKeySql()));
+  return Number(row?.n ?? 0);
+}
+
+/** An agent whose config names this provider: the only kind a key of that provider can think for. */
+export function setToProviderSql(provider: string): SQL<boolean> {
+  return sql<boolean>`(${agents.config} #>> '{llm,provider}') = ${provider}`;
+}
+
+/**
+ * How many of an owner's agents are missing a key that this provider's key could be:
+ * key agents with none attached, set to this provider. It is what "attach this key to my
+ * N agents without one" offers, and the attach updates by the same two conditions, so the
+ * offer and what the attach does are the same number. A provider that is no longer
+ * offered fits none: the attach refuses its keys. Under the scripted model nobody is
+ * missing a key.
+ */
+export async function countAgentsKeyFits(userId: string, provider: string): Promise<number> {
+  if (isLlmMock() || !isProvider(provider)) return 0;
+  const db = await getDb();
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(agents)
+    .where(and(eq(agents.ownerId, userId), missingKeySql(), setToProviderSql(provider)));
   return Number(row?.n ?? 0);
 }
 

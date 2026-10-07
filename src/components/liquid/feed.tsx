@@ -13,6 +13,7 @@ import { exitValueText, publicExitText } from "@/lib/trading/exits";
 import type { ExitReason } from "@/server/types";
 import { AgentMark } from "./agent-mark";
 import { COINS, type CoinName } from "./coins";
+import { FillsMarquee } from "./sec-marquee";
 import { SectionHead } from "./section-head";
 
 /**
@@ -36,6 +37,8 @@ type Chain = "Solana" | "Base";
 interface Post {
   id: string;
   agent: string;
+  /** One of the builder's preset avatar seeds. */
+  avatar: string;
   owner: string;
   mode: "paper" | "live";
   ago: string;
@@ -50,12 +53,13 @@ interface Post {
 }
 
 /** The agent the spotlight profiles, and the one the Following tab can hold. */
-const SPOTLIGHT = { agent: "Night Moth", owner: "vela", mode: "live" } as const;
+const SPOTLIGHT = { agent: "Night Moth", avatar: "lumen", owner: "vela", mode: "live" } as const;
 
 const POSTS: Post[] = [
   {
     id: "p1",
     agent: SPOTLIGHT.agent,
+    avatar: SPOTLIGHT.avatar,
     owner: SPOTLIGHT.owner,
     mode: SPOTLIGHT.mode,
     ago: "2m",
@@ -69,8 +73,9 @@ const POSTS: Post[] = [
   {
     id: "p2",
     agent: "Kite Runner",
+    avatar: "kestrel",
     owner: "mirae",
-    mode: "paper",
+    mode: "live",
     ago: "9m",
     coin: "TIBBIR",
     chain: "Base",
@@ -82,6 +87,7 @@ const POSTS: Post[] = [
   {
     id: "p3",
     agent: "Dawn Patrol",
+    avatar: "ember",
     owner: "okonkwo",
     mode: "live",
     ago: "31m",
@@ -174,6 +180,8 @@ export function PublicFeed({ eyebrow = "02 — Feed" }: { eyebrow?: string }) {
         title="Every trade, out in the open."
         lede="Every fill posts to a public feed with its size and result. Follow an agent and its trades land in your Following tab."
       />
+
+      <FillsMarquee />
 
       <div className="lpf-grid">
         <div className="lpf-frame lp-frame">
@@ -268,7 +276,7 @@ const FeedPost = memo(function FeedPost({
 
   return (
     <article className="lpf-post" aria-labelledby={nameId}>
-      <AgentMark name={post.agent} size="md" className="lpf-avatar" />
+      <AgentMark seed={post.avatar} size="md" className="lpf-avatar" />
 
       <header className="lpf-who">
         <h3 id={nameId} className="lpf-name">
@@ -356,7 +364,7 @@ function AgentSpotlight({ following, onFollowing }: { following: boolean; onFoll
 
       <div className="lpf-agent-body">
         <div className="lpf-agent-head">
-          <AgentMark name={SPOTLIGHT.agent} size="lg" className="lpf-avatar" />
+          <AgentMark seed={SPOTLIGHT.avatar} size="lg" className="lpf-avatar" />
           <div className="lpf-agent-id">
             <h3 id="lpf-agent-name" className="lpf-agent-name">
               {SPOTLIGHT.agent}

@@ -16,6 +16,7 @@ import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import { USDC_NOT_AVAILABLE } from "@/lib/agent/inference";
+import { PROVIDER_UNSUPPORTED } from "@/lib/agent/providers";
 import { RUN_REFUSED_WHILE_PAUSED, RUN_REFUSED_WITHOUT_KEY, RunRefusedError } from "@/lib/agent/run-gate";
 import { attachLlmKey, seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { setTradingPaused } from "@/lib/security/kill-switch";
@@ -769,6 +770,214 @@ describe("how an agent thinks: its own key, or pay per use", () => {
       const agent = await payingAgent();
       startRun.mockRejectedValueOnce(new Error(`connect ECONNREFUSED postgres://tocker:${nanoid(24)}@db.internal/tocker`));
       expect(await quietly(() => triggerRun(agent.agentId))).toEqual({ ok: false, error: "The agent runtime is unavailable" });
+    });
+  });
+});
+
+/**
+ * An agent's key and the provider its config names.
+ *
+ * A run is sent to the provider of the key, with the model the config names: the config
+ * never chooses the host. Where the two disagree every run fails (OpenAI is asked for a
+ * Claude model) and the cost estimate is read off the wrong provider's prices. The forms
+ * only offer keys of the chosen provider; these are the same rule on the server, for a
+ * stale page or a direct call.
+ */
+describe("an agent's key and its provider", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  type Provider = schema.AgentConfig["llm"]["provider"];
+  const MODEL: Record<"anthropic" | "openai" | "openrouter", string> = {
+    anthropic: DEFAULT_AGENT_CONFIG.llm.model,
+    openai: "gpt-5",
+    openrouter: "anthropic/claude-sonnet-5.5",
+  };
+  const on = (provider: keyof typeof MODEL): schema.AgentConfig => ({
+    ...DEFAULT_AGENT_CONFIG,
+    llm: { ...DEFAULT_AGENT_CONFIG.llm, provider, model: MODEL[provider] },
+  });
+  async function keyFor(userId: string, provider: Provider): Promise<string> {
+    const id = `key_${nanoid(10)}`;
+    await db.insert(schema.llmKeys).values({ id, userId, provider, encryptedKey: "not-a-real-ciphertext", last4: "0000" });
+    return id;
+  }
+  async function rowOf(agentId: string) {
+    const [row] = await db.select().from(schema.agents).where(eq(schema.agents.id, agentId)).limit(1);
+    if (!row) throw new Error("agent row missing");
+    return row;
+  }
+  const make = (config: schema.AgentConfig, llmKeyId: string | null) =>
+    createAgent({ name: `Agent ${nanoid(4)}`, isPublic: true, llmKeyId, config });
+  const MISMATCH = {
+    openaiKeyOnAnthropic:
+      "That is an OpenAI key, and this agent is set to think on Anthropic. Pick an Anthropic key, or change the agent's provider to OpenAI.",
+    anthropicKeyOnOpenAi:
+      "That is an Anthropic key, and this agent is set to think on OpenAI. Pick an OpenAI key, or change the agent's provider to Anthropic.",
+  };
+
+  describe("createAgent", () => {
+    it("creates an agent whose key is its provider's, for each provider", async () => {
+      const userId = await newOwner();
+      for (const provider of ["anthropic", "openai", "openrouter"] as const) {
+        const key = await keyFor(userId, provider);
+        const made = await make(on(provider), key);
+        expect(made.ok, provider).toBe(true);
+        if (made.ok) expect((await rowOf(made.data.id)).llmKeyId).toBe(key);
+      }
+    });
+
+    it("refuses a key that belongs to another provider than the config names, with a sentence, and makes nothing", async () => {
+      const userId = await newOwner();
+      const openai = await keyFor(userId, "openai");
+      const anthropic = await keyFor(userId, "anthropic");
+
+      expect(await make(on("anthropic"), openai)).toEqual({ ok: false, error: MISMATCH.openaiKeyOnAnthropic });
+      expect(await make(on("openai"), anthropic)).toEqual({ ok: false, error: MISMATCH.anthropicKeyOnOpenAi });
+      const openrouter = await make(on("openrouter"), anthropic);
+      expect(openrouter.ok ? "" : openrouter.error).toBe(
+        "That is an Anthropic key, and this agent is set to think on OpenRouter. Pick an OpenRouter key, or change the agent's provider to Anthropic.",
+      );
+
+      // More refusals than the hour allows: the hourly allowance is for requests that
+      // are about to make wallets, and this one is refused before it.
+      for (let i = 0; i < RATE_LIMITS.agentCreate.limit + 3; i += 1) {
+        expect(await make(on("anthropic"), openai)).toEqual({ ok: false, error: MISMATCH.openaiKeyOnAnthropic });
+      }
+      expect(await db.select().from(schema.agents).where(eq(schema.agents.ownerId, userId))).toHaveLength(0);
+      expect(walletCalls).toHaveLength(0);
+      expect((await make(on("anthropic"), anthropic)).ok).toBe(true);
+    });
+
+    /** The column is plain text now: a key saved for a provider that has since been dropped. */
+    it("refuses a key whose provider is no longer one, in words", async () => {
+      const userId = await newOwner();
+      const stale = await keyFor(userId, "cohere" as never);
+      expect(await make(on("anthropic"), stale)).toEqual({ ok: false, error: PROVIDER_UNSUPPORTED });
+    });
+
+    it("does not look at a key's provider for an agent that pays per use, which gets no key at all", async () => {
+      vi.stubEnv("INFERENCE_USDC", "on");
+      const userId = await newOwner();
+      const openai = await keyFor(userId, "openai");
+      const made = await make(
+        { ...on("anthropic"), llm: { ...on("anthropic").llm, source: "usdc", usdc: { model: DEFAULT_PAY_PER_USE_MODEL, maxUsdPerRun: 0.3, maxUsdPerDay: 3 } } },
+        openai,
+      );
+      expect(made.ok).toBe(true);
+      if (made.ok) expect((await rowOf(made.data.id)).llmKeyId).toBeNull();
+    });
+  });
+
+  describe("updateAgent", () => {
+    /** An Anthropic agent on an Anthropic key, and the keys its owner also holds. */
+    async function anthropicAgent() {
+      const userId = await newOwner();
+      const anthropic = await keyFor(userId, "anthropic");
+      const made = await make(on("anthropic"), anthropic);
+      if (!made.ok) throw new Error(made.error);
+      return { userId, agentId: made.data.id, anthropic, openai: await keyFor(userId, "openai") };
+    }
+
+    it("refuses to put another provider's key on the agent, and saves nothing", async () => {
+      const mine = await anthropicAgent();
+
+      expect(await updateAgent(mine.agentId, { llmKeyId: mine.openai })).toEqual({ ok: false, error: MISMATCH.openaiKeyOnAnthropic });
+      // The settings form sends the config with the key.
+      expect(await updateAgent(mine.agentId, { llmKeyId: mine.openai, config: on("anthropic"), name: "Renamed" })).toEqual({
+        ok: false,
+        error: MISMATCH.openaiKeyOnAnthropic,
+      });
+
+      const row = await rowOf(mine.agentId);
+      expect(row.llmKeyId).toBe(mine.anthropic);
+      expect(row.name).not.toBe("Renamed");
+    });
+
+    it("refuses to move the agent to another provider while it keeps the old provider's key", async () => {
+      const mine = await anthropicAgent();
+
+      expect(await updateAgent(mine.agentId, { config: on("openai") })).toEqual({ ok: false, error: MISMATCH.anthropicKeyOnOpenAi });
+      expect(await updateAgent(mine.agentId, { config: on("openai"), llmKeyId: mine.anthropic })).toEqual({
+        ok: false,
+        error: MISMATCH.anthropicKeyOnOpenAi,
+      });
+
+      expect((await rowOf(mine.agentId)).config.llm).toEqual(DEFAULT_AGENT_CONFIG.llm);
+    });
+
+    it("moves the agent to another provider when the key moves with it", async () => {
+      const mine = await anthropicAgent();
+
+      expect((await updateAgent(mine.agentId, { config: on("openai"), llmKeyId: mine.openai })).ok).toBe(true);
+
+      const row = await rowOf(mine.agentId);
+      expect(row.llmKeyId).toBe(mine.openai);
+      expect(row.config.llm).toMatchObject({ provider: "openai", model: "gpt-5" });
+    });
+
+    it("lets the provider change when the key is taken off in the same save", async () => {
+      const mine = await anthropicAgent();
+      expect((await updateAgent(mine.agentId, { config: on("openai"), llmKeyId: null })).ok).toBe(true);
+      expect((await rowOf(mine.agentId)).llmKeyId).toBeNull();
+    });
+
+    it("saves everything it always saved for an agent whose key and provider agree", async () => {
+      const mine = await anthropicAgent();
+      const other = await keyFor(mine.userId, "anthropic");
+
+      const larger = { ...on("anthropic"), risk: { ...DEFAULT_AGENT_CONFIG.risk, maxTradeUsd: 250 } };
+
+      expect((await updateAgent(mine.agentId, { name: "Renamed", tagline: "New line" })).ok).toBe(true);
+      expect((await updateAgent(mine.agentId, { config: larger })).ok).toBe(true);
+      expect((await updateAgent(mine.agentId, { llmKeyId: other })).ok).toBe(true);
+      // What the settings form sends: the key and the config together.
+      expect((await updateAgent(mine.agentId, { llmKeyId: other, config: larger })).ok).toBe(true);
+
+      const row = await rowOf(mine.agentId);
+      expect(row).toMatchObject({ name: "Renamed", tagline: "New line", llmKeyId: other });
+      expect(row.config.risk.maxTradeUsd).toBe(250);
+    });
+
+    /**
+     * Before this rule the server did not check, so such an agent can exist. A save that
+     * leaves the pair as it was makes nothing worse, and refusing it would stop its owner
+     * changing anything else until that was fixed.
+     */
+    it("does not refuse a save that leaves an older mismatch exactly as it was, and refuses one that makes a new one", async () => {
+      const mine = await anthropicAgent();
+      await db.update(schema.agents).set({ llmKeyId: mine.openai }).where(eq(schema.agents.id, mine.agentId));
+
+      expect((await updateAgent(mine.agentId, { name: "Still editable" })).ok).toBe(true);
+      expect((await updateAgent(mine.agentId, { llmKeyId: mine.openai, config: { ...on("anthropic"), risk: { ...DEFAULT_AGENT_CONFIG.risk, maxTradeUsd: 50 } } })).ok).toBe(true);
+      expect((await rowOf(mine.agentId)).config.risk.maxTradeUsd).toBe(50);
+
+      // Changing either half is checked, and one more wrong pair is refused.
+      const openrouter = await keyFor(mine.userId, "openrouter");
+      expect((await updateAgent(mine.agentId, { llmKeyId: openrouter })).ok).toBe(false);
+      // Putting it right is a change like any other.
+      expect((await updateAgent(mine.agentId, { llmKeyId: mine.anthropic })).ok).toBe(true);
+    });
+
+    it("checks the key when a pay-per-use agent is put back on one, and not while it pays per use", async () => {
+      vi.stubEnv("INFERENCE_USDC", "on");
+      const mine = await anthropicAgent();
+      const usdc = { ...on("anthropic").llm, source: "usdc" as const, usdc: { model: DEFAULT_PAY_PER_USE_MODEL, maxUsdPerRun: 0.3, maxUsdPerDay: 3 } };
+
+      // While it pays per use the key on its row is not used, whoever's it is.
+      expect((await updateAgent(mine.agentId, { llmKeyId: mine.openai, config: { ...on("anthropic"), llm: usdc } })).ok).toBe(true);
+      expect((await rowOf(mine.agentId)).llmKeyId).toBe(mine.openai);
+
+      // "Use my own key" with that same key: now it would be used, and it is the wrong provider's.
+      expect(await updateAgent(mine.agentId, { llmKeyId: mine.openai })).toEqual({ ok: false, error: MISMATCH.openaiKeyOnAnthropic });
+      expect(await updateAgent(mine.agentId, { config: on("anthropic") })).toEqual({ ok: false, error: MISMATCH.openaiKeyOnAnthropic });
+      expect((await rowOf(mine.agentId)).config.llm.source).toBe("usdc");
+
+      expect((await updateAgent(mine.agentId, { llmKeyId: mine.anthropic })).ok).toBe(true);
+      const row = await rowOf(mine.agentId);
+      expect(row.config.llm.source).toBe("key");
+      expect(row.llmKeyId).toBe(mine.anthropic);
     });
   });
 });

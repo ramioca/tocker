@@ -25,7 +25,7 @@ export const LANDING_DEFAULTS = {
 
 const d = LANDING_DEFAULTS;
 
-/** How each execution mode reads on the page. Every agent starts on paper. */
+/** How each execution mode reads on the page. */
 export const MODE_WORDS = { approve: "asks first", auto: "trades on its own" } as const;
 const CHAIN_NAMES = { solana: "Solana", base: "Base" } as const;
 
@@ -41,7 +41,7 @@ const chainsText = () => {
 
 /** The card's rows, read in pairs: label, value. */
 export const DEFAULT_ROWS: ReadonlyArray<readonly [string, string]> = [
-  ["Mode", `paper · ${MODE_WORDS[d.mode]}`],
+  ["Mode", MODE_WORDS[d.mode]],
   ["Runs", `every ${d.intervalMinutes} min`],
   ["Chains", chainsText()],
   ["Score floor", `${d.minScore} / 100`],
@@ -68,11 +68,23 @@ export function feeSentence(feeUsd: number): string {
   return ` What Tocker charges is a flat $${amount} per filled trade, buy or sell, never a percentage of its size.`;
 }
 
-/** The two FAQ answers that say where an agent's thinking comes from, as they have always read. */
-const KEY_MODEL_ANSWER =
-  "The one you choose, on your own key: Anthropic, OpenAI or OpenRouter. Keys are encrypted at rest and decrypted only on our servers, to run your agent and to list the models your key can use. Your provider bills you for the model directly.";
-const KEY_START_ANSWER =
-  "An email address and an API key for the model your agent runs on (Anthropic, OpenAI or OpenRouter). Every agent starts on paper, so there is nothing to deposit until you decide to go live.";
+/** How many providers the page names before it says "and more". */
+const NAMED_PROVIDERS = 3;
+
+/**
+ * The providers a key can be from, as a sentence names them. Up to three are all named
+ * ("Anthropic, OpenAI or OpenRouter"); past that, the first three "and more".
+ *
+ * The names are handed in: they are the providers a key can be added for today, read
+ * from the registry by the page (`PROVIDER_ORDER` in `src/lib/agent/providers.ts`). So
+ * the page never names a provider that is not switched on, never says "and more" while
+ * there are no more, and does not grow a line for every provider added.
+ */
+export function providerWords(names: readonly string[]): string {
+  if (names.length > NAMED_PROVIDERS) return `${names.slice(0, NAMED_PROVIDERS).join(", ")} and more`;
+  if (names.length < 2) return names.join("");
+  return `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
+}
 
 /**
  * "Which AI model runs it?" and "What do I need to start?".
@@ -87,12 +99,24 @@ const KEY_START_ANSWER =
  * The open wording keeps the order the product does: your own key first and recommended,
  * pay per use for someone without one. It says what leaves Tocker in that mode, because
  * that is a thing to know before choosing it, not after.
+ *
+ * `providers` is the names of the providers a key can be from, in the order the chooser
+ * lists them. With the three the product started with, both answers read as they always
+ * have ("Anthropic, OpenAI or OpenRouter").
  */
-export function thinkingAnswers(payPerUseOpen: boolean): { model: string; start: string } {
-  if (!payPerUseOpen) return { model: KEY_MODEL_ANSWER, start: KEY_START_ANSWER };
+export function thinkingAnswers(payPerUseOpen: boolean, providers: readonly string[]): { model: string; start: string } {
+  const named = providerWords(providers);
+  // With nothing to name, the sentences still stand: they just name nobody.
+  const keyModel = `The one you choose, on your own key${named ? `: ${named}` : ""}. Keys are encrypted at rest and decrypted only on our servers, to run your agent and to list the models your key can use. Your provider bills you for the model directly.`;
+  const brackets = named ? ` (${named})` : "";
+  if (!payPerUseOpen) {
+    return {
+      model: keyModel,
+      start: `An email address and an API key for the model your agent runs on${brackets}.`,
+    };
+  }
   return {
-    model: `${KEY_MODEL_ANSWER} An agent with no key can pay per use instead: each model step is bought in USDC from the agent’s own Solana wallet, from a short list of models. In that mode the agent’s strategy and transcript are sent to BlockRun and the model provider it uses.`,
-    start:
-      "An email address, and a way for your agent to think: your own API key (Anthropic, OpenAI or OpenRouter), which is what we recommend, or a few dollars of USDC in the agent’s own wallet to pay per use. Every agent starts on paper, so there is nothing to deposit for trading until you decide to go live.",
+    model: `${keyModel} An agent with no key can pay per use instead: each model step is bought in USDC from the agent’s own Solana wallet, from a short list of models. In that mode the agent’s strategy and transcript are sent to BlockRun and the model provider it uses.`,
+    start: `An email address, and a way for your agent to think: your own API key${brackets}, which is what we recommend, or a few dollars of USDC in the agent’s own wallet to pay per use.`,
   };
 }

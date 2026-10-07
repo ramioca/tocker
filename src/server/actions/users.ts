@@ -1,10 +1,26 @@
 "use server";
 import { discoverAnthropicWorkspace, needsWorkspaceHeader } from "@/lib/agent/anthropic-workspace";
 import { thinkSource } from "@/lib/agent/inference";
-import { countAgentsMissingKey, missingKeySql, paysPerUseSql } from "@/lib/agent/inference-gate";
+import { missingKeySql, paysPerUseSql } from "@/lib/agent/inference-gate";
+import { countAgentsKeyFits, setToProviderSql } from "@/server/queries/users";
 import { listModelsForKey } from "@/lib/agent/key-models";
 import { probeLlmKey } from "@/lib/agent/key-probe";
-import { providerLabel, type ModelOption } from "@/lib/agent/models";
+import {
+  KEY_MAX_CHARS,
+  KEY_UNSENDABLE,
+  KEY_WRAPPED,
+  PROVIDER_UNSUPPORTED,
+  isProvider,
+  keyFitsHeader,
+  keyIsWrapped,
+  keyProblem,
+  providerLabel,
+  providerRow,
+  withArticle,
+  type LlmProvider,
+  type ModelOption,
+} from "@/lib/agent/providers";
+import { withoutKey } from "@/lib/agent/providers-keys";
 import { revalidatePath } from "next/cache";
 import { and, eq, isNull, ne, not, sql } from "drizzle-orm";
 import { agents, getDb, llmKeys, notifications, users } from "@/db";
@@ -15,15 +31,9 @@ import { decryptSecret, encryptSecret, last4 } from "@/lib/crypto";
 import { recordAudit } from "@/lib/security/audit";
 import { SECRET_IN_PUBLIC_TEXT, dbErrorForLog, looksLikeSecret } from "@/lib/security/redact";
 import { newId } from "@/server/queries/_shared";
-import { mismatchedProvider, wrongProviderOnAdd, wrongProviderOnRotate } from "@/lib/agent/key-prefix";
 import { sanitizePrefs, type NotificationPrefs } from "@/lib/notifications/prefs";
 import type { ActionResult } from "@/server/types";
 import { slowDown } from "./_shared";
-
-/** "an OpenAI", "a Groq": the audit log is read, so it gets the article right. */
-function withArticle(word: string): string {
-  return `${/^[aeiou]/i.test(word) ? "an" : "a"} ${word}`;
-}
 
 function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
@@ -36,13 +46,27 @@ function rejectedBy(provider: string): string {
 
 const HANDLE_RE = /^[a-z0-9_]{2,20}$/;
 
-/** No provider issues a key this long; the forms stop at the same length. */
-const MAX_KEY_CHARS = 512;
 /** Anthropic's own shape for a workspace id. Anything else in that field is a mistake. */
 const WORKSPACE_ID_RE = /^wrkspc_[A-Za-z0-9]{1,72}$/;
 /** Adding or replacing a key asks its provider about it, so it is paced like any outbound call. */
 const KEY_WRITE_LIMIT = { limit: 10, windowMs: 60_000 } as const;
 const LABEL_IS_A_KEY = "Label looks like an API key. A label is only a name; the key itself goes in the key field.";
+
+/**
+ * Why what was pasted cannot be a key under any provider, or null. Asked of the trimmed
+ * value first thing, so nothing below it, and no provider, ever sees one of these.
+ *
+ * More than the key was pasted (quotes, `NAME=`, `export`): said in its own words,
+ * because the fix is to paste less. Or it is too short or too long to be a key. Or it
+ * has a character no request header can carry, a space or a curly quote in the middle:
+ * saved, it would fail every run.
+ */
+function unusableKey(key: string): string | null {
+  if (key.length > KEY_MAX_CHARS) return "That does not look like an API key";
+  if (keyIsWrapped(key)) return KEY_WRAPPED;
+  if (key.length < 16) return "That does not look like an API key";
+  return keyFitsHeader(key) ? null : KEY_UNSENDABLE;
+}
 
 export async function updateProfile(input: {
   handle?: string;
@@ -104,7 +128,7 @@ export async function updateProfile(input: {
 }
 
 export async function addLlmKey(input: {
-  provider: "anthropic" | "openai" | "openrouter";
+  provider: LlmProvider;
   key: string;
   label?: string;
   /** Anthropic only: the workspace an organization-level key should act in. */
@@ -114,8 +138,11 @@ export async function addLlmKey(input: {
   if (!session) return fail("Sign in first");
 
   const key = typeof input.key === "string" ? input.key.trim() : "";
-  if (key.length < 16 || key.length > MAX_KEY_CHARS || /\s/.test(key)) return fail("That does not look like an API key");
-  if (!["anthropic", "openai", "openrouter"].includes(input.provider)) return fail("Unknown provider");
+  const unusable = unusableKey(key);
+  if (unusable) return fail(unusable);
+  // The type is erased at the wire. Only a provider that is switched on has a host a key
+  // may be sent to; anything else stops here, before the key is looked at again.
+  if (!isProvider(input.provider)) return fail("Unknown provider");
   if (input.label !== undefined && (typeof input.label !== "string" || input.label.trim().length > 60)) {
     return fail("Label must be 60 characters or fewer");
   }
@@ -132,10 +159,12 @@ export async function addLlmKey(input: {
   }
   const limited = slowDown("llm-key", session.userId, KEY_WRITE_LIMIT);
   if (limited) return fail(limited);
-  // The form refuses this before calling; this covers a direct call. A key saved under
-  // the wrong provider passes when that provider can't be probed and fails on the next run.
-  const otherProvider = mismatchedProvider(key, input.provider);
-  if (otherProvider) return fail(wrongProviderOnAdd(otherProvider, input.provider));
+  // Before anything is sent anywhere. A key that starts the way another provider's keys
+  // do would be handed to this one by the check below, and a key without the prefix this
+  // provider documents is some other service's. The form refuses both before calling;
+  // this covers a direct call.
+  const problem = keyProblem(input.provider, key);
+  if (problem) return fail(problem);
 
   // An Anthropic key made at the organization level must name a workspace on every
   // request. Nobody should have to know that: one free request says whether this key
@@ -181,7 +210,7 @@ export async function addLlmKey(input: {
   await recordAudit({
     userId: session.userId,
     kind: "llm_key_added",
-    summary: `Added ${withArticle(providerLabel(input.provider))} API key ending ${last4(key)}${label ? ` (${label})` : ""}.`,
+    summary: `Added ${withArticle(input.provider)} API key ending ${last4(key)}${label ? ` (${label})` : ""}.`,
     metadata: { provider: input.provider, last4: last4(key) },
   });
 
@@ -189,26 +218,15 @@ export async function addLlmKey(input: {
   revalidatePath("/settings/security");
   // A key removed and re-added (rather than rotated) leaves every agent it served with
   // none. Saying how many lets the form offer to attach this one in the same breath. An
-  // agent that pays for its own thinking has no key on purpose and is not counted.
-  const keylessAgents = await countAgentsMissingKey(session.userId);
+  // agent that pays for its own thinking has no key on purpose and is not counted, and
+  // neither is one set to another provider, which this key could not think for.
+  const keylessAgents = await countAgentsKeyFits(session.userId, input.provider);
   return {
     ok: true,
     data: { id, last4: last4(key), keylessAgents, ...(probe === "unreachable" ? { unverified: true } : {}) },
   };
 }
 
-/**
- * Attach one of the caller's keys to every one of their agents that has none.
- *
- * The other half of `removeLlmKey`: removing a key detaches every agent it served, and
- * adding a new one attached nothing, so an operator who swapped keys by remove-then-add
- * ended with a working key and every agent stopped — fixable only agent by agent. Only
- * agents with no key at all are touched; one already pointed at another key keeps it.
- *
- * An agent that pays for its own thinking (`llm.source: "usdc"`) is never touched. It has
- * no key because it needs none, and a key put on it here would sit unused: the only way
- * to move one back to a key is its own settings, which change the mode explicitly.
- */
 /** How often one account may ask a provider for a model list. The picker caches it too. */
 const KEY_MODELS_LIMIT = { limit: 20, windowMs: 60_000 } as const;
 /** How long one key's list is served before its provider is asked again. */
@@ -218,17 +236,20 @@ const KEY_MODELS_CACHE_MAX = 500;
 const keyModelsCache = new Map<string, { at: number; models: ModelOption[] }>();
 
 /**
- * The models one of the caller's own keys can use, asked of Anthropic or OpenAI.
+ * The models one of the caller's own keys can use, asked of the provider it was saved
+ * under. Only for a provider whose list depends on the key (`modelList: "by-key"` on its
+ * row); a public list is read without one, through `/api/models/[provider]`.
  *
  * This is the one place outside the run loop where a stored key is decrypted. The
  * plaintext lives for the length of the provider request inside this function; what
- * goes back to the browser is model ids, names and list prices. The key is looked up by
- * id *and* owner, so nobody learns anything through a key that is not theirs, including
- * whether it exists.
+ * goes back to the browser is model ids, names and list prices, and a name is the
+ * provider's own text, so the key is taken out of it by value before it leaves. The key
+ * is looked up by id *and* owner, so nobody learns anything through a key that is not
+ * theirs, including whether it exists.
  */
 export async function listKeyModels(
   keyId: string,
-): Promise<ActionResult<{ provider: "anthropic" | "openai"; models: ModelOption[] }>> {
+): Promise<ActionResult<{ provider: LlmProvider; models: ModelOption[] }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
   // A public endpoint: the argument is whatever the caller sent.
@@ -243,38 +264,75 @@ export async function listKeyModels(
     .where(and(eq(llmKeys.id, keyId), eq(llmKeys.userId, session.userId)))
     .limit(1);
   if (!row) return fail("Key not found");
-  if (row.provider === "openrouter") return fail("OpenRouter's list does not depend on the key");
+  // The column is plain text, so the row's word is checked like anything else from
+  // outside. A key is decrypted only for a provider that is switched on and is asked by
+  // key: no other kind of row gets as far as the plaintext.
+  const provider = row.provider;
+  if (!isProvider(provider)) return fail(PROVIDER_UNSUPPORTED);
+  if (providerRow(provider).modelList !== "by-key") return fail(`${providerLabel(provider)}'s list does not depend on the key`);
 
   const cacheKey = `${row.id}:${row.last4}`;
   const cached = keyModelsCache.get(cacheKey);
   if (cached && Date.now() - cached.at < KEY_MODELS_TTL_MS) {
-    return { ok: true, data: { provider: row.provider, models: cached.models } };
+    return { ok: true, data: { provider, models: cached.models } };
   }
 
-  let result;
+  let key: string;
   try {
-    result = await listModelsForKey(row.provider, decryptSecret(row.encryptedKey), row.workspaceId);
+    key = decryptSecret(row.encryptedKey);
   } catch (err) {
     // Decryption failed (a missing or changed ENCRYPTION_KEY). Message only, never the blob.
     console.error("[listKeyModels]", err instanceof Error ? err.message : String(err));
     return fail("Could not read this key. The built-in list is shown instead.");
   }
+  // Most providers' keys have no shape a pattern could find, so the key is removed by
+  // value, here where it is known, from anything the provider wrote.
+  const clean = withoutKey(key);
+  const unavailable = `Couldn't get the model list from ${providerLabel(provider)} just now.`;
+  let result;
+  try {
+    result = await listModelsForKey(provider, key, row.workspaceId);
+  } catch (err) {
+    // It does not throw. If it ever does, what it threw may quote the provider.
+    console.error("[listKeyModels]", clean(err instanceof Error ? err.message : String(err)));
+    return fail(unavailable);
+  }
   if (!result.ok) {
     return fail(
       result.reason === "rejected"
-        ? `${providerLabel(row.provider)} no longer accepts this key. Replace it under Settings, LLM API keys.`
-        : `Couldn't get the model list from ${providerLabel(row.provider)} just now.`,
+        ? `${providerLabel(provider)} no longer accepts this key. Replace it under Settings, LLM API keys.`
+        : unavailable,
     );
   }
+  // An id the cleaning would change has a credential in it and is not an id.
+  const models = result.models.flatMap((model) => (clean(model.id) === model.id ? [{ ...model, label: clean(model.label) }] : []));
 
   if (keyModelsCache.size >= KEY_MODELS_CACHE_MAX) {
     const oldest = keyModelsCache.keys().next().value;
     if (oldest !== undefined) keyModelsCache.delete(oldest);
   }
-  keyModelsCache.set(cacheKey, { at: Date.now(), models: result.models });
-  return { ok: true, data: { provider: row.provider, models: result.models } };
+  keyModelsCache.set(cacheKey, { at: Date.now(), models });
+  return { ok: true, data: { provider, models } };
 }
 
+/**
+ * Attach one of the caller's keys to every one of their agents that has none.
+ *
+ * The other half of `removeLlmKey`: removing a key detaches every agent it served, and
+ * adding a new one attached nothing, so an operator who swapped keys by remove-then-add
+ * ended with a working key and every agent stopped — fixable only agent by agent. Only
+ * agents with no key at all are touched; one already pointed at another key keeps it.
+ *
+ * An agent that pays for its own thinking (`llm.source: "usdc"`) is never touched. It has
+ * no key because it needs none, and a key put on it here would sit unused: the only way
+ * to move one back to a key is its own settings, which change the mode explicitly.
+ *
+ * Nor is an agent set to another provider than the key's. A run goes to the provider of
+ * the key with the model the config names, so a Groq key on an agent set to Anthropic
+ * could only fail, asking Groq for a Claude model. `createAgent` and `updateAgent`
+ * refuse that pair; this is the third way a key reaches an agent and holds to the same
+ * rule. Those agents get their provider, model and key chosen together in their settings.
+ */
 export async function attachKeyToKeylessAgents(keyId: string): Promise<ActionResult<{ attached: number }>> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
@@ -286,12 +344,27 @@ export async function attachKeyToKeylessAgents(keyId: string): Promise<ActionRes
     .where(and(eq(llmKeys.id, keyId), eq(llmKeys.userId, session.userId)))
     .limit(1);
   if (!key) return fail("Key not found");
+  const provider = key.provider;
+  if (!isProvider(provider)) return fail(PROVIDER_UNSUPPORTED);
 
   const attached = await db
     .update(agents)
     .set({ llmKeyId: key.id, updatedAt: new Date() })
-    .where(and(eq(agents.ownerId, session.userId), missingKeySql()))
+    .where(and(eq(agents.ownerId, session.userId), missingKeySql(), setToProviderSql(provider)))
     .returning({ id: agents.id, name: agents.name, slug: agents.slug });
+
+  // Nothing fitted, yet there are agents without a key: say why, rather than "attached to 0".
+  if (attached.length === 0) {
+    const [others] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(agents)
+      .where(and(eq(agents.ownerId, session.userId), missingKeySql()));
+    if (Number(others?.n ?? 0) > 0) {
+      return fail(
+        `None of your agents without a key are set to ${providerLabel(provider)}. Open each one's settings and choose its provider, model and key there.`,
+      );
+    }
+  }
 
   // One row per agent, so each agent's own history says when it got its brain back.
   // `llm_key_added` is the honest existing kind: a key was added to this agent.
@@ -301,8 +374,8 @@ export async function attachKeyToKeylessAgents(keyId: string): Promise<ActionRes
       kind: "llm_key_added",
       agentId: agent.id,
       agentName: agent.name,
-      summary: `Attached the ${providerLabel(key.provider)} key ending ${key.last4} to ${agent.name}, which had no key.`,
-      metadata: { provider: key.provider, last4: key.last4, attachedTo: agent.id },
+      summary: `Attached the ${providerLabel(provider)} key ending ${key.last4} to ${agent.name}, which had no key.`,
+      metadata: { provider, last4: key.last4, attachedTo: agent.id },
     });
   }
 
@@ -370,7 +443,8 @@ export async function rotateLlmKey(input: {
   if (!session) return fail("Sign in first");
 
   const key = typeof input.key === "string" ? input.key.trim() : "";
-  if (key.length < 16 || key.length > MAX_KEY_CHARS || /\s/.test(key)) return fail("That does not look like an API key");
+  const unusable = unusableKey(key);
+  if (unusable) return fail(unusable);
   const limited = slowDown("llm-key", session.userId, KEY_WRITE_LIMIT);
   if (limited) return fail(limited);
 
@@ -381,15 +455,20 @@ export async function rotateLlmKey(input: {
     .where(and(eq(llmKeys.id, input.id), eq(llmKeys.userId, session.userId)))
     .limit(1);
   if (!existing) return fail("Key not found");
-  // A rotation replaces the secret, never the provider; the inventory refuses this first.
-  const otherProvider = mismatchedProvider(key, existing.provider);
-  if (otherProvider) return fail(wrongProviderOnRotate(otherProvider, existing.provider));
+  // The provider is the saved row's word. One that is no longer switched on has no host
+  // a new secret could be checked against, or sent to on a run.
+  const provider = existing.provider;
+  if (!isProvider(provider)) return fail(PROVIDER_UNSUPPORTED);
+  // A rotation replaces the secret, never the provider; the inventory refuses this
+  // first. Before anything is sent: the new secret must not be another provider's key.
+  const problem = keyProblem(provider, key, "rotate");
+  if (problem) return fail(problem);
 
   // Every agent on this key picks up the new secret on its next run, so a refused one
   // would take all of them down at once. Checked against the saved workspace: rotation
   // replaces the secret, not where it acts.
-  const probe = await probeLlmKey(existing.provider, key, existing.workspaceId);
-  if (probe === "rejected") return fail(rejectedBy(existing.provider));
+  const probe = await probeLlmKey(provider, key, existing.workspaceId);
+  if (probe === "rejected") return fail(rejectedBy(provider));
 
   const [{ n: agentCount }] = await db
     .select({ n: sql<number>`count(*)::int` })
@@ -410,10 +489,10 @@ export async function rotateLlmKey(input: {
   await recordAudit({
     userId: session.userId,
     kind: "llm_key_rotated",
-    summary: `Rotated the ${existing.provider} key: ${existing.last4} → ${last4(key)}. ${Number(agentCount)} agent${
+    summary: `Rotated the ${providerLabel(provider)} key: ${existing.last4} → ${last4(key)}. ${Number(agentCount)} agent${
       Number(agentCount) === 1 ? "" : "s"
     } kept running.`,
-    metadata: { provider: existing.provider, from: existing.last4, to: last4(key), agents: Number(agentCount) },
+    metadata: { provider, from: existing.last4, to: last4(key), agents: Number(agentCount) },
   });
 
   revalidatePath("/settings");

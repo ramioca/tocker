@@ -2,6 +2,7 @@ import { DEFAULT_AGENT_CONFIG, DEFAULT_MODEL_ID } from "@/lib/agent/config";
 import { DEFAULT_FUND_USD } from "@/lib/wallets/funding";
 import { chooseSource, stripPayPerUse, usdcEstimate } from "@/components/agents/thinking";
 import { thinkSource } from "@/lib/agent/inference";
+import { isProvider, type LlmProvider } from "@/lib/agent/providers";
 import type { AgentConfigInput } from "@/lib/agent/config";
 import type { AgentConfig } from "@/db/schema";
 import type { LlmKeyRow } from "@/server/types";
@@ -100,6 +101,25 @@ export function emptyDraft(): BuilderDraft {
 }
 
 /**
+ * An agent's model settings moved to another provider: that provider, on the model the
+ * registry starts it on. The model that was chosen belongs to the provider being left
+ * and would fail the first run on this one. Everything else (temperature, steps, how it
+ * thinks) stays as it was. The builder and the settings form both change provider
+ * through this, so they cannot come to disagree about what a switch does.
+ */
+export function onProvider<L extends { provider: LlmProvider; model: string }>(llm: L, provider: LlmProvider): L {
+  return { ...llm, provider, model: DEFAULT_MODEL_ID[provider] };
+}
+
+/** The first of the account's keys that belongs to this provider, or null when it has none. */
+export function firstKeyFor(
+  keys: ReadonlyArray<Pick<LlmKeyRow, "id" | "provider">>,
+  provider: LlmProvider,
+): string | null {
+  return keys.find((key) => key.provider === provider)?.id ?? null;
+}
+
+/**
  * Put a draft on a key the account already has.
  *
  * The builder opened on Anthropic with no key chosen, whatever the account held. Someone
@@ -117,12 +137,25 @@ export function emptyDraft(): BuilderDraft {
  * moving it onto one would undo a choice somebody made. That holds only while the viewer
  * may use pay-per-use. A draft saved when they could, restored when they cannot, goes
  * back to being a key draft, because the form no longer shows the other mode at all.
+ *
+ * Neither the draft nor the keys are trusted to name a provider that is offered. A draft
+ * is read back from localStorage and a key from its row, and either can name a provider
+ * that has been switched off since, or nothing sensible at all. Such a draft starts
+ * again on the default provider, and such a key is never chosen for it: the form could
+ * show neither, and the server refuses both.
  */
 export function withDefaultKey(
   draft: BuilderDraft,
-  keys: ReadonlyArray<Pick<LlmKeyRow, "id" | "provider">>,
+  allKeys: ReadonlyArray<Pick<LlmKeyRow, "id" | "provider">>,
   options: { payPerUseAllowed?: boolean } = {},
 ): BuilderDraft {
+  if (!isProvider(draft.config.llm.provider)) {
+    draft = {
+      ...draft,
+      config: { ...draft.config, llm: onProvider(draft.config.llm, DEFAULT_AGENT_CONFIG.llm.provider) },
+    };
+  }
+  const keys = allKeys.filter((key) => isProvider(key.provider));
   if (thinkSource(draft.config) === "usdc") {
     if (options.payPerUseAllowed === true) {
       // A saved draft that names the mode without its model and limits gets the defaults,
@@ -143,10 +176,7 @@ export function withDefaultKey(
   return {
     ...draft,
     llmKeyId: first.id,
-    config: {
-      ...draft.config,
-      llm: { ...draft.config.llm, provider: first.provider, model: DEFAULT_MODEL_ID[first.provider] },
-    },
+    config: { ...draft.config, llm: onProvider(draft.config.llm, first.provider) },
   };
 }
 

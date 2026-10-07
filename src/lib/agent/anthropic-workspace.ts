@@ -20,13 +20,21 @@
  * header", which is right for a scoped key and no worse than before for the other kind.
  *
  * Every function here is handed a plaintext key, so none of it may reach a client
- * bundle, and none of it logs, returns or keeps the key.
+ * bundle, and none of it logs, returns or keeps the key. Every request goes through
+ * `providerFetch`, which sends it to Anthropic's own origin and nowhere else, and does
+ * not follow a redirect: `x-api-key` is a header `fetch` would carry across one.
  */
 import "server-only";
+import { providerFetch, withoutKey } from "./providers-keys";
 
-const API = "https://api.anthropic.com";
 const API_VERSION = "2023-06-01";
 const TIMEOUT_MS = 10_000;
+/**
+ * Anthropic's own shape for a workspace id. An id read from one of its answers is put
+ * into the path of the next request and saved beside the key, so it is held to this
+ * shape first: letters and digits after the prefix, and nothing that could be a path.
+ */
+const WORKSPACE_ID = /^wrkspc_[A-Za-z0-9]{1,72}$/;
 
 export interface AnthropicWorkspace {
   id: string;
@@ -57,8 +65,7 @@ export function orderCandidates(
   listed: readonly AnthropicWorkspace[],
   unlisted: readonly AnthropicWorkspace[],
 ): AnthropicWorkspace[] {
-  const live = (ws: readonly AnthropicWorkspace[]) =>
-    ws.filter((w) => w.archivedAt === null && w.id.startsWith("wrkspc_"));
+  const live = (ws: readonly AnthropicWorkspace[]) => ws.filter((w) => w.archivedAt === null && WORKSPACE_ID.test(w.id));
   const byAge = (a: AnthropicWorkspace, b: AnthropicWorkspace) => a.createdAt.localeCompare(b.createdAt);
   const rest = live(listed).sort(byAge);
   const named = rest.filter((w) => /default/i.test(w.name));
@@ -97,7 +104,7 @@ export function workspaceIdsFromApiKeys(body: unknown): string[] {
   const ids = new Set<string>();
   for (const raw of data) {
     const scope = (raw as { scope?: { type?: unknown; workspace_id?: unknown } } | null)?.scope;
-    if (scope?.type === "workspace" && typeof scope.workspace_id === "string" && scope.workspace_id.startsWith("wrkspc_")) {
+    if (scope?.type === "workspace" && typeof scope.workspace_id === "string" && WORKSPACE_ID.test(scope.workspace_id)) {
       ids.add(scope.workspace_id);
     }
   }
@@ -109,10 +116,9 @@ async function get(
   path: string,
   extra: Record<string, string> = {},
 ): Promise<{ status: number; body: unknown }> {
-  const res = await fetch(`${API}${path}`, {
+  const res = await providerFetch("anthropic", path, {
     headers: { "x-api-key": apiKey, "anthropic-version": API_VERSION, accept: "application/json", ...extra },
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-    cache: "no-store",
+    timeoutMs: TIMEOUT_MS,
   });
   let body: unknown = null;
   try {
@@ -164,7 +170,10 @@ export async function discoverAnthropicWorkspace(apiKey: string): Promise<Worksp
     if (list.status !== 200) return { kind: "unknown", reason: `list workspaces answered ${list.status}` };
     listed = parseWorkspaces(list.body);
   } catch (err) {
-    return { kind: "unknown", reason: err instanceof Error ? err.message : "list workspaces failed" };
+    // The reason is for a log. It is a network error's own text, so the key is taken
+    // out of it by value and by shape before it leaves.
+    const reason = err instanceof Error ? err.message : "list workspaces failed";
+    return { kind: "unknown", reason: withoutKey(apiKey)(reason) };
   }
 
   // The Default Workspace: named only by keys that live in it.

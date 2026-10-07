@@ -1,9 +1,6 @@
 import { LOGIN_HREF } from "@/lib/contact";
 import { CreateAgentLink } from "./create-agent-link";
 
-/** The signed-in home. It does the real session check and sends a stale cookie to sign-in. */
-export const APP_HREF = "/home";
-
 /** Where "Create your agent" goes: the builder, through sign-in when there is no session. */
 const NEW_AGENT_HREF = "/agents/new";
 

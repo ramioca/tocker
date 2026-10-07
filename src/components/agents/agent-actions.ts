@@ -25,6 +25,7 @@ import {
   type CreateAgentInput,
 } from "@/server/actions/agents";
 import { addLlmKey } from "@/server/actions/users";
+import { isProvider, keyProblem, type LlmProvider } from "@/lib/agent/providers";
 import { MOCK_AGENT_SLUG, MOCK_RUN_ID } from "@/mocks/core";
 import type {
   ActionResult,
@@ -137,14 +138,21 @@ export async function triggerRunAction(id: string): Promise<ActionResult<{ runId
 }
 
 export async function addLlmKeyAction(input: {
-  provider: "anthropic" | "openai" | "openrouter";
+  provider: LlmProvider;
   key: string;
   label?: string;
   workspaceId?: string;
 }): Promise<ActionResult<{ id: string; last4: string }>> {
-  if (input.key.trim().length < 12) {
+  // A server action: the argument is whatever the caller sent, whatever its type says.
+  if (typeof input?.key !== "string" || input.key.trim().length < 12) {
     return { ok: false, error: "That does not look like an API key." };
   }
+  // The real action makes both of these refusals itself, before the key goes anywhere.
+  // They are made here as well so that the mock, which stores nothing and asks nobody,
+  // answers a wrong-provider key the way the real one does.
+  if (!isProvider(input.provider)) return { ok: false, error: "Unknown provider" };
+  const problem = keyProblem(input.provider, input.key);
+  if (problem) return { ok: false, error: problem };
   return withMock(
     () => addLlmKey(input),
     () => ({

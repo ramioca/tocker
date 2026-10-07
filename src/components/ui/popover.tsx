@@ -19,12 +19,21 @@ function PopoverContent({
   side = "bottom",
   sideOffset = 4,
   collisionPadding,
+  aboveDialog = false,
   ...props
 }: PopoverPrimitive.Popup.Props &
   Pick<
     PopoverPrimitive.Positioner.Props,
     "align" | "alignOffset" | "side" | "sideOffset" | "collisionPadding"
-  >) {
+  > & {
+    /**
+     * For a popover opened from inside the onboarding dialog. That dialog sits at
+     * z-[100] and this positioner is drawn beside it, not inside it, so at the usual
+     * z-50 the popover would open underneath the dialog it belongs to. The class is
+     * chosen here, on the positioner, because `className` reaches only the popup.
+     */
+    aboveDialog?: boolean;
+  }) {
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Positioner
@@ -33,7 +42,7 @@ function PopoverContent({
         side={side}
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
-        className="isolate z-50"
+        className={aboveDialog ? "isolate z-[110]" : "isolate z-50"}
       >
         {/* A 90% floor under the glass, as on the menus: a popover can carry money, and
             a page heading reading through it competes with the number. */}

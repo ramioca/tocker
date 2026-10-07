@@ -30,6 +30,9 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowRight, Bot, Coins, Compass, KeyRound, Sparkles, X } from "lucide-react";
 import { useSession } from "@/hooks/use-session";
 import { AddLlmKeyForm } from "@/components/settings/add-llm-key-form";
+import { providerNames } from "@/components/agents/provider-choice";
+import { KeyPageLink } from "@/components/agents/provider-picker";
+import { providerLabel } from "@/lib/agent/providers";
 import { cn } from "@/lib/utils";
 import type { LlmKeyRow } from "@/server/types";
 
@@ -133,8 +136,16 @@ export function OnboardingModal({
   return (
     <Dialog.Root
       open={open}
-      onOpenChange={(next) => {
-        if (!next) dismiss();
+      onOpenChange={(next, details) => {
+        if (next) return;
+        // The provider list in the key step opens over this dialog and closes on Escape.
+        // An Escape it has already used must not close onboarding as well: once
+        // dismissed it does not come back.
+        if (details.reason === "escape-key" && details.event.defaultPrevented) {
+          details.cancel();
+          return;
+        }
+        dismiss();
       }}
     >
       <Dialog.Portal>
@@ -204,8 +215,8 @@ export function OnboardingModal({
                         }
                         body={
                           payPerUseAllowed
-                            ? "An agent on your own key thinks on your provider account. Add a key from the provider its model runs on: Anthropic, OpenAI or OpenRouter. An agent set to pay per use needs none."
-                            : "They think on your provider account. Add a key from the provider each agent's model runs on: Anthropic, OpenAI or OpenRouter."
+                            ? `An agent on your own key thinks on your provider account. Add a key from the provider its model runs on: ${providerNames()}. An agent set to pay per use needs none.`
+                            : `They think on your provider account. Add a key from the provider each agent's model runs on: ${providerNames()}.`
                         }
                         payPerUseAllowed={payPerUseAllowed}
                         onAdded={dismiss}
@@ -255,8 +266,6 @@ const ghostButton =
   "inline-flex h-9 items-center rounded-lg px-3 text-sm text-muted-foreground transition-[color,background-color,transform] duration-150 hover:bg-muted hover:text-foreground active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 const primaryButton =
   "inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
-const inlineLink =
-  "rounded-sm text-foreground underline decoration-muted-foreground/50 underline-offset-2 transition-colors duration-150 hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
 function WelcomeStep({
   handle,
@@ -318,7 +327,8 @@ function KeyStep({
   title = "Add an LLM key",
   // Not "any agent can use any key you own": the builder refuses a key from a provider
   // other than the one the agent's model runs on, and a run made with one fails there.
-  body = "Anthropic, OpenAI or OpenRouter. You can add more later; an agent uses a key from the provider its model runs on.",
+  // The providers are named from the registry, so this cannot fall behind the chooser.
+  body = `${providerNames()}. You can add more later; an agent uses a key from the provider its model runs on.`,
   payPerUseAllowed = false,
   onAdded,
   onSkip,
@@ -334,24 +344,19 @@ function KeyStep({
     <div>
       <StepHeader icon={<KeyRound className="size-5" aria-hidden />} title={title} body={body} />
       <div className="mt-5">
-        <AddLlmKeyForm compact submitLabel="Save key" onAdded={onAdded} />
+        {/* `aboveDialog`: the provider list is drawn beside this dialog, not inside it,
+            and has to open over it. */}
+        <AddLlmKeyForm compact aboveDialog submitLabel="Save key" onAdded={onAdded} />
       </div>
-      {/* Someone arriving without a key has nowhere to go from a paste field. After the
-          form in the DOM, so the tab order is form, these links, then "I'll do this later". */}
+      {/* Someone arriving without a key has nowhere to go from a paste field. The form
+          links to the chosen provider's key page under its chooser, since nobody here has
+          a key yet; this says so, and keeps the one-press way to the quickest start. The
+          name and the address are read from OpenRouter's row in the registry. */}
       <p className="mt-4 text-xs leading-5 text-muted-foreground">
-        No key yet? The quickest is OpenRouter: create one at{" "}
-        <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className={inlineLink}>
-          openrouter.ai/keys
-        </a>{" "}
-        and paste it here.{" "}
-        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer" className={inlineLink}>
-          Anthropic
-        </a>{" "}
-        and{" "}
-        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className={inlineLink}>
-          OpenAI
-        </a>{" "}
-        keys work too.
+        No key yet? Choose a provider above: the link under it opens the page where its keys are made. If you
+        have no account with any of them, {providerLabel("openrouter")} is the quickest to start with: create a
+        key at <KeyPageLink provider="openrouter" />, choose {providerLabel("openrouter")} above and paste it
+        here.
       </p>
       {payPerUseAllowed ? (
         <p className="mt-2 text-xs leading-5 text-muted-foreground">

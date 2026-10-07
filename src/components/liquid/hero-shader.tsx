@@ -6,16 +6,31 @@ import { useSafeReducedMotion } from "./motion";
 type Canvas = typeof import("./hero-shader-canvas").default;
 
 /**
- * A slow aurora in the mark's colours behind the hero (Shaders, MIT, WebGPU).
+ * A slow silk in the mark’s colours behind the hero (Shaders, MIT, WebGPU), which
+ * gives under a mouse (see hero-shader-canvas.tsx).
  *
  * Kept off the critical path and out of the way:
  * - the library loads only after the page is idle, so it never delays the headline;
- * - it mounts only where WebGPU exists and motion is welcome; everyone else keeps
- *   the painted CSS glow that was there before;
+ * - it mounts only where WebGPU exists, motion is welcome and the device is not a
+ *   low-end one (see lowEnd); everyone else keeps
+ *   the painted poster under it (hero.tsx, `.lp-hero-poster`), which the canvas
+ *   crossfades over once it has drawn its first frame;
  * - the renderer stops drawing while the hero is off screen (the library's own
  *   IntersectionObserver), and the canvas is rendered at a low cap and faded in;
  * - telemetry is off.
  */
+/**
+ * Devices that would rather keep the poster: data saver on, or little memory or few
+ * cores (where reported). The library is a large module, and evaluating it costs a
+ * slow phone well over a second of main thread, which no backdrop is worth.
+ */
+function lowEnd(): boolean {
+  const nav = navigator as Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
+  if (nav.connection?.saveData) return true;
+  if (nav.deviceMemory !== undefined && nav.deviceMemory < 4) return true;
+  return nav.hardwareConcurrency !== undefined && nav.hardwareConcurrency < 4;
+}
+
 export function HeroShader() {
   const reduced = useSafeReducedMotion();
   const [lib, setLib] = useState<{ Canvas: Canvas } | null>(null);
@@ -23,7 +38,7 @@ export function HeroShader() {
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (reduced || !("gpu" in navigator)) return;
+    if (reduced || !("gpu" in navigator) || lowEnd()) return;
     let cancelled = false;
     const load = () => {
       import("./hero-shader-canvas")
@@ -44,7 +59,11 @@ export function HeroShader() {
 
   return (
     <div className="lp-hero-shader" data-ready={ready ? "" : undefined} aria-hidden>
-      <Canvas onReady={() => setReady(true)} onUnavailable={() => setFailed(true)} />
+      <Canvas
+        interactive={window.matchMedia("(hover: hover) and (pointer: fine)").matches}
+        onReady={() => setReady(true)}
+        onUnavailable={() => setFailed(true)}
+      />
     </div>
   );
 }

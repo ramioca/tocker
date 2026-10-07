@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CATALOGUE, CATALOGUE_IDS } from "@/lib/agent/providers";
 import { REDACTED, dbErrorForLog, looksLikeSecret, redactDeep, redactSecrets, secretParts } from "./redact";
 
 /**
@@ -45,6 +46,48 @@ describe("redactSecrets", () => {
     }
   });
 
+  /** The providers added with the registry, each by the prefix its keys are known by. */
+  it("knows the shapes of the newer providers' keys", () => {
+    const samples = [
+      `AQ.${body(48)}`,
+      `AQ.${body(20)}-${body(20)}_${body(12)}`,
+      `csk-${body(48)}`,
+      `csk-${"0a1b2c3d".repeat(6)}`,
+      `fw_${body(24)}`,
+      `vck_${body(40)}`,
+      `sk_${body(40)}`,
+      `sk_${"0a1b2c3d".repeat(6)}`,
+    ];
+    for (const sample of samples) {
+      expect(redactSecrets(`got ${sample} back`, NO_ENV), sample.slice(0, 6)).toBe(`got ${REDACTED} back`);
+      expect(redactSecrets(`{"error":"Wrong API Key: ${sample}"}`, NO_ENV), sample.slice(0, 6)).toBe(`{"error":"Wrong API Key: ${REDACTED}"}`);
+      expect(looksLikeSecret(sample), sample.slice(0, 6)).toBe(true);
+    }
+  });
+
+  /** A provider that echoes the key it refused stars out the middle; the ends are still the key's. */
+  it("cuts a half-masked echo of the newer shapes too", () => {
+    for (const prefix of ["csk-", "sk_"]) {
+      const masked = `${prefix}${body(4)}${"*".repeat(30)}${body(4)}`;
+      expect(redactSecrets(`Wrong API Key ${masked}.`, NO_ENV), prefix).toBe(`Wrong API Key ${REDACTED}.`);
+    }
+  });
+
+  /**
+   * Whatever prefix a provider's row lists, a key that starts with it is cut out of text.
+   * A prefix added to the registry without a shape here fails this test, not a user.
+   */
+  it("removes a key carrying any prefix the provider registry lists", () => {
+    const prefixes = CATALOGUE_IDS.flatMap((id) => CATALOGUE[id].keyPrefixes.map((prefix) => ({ id, prefix })));
+    expect(prefixes.length).toBeGreaterThan(10);
+    for (const { id, prefix } of prefixes) {
+      const key = `${prefix}${body(48)}`;
+      const shown = redactSecrets(`${CATALOGUE[id].label} said: invalid key ${key} (request 42)`, NO_ENV);
+      expect(shown, `${id} ${prefix}`).toBe(`${CATALOGUE[id].label} said: invalid key ${REDACTED} (request 42)`);
+      expect(looksLikeSecret(`my key is ${key}`), `${id} ${prefix}`).toBe(true);
+    }
+  });
+
   it("cuts a private key block whole", () => {
     const pem = ["-----BEGIN", "PRIVATE KEY-----"].join(" ") + `\n${body(64)}\n${body(64)}\n` + ["-----END", "PRIVATE KEY-----"].join(" ");
     expect(redactSecrets(`key:\n${pem}\ndone`, NO_ENV)).toBe(`key:\n${REDACTED}\ndone`);
@@ -76,6 +119,12 @@ describe("redactSecrets", () => {
       "Slippage 150 bps; token=WIF; key levels at 2.10 and 2.45.",
       "Missing bearer authentication in the Authorization header.",
       "authorization: insufficient_permissions_for_this_model",
+      // Words that begin the way the newer key shapes do, and are not keys.
+      "sk_momentum_rotation_strategy_for_new_launches",
+      "See the FAQ.Getting-started-with-agents-and-keys page.",
+      "csk-style keys start with csk- and vck_ keys with vck_.",
+      "fw_ and hf_ are prefixes; AQ. is one too.",
+      "Qwen/Qwen3.8-2.4T-A95B on accounts/fireworks/models/glm-5p3",
     ];
     for (const text of kept) expect(redactSecrets(text, NO_ENV), text.slice(0, 24)).toBe(text);
   });
@@ -146,7 +195,7 @@ describe("looksLikeSecret", () => {
   });
 
   it("says no to names, taglines and notes", () => {
-    for (const text of ["Momentum Bot", "sk-momentum-rotation", "Buys strength, sells weakness.", "", null, undefined]) {
+    for (const text of ["Momentum Bot", "sk-momentum-rotation", "sk_momentum_rotation", "Buys strength, sells weakness.", "", null, undefined]) {
       expect(looksLikeSecret(text), String(text)).toBe(false);
     }
   });

@@ -11,13 +11,14 @@ import { useSafeReducedMotion } from "./motion";
 import {
   HERO_LABEL,
   SAMPLE_AGENT,
+  SAMPLE_AVATAR_SEED,
   SAMPLE_BUYS,
   SAMPLE_EVERY_MIN,
   SAMPLE_FLOOR,
   SAMPLE_FOUND,
   SAMPLE_MODE,
   SAMPLE_NEXT_RUN_AT,
-  SAMPLE_OTHER_SCORES,
+  SAMPLE_OTHERS,
   SAMPLE_PROMPT,
   SAMPLE_ROWS,
   SAMPLE_RUN_AT,
@@ -41,13 +42,11 @@ import {
 /** Bars, scores and verdicts start this far apart, row by row. */
 const STAGGER_MS = 90;
 /**
- * The card fades in with the hero's load-in stagger. If its rows are already in
- * view at load, hold the bars until the fade has mostly landed, so they grow
- * where they can be seen.
+ * The card rises in last in the hero's load-in (hero-intro.tsx: 0.6s delay, 1.3s
+ * expo out). If its rows are already in view at load, hold the bars until the
+ * rise has mostly landed, so they grow where they can be seen.
  */
-const SETTLE_MS = 650;
-
-const delay = (s: string) => ({ "--reveal-delay": s }) as CSSProperties;
+const SETTLE_MS = 1250;
 
 /**
  * Real coins, made-up scores. A skip never names a gate: that would be a claim
@@ -75,7 +74,7 @@ export function HeroRun() {
   const live = on || reduced;
 
   return (
-    <div className="lp-hr-stage lp-wrap reveal" style={delay("0.32s")}>
+    <div className="lp-hr-stage lp-wrap lp-intro">
       <div
         className="lp-hr lp-frame"
         data-in={live ? "" : undefined}
@@ -86,11 +85,10 @@ export function HeroRun() {
         <div aria-hidden>
           <div className="lp-hr-head">
             <div className="lp-hr-who">
-              <AgentMark name={SAMPLE_AGENT} className="lp-hr-avatar" />
+              <AgentMark seed={SAMPLE_AVATAR_SEED} className="lp-hr-avatar" />
               <span className="lp-hr-agent">{SAMPLE_AGENT}</span>
               <span className="lp-hr-chip lp-mono">sample</span>
               <span className="lp-hr-meta lp-mono">
-                <span className="lp-hr-wide">paper · </span>
                 {SAMPLE_MODE}
                 <span className="lp-hr-xwide"> · every {SAMPLE_EVERY_MIN} min</span>
               </span>
@@ -125,11 +123,11 @@ export function HeroRun() {
           </div>
 
           <p className="lp-hr-more lp-mono">
-            + {SAMPLE_OTHER_SCORES.length} more <span className="lp-hr-roomy">scored </span>below your floor
+            + {SAMPLE_OTHERS.length} more <span className="lp-hr-roomy">scored </span>below your floor
           </p>
 
           <div className="lp-hr-foot lp-mono">
-            <span>Paper · {SAMPLE_BUYS.length} buys waiting for your OK</span>
+            <span>{SAMPLE_BUYS.length} buys waiting for your OK</span>
             <span className="lp-hr-wide">next run {SAMPLE_NEXT_RUN_AT}</span>
           </div>
         </div>

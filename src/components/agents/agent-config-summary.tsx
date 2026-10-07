@@ -14,7 +14,9 @@ import {
 } from "@/components/tokens";
 import { DISCOVERY_FEEDS } from "@/components/agents/builder/types";
 import { THINK_SOURCE_LABELS, payPerUseModelLabel, stepsAllowed } from "@/components/agents/thinking";
+import { ownListModelName } from "@/components/agents/model-list";
 import { thinkSource } from "@/lib/agent/inference";
+import { providerLabel } from "@/lib/agent/providers";
 import { cn } from "@/lib/utils";
 import type { AgentConfig } from "@/db/schema";
 
@@ -237,12 +239,16 @@ export function AgentConfigSummary({
               </>
             ) : (
               <>
-                <Row label="Provider">
-                  <span className="capitalize">{config.llm.provider}</span>
-                </Row>
-                {/* The name the header prints; the exact id is one hover away. */}
+                {/* The provider's name as it writes it, from the registry: capitalising the
+                    stored id gave "Openai" and would give "Xai". */}
+                <Row label="Provider">{providerLabel(config.llm.provider)}</Row>
+                {/* The name the header prints; the exact id is one hover away. A model the
+                    header's lookup does not know is looked up on this agent's own
+                    provider first, which only the owner's view can do. */}
                 <Row label="Model">
-                  <span title={config.llm.model}>{modelLabel(config.llm.model)}</span>
+                  <span title={config.llm.model}>
+                    {ownListModelName(config.llm.provider, config.llm.model) ?? modelLabel(config.llm.model)}
+                  </span>
                 </Row>
               </>
             )}

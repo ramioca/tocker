@@ -6,7 +6,7 @@ import { listAuditEvents } from "@/lib/security/audit";
 import { getKillSwitch } from "@/lib/security/kill-switch";
 import { getMfaStatus } from "@/lib/security/mfa";
 import { getLlmKeyDetails } from "@/lib/security/llm-keys";
-import { countKeylessAgents } from "@/server/queries/users";
+import { countAgentsKeyFits, countKeylessAgents } from "@/server/queries/users";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { SignedOut } from "@/components/settings/signed-out";
@@ -48,6 +48,11 @@ export default async function SecuritySettingsPage() {
     // A count, not a reason to fail the page.
     countKeylessAgents(session.userId).catch(() => 0),
   ]);
+  // One key: attaching it is offered, for the agents set to its provider. Several: each
+  // agent picks its own, so there is nothing to count. A failed count offers nothing.
+  const onlyKey = keys.length === 1 ? keys[0] : null;
+  const attachableAgents =
+    onlyKey && keylessAgents > 0 ? await countAgentsKeyFits(session.userId, onlyKey.provider).catch(() => 0) : 0;
   const events = fetched.slice(0, AUDIT_CAP);
   const hasMore = fetched.length > AUDIT_CAP;
 
@@ -87,7 +92,12 @@ export default async function SecuritySettingsPage() {
           title="LLM keys"
           description="Your agents reason on your provider account. A key here can spend money on your bill, so it gets the same treatment as a wallet."
         >
-          <LlmKeyInventory keys={keys} isAdmin={isAdminEmail(session.email)} keylessAgents={keylessAgents} />
+          <LlmKeyInventory
+            keys={keys}
+            isAdmin={isAdminEmail(session.email)}
+            keylessAgents={keylessAgents}
+            attachableAgents={attachableAgents}
+          />
         </SettingsSection>
 
         {/*

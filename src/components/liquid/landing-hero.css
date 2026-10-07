@@ -3,13 +3,38 @@
  * the skip link and the brand lockup live in landing.css.
  *
  * The first screen is type and one product moment: an eyebrow, the headline
- * with one word in the brand gradient, a sentence, one action, and a flat run
- * card with a painted glow behind it (radial gradients, no blur). Colour
- * appears where it means something: the cyan dot, "sleep", the bars of the
- * tokens that clear the floor and their buy dots.
+ * with one word in the brand gradient, a sentence, one action, and the run
+ * card rising out of depth on a painted glow (radial gradients, no blur).
+ * Behind it all: a painted poster, the live silk crossfading
+ * over it, and a faint grid. Colour appears where it means something: the cyan
+ * dot, "sleep", the bars of the tokens that clear the floor and their buy dots.
+ *
+ * Load-in and scroll depth are hero-intro.tsx (GSAP); the `.lp-intro` gate at
+ * the end of the hero block is the CSS half of that contract.
  * ========================================================================== */
 
 /* ================================== nav ================================== */
+/* In the flow, above the hero's aurora (which reaches up behind it), closed by
+   a hairline that fades out at both ends. It settles in on load. */
+.lp-nav-bar {
+  position: relative;
+  z-index: 1;
+  animation: lp-nav-in 0.9s var(--ease-expo) both;
+}
+.lp-nav-bar::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--line-soft) 18%, var(--line) 50%, var(--line-soft) 82%, transparent);
+  pointer-events: none;
+}
+@keyframes lp-nav-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
 .lp-nav {
   display: flex;
   align-items: center;
@@ -42,7 +67,7 @@
 }
 .lp-nav-links {
   display: none;
-  gap: 32px;
+  gap: 30px;
   font-size: var(--fs-body-sm);
   letter-spacing: -0.005em;
   color: var(--fg-3);
@@ -55,12 +80,44 @@
 .lp-nav-links a {
   display: inline-flex;
   align-items: center;
+  gap: 7px;
   min-height: 40px;
   transition: color 150ms ease-out;
+}
+/* The section's number, small and raised, like a footnote mark. */
+.lp-nav-num {
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--fg-3);
+  opacity: 0.75;
+  transform: translateY(-3px);
+  transition: color 150ms ease-out;
+}
+.lp-nav-label {
+  position: relative;
+}
+/* An underline that draws in from the left and leaves to the right. */
+.lp-nav-label::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -4px;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: right;
+  transition: transform 220ms var(--ease-out);
 }
 @media (hover: hover) and (pointer: fine) {
   .lp-nav-links a:hover {
     color: var(--fg);
+  }
+  .lp-nav-links a:hover .lp-nav-num {
+    color: var(--brand-cyan);
+  }
+  .lp-nav-links a:hover .lp-nav-label::after {
+    transform: scaleX(1);
+    transform-origin: left;
   }
 }
 
@@ -75,7 +132,46 @@
   position: relative;
   /* The card's glow is wider than a phone; clip it sideways, not downward. */
   overflow-x: clip;
-  padding-top: clamp(40px, 9vh, 96px);
+  padding-top: clamp(48px, 10vh, 112px);
+}
+
+/* The backdrop: poster, live silk. It reaches up behind the nav (which
+   sits above it), and fades into the black well before the card's foot. */
+.lp-hero-bg {
+  position: absolute;
+  inset: -72px 0 auto;
+  z-index: 0;
+  height: min(1040px, calc(100% + 72px));
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.7) 40%, transparent 86%);
+  mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.7) 40%, transparent 86%);
+  animation: lp-bg-in 1.8s var(--ease-out) both;
+}
+@keyframes lp-bg-in {
+  from {
+    opacity: 0;
+  }
+}
+.lp-hero > :not(.lp-hero-bg) {
+  position: relative;
+  z-index: 1;
+}
+/* The aurora, painted: three curtains of the brand light and a cool core. It is
+   the whole backdrop without WebGPU or under reduced motion, and dims under the
+   live canvas once that has drawn. */
+.lp-hero-poster {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(28% 36% at 24% 22%, rgba(63, 210, 255, 0.16), transparent 70%),
+    radial-gradient(34% 42% at 42% 16%, rgba(61, 107, 255, 0.26), transparent 70%),
+    radial-gradient(30% 40% at 62% 20%, rgba(139, 108, 255, 0.17), transparent 72%),
+    radial-gradient(26% 32% at 80% 12%, rgba(255, 61, 203, 0.13), transparent 70%),
+    radial-gradient(60% 26% at 50% 0%, rgba(61, 107, 255, 0.2), transparent 75%);
+  transition: opacity 1600ms var(--ease-out);
+}
+.lp-hero-bg:has(.lp-hero-shader[data-ready]) .lp-hero-poster {
+  opacity: 0.45;
 }
 .lp-hero-head {
   display: flex;
@@ -83,12 +179,20 @@
   align-items: center;
   text-align: center;
 }
+/* The eyebrow is a quiet pill with a live dot that breathes. */
 .lp-hero-eyebrow {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  height: 32px;
+  padding-inline: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.025);
+  box-shadow: var(--frame-edge);
 }
 .lp-hero-dot {
+  position: relative;
   flex-shrink: 0;
   width: 6px;
   height: 6px;
@@ -96,31 +200,52 @@
   background: var(--brand-cyan);
   box-shadow: 0 0 0 3px var(--brand-cyan-ring);
 }
+@media (prefers-reduced-motion: no-preference) {
+  .lp-hero-dot::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--brand-cyan);
+    animation: lp-dot-pulse 2.6s var(--ease-out) 1.2s infinite;
+  }
+}
+@keyframes lp-dot-pulse {
+  0% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(3.4);
+  }
+}
 .lp-h1 {
-  margin-top: 26px;
-  font-size: clamp(3.25rem, 6.9vw, 6.25rem);
-  line-height: 0.95;
+  margin-top: 28px;
+  font-size: clamp(3.25rem, 7.5vw, 7.25rem);
+  line-height: 0.94;
   font-weight: 600;
-  letter-spacing: -0.055em;
+  letter-spacing: -0.058em;
   color: var(--fg);
   text-wrap: balance;
 }
-/* The headline only slides in: painted at opacity 0 it would not count as
-   painted, and it is the largest text on the screen. */
-.lp-h1.reveal {
-  opacity: 1;
-  animation-name: lp-in-y;
+.lp-h1-end {
+  white-space: nowrap;
 }
-@keyframes lp-in-y {
-  to {
-    transform: none;
-  }
-}
-/* Two set lines from 640px; free, balanced wrapping on phones. */
+/* Two set lines from 640px; free, balanced wrapping on phones. Not a <br>:
+   SplitText would keep the break on phones too. */
 @media (min-width: 640px) {
-  .lp-h1-line {
-    display: block;
+  .lp-h1-half {
+    white-space: nowrap;
   }
+}
+/* SplitText's line masks (hero-intro.tsx) clip at the line box, and the tight
+   leading would shave the descenders of "agent", "you" and "sleep": give each
+   mask room below and take it back with the margin, so the layout is unchanged. */
+.lp-hero .lp-split-line-mask {
+  padding-block: 0.04em 0.16em;
+  margin-block: -0.04em -0.16em;
 }
 /* The one coloured word: the brand gradient clipped to the type. The padding
    (given back by the margin) keeps the "p" inside the painted box despite the
@@ -135,7 +260,7 @@
   white-space: nowrap;
 }
 .lp-hero-sub {
-  margin-top: 26px;
+  margin-top: 28px;
   max-width: 34rem;
   font-size: clamp(16.5px, 1.35vw, 19px);
   line-height: 1.55;
@@ -190,10 +315,24 @@
     width: 100%;
     margin-top: 32px;
   }
-  /* The eyebrow keeps to one line: the chains go, and the run card under it
-     still names both. */
-  .lp-hero-eyebrow-more {
+  /* The eyebrow keeps to one line: the chains keep their marks, not their names. */
+  .lp-hero-eyebrow .lp-chain-name,
+  .lp-hero-eyebrow .lp-chain-and {
     display: none;
+  }
+}
+/* The intro's start state (hero-intro.tsx), only where it will run: scripting on
+   and motion welcome. If the script has not taken over by --intro-failsafe (2.4s in a build),
+   the parts fade in on their own and the script leaves them be. */
+@media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
+  .lp-hero:not([data-intro]) .lp-intro {
+    opacity: 0;
+    animation: lp-intro-failsafe 0.6s var(--ease-out) var(--intro-failsafe, 2.4s) forwards;
+  }
+}
+@keyframes lp-intro-failsafe {
+  to {
+    opacity: 1;
   }
 }
 /* The narrowest phones: three lines of headline, and the eyebrow on one. */
@@ -210,7 +349,10 @@
 /* ============================ the run card ============================ */
 .lp-hr-stage {
   position: relative;
-  margin-top: clamp(56px, 8vh, 80px);
+  margin-top: clamp(56px, 9vh, 88px);
+  /* Depth for the card's lean (hero-intro.tsx tilts .lp-hr back on wide screens). */
+  perspective: 1600px;
+  perspective-origin: 50% 0%;
 }
 /* A painted glow rising behind the card's top edge. */
 .lp-hr-stage::before {
@@ -235,7 +377,26 @@
   text-align: left;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 0 1px rgba(0, 0, 0, 0.6),
+    0 40px 120px -48px rgba(61, 107, 255, 0.28),
     0 48px 96px -40px #000;
+}
+/* Light catching the top edge: a hairline brightest left of centre, tinted
+   toward the brand's violet, gone before the corners. */
+.lp-hr::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 1;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 6%,
+    rgba(255, 255, 255, 0.22) 34%,
+    rgba(139, 108, 255, 0.38) 58%,
+    transparent 92%
+  );
+  pointer-events: none;
 }
 
 .lp-hr-head {
@@ -569,30 +730,25 @@
   }
 }
 
-/* The hero's aurora (hero-shader.tsx): a WebGPU canvas behind the headline that
-   fades in once it has drawn, and fades out into the black before the card. It
-   never takes pointer events, and the type keeps its own contrast over it. */
+/* The hero’s silk (hero-shader.tsx): a WebGPU canvas over the poster that
+   crossfades in once it has drawn (the poster dims under it), inside the
+   backdrop's fade to black. It never takes pointer events, and the type keeps
+   its own contrast over it. */
 .lp-hero-shader {
   position: absolute;
-  inset: 0 0 auto;
-  z-index: 0;
-  height: min(860px, 100%);
+  inset: 0;
   opacity: 0;
-  pointer-events: none;
-  transition: opacity 1200ms var(--ease-out);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 45%, transparent 82%);
-  mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 45%, transparent 82%);
+  /* Fades out toward the run card, so the silk sits behind the type, not under the card. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 45%, transparent 95%);
+  mask-image: linear-gradient(to bottom, #000 45%, transparent 95%);
+  transition: opacity 1600ms var(--ease-out);
 }
 .lp-hero-shader[data-ready] {
-  opacity: 0.5;
+  opacity: 0.6;
 }
 .lp-hero-shader-canvas {
   width: 100%;
   height: 100%;
-}
-.lp-hero > :not(.lp-hero-shader) {
-  position: relative;
-  z-index: 1;
 }
 @media (prefers-reduced-motion: reduce) {
   .lp-hero-shader {
