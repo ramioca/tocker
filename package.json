@@ -38,6 +38,7 @@
     "@base-ui/react": "^1.8.0",
     "@coinbase/cdp-sdk": "^1.55.0",
     "@electric-sql/pglite": "^0.5.8",
+    "@gsap/react": "2.1.2",
     "@openrouter/ai-sdk-provider": "^3.0.0",
     "@privy-io/node": "0.34.0",
     "@privy-io/react-auth": "^3.42.0",

@@ -4,7 +4,7 @@ import { LiquidLanding } from "@/components/liquid/liquid-landing";
 
 const TITLE = "Tocker — AI trading agents for Solana and Base";
 const DESCRIPTION =
-  "Describe a strategy in plain English. Your agent screens new tokens on Solana and Base, trades the few that clear your bar, and asks before it buys. Open now; every agent starts on paper.";
+  "Describe a strategy in plain English. Your agent screens new tokens on Solana and Base, trades the few that clear your bar, on the schedule you set. Open now.";
 
 /**
  * The two cookies the auth client writes after sign-in, the same pair the sign-in page

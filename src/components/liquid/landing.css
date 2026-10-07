@@ -7,7 +7,17 @@
  * proposal that trades; green and red only on P&L. Geist for reading, Geist
  * Mono for every label and figure. Hover is gated to fine pointers,
  * transitions name their properties and stay under 220ms, pressables scale on
- * press, and reduced motion gets end states. Nothing here is fixed or blurred.
+ * press, and reduced motion gets end states. Nothing is blurred; the one fixed
+ * layer is the film grain (.lp::after), which never takes pointer events.
+ *
+ * Scrolling: smooth-scroll.tsx mounts Lenis on the window (not under reduced
+ * motion) and drives it from GSAP's ticker, so ScrollTrigger works as usual
+ * against the window. Inner scrollers and modals need `data-lenis-prevent`.
+ *
+ * Shared texture utility any section may use (the page's film grain is one fixed
+ * layer on .lp::after):
+ *   .lp-grid-bg   a faint 1px grid (64px cell), masked to a radial pool; set
+ *                 --grid-mask to reshape the pool, --grid-cell to resize it
  *
  * The landing's stylesheets, imported once and in this order by
  * liquid-landing.tsx (nothing else imports them):
@@ -86,6 +96,12 @@
   --split-gap: 48px;
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  /* GSAP's expo.out, for CSS that has to land in step with the GSAP intros. */
+  --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Film grain: a 160px fractal-noise tile, white on transparent. */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1.1 -0.2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --grain-opacity: 0.035;
 
   /* The app's theme variables, pointed at the same palette, so the Spectrum
      components on this page render in brand colours. */
@@ -123,6 +139,57 @@
   background-repeat: no-repeat;
   background-size: 100% 900px;
 }
+/* The film grain over the whole page: one viewport-sized fixed layer, so it is
+   rasterised once and composited, never repainted on scroll. */
+.lp::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  background-image: var(--grain);
+  background-size: 160px 160px;
+  opacity: var(--grain-opacity);
+  pointer-events: none;
+}
+/* A faint grid, masked to a radial pool of light (top centre by default). */
+.lp-grid-bg {
+  --grid-cell: 64px;
+  --grid-line: rgba(255, 255, 255, 0.045);
+  --grid-mask: radial-gradient(ellipse 60% 55% at 50% 0%, #000 0%, rgba(0, 0, 0, 0.5) 45%, transparent 80%);
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: var(--grid-cell) var(--grid-cell);
+  background-position: calc(50% + var(--grid-cell) / 2) -1px;
+  -webkit-mask-image: var(--grid-mask);
+  mask-image: var(--grid-mask);
+  pointer-events: none;
+}
+@media (forced-colors: active), print {
+  .lp::after,
+  .lp-grid-bg {
+    display: none;
+  }
+}
+
+/* Lenis (smooth-scroll.tsx) on the window: its own stylesheet, inlined here so the
+   page needs no extra import. Present only while Lenis has marked <html>. */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis:not(.lenis-autoToggle).lenis-stopped {
+  overflow: clip;
+}
+.lenis [data-lenis-prevent],
+.lenis [data-lenis-prevent-wheel],
+.lenis [data-lenis-prevent-touch] {
+  overscroll-behavior: contain;
+}
+.lenis.lenis-smooth iframe {
+  pointer-events: none;
+}
+
 .lp ::selection {
   background: var(--fg);
   color: var(--bg);
@@ -306,8 +373,14 @@
 .lp-btn-metal:active {
   transform: scale(0.97);
 }
-.lp-btn-metal:focus-visible {
+/* The ring goes around the chrome, not inside it: the pill drops the page's
+   outline and its wrapper draws the same 2px ring at the same offset. */
+.lp .lp-btn-metal:focus-visible {
   outline: none;
+}
+.lp-metal:has(.lp-btn-metal:focus-visible) {
+  outline: 2px solid var(--fg);
+  outline-offset: 3px;
 }
 /* The nav's copy: the same chrome at the bar's height. */
 .lp-metal-sm .lp-btn-metal {
@@ -396,7 +469,7 @@
   place-items: center;
   width: 28px;
   height: 28px;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: var(--r-sm);
   background: var(--raised);
   font-family: var(--font-mono);
@@ -406,6 +479,21 @@
   letter-spacing: 0.02em;
   color: var(--fg-2);
   user-select: none;
+  position: relative;
+  overflow: hidden;
+}
+.lp-agentmark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.lp-agentmark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+  pointer-events: none;
 }
 .lp-agentmark[data-size="md"] {
   width: 36px;
@@ -528,4 +616,29 @@
   .lp-btn-ghost {
     border: 1px solid ButtonText;
   }
+}
+
+/* ============================ chains (chain-logos.tsx) ============================ */
+.lp-chains {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.lp-chain {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+}
+.lp-chain-logo {
+  display: block;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+.lp-close-lede .lp-chains {
+  vertical-align: -0.2em;
+}
+.lp-hero-eyebrow-sep {
+  opacity: 0.5;
 }

@@ -1,17 +1,20 @@
-import { FAQTabsCard, type FaqTab } from "@/components/spectrumui/faq-tabs-card";
+import type { FaqTab } from "@/components/spectrumui/faq-tabs-card";
 import { PROVIDER_ORDER, providerLabel } from "@/lib/agent/providers";
 import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
 import { inferenceFlags } from "@/lib/x402/inference-types";
-import { AppLink } from "./app-link";
-import { BrandHeroMark, BrandLockup } from "./brand";
+import { BrandLockup } from "./brand";
 import { AgentConsole } from "./console";
-import { DEFAULT_ROWS, feeSentence, thinkingAnswers } from "./defaults";
+import { feeSentence, thinkingAnswers } from "./defaults";
 import { PublicFeed } from "./feed";
-import { GoLiveDemo } from "./go-live";
 import { Hero } from "./hero";
 import { Nav } from "./nav";
 import { PerformancePanel } from "./performance";
+import { CloseCta } from "./sec-close";
+import { FaqList } from "./sec-faq";
+import { FooterWordmark } from "./sec-footer-wordmark";
+import { GuardrailsBento } from "./sec-guardrails-bento";
 import { SectionHead } from "./section-head";
+import { SmoothScroll } from "./smooth-scroll";
 import { DEFAULT_DATA_BUDGET_USD, LANDING_SOURCES, usd2, usd3, type LandingSource } from "./signals-data";
 import "./landing.css";
 import "./landing-hero.css";
@@ -34,6 +37,9 @@ import "./landing-sections.css";
  * someone who is probably signed in already. Nothing is hidden or redirected on
  * it; the app does the real check.
  *
+ * SmoothScroll (a client provider around the page) sets up Lenis, GSAP's ticker and
+ * ScrollTrigger together, and MotionConfig's reduced-motion policy; see smooth-scroll.tsx.
+ *
  * Section order: Nav, Hero, 01 How, 02 Feed, 03 Data, 04 Performance,
  * 05 Guardrails, 06 Questions, closing call to action, Footer.
  */
@@ -53,74 +59,31 @@ const BUDGET = usd2(DEFAULT_DATA_BUDGET_USD);
  */
 const faqTabs = (feeUsd: number, thinking: { model: string; start: string }): FaqTab[] => [
   {
-    label: "Trading",
+    label: "FAQ",
     faqs: [
       {
         question: "What does the agent trade?",
         answer:
-          "Any token on Solana and Base that clears the ten hard gates and scores at or above your floor. There is no allowlist; the only list is your blocklist, and it only subtracts.",
-      },
-      {
-        question: "What are the hard gates?",
-        answer:
-          "Ten checks: mint authority, freeze authority, honeypot, a failed sell check, tax, liquidity, holder count, token age, top-ten share and your blocklist. Most of them also refuse a token when the data is missing. No score overrides any of them.",
+          "Any token on Solana and Base that clears ten hard gates (mint and freeze authority, honeypot, sell check, tax, liquidity, holders, age, top-ten share and your blocklist) and scores at or above your floor. No score overrides a gate, and every threshold is yours to set.",
       },
       {
         question: "How do exits work?",
         answer:
-          "In code, not in the prompt. Stop loss, take profit, a collapsing score, a draining pool, and an optional trailing stop or max hold are checked every five minutes, model awake or not. Each one sells the whole position, and entry rules never block an exit.",
+          "In code, not in the prompt. Stop loss, take profit, a collapsing score and a draining pool are checked every five minutes, model awake or not, and entry rules never block a sell.",
       },
       {
-        question: "What does the data cost?",
-        answer: `Nothing from your wallet. Tocker pays the vendors per call, in USDC over x402. Each run may spend up to its data budget (${BUDGET} by default), and score_token buys enrichment automatically until that budget is used.${feeSentence(feeUsd)}`,
-      },
-      {
-        question: "Which AI model runs it?",
-        answer: thinking.model,
-      },
-    ],
-  },
-  {
-    label: "Safety",
-    faqs: [
-      {
-        question: "Does it trade real money from day one?",
+        question: "How often does it run, and does it ask first?",
         answer:
-          "No. Every agent starts on paper against real quotes and asks before each trade. Going live is a separate screen with a checklist and a hold-to-confirm.",
-      },
-      {
-        question: "What if I miss an approval?",
-        answer:
-          "The proposal expires after an hour and nothing trades. Stop loss, take profit and the other rule exits never wait for an approval.",
+          "As often as you like: every five minutes, once a week, or only when you press Run. It can ask before each trade (a proposal you miss expires after an hour) or trade on its own, and you can switch either way at any time.",
       },
       {
         question: "Who controls the agent’s wallet?",
         answer:
-          "Each agent gets its own wallet on Solana and on Base, separate from yours. They are server wallets: Tocker signs the agent’s trades so it can act while you are away, and their policy refuses to export the keys. Withdrawals are yours alone, to any address you choose.",
+          "Each agent gets its own wallet on Solana and Base, separate from yours. Tocker signs its trades so it can act while you are away, the keys can't be exported, and withdrawals are yours alone.",
       },
       {
-        question: "Can other people see my strategy?",
-        answer:
-          "If the agent is public (the default), they see its trades on the feed: token, size, price, result and the one-line note it posts with each fill. They never see your prompt, thresholds, data sources or the run transcript.",
-      },
-    ],
-  },
-  {
-    label: "Access",
-    faqs: [
-      {
-        question: "How do I get in?",
-        answer:
-          "Press Get started and enter your email. We send a six-digit code, and that is your account; there is no waitlist and no password. A crypto wallet works too.",
-      },
-      {
-        question: "What do I need to start?",
-        answer: thinking.start,
-      },
-      {
-        question: "Can I run more than one agent?",
-        answer:
-          "Yes. Run separate agents for momentum, sentiment or fresh launches, each with its own mandate and its own wallets.",
+        question: "What does it cost, and what do I need?",
+        answer: `Data is on us: Tocker pays the vendors per call in USDC over x402, up to ${BUDGET} a run by default.${feeSentence(feeUsd)} To start: ${thinking.start.charAt(0).toLowerCase()}${thinking.start.slice(1)}`,
       },
     ],
   },
@@ -128,20 +91,22 @@ const faqTabs = (feeUsd: number, thinking: { model: string; start: string }): Fa
 
 export function LiquidLanding({ hasSession }: { hasSession: boolean }) {
   return (
-    <div className="lp">
-      <Nav hasSession={hasSession} />
-      <main id="main" tabIndex={-1}>
-        <Hero hasSession={hasSession} />
-        <How />
-        <PublicFeed eyebrow="02 — Feed" />
-        <Sources />
-        <Performance />
-        <Guardrails />
-        <Faq />
-        <Close hasSession={hasSession} />
-      </main>
-      <Footer />
-    </div>
+    <SmoothScroll>
+      <div className="lp">
+        <Nav hasSession={hasSession} />
+        <main id="main" tabIndex={-1}>
+          <Hero hasSession={hasSession} />
+          <How />
+          <PublicFeed eyebrow="02 — Feed" />
+          <Sources />
+          <Performance />
+          <Guardrails />
+          <Faq />
+          <CloseCta hasSession={hasSession} />
+        </main>
+        <Footer />
+      </div>
+    </SmoothScroll>
   );
 }
 
@@ -246,23 +211,7 @@ function Guardrails() {
         title="Entry rules never block an exit."
         lede="Stop loss, take profit, a collapsing score and a draining pool are checked in code every five minutes, between runs too. Blocklist a token you hold, spend the day’s trades, hit the kill switch: the sell still goes through."
       />
-      <div className="lp-guard-grid">
-        <GoLiveDemo />
-        <div className="lp-defaults lp-frame">
-          <div className="lp-defaults-head">
-            <h3 className="lp-defaults-title">Defaults you can change</h3>
-            <span className="lp-label lp-defaults-meta">new agent</span>
-          </div>
-          <dl aria-label="Defaults a new agent starts with">
-            {DEFAULT_ROWS.map(([k, v]) => (
-              <div key={k} className="lp-default">
-                <dt className="lp-label">{k}</dt>
-                <dd className="lp-mono">{v}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      </div>
+      <GuardrailsBento />
     </section>
   );
 }
@@ -275,35 +224,9 @@ function Faq() {
         num="06"
         label="Questions"
         title="Before you join."
-        lede="How it trades, what it costs, who holds the wallet and who sees what."
+        lede="What it trades, what it costs and who holds the wallet."
       />
-      <FAQTabsCard
-        tabs={faqTabs(
-          feeEnabled() ? platformFeeUsd() : 0,
-          thinkingAnswers(inferenceFlags().stage === "on", PROVIDER_ORDER.map(providerLabel)),
-        )}
-        className="lp-faq-card"
-      />
-    </section>
-  );
-}
-
-/**
- * The page closes on the mark, painted on a still glow, and the hero's call to
- * action again: the way into sign-in, or into the app for a visitor who came
- * with a session cookie.
- */
-function Close({ hasSession }: { hasSession: boolean }) {
-  return (
-    <section className="lp-wrap lp-close" aria-labelledby="lp-close-title">
-      <div className="lp-close-art" aria-hidden>
-        <BrandHeroMark width={180} className="lp-close-mark" />
-      </div>
-      <h2 id="lp-close-title" className="lp-h2 lp-close-title">
-        Your strategy, on the clock.
-      </h2>
-      <p className="lp-lede lp-close-lede">Open now on Solana and Base. Every agent starts on paper.</p>
-      <AppLink hasSession={hasSession} className="lp-close-cta" />
+      <FaqList tabs={faqTabs(feeEnabled() ? platformFeeUsd() : 0, thinkingAnswers(inferenceFlags().stage === "on", PROVIDER_ORDER.map(providerLabel)))} />
     </section>
   );
 }
@@ -332,6 +255,7 @@ function Footer() {
           <p className="lp-mono lp-footer-copy">© 2026 Tocker</p>
         </div>
       </div>
+      <FooterWordmark />
     </footer>
   );
 }

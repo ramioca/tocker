@@ -9,23 +9,29 @@ import {
   type EnrichmentPlan,
 } from "@/lib/agent/enrichment";
 import { LANDING_DEFAULTS } from "./defaults";
-import { LANDING_SOURCES, usd3 } from "./signals-data";
+import { LANDING_SOURCES, usd2, usd3 } from "./signals-data";
 import {
   SAMPLE_AGENT,
   SAMPLE_BUYS,
+  SAMPLE_EVERY_MIN,
   SAMPLE_FLOOR,
   SAMPLE_FOUND,
   SAMPLE_NEXT_RUN_AT,
-  SAMPLE_OTHER_SCORES,
+  SAMPLE_MODE,
+  SAMPLE_OTHERS,
+  SAMPLE_PROMPT,
+  SAMPLE_ROWS,
   SAMPLE_RUN_AT,
   SAMPLE_SCORED,
   SAMPLE_SKIPS,
   SAMPLE_STOP_PCT,
   SAMPLE_TAKE_PROFIT_PCT,
   SAMPLE_TRADE_USD,
+  clearsFloor,
   countWord,
   sampleRow,
 } from "./sample";
+import type { CoinName } from "./coins";
 
 /**
  * The hero's sample run, opened up: what the How section's console shows. Pure
@@ -68,7 +74,7 @@ export const LAUNCH_RADARS = { solana: "solenrich-launches", base: "gate402-base
 const LAUNCH_RADARS_IDS = Object.values(LAUNCH_RADARS);
 
 /** What score_token buys for a token on `chain` that the free data has not ruled out. */
-export function readsFor(chain: Chain): string[] {
+function readsFor(chain: Chain): string[] {
   const plan: EnrichmentPlan = planEnrichment({
     free: { total: 70, verdict: "watch", blockers: [] },
     chain,
@@ -95,7 +101,8 @@ type Step = {
   reads: { id: string; n: number }[];
   /** How many tokens it scored in full (score_token rows only). */
   scored?: number;
-  chain?: Chain;
+  /** The chain of each token it scored, one entry per token. */
+  chains?: Chain[];
 };
 
 /** What one call to a source buys, in words: one and many. */
@@ -122,24 +129,27 @@ const children = (stepId: string, reads: Step["reads"]): ToolCall[] =>
 function scoreStep(s: {
   id: string;
   args: Record<string, unknown>;
-  chain: Chain;
-  scored: number;
+  /** One per token scored. */
+  chains: Chain[];
   result: string;
   start: number;
   done: number;
   startedAt: number;
   completedAt: number;
 }): Step {
-  const reads = readsFor(s.chain).map((id) => ({ id, n: s.scored }));
+  const counts = new Map<string, number>();
+  for (const chain of s.chains) for (const id of readsFor(chain)) counts.set(id, (counts.get(id) ?? 0) + 1);
+  const reads = [...counts].map(([id, n]) => ({ id, n }));
+  const scored = s.chains.length;
   return {
     start: s.start,
     done: s.done,
     reads,
-    scored: s.scored,
-    chain: s.chain,
+    scored,
+    chains: s.chains,
     call: {
       id: s.id,
-      name: s.scored > 1 ? `score_token ×${s.scored}` : "score_token",
+      name: scored > 1 ? `score_token ×${scored}` : "score_token",
       args: s.args,
       result: s.result,
       status: "success",
@@ -177,8 +187,7 @@ const STEPS: Step[] = [
   scoreStep({
     id: "score-tibbir",
     args: { token: "TIBBIR", chain: "base" },
-    chain: "base",
-    scored: 1,
+    chains: ["base"],
     result: `${TIBBIR.score} / 100 · your floor is ${SAMPLE_FLOOR}.`,
     start: 1,
     done: 2,
@@ -188,8 +197,7 @@ const STEPS: Step[] = [
   scoreStep({
     id: "score-sol",
     args: { token: "SOL", chain: "solana" },
-    chain: "solana",
-    scored: 1,
+    chains: ["solana"],
     result: `${SOL.score} / 100 · your floor is ${SAMPLE_FLOOR}.`,
     start: 2,
     done: 3,
@@ -199,8 +207,7 @@ const STEPS: Step[] = [
   scoreStep({
     id: "score-super-inu",
     args: { token: "SUPER INU", chain: "solana" },
-    chain: "solana",
-    scored: 1,
+    chains: ["solana"],
     result: `${SUPER_INU.score} / 100 · below your floor of ${SAMPLE_FLOOR}.`,
     start: 2,
     done: 3,
@@ -209,10 +216,9 @@ const STEPS: Step[] = [
   }),
   scoreStep({
     id: "score-rest",
-    args: { tokens: SAMPLE_OTHER_SCORES.length, chain: "solana" },
-    chain: "solana",
-    scored: SAMPLE_OTHER_SCORES.length,
-    result: `${SAMPLE_OTHER_SCORES.join(", ").replace(/, (\d+)$/, " and $1")} / 100 · all below your floor of ${SAMPLE_FLOOR}.`,
+    args: { tokens: SAMPLE_OTHERS.map((r) => r.coin) },
+    chains: SAMPLE_OTHERS.map((r) => (r.chain === "Base" ? "base" : "solana")),
+    result: `${SAMPLE_OTHERS.map((r) => `${r.coin} ${r.score}`).join(", ").replace(/, ([^,]+)$/, " and $1")} / 100 · all below your floor of ${SAMPLE_FLOOR}.`,
     start: 3,
     done: 4,
     startedAt: 5100,
@@ -226,7 +232,7 @@ const STEPS: Step[] = [
       id: "trade",
       name: `place_trade ×${SAMPLE_BUYS.length}`,
       args: { tokens: SAMPLE_BUYS.map((r) => r.coin), side: "buy", amountUsd: SAMPLE_TRADE_USD },
-      result: `${countWord(SAMPLE_BUYS.length).replace(/^./, (c) => c.toUpperCase())} buys sent for your approval · paper · each expires in ${SAMPLE_PROPOSAL_TTL_MIN} min.`,
+      result: `${countWord(SAMPLE_BUYS.length).replace(/^./, (c) => c.toUpperCase())} buys sent for your approval · each expires in ${SAMPLE_PROPOSAL_TTL_MIN} min.`,
       status: "success",
       startedAt: 7400,
       completedAt: 8200,
@@ -250,8 +256,8 @@ const STEPS: Step[] = [
 
 /** How many tokens the transcript shows scored in full; console-run.test.ts holds it to SAMPLE_SCORED. */
 export const STEPS_SCORED = STEPS.reduce((n, s) => n + (s.scored ?? 0), 0);
-/** Each score_token row's chain and the sources it bought, for the planner check in the test. */
-export const SCORE_READS = STEPS.filter((s) => s.scored).map((s) => ({ chain: s.chain!, ids: s.reads.map((r) => r.id) }));
+/** Each token scored in full: its chain and the sources bought for it, for the planner check in the test. */
+export const SCORE_READS = STEPS.flatMap((s) => (s.chains ?? []).map((chain) => ({ chain, ids: readsFor(chain) })));
 /** discover_tokens' paid reads. */
 export const DISCOVER_READS = STEPS[0].reads.map((r) => r.id);
 
@@ -300,11 +306,11 @@ export const REASONING: ReasoningStep[] = [
   },
   {
     id: "r4",
-    content: `SOL clears at ${SOL.score}. SUPER INU stops at ${SUPER_INU.score} and the other ${countWord(SAMPLE_OTHER_SCORES.length)} score lower, all below your floor.`,
+    content: `SOL clears at ${SOL.score}. SUPER INU stops at ${SUPER_INU.score} and the other ${countWord(SAMPLE_OTHERS.length)} score lower, all below your floor.`,
   },
   {
     id: "r5",
-    content: `Propose $${SAMPLE_TRADE_USD} on paper for TIBBIR and SOL, stop ${SAMPLE_STOP_PCT}%, take profit ${SAMPLE_TAKE_PROFIT_PCT}%. You decide; each proposal expires after an hour.`,
+    content: `Propose $${SAMPLE_TRADE_USD} each for TIBBIR and SOL, stop ${SAMPLE_STOP_PCT}%, take profit ${SAMPLE_TAKE_PROFIT_PCT}%. You decide; each proposal expires after an hour.`,
   },
 ];
 
@@ -313,21 +319,21 @@ export const CONSOLE_SUMMARY =
   `Sample, owner only: the ${SAMPLE_RUN_AT} run of ${SAMPLE_AGENT}, as its owner sees it. ` +
   `It screened ${SAMPLE_FOUND} candidates on Solana and Base, scored ${SAMPLE_SCORED} against a floor of ${SAMPLE_FLOOR} ` +
   `and bought ${usd3(DATA_TOTAL_USD)} of data: ${BOUGHT_WORDS}. ` +
-  `It proposed ${SAMPLE_BUYS.length} paper buys of $${SAMPLE_TRADE_USD}: ${SAMPLE_BUYS.map((r) => `${r.coin} at ${r.score}`).join(" and ")}. ` +
-  `${SAMPLE_SKIPS.map((r) => `${r.coin} stopped at ${r.score}`).join(", ")} and ${countWord(SAMPLE_OTHER_SCORES.length)} more scored lower, below the floor. ` +
+  `It proposed ${SAMPLE_BUYS.length} buys of $${SAMPLE_TRADE_USD}: ${SAMPLE_BUYS.map((r) => `${r.coin} at ${r.score}`).join(" and ")}. ` +
+  `${SAMPLE_SKIPS.map((r) => `${r.coin} stopped at ${r.score}`).join(", ")} and ${countWord(SAMPLE_OTHERS.length)} more scored lower, below the floor. ` +
   `Both wait for the owner's approval, starting with the request below. ` +
   `The next run is at ${SAMPLE_NEXT_RUN_AT}; exits are checked every 5 minutes in code, between runs too.`;
 
 /** The approval request at the end of the run, and what each answer does (demo.tsx). */
 export const APPROVAL = {
   title: `${SAMPLE_AGENT} wants to buy TIBBIR`,
-  description: `$${SAMPLE_TRADE_USD} on paper at a score of ${TIBBIR.score}, against your floor of ${SAMPLE_FLOOR}. Stop ${SAMPLE_STOP_PCT}%, take profit ${SAMPLE_TAKE_PROFIT_PCT}%.`,
+  description: `$${SAMPLE_TRADE_USD} at a score of ${TIBBIR.score}, against your floor of ${SAMPLE_FLOOR}. Stop ${SAMPLE_STOP_PCT}%, take profit ${SAMPLE_TAKE_PROFIT_PCT}%.`,
   // A no-break space before each dot, so a wrap never starts a line with one.
   meta: `${TIBBIR.chain} · place_trade · expires in ${SAMPLE_PROPOSAL_TTL_MIN} min`,
   result: {
     approved: {
-      title: `Approved · $${SAMPLE_TRADE_USD} of TIBBIR on paper`,
-      note: "In the app it fills on paper and posts to the feed. This demo sends nothing.",
+      title: `Approved · $${SAMPLE_TRADE_USD} of TIBBIR`,
+      note: "In the app it fills and posts to the feed. This demo sends nothing.",
     },
     rejected: {
       title: "Skipped TIBBIR · no position opened",
@@ -344,14 +350,6 @@ export const APPROVAL = {
 const STAGE_AT = [0, 1, 1, 1, 2, 2, 3] as const;
 const LINES_AT = [0, 1, 2, 3, 4, 5, 5] as const;
 export const FINAL_BEAT = STAGE_AT.length - 1;
-
-/**
- * One beat of the replay. Six beats make 4.8s: the replay is over inside five
- * seconds (WCAG 2.2.2), and the finished trace reports the time it showed.
- */
-export const BEAT_MS = 800;
-/** How long the model thought, as the finished trace reports it. */
-export const THOUGHT_MS = FINAL_BEAT * BEAT_MS;
 
 /**
  * A step as it stands at `beat`. A step that has not finished has no timing,
@@ -409,3 +407,60 @@ export const RUN_COPY: readonly string[] = [
   APPROVAL.meta,
   ...Object.values(APPROVAL.result).flatMap((r) => [r.title, r.note]),
 ];
+
+/* ------------------------------------------------------------------------ *
+ * The How section's three-step story (console.tsx): the strategy its owner
+ * wrote, the run it scored, the trade it asks for. Owner's view of a sample.
+ * ------------------------------------------------------------------------ */
+
+const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** The story's three steps, as the left column tells them. No real coin is named here. */
+export const STORY = [
+  {
+    id: "strategy",
+    kicker: "Strategy",
+    title: "You write the strategy.",
+    body: `A prompt in plain words, a score floor and your limits. There is no allowlist: it may trade any token that clears the hard gates and scores ${SAMPLE_FLOOR} or more, and a blocklist only takes tokens away. Nobody but you ever sees it.`,
+  },
+  {
+    id: "run",
+    kicker: "Scored run",
+    title: "It scores, then pays for proof.",
+    body: `Every ${SAMPLE_EVERY_MIN} minutes it screens Solana and Base, scores the best in full and buys only the data it needs. This run: ${SAMPLE_FOUND} candidates, ${SAMPLE_SCORED} scored, ${usd3(DATA_TOTAL_USD)} of data.`,
+  },
+  {
+    id: "trade",
+    kicker: "Trade",
+    title: "Then it asks you, or just trades.",
+    body: `${capitalise(countWord(SAMPLE_BUYS.length))} cleared the floor, so it proposes ${countWord(SAMPLE_BUYS.length)} buys and waits for your OK. Switch approvals off and it runs on its own, on schedule, every ${SAMPLE_EVERY_MIN} minutes. Try it: approve, skip, or flip the switch. Stops and take profit run in code either way.`,
+  },
+] as const;
+
+/** The sample agent's strategy as its owner sees it in the builder: the rows, in pairs. */
+export const STRATEGY_PROMPT = SAMPLE_PROMPT;
+export const STRATEGY_ROWS: ReadonlyArray<readonly [string, string]> = [
+  ["Mode", SAMPLE_MODE],
+  ["Runs", `every ${SAMPLE_EVERY_MIN} min`],
+  ["Chains", "Solana · Base"],
+  ["Score floor", `${SAMPLE_FLOOR} / 100`],
+  ["Per trade", `$${SAMPLE_TRADE_USD}`],
+  ["Exits", `stop ${SAMPLE_STOP_PCT}% · take ${SAMPLE_TAKE_PROFIT_PCT}%`],
+];
+/** The data sources it may buy from (a new agent's defaults) and its budget per run. */
+export const STRATEGY_SOURCES: readonly string[] = LANDING_DEFAULTS.dataSources;
+export const STRATEGY_BUDGET_USD = LANDING_DEFAULTS.maxDataSpendUsdPerRun;
+/** The universe rule in words: open by default, the blocklist only subtracts. */
+export const STRATEGY_UNIVERSE = `Any token that clears the hard gates and scores ${SAMPLE_FLOOR}+`;
+
+/** Every token the run scored in full, best first: the top three, then the rest under the floor. */
+export const SCORE_BOARD: readonly { id: string; label: string; coin?: CoinName; chain: string; score: number; clears: boolean }[] = [
+  ...SAMPLE_ROWS.map((r) => ({ id: r.coin, label: r.coin, coin: r.coin, chain: r.chain, score: r.score, clears: clearsFloor(r.score) })),
+  ...SAMPLE_OTHERS.map((r) => ({ id: r.coin, label: r.coin, coin: r.coin, chain: r.chain, score: r.score, clears: clearsFloor(r.score) })),
+];
+
+/** The strategy step's text alternative (its card is a picture). */
+export const STRATEGY_SUMMARY =
+  `${SAMPLE_AGENT}'s strategy, owner only: “${SAMPLE_PROMPT}” ` +
+  STRATEGY_ROWS.map(([k, v]) => `${k}: ${v}`).join("; ") +
+  `. ${STRATEGY_UNIVERSE}; blocklist empty. Data it may buy: ${STRATEGY_SOURCES.join(", ")}, up to ${usd2(STRATEGY_BUDGET_USD)} a run.`;

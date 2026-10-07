@@ -10,12 +10,16 @@ import {
   REASONING,
   RUN_COPY,
   SAMPLE_PROPOSAL_TTL_MIN,
+  SCORE_BOARD,
+  STORY,
+  STRATEGY_SOURCES,
+  STRATEGY_SUMMARY,
   SCORE_READS,
   STAGES,
   STEPS_SCORED,
   runAt,
 } from "./console-run";
-import { SAMPLE_SCORED, HERO_LABEL } from "./sample";
+import { SAMPLE_BUYS, SAMPLE_FLOOR, SAMPLE_FOUND, SAMPLE_SCORED, HERO_LABEL } from "./sample";
 import { LANDING_SOURCES, usd3 } from "./signals-data";
 
 /** The How section's console replays the hero's sample run; these keep its copy honest. */
@@ -104,7 +108,7 @@ describe("sample copy about real coins", () => {
   const claims =
     /gate|mint|freeze|honeypot|revok|renounc|\brugs?\b|\bsafe(ty)?\b|\bclean\b|\bverified\b|audit|\block(ed)?\b|\bburn(ed|t)?\b|sellab|passed|failed|risk|top.?ten|holders? hold|\btax/i;
   const realCoin = /TIBBIR|SUPER INU|\bSOL\b/;
-  const lines = [...RUN_COPY, HERO_LABEL].filter((line) => realCoin.test(line));
+  const lines = [...RUN_COPY, HERO_LABEL, ...STORY.flatMap((s) => [s.title, s.body]), ...SCORE_BOARD.map((r) => r.label)].filter((line) => realCoin.test(line));
 
   it("covers the run, the console summary, the approval and the hero card", () => {
     expect(lines.length).toBeGreaterThan(10);
@@ -124,6 +128,40 @@ describe("sample copy about real coins", () => {
     }
     for (const fine of ["Blocklist a token you hold", "every 5 minutes on the clock"]) {
       expect(fine).not.toMatch(claims);
+    }
+  });
+});
+
+describe("the How story", () => {
+  it("tells three steps: strategy, scored run, trade", () => {
+    expect(STORY.map((s) => s.id)).toEqual(["strategy", "run", "trade"]);
+  });
+
+  it("says the universe is open and the blocklist only subtracts, with no fork or copy", () => {
+    const strategy = STORY[0].body;
+    expect(strategy).toMatch(/no allowlist/i);
+    expect(strategy).toMatch(/blocklist only/i);
+    expect(strategy).toContain(String(SAMPLE_FLOOR));
+    for (const s of STORY) expect(`${s.title} ${s.body}`).not.toMatch(/\bfork|\bcopy\b|clone/i);
+  });
+
+  it("quotes the run's own numbers", () => {
+    expect(STORY[1].body).toContain(usd3(DATA_TOTAL_USD));
+    expect(STORY[1].body).toContain(String(SAMPLE_FOUND));
+    expect(STORY[1].body).toContain(String(SAMPLE_SCORED));
+  });
+
+  it("boards every token it scored, best first, with the buys above the floor", () => {
+    expect(SCORE_BOARD).toHaveLength(SAMPLE_SCORED);
+    const scores = SCORE_BOARD.map((r) => r.score);
+    expect([...scores].sort((a, b) => b - a)).toEqual(scores);
+    expect(SCORE_BOARD.filter((r) => r.clears).map((r) => r.coin)).toEqual(SAMPLE_BUYS.map((r) => r.coin));
+  });
+
+  it("lists the default data sources in its strategy summary", () => {
+    for (const id of STRATEGY_SOURCES) {
+      expect(LANDING_SOURCES.some((s) => s.id === id)).toBe(true);
+      expect(STRATEGY_SUMMARY).toContain(id);
     }
   });
 });
