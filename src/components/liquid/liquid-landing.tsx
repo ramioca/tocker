@@ -56,74 +56,31 @@ const BUDGET = usd2(DEFAULT_DATA_BUDGET_USD);
  */
 const faqTabs = (feeUsd: number, thinking: { model: string; start: string }): FaqTab[] => [
   {
-    label: "Trading",
+    label: "FAQ",
     faqs: [
       {
         question: "What does the agent trade?",
         answer:
-          "Any token on Solana and Base that clears the ten hard gates and scores at or above your floor. There is no allowlist; the only list is your blocklist, and it only subtracts.",
-      },
-      {
-        question: "What are the hard gates?",
-        answer:
-          "Ten checks: mint authority, freeze authority, honeypot, a failed sell check, tax, liquidity, holder count, token age, top-ten share and your blocklist. Most of them also refuse a token when the data is missing. No score overrides any of them.",
+          "Any token on Solana and Base that clears ten hard gates (mint and freeze authority, honeypot, sell check, tax, liquidity, holders, age, top-ten share and your blocklist) and scores at or above your floor. No score overrides a gate, and every threshold is yours to set.",
       },
       {
         question: "How do exits work?",
         answer:
-          "In code, not in the prompt. Stop loss, take profit, a collapsing score, a draining pool, and an optional trailing stop or max hold are checked every five minutes, model awake or not. Each one sells the whole position, and entry rules never block an exit.",
+          "In code, not in the prompt. Stop loss, take profit, a collapsing score and a draining pool are checked every five minutes, model awake or not, and entry rules never block a sell.",
       },
-      {
-        question: "What does the data cost?",
-        answer: `Nothing from your wallet. Tocker pays the vendors per call, in USDC over x402. Each run may spend up to its data budget (${BUDGET} by default), and score_token buys enrichment automatically until that budget is used.${feeSentence(feeUsd)}`,
-      },
-      {
-        question: "Which AI model runs it?",
-        answer: thinking.model,
-      },
-    ],
-  },
-  {
-    label: "Safety",
-    faqs: [
       {
         question: "Does it trade real money from day one?",
         answer:
-          "No. Every agent starts on paper against real quotes and asks before each trade. Going live is a separate screen with a checklist and a hold-to-confirm.",
-      },
-      {
-        question: "What if I miss an approval?",
-        answer:
-          "The proposal expires after an hour and nothing trades. Stop loss, take profit and the other rule exits never wait for an approval.",
+          "No. Every agent starts on paper and asks before each trade; a proposal you miss expires after an hour. Going live is a separate screen with a checklist and a hold-to-confirm.",
       },
       {
         question: "Who controls the agent’s wallet?",
         answer:
-          "Each agent gets its own wallet on Solana and on Base, separate from yours. They are server wallets: Tocker signs the agent’s trades so it can act while you are away, and their policy refuses to export the keys. Withdrawals are yours alone, to any address you choose.",
+          "Each agent gets its own wallet on Solana and Base, separate from yours. Tocker signs its trades so it can act while you are away, the keys can't be exported, and withdrawals are yours alone.",
       },
       {
-        question: "Can other people see my strategy?",
-        answer:
-          "If the agent is public (the default), they see its trades on the feed: token, size, price, result and the one-line note it posts with each fill. They never see your prompt, thresholds, data sources or the run transcript.",
-      },
-    ],
-  },
-  {
-    label: "Access",
-    faqs: [
-      {
-        question: "How do I get in?",
-        answer:
-          "Press Get started and enter your email. We send a six-digit code, and that is your account; there is no waitlist and no password. A crypto wallet works too.",
-      },
-      {
-        question: "What do I need to start?",
-        answer: thinking.start,
-      },
-      {
-        question: "Can I run more than one agent?",
-        answer:
-          "Yes. Run separate agents for momentum, sentiment or fresh launches, each with its own mandate and its own wallets.",
+        question: "What does it cost, and what do I need?",
+        answer: `Data is on us: Tocker pays the vendors per call in USDC over x402, up to ${BUDGET} a run by default.${feeSentence(feeUsd)} To start: ${thinking.start.charAt(0).toLowerCase()}${thinking.start.slice(1)}`,
       },
     ],
   },
@@ -264,7 +221,7 @@ function Faq() {
         num="06"
         label="Questions"
         title="Before you join."
-        lede="How it trades, what it costs, who holds the wallet and who sees what."
+        lede="What it trades, what it costs and who holds the wallet."
       />
       <FaqList tabs={faqTabs(feeEnabled() ? platformFeeUsd() : 0, thinkingAnswers(inferenceFlags().stage === "on"))} />
     </section>

@@ -40,11 +40,16 @@ export const SAMPLE_ROWS = [
   { coin: "SUPER INU", chain: "Solana", score: 58 },
 ] as const satisfies readonly SampleRow[];
 
-/** The rest of what it scored: fresh Solana candidates, never named, all under the floor. */
-export const SAMPLE_OTHER_SCORES = [55, 49, 44] as const;
+/** The rest of what it scored, all under the floor: listed on the score board, counted elsewhere. */
+export const SAMPLE_OTHERS = [
+  { coin: "BRETT", chain: "Base", score: 55 },
+  { coin: "BONK", chain: "Solana", score: 49 },
+  { coin: "WIF", chain: "Solana", score: 44 },
+] as const satisfies readonly SampleRow[];
+export const SAMPLE_OTHER_SCORES = SAMPLE_OTHERS.map((r) => r.score);
 
 /** Tokens score_token scored in full this run. */
-export const SAMPLE_SCORED = SAMPLE_ROWS.length + SAMPLE_OTHER_SCORES.length;
+export const SAMPLE_SCORED = SAMPLE_ROWS.length + SAMPLE_OTHERS.length;
 
 export const clearsFloor = (score: number) => score >= SAMPLE_FLOOR;
 

@@ -17,7 +17,7 @@ import {
   SAMPLE_FOUND,
   SAMPLE_MODE,
   SAMPLE_NEXT_RUN_AT,
-  SAMPLE_OTHER_SCORES,
+  SAMPLE_OTHERS,
   SAMPLE_PROMPT,
   SAMPLE_ROWS,
   SAMPLE_RUN_AT,
@@ -123,7 +123,7 @@ export function HeroRun() {
           </div>
 
           <p className="lp-hr-more lp-mono">
-            + {SAMPLE_OTHER_SCORES.length} more <span className="lp-hr-roomy">scored </span>below your floor
+            + {SAMPLE_OTHERS.length} more <span className="lp-hr-roomy">scored </span>below your floor
           </p>
 
           <div className="lp-hr-foot lp-mono">

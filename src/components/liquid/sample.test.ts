@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { MIN_SCORED_PER_TICK } from "@/lib/agent/limits";
 import { COINS } from "./coins";
-import { HERO_LABEL, SAMPLE_OTHER_SCORES, SAMPLE_PROMPT, SAMPLE_ROWS, SAMPLE_SCORED, clearsFloor } from "./sample";
+import { HERO_LABEL, SAMPLE_OTHERS, SAMPLE_OTHER_SCORES, SAMPLE_PROMPT, SAMPLE_ROWS, SAMPLE_SCORED, clearsFloor } from "./sample";
 
 describe("the landing's sample run", () => {
-  it("shows two tokens that clear the floor and one that doesn't, each a known coin", () => {
+  it("shows two tokens that clear the floor and one that doesn't, and names the rest, each a known coin", () => {
     expect(SAMPLE_ROWS.filter((r) => clearsFloor(r.score))).toHaveLength(2);
-    for (const r of SAMPLE_ROWS) expect(COINS[r.coin]).toBeDefined();
+    for (const r of [...SAMPLE_ROWS, ...SAMPLE_OTHERS]) expect(COINS[r.coin]).toBeDefined();
   });
 
   it("shows its top three: everything else it scored is lower, and under the floor", () => {
@@ -17,7 +17,7 @@ describe("the landing's sample run", () => {
     }
   });
 
-  it("scores at least the run loop's minimum of fresh candidates, plus SOL, which discovery never lists", () => {
+  it("scores at least the run loop's minimum of discovered candidates, plus SOL, which discovery never lists", () => {
     const fresh = SAMPLE_SCORED - SAMPLE_ROWS.filter((r) => r.coin === "SOL").length;
     expect(fresh).toBeGreaterThanOrEqual(MIN_SCORED_PER_TICK);
   });

@@ -486,32 +486,45 @@
   padding-block: calc(var(--section-space) + 32px) var(--section-space);
   text-align: center;
 }
-/* The mark on a painted glow: the hero's two brand lights, smaller. No blur,
-   no animation; it paints once. */
-.lp .lp-close-art {
+/* The backdrop: a painted glow everyone sees, and the liquid silk (close-shader.tsx)
+   fading in over it where WebGPU runs. Both sit behind the type, faded to black at
+   every edge, and never take pointer events. */
+.lp .lp-close {
   position: relative;
   isolation: isolate;
-  width: 180px;
-  margin-bottom: 40px;
 }
-.lp .lp-close-art::before {
-  content: "";
+.lp .lp-close-glow {
   position: absolute;
   z-index: -1;
   left: 50%;
   top: 50%;
-  width: 640px;
-  height: 420px;
+  width: min(1200px, 140vw);
+  height: 115%;
   transform: translate(-50%, -50%);
-  background:
-    radial-gradient(32% 38% at 43% 47%, var(--glow-blue), transparent 70%),
-    radial-gradient(28% 34% at 59% 55%, var(--glow-magenta), transparent 70%);
   pointer-events: none;
+  background:
+    radial-gradient(36% 42% at 40% 52%, var(--glow-blue), transparent 70%),
+    radial-gradient(30% 36% at 62% 48%, var(--glow-magenta), transparent 70%);
+  -webkit-mask-image: radial-gradient(50% 50% at 50% 50%, #000 35%, transparent 100%);
+  mask-image: radial-gradient(50% 50% at 50% 50%, #000 35%, transparent 100%);
 }
-.lp .lp-close-mark {
-  display: block;
-  width: 180px;
-  height: auto;
+.lp .lp-close-shader {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 1600ms var(--ease-out);
+}
+.lp .lp-close-shader[data-ready] {
+  opacity: 0.7;
+}
+.lp-close-shader-canvas {
+  width: 100%;
+  height: 100%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp .lp-close-shader {
+    display: none;
+  }
 }
 .lp .lp-close-title {
   max-width: 16ch;
@@ -524,20 +537,6 @@
 .lp .lp-close-cta {
   margin-top: 32px;
 }
-@media (max-width: 639px) {
-  .lp .lp-close-art {
-    width: 140px;
-    margin-bottom: 32px;
-  }
-  .lp .lp-close-art::before {
-    width: 460px;
-    height: 320px;
-  }
-  .lp .lp-close-mark {
-    width: 140px;
-  }
-}
-
 /* ============================ footer ============================ */
 .lp .lp-footer-top {
   display: flex;
