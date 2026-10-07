@@ -171,7 +171,10 @@ export function InferenceCard({ data }: { data: AdminInference }) {
           <dd className="mt-1 leading-6 text-muted-foreground">
             {control.halted ? (
               <>
-                <span className="font-medium text-destructive">On.</span> {control.haltReason ?? "No reason was recorded."}
+                <span className="font-medium text-destructive">On.</span>{" "}
+                <span className="block max-h-64 overflow-y-auto break-words whitespace-pre-wrap">
+                  {control.haltReason ?? "No reason was recorded."}
+                </span>
                 {control.updatedBy ? ` Set by ${control.updatedBy}` : ""}
                 {control.updatedAt ? (
                   <>

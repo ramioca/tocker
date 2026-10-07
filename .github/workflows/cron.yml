@@ -16,7 +16,7 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
-# The job calls two URLs and needs nothing from the repository.
+# The job calls three URLs and needs nothing from the repository.
 permissions: {}
 jobs:
   tick:

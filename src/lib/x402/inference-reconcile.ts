@@ -447,7 +447,7 @@ async function holdThroughRunLoop(agentId: string, now: Date): Promise<void> {
     return;
   }
   if (typeof apply !== "function") return;
-  await (apply as (agentId: string, reason: InferenceStopReason, now: Date) => Promise<unknown>)(agentId, "paused", now);
+  await (apply as (agentId: string, reason: InferenceStopReason, now: Date) => Promise<unknown>)(agentId, "transfer_check", now);
 }
 
 /** The pass cannot go on asking the chain: out of calls, out of time, or the RPC is down. */

@@ -251,6 +251,7 @@ export const INFERENCE_STOPS = {
   paid_no_answer: "platform",
   rerouted: "platform",
   bad_request: "platform",
+  transfer_check: "platform",
 } as const;
 
 export type InferenceStopReason = keyof typeof INFERENCE_STOPS;
@@ -319,7 +320,7 @@ export function describeInferenceStop(
     case "platform_day_cap":
       return { title: "Pay-per-use is at capacity today", detail: "Tocker limits how much all agents may spend on pay-per-use thinking in a day, and today's limit is reached. The agent starts again at 00:00 UTC. Your own API key is not affected." };
     case "no_rpc":
-      return { title: "Pay-per-use is not set up", detail: "Tocker cannot read the Solana network reliably enough to pay safely, so nothing was charged. The agent tries again later." };
+      return { title: "Waiting on the Solana network", detail: "Tocker could not read the Solana network reliably enough to pay safely, so nothing was charged. The agent tries again later." };
     case "step_cap":
       return { title: "The price was higher than expected", detail: "The model provider asked more for one step than Tocker allows a step to cost, so nothing was paid and the run stopped." };
     case "pin_mismatch":
@@ -330,11 +331,15 @@ export function describeInferenceStop(
     case "signature_failed":
       return { title: "The wallet did not sign", detail: "The agent's wallet could not sign the payment for this step, so nothing was paid and the run stopped. The agent tries again later." };
     case "paid_no_answer":
-      return { title: "A step was paid for but not answered", detail: "The agent paid for one step and the provider did not return an answer. The run stopped so it would not pay again. The charge is listed under Money." };
+      // Said at a moment when the payment is usually still being checked, so it claims
+      // only what is known: a payment was signed, and no answer came.
+      return { title: "A step got no answer", detail: "The agent signed a payment for one step and the provider did not return an answer. The run stopped so it would not pay again. If that payment landed it is listed under Money; if the chain shows it never did, nothing was charged." };
     case "rerouted":
       return { title: "A different model answered", detail: `The provider answered with a different model than ${context.model ?? "the one chosen"}. The answer was not used and the run stopped. If that step was charged, it is listed under Money.` };
     case "bad_request":
       return { title: "The request was refused", detail: "The provider refused the request before any payment, so nothing was paid and the run stopped." };
+    case "transfer_check":
+      return { title: "Paused while a transfer is checked", detail: "Tocker found a transfer from this agent's wallet to the model provider that its records do not explain. Pay-per-use is paused for this agent only while that is checked. Nothing is being charged." };
   }
 }
 

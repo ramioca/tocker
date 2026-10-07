@@ -1,7 +1,7 @@
 /**
  * Ledger against chain, for one agent wallet's pay-per-use thinking.
  *
- *   tsx --env-file-if-exists=.env scripts/inference-audit.ts <agent id | agent slug | wallet address> [--hours 24]
+ *   pnpm tsx scripts/inference-audit.ts <agent id | agent slug | wallet address> [--hours 24]
  *
  * Reads the wallet's own USDC account history through `SOLANA_RPC_URL`, picks out every
  * transfer to the pinned gateway, and sets them beside the `inference_payments` rows for
@@ -38,7 +38,7 @@ import {
 import { INFERENCE_GATEWAY } from "@/lib/x402/inference-types";
 
 const HOUR_MS = 3_600_000;
-const USAGE = "usage: tsx --env-file-if-exists=.env scripts/inference-audit.ts <agent id | agent slug | wallet address> [--hours 24]";
+const USAGE = "usage: pnpm tsx scripts/inference-audit.ts <agent id | agent slug | wallet address> [--hours 24]";
 
 function usd(units: bigint): string {
   const negative = units < BigInt(0);

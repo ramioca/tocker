@@ -106,6 +106,12 @@ function HaltSwitch({ halted }: { halted: boolean }) {
           </Button>
         )}
       </div>
+      {halted ? (
+        <p className="text-xs leading-5 text-muted-foreground">
+          Clearing acknowledges the transactions the reason above names. Anything it does not name halts pay-per-use
+          again when it is next seen.
+        </p>
+      ) : null}
       {error ? <Problem>{error}</Problem> : null}
     </div>
   );

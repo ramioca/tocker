@@ -62,7 +62,7 @@ import {
   controlStop,
   type BreakerRule,
 } from "@/lib/x402/inference-budget";
-import { readInferenceControl } from "@/lib/x402/inference-ledger";
+import { MAX_HALT_REASON, readInferenceControl } from "@/lib/x402/inference-ledger";
 import { GIVE_UP_AFTER_MS, LATE_LOOK_MS } from "@/lib/x402/inference-reconcile";
 import {
   AGENT_DAY_REQUESTS,
@@ -1270,7 +1270,9 @@ export async function getAdminInference(adminUserId: string, now: Date = new Dat
     lateLookDays: Math.round(LATE_LOOK_MS / 86_400_000),
     control: {
       halted: control.halted,
-      haltReason: shown(control.haltReason),
+      // In full: clearing a halt acknowledges every transaction its reason names, so the
+      // admin must be able to read all of it, not the first lines.
+      haltReason: shown(control.haltReason, MAX_HALT_REASON),
       haltClearedAt: control.haltClearedAt ? control.haltClearedAt.toISOString() : null,
       pausedUntil: control.pausedUntil ? control.pausedUntil.toISOString() : null,
       pauseReason: shown(control.pauseReason),

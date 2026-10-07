@@ -263,7 +263,7 @@ export function holdsAgent(reason: InferenceStopReason): boolean {
  * being off for the account, and the platform's own day being used up. The agent, its
  * wallet and its owner did nothing, and no run of its own stopped.
  */
-const NO_FAULT_HOLDS: ReadonlySet<InferenceStopReason> = new Set<InferenceStopReason>(["halted", "paused", "flag_off", "platform_day_cap"]);
+const NO_FAULT_HOLDS: ReadonlySet<InferenceStopReason> = new Set<InferenceStopReason>(["halted", "paused", "flag_off", "platform_day_cap", "transfer_check"]);
 
 /**
  * Whether a hold for `reason` counts against the agent. A hold that is nobody's fault

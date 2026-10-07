@@ -168,6 +168,9 @@ export function holdUntil(reason: InferenceStopReason, strikes: number, now: Dat
       return nextUtcMidnight(now);
     case "halted":
     case "paused":
+    // Re-applied by the reconciler on every pass while the transfer is in view, so a
+    // short look-again is right: the hold lifts soon after the transfer stops being seen.
+    case "transfer_check":
       return new Date(now.getTime() + HOLD_SWITCH_MINUTES * MINUTE_MS);
     default: {
       const count = Number.isFinite(strikes) ? Math.floor(strikes) : 1;

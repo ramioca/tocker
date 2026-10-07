@@ -233,9 +233,10 @@ export const agents = pgTable(
      * failing: no run row is written and its owner is told once, not on every tick.
      */
     inferenceHold: text("inference_hold"),
+    /** Also set while `inference_hold` is null, as the note of a first unreadable balance: only a second one in a row becomes a hold. */
     inferenceHoldSince: timestamp("inference_hold_since", { withTimezone: true }),
     inferenceHoldUntil: timestamp("inference_hold_until", { withTimezone: true }),
-    /** Consecutive runs or checks that ended in a hold; drives the back-off. */
+    /** Consecutive holds that were the agent's or the gateway's doing; drives the back-off. Holds that are nobody's fault (a halt, a pause, the switch off, the platform's daily limit) do not count. */
     inferenceStrikes: integer("inference_strikes").default(0).notNull(),
     /** When the owner was last told about the current hold. */
     inferenceNotifiedAt: timestamp("inference_notified_at", { withTimezone: true }),
