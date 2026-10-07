@@ -9,20 +9,25 @@ import {
   type EnrichmentPlan,
 } from "@/lib/agent/enrichment";
 import { LANDING_DEFAULTS } from "./defaults";
-import { LANDING_SOURCES, usd3 } from "./signals-data";
+import { LANDING_SOURCES, usd2, usd3 } from "./signals-data";
 import {
   SAMPLE_AGENT,
   SAMPLE_BUYS,
+  SAMPLE_EVERY_MIN,
   SAMPLE_FLOOR,
   SAMPLE_FOUND,
   SAMPLE_NEXT_RUN_AT,
+  SAMPLE_MODE,
   SAMPLE_OTHER_SCORES,
+  SAMPLE_PROMPT,
+  SAMPLE_ROWS,
   SAMPLE_RUN_AT,
   SAMPLE_SCORED,
   SAMPLE_SKIPS,
   SAMPLE_STOP_PCT,
   SAMPLE_TAKE_PROFIT_PCT,
   SAMPLE_TRADE_USD,
+  clearsFloor,
   countWord,
   sampleRow,
 } from "./sample";
@@ -68,7 +73,7 @@ export const LAUNCH_RADARS = { solana: "solenrich-launches", base: "gate402-base
 const LAUNCH_RADARS_IDS = Object.values(LAUNCH_RADARS);
 
 /** What score_token buys for a token on `chain` that the free data has not ruled out. */
-export function readsFor(chain: Chain): string[] {
+function readsFor(chain: Chain): string[] {
   const plan: EnrichmentPlan = planEnrichment({
     free: { total: 70, verdict: "watch", blockers: [] },
     chain,
@@ -346,14 +351,6 @@ const LINES_AT = [0, 1, 2, 3, 4, 5, 5] as const;
 export const FINAL_BEAT = STAGE_AT.length - 1;
 
 /**
- * One beat of the replay. Six beats make 4.8s: the replay is over inside five
- * seconds (WCAG 2.2.2), and the finished trace reports the time it showed.
- */
-export const BEAT_MS = 800;
-/** How long the model thought, as the finished trace reports it. */
-export const THOUGHT_MS = FINAL_BEAT * BEAT_MS;
-
-/**
  * A step as it stands at `beat`. A step that has not finished has no timing,
  * no result and no children, so it can't be opened or show a duration yet.
  */
@@ -409,3 +406,60 @@ export const RUN_COPY: readonly string[] = [
   APPROVAL.meta,
   ...Object.values(APPROVAL.result).flatMap((r) => [r.title, r.note]),
 ];
+
+/* ------------------------------------------------------------------------ *
+ * The How section's three-step story (console.tsx): the strategy its owner
+ * wrote, the run it scored, the trade it asks for. Owner's view of a sample.
+ * ------------------------------------------------------------------------ */
+
+const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** The story's three steps, as the left column tells them. No real coin is named here. */
+export const STORY = [
+  {
+    id: "strategy",
+    kicker: "Strategy",
+    title: "You write the strategy.",
+    body: `A prompt in plain words, a score floor and your limits. There is no allowlist: it may trade any token that clears the hard gates and scores ${SAMPLE_FLOOR} or more, and a blocklist only takes tokens away. Nobody but you ever sees it.`,
+  },
+  {
+    id: "run",
+    kicker: "Scored run",
+    title: "It scores, then pays for proof.",
+    body: `Every ${SAMPLE_EVERY_MIN} minutes it screens fresh launches, scores the best in full and buys only the data it needs. This run: ${SAMPLE_FOUND} candidates, ${SAMPLE_SCORED} scored, ${usd3(DATA_TOTAL_USD)} of data.`,
+  },
+  {
+    id: "trade",
+    kicker: "Trade",
+    title: "Then it asks you.",
+    body: `${capitalise(countWord(SAMPLE_BUYS.length))} cleared the floor, so it proposes ${countWord(SAMPLE_BUYS.length)} paper buys and waits for your OK. Try it: approve, skip, or switch approvals off. Stops and take profit run in code either way.`,
+  },
+] as const;
+
+/** The sample agent's strategy as its owner sees it in the builder: the rows, in pairs. */
+export const STRATEGY_PROMPT = SAMPLE_PROMPT;
+export const STRATEGY_ROWS: ReadonlyArray<readonly [string, string]> = [
+  ["Mode", `paper · ${SAMPLE_MODE}`],
+  ["Runs", `every ${SAMPLE_EVERY_MIN} min`],
+  ["Chains", "Solana · Base"],
+  ["Score floor", `${SAMPLE_FLOOR} / 100`],
+  ["Per trade", `$${SAMPLE_TRADE_USD}`],
+  ["Exits", `stop ${SAMPLE_STOP_PCT}% · take ${SAMPLE_TAKE_PROFIT_PCT}%`],
+];
+/** The data sources it may buy from (a new agent's defaults) and its budget per run. */
+export const STRATEGY_SOURCES: readonly string[] = LANDING_DEFAULTS.dataSources;
+export const STRATEGY_BUDGET_USD = LANDING_DEFAULTS.maxDataSpendUsdPerRun;
+/** The universe rule in words: open by default, the blocklist only subtracts. */
+export const STRATEGY_UNIVERSE = `Any token that clears the hard gates and scores ${SAMPLE_FLOOR}+`;
+
+/** Every token the run scored in full, best first: the three it names, then the fresh launches it doesn't. */
+export const SCORE_BOARD: readonly { id: string; label: string; coin?: (typeof SAMPLE_ROWS)[number]["coin"]; chain: string; score: number; clears: boolean }[] = [
+  ...SAMPLE_ROWS.map((r) => ({ id: r.coin, label: r.coin, coin: r.coin, chain: r.chain, score: r.score, clears: clearsFloor(r.score) })),
+  ...SAMPLE_OTHER_SCORES.map((score, i) => ({ id: `fresh-${i}`, label: "Fresh launch", chain: "Solana", score, clears: clearsFloor(score) })),
+];
+
+/** The strategy step's text alternative (its card is a picture). */
+export const STRATEGY_SUMMARY =
+  `${SAMPLE_AGENT}'s strategy, owner only: “${SAMPLE_PROMPT}” ` +
+  STRATEGY_ROWS.map(([k, v]) => `${k}: ${v}`).join("; ") +
+  `. ${STRATEGY_UNIVERSE}; blocklist empty. Data it may buy: ${STRATEGY_SOURCES.join(", ")}, up to ${usd2(STRATEGY_BUDGET_USD)} a run.`;

@@ -41,13 +41,11 @@ import {
 /** Bars, scores and verdicts start this far apart, row by row. */
 const STAGGER_MS = 90;
 /**
- * The card fades in with the hero's load-in stagger. If its rows are already in
- * view at load, hold the bars until the fade has mostly landed, so they grow
- * where they can be seen.
+ * The card rises in last in the hero's load-in (hero-intro.tsx: 0.6s delay, 1.3s
+ * expo out). If its rows are already in view at load, hold the bars until the
+ * rise has mostly landed, so they grow where they can be seen.
  */
-const SETTLE_MS = 650;
-
-const delay = (s: string) => ({ "--reveal-delay": s }) as CSSProperties;
+const SETTLE_MS = 1250;
 
 /**
  * Real coins, made-up scores. A skip never names a gate: that would be a claim
@@ -75,7 +73,7 @@ export function HeroRun() {
   const live = on || reduced;
 
   return (
-    <div className="lp-hr-stage lp-wrap reveal" style={delay("0.32s")}>
+    <div className="lp-hr-stage lp-wrap lp-intro">
       <div
         className="lp-hr lp-frame"
         data-in={live ? "" : undefined}

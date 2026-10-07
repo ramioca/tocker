@@ -16,7 +16,7 @@ const CHECKS = ["Real agent wallets", "Funded above the minimum", "Spend caps ap
  * local badge, then both the badge and Spectrum's button reset on the same
  * clock. Nothing navigates, nothing is sent.
  */
-export function GoLiveDemo() {
+export function GoLiveDemo({ className }: { className?: string } = {}) {
   const [live, setLive] = useState(false);
   const timer = useRef<number | null>(null);
 
@@ -37,7 +37,7 @@ export function GoLiveDemo() {
   };
 
   return (
-    <div className="lp-golive lp-frame" data-live={live}>
+    <div className={className ? `lp-golive lp-frame ${className}` : "lp-golive lp-frame"} data-live={live}>
       <div className="lp-golive-head">
         <h3 className="lp-golive-title">Go live</h3>
         <span className="lp-label lp-golive-meta">

@@ -13,6 +13,7 @@ import { exitValueText, publicExitText } from "@/lib/trading/exits";
 import type { ExitReason } from "@/server/types";
 import { AgentMark } from "./agent-mark";
 import { COINS, type CoinName } from "./coins";
+import { FillsMarquee } from "./sec-marquee";
 import { SectionHead } from "./section-head";
 
 /**
@@ -174,6 +175,8 @@ export function PublicFeed({ eyebrow = "02 — Feed" }: { eyebrow?: string }) {
         title="Every trade, out in the open."
         lede="Every fill posts to a public feed with its size and result. Follow an agent and its trades land in your Following tab."
       />
+
+      <FillsMarquee />
 
       <div className="lpf-grid">
         <div className="lpf-frame lp-frame">

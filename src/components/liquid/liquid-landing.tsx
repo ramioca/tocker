@@ -1,16 +1,19 @@
-import { FAQTabsCard, type FaqTab } from "@/components/spectrumui/faq-tabs-card";
+import type { FaqTab } from "@/components/spectrumui/faq-tabs-card";
 import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
 import { inferenceFlags } from "@/lib/x402/inference-types";
-import { AppLink } from "./app-link";
-import { BrandHeroMark, BrandLockup } from "./brand";
+import { BrandLockup } from "./brand";
 import { AgentConsole } from "./console";
-import { DEFAULT_ROWS, feeSentence, thinkingAnswers } from "./defaults";
+import { feeSentence, thinkingAnswers } from "./defaults";
 import { PublicFeed } from "./feed";
-import { GoLiveDemo } from "./go-live";
 import { Hero } from "./hero";
 import { Nav } from "./nav";
 import { PerformancePanel } from "./performance";
+import { CloseCta } from "./sec-close";
+import { FaqList } from "./sec-faq";
+import { FooterWordmark } from "./sec-footer-wordmark";
+import { GuardrailsBento } from "./sec-guardrails-bento";
 import { SectionHead } from "./section-head";
+import { SmoothScroll } from "./smooth-scroll";
 import { DEFAULT_DATA_BUDGET_USD, LANDING_SOURCES, usd2, usd3, type LandingSource } from "./signals-data";
 import "./landing.css";
 import "./landing-hero.css";
@@ -32,6 +35,9 @@ import "./landing-sections.css";
  * nothing more: it turns "Sign in" and "Get started" into "Open the app" for
  * someone who is probably signed in already. Nothing is hidden or redirected on
  * it; the app does the real check.
+ *
+ * SmoothScroll (a client provider around the page) sets up Lenis, GSAP's ticker and
+ * ScrollTrigger together, and MotionConfig's reduced-motion policy; see smooth-scroll.tsx.
  *
  * Section order: Nav, Hero, 01 How, 02 Feed, 03 Data, 04 Performance,
  * 05 Guardrails, 06 Questions, closing call to action, Footer.
@@ -125,20 +131,22 @@ const faqTabs = (feeUsd: number, thinking: { model: string; start: string }): Fa
 
 export function LiquidLanding({ hasSession }: { hasSession: boolean }) {
   return (
-    <div className="lp">
-      <Nav hasSession={hasSession} />
-      <main id="main" tabIndex={-1}>
-        <Hero hasSession={hasSession} />
-        <How />
-        <PublicFeed eyebrow="02 — Feed" />
-        <Sources />
-        <Performance />
-        <Guardrails />
-        <Faq />
-        <Close hasSession={hasSession} />
-      </main>
-      <Footer />
-    </div>
+    <SmoothScroll>
+      <div className="lp">
+        <Nav hasSession={hasSession} />
+        <main id="main" tabIndex={-1}>
+          <Hero hasSession={hasSession} />
+          <How />
+          <PublicFeed eyebrow="02 — Feed" />
+          <Sources />
+          <Performance />
+          <Guardrails />
+          <Faq />
+          <CloseCta hasSession={hasSession} />
+        </main>
+        <Footer />
+      </div>
+    </SmoothScroll>
   );
 }
 
@@ -243,23 +251,7 @@ function Guardrails() {
         title="Entry rules never block an exit."
         lede="Stop loss, take profit, a collapsing score and a draining pool are checked in code every five minutes, between runs too. Blocklist a token you hold, spend the day’s trades, hit the kill switch: the sell still goes through."
       />
-      <div className="lp-guard-grid">
-        <GoLiveDemo />
-        <div className="lp-defaults lp-frame">
-          <div className="lp-defaults-head">
-            <h3 className="lp-defaults-title">Defaults you can change</h3>
-            <span className="lp-label lp-defaults-meta">new agent</span>
-          </div>
-          <dl aria-label="Defaults a new agent starts with">
-            {DEFAULT_ROWS.map(([k, v]) => (
-              <div key={k} className="lp-default">
-                <dt className="lp-label">{k}</dt>
-                <dd className="lp-mono">{v}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      </div>
+      <GuardrailsBento />
     </section>
   );
 }
@@ -274,30 +266,7 @@ function Faq() {
         title="Before you join."
         lede="How it trades, what it costs, who holds the wallet and who sees what."
       />
-      <FAQTabsCard
-        tabs={faqTabs(feeEnabled() ? platformFeeUsd() : 0, thinkingAnswers(inferenceFlags().stage === "on"))}
-        className="lp-faq-card"
-      />
-    </section>
-  );
-}
-
-/**
- * The page closes on the mark, painted on a still glow, and the hero's call to
- * action again: the way into sign-in, or into the app for a visitor who came
- * with a session cookie.
- */
-function Close({ hasSession }: { hasSession: boolean }) {
-  return (
-    <section className="lp-wrap lp-close" aria-labelledby="lp-close-title">
-      <div className="lp-close-art" aria-hidden>
-        <BrandHeroMark width={180} className="lp-close-mark" />
-      </div>
-      <h2 id="lp-close-title" className="lp-h2 lp-close-title">
-        Your strategy, on the clock.
-      </h2>
-      <p className="lp-lede lp-close-lede">Open now on Solana and Base. Every agent starts on paper.</p>
-      <AppLink hasSession={hasSession} className="lp-close-cta" />
+      <FaqList tabs={faqTabs(feeEnabled() ? platformFeeUsd() : 0, thinkingAnswers(inferenceFlags().stage === "on"))} />
     </section>
   );
 }
@@ -326,6 +295,7 @@ function Footer() {
           <p className="lp-mono lp-footer-copy">© 2026 Tocker</p>
         </div>
       </div>
+      <FooterWordmark />
     </footer>
   );
 }
