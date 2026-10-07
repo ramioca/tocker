@@ -577,6 +577,7 @@ export function AgentBuilder({
     runLine: card.runLine,
     runsPerDay: card.runsPerDay,
     onGo: goFromCard,
+    currentStep: step,
     quietKey: cardRestored,
     disabled: creating,
   };
@@ -673,7 +674,7 @@ export function AgentBuilder({
 
           {/* A minimum height, so a short step never makes the page shorter than the
               viewport and the bar below does not jump between steps. */}
-          <div className="mt-2 min-h-[calc(100dvh-16rem)]">
+          <div className="mt-2 min-h-[calc(100dvh-17rem)]">
             <StepPanel
               {...panel("name")}
               title="Name it"

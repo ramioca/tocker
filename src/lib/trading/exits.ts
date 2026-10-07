@@ -210,6 +210,18 @@ function holdText(hours: number): string {
   return `${(hours / 24).toFixed(1)}d`;
 }
 
+/**
+ * The owner's own limit, said as they set it. One decimal as above, unless that would
+ * misstate the number: a limit of an hour and a quarter is "1.25h", not "1.3h". Time
+ * elapsed is a measurement and keeps `holdText`.
+ */
+function limitText(hours: number): string {
+  const exact = (n: number) => (Number.isInteger(Math.round(n * 100) / 10) ? n.toFixed(1) : n.toFixed(2));
+  if (hours < 1) return `${Math.round(hours * 60)}m`;
+  if (hours < 48) return `${exact(hours)}h`;
+  return `${exact(hours / 24)}d`;
+}
+
 function ruleText(pct: number): string {
   return `${Number.isInteger(pct) ? pct.toFixed(0) : pct.toFixed(1)}%`;
 }
@@ -325,7 +337,7 @@ function evaluateOne(position: ExitPosition, rules: ExitRules, now: Date): Candi
   if (rules.maxHoldHours !== null && held !== null && held >= rules.maxHoldHours) {
     return {
       reason: "max_hold",
-      rationale: `Max hold: ${symbol} has been open ${holdText(held)}, past my ${holdText(rules.maxHoldHours)} limit, at ${pctText(pnlPct ?? 0)}. The thesis had its window; closing it out.`,
+      rationale: `Max hold: ${symbol} has been open ${holdText(held)}, past my ${limitText(rules.maxHoldHours)} limit, at ${pctText(pnlPct ?? 0)}. The thesis had its window; closing it out.`,
     };
   }
 
