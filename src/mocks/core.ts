@@ -513,10 +513,40 @@ function scoreFor(seed: number, side: "buy" | "sell", scoredAt: string): TradeSc
   };
 }
 
+/** The ways a mock trade fails to fill, each in the words the real writer stores. */
+const MOCK_MISSES: Array<{
+  status: "failed" | "rejected";
+  decidedBy: string | null;
+  /** The order was signed and sent before it failed, so the row keeps its transaction. */
+  signed: boolean;
+  error: (symbol: string, hash: string) => string;
+}> = [
+  {
+    status: "failed",
+    decidedBy: null,
+    signed: false,
+    error: (symbol) =>
+      `Tocker did not send this ${symbol} trade: network fees are running high: Jupiter wants a 249247-lamport priority fee, more than the 150000 Tocker pays on a trade this size — try again shortly, or trade a larger amount. Nothing was signed.`,
+  },
+  {
+    status: "failed",
+    decidedBy: null,
+    signed: true,
+    error: (_symbol, hash) =>
+      `Jupiter execute: Expired (code -1005). — transaction ${hash} did not resolve within 20s, so its outcome is unknown.`,
+  },
+  { status: "rejected", decidedBy: "owner", signed: false, error: () => "Declined by the owner." },
+];
+
 function tradesFor(agent: AgentCard, count: number, seedOffset = 0): TradeRow[] {
   const rand = rng(agent.slug.length * 61 + count + seedOffset);
   const universe = mockTokens.filter((t) => agent.chains.includes(t.chain));
   const out: TradeRow[] = [];
+  const paper = agent.mode === "paper";
+  // A paper order is never signed, so it cannot fail with a transaction behind it.
+  const misses = paper ? MOCK_MISSES.filter((miss) => !miss.signed) : MOCK_MISSES;
+  // An automatic exit is never put to the owner, so nobody can decline one: it only fails.
+  const exitMisses = misses.filter((miss) => miss.status === "failed");
   for (let i = 0; i < count; i += 1) {
     const t = universe[Math.floor(rand() * universe.length)];
     const side = rand() > 0.42 ? "buy" : "sell";
@@ -525,6 +555,17 @@ function tradesFor(agent: AgentCard, count: number, seedOffset = 0): TradeRow[] 
     const failed = rand() > 0.94;
     const score = scoreFor(agent.slug.length * 31 + i + seedOffset, side, iso((i * 47 + 9 + seedOffset * 13) * MINUTE));
     const guardian = side === "sell" && i % 4 === 0;
+    // A trade that did not fill is stored the way the writers store it: no amount, no
+    // price, the value that was asked for, and one of the reasons they really write.
+    const pool = guardian ? exitMisses : misses;
+    const miss = failed ? pool[i % pool.length] : null;
+    const declined = miss?.decidedBy === "owner";
+    const askedMinutesAgo = i * 47 + 8 + seedOffset * 13;
+    const hash = paper
+      ? ""
+      : t.chain === "solana"
+        ? `5${Math.floor(rand() * 1e12).toString(36)}Qq7xWc2vT9rNhKpZmA${i}`
+        : `0x${Math.floor(rand() * 1e15).toString(16).padStart(12, "0")}a4f19c2b7e${i}`;
     out.push({
       id: `trade_${agent.slug}_${seedOffset}_${i}`,
       agentId: agent.id,
@@ -532,29 +573,26 @@ function tradesFor(agent: AgentCard, count: number, seedOffset = 0): TradeRow[] 
       chain: t.chain,
       side,
       token: t,
-      amountToken: round(amountUsd / price, 6),
+      amountToken: miss ? 0 : round(amountUsd / price, 6),
       amountUsd,
-      priceUsd: price,
-      feeUsd: round(amountUsd * 0.003, 4),
-      status: failed ? "failed" : "filled",
-      isPaper: agent.mode === "paper",
-      txHash:
-        agent.mode === "paper"
-          ? null
-          : t.chain === "solana"
-            ? `5${Math.floor(rand() * 1e12).toString(36)}Qq7xWc2vT9rNhKpZmA${i}`
-            : `0x${Math.floor(rand() * 1e15).toString(16).padStart(12, "0")}a4f19c2b7e${i}`,
+      priceUsd: miss ? 0 : price,
+      feeUsd: miss ? 0 : round(amountUsd * 0.003, 4),
+      status: miss ? miss.status : "filled",
+      isPaper: paper,
+      txHash: paper || (miss && !miss.signed) ? null : hash,
       origin: guardian ? "guardian" : "agent",
       exitReason: guardian ? (i % 8 === 0 ? "take_profit" : "stop_loss") : null,
-      requestedUsd: null,
-      proposedAt: null,
-      decidedAt: null,
-      decidedBy: null,
+      // A declined trade was a proposal first: it carries what was asked for, when it was
+      // put to the owner and, two minutes on, when the owner said no.
+      requestedUsd: declined ? amountUsd : null,
+      proposedAt: declined ? iso(askedMinutesAgo * MINUTE) : null,
+      decidedAt: declined ? iso((askedMinutesAgo - 2) * MINUTE) : null,
+      decidedBy: miss?.decidedBy ?? null,
       entryScore: score?.total ?? null,
       rationale: guardian ? (i % 8 === 0 ? "Take profit: +41.2% from entry." : "Stop loss: −15.3% from entry.") : rationaleFor(side, i + seedOffset),
       score,
-      error: failed ? "Slippage exceeded 100 bps — order rejected before submission." : null,
-      createdAt: iso((i * 47 + 8 + seedOffset * 13) * MINUTE),
+      error: miss ? miss.error(t.symbol, hash) : null,
+      createdAt: iso(askedMinutesAgo * MINUTE),
       filledAt: failed ? null : iso((i * 47 + 7 + seedOffset * 13) * MINUTE),
       realizedPnlUsd: null,
       realizedPnlPct: null,
