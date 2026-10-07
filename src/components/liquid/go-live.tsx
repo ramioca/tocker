@@ -4,7 +4,7 @@ import { HoldToConfirmButton } from "@/components/spectrumui/hold-to-confirm";
 import { Zap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-/** How long the demo's "Live (demo)" state lasts before it puts itself back on paper. */
+/** How long the demo's "Live (demo)" state lasts before it resets. */
 const GO_LIVE_DEMO_MS = 3200;
 
 /** Four of the real readiness checks (src/lib/security/live-readiness.ts), by their titles. */
@@ -45,19 +45,6 @@ export function GoLiveDemo({ className }: { className?: string } = {}) {
         </span>
       </div>
       <div className="lp-golive-body">
-        {/* Static state text: the button's own status region announces the confirmation. */}
-        <p className="lp-sr">{live ? "Mode: live (demo)" : "Mode: paper"}</p>
-        <div className="lp-golive-state lp-mono" aria-hidden>
-          <span className="lp-golive-mode" data-on={!live}>
-            paper
-          </span>
-          <svg className="lp-golive-arrow" width="16" height="8" viewBox="0 0 16 8" fill="none">
-            <path d="M0 4h14M11 1l3 3-3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <span className="lp-golive-mode" data-on={live}>
-            live
-          </span>
-        </div>
         <ul className="lp-golive-checks" aria-label="Checklist, sample">
           {CHECKS.map((c) => (
             <li key={c}>
@@ -82,8 +69,7 @@ export function GoLiveDemo({ className }: { className?: string } = {}) {
         />
       </div>
       <p className="lp-golive-note">
-        Every agent starts on paper. In the app, going live is its own screen: the checklist, then this hold. A tap
-        can&rsquo;t do it.
+        In the app, going live is its own screen: the checklist, then this hold. A tap can&rsquo;t do it.
       </p>
     </div>
   );

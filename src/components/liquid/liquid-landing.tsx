@@ -69,9 +69,9 @@ const faqTabs = (feeUsd: number, thinking: { model: string; start: string }): Fa
           "In code, not in the prompt. Stop loss, take profit, a collapsing score and a draining pool are checked every five minutes, model awake or not, and entry rules never block a sell.",
       },
       {
-        question: "Does it trade real money from day one?",
+        question: "How often does it run, and does it ask first?",
         answer:
-          "No. Every agent starts on paper and asks before each trade; a proposal you miss expires after an hour. Going live is a separate screen with a checklist and a hold-to-confirm.",
+          "As often as you like: every five minutes, once a week, or only when you press Run. It can ask before each trade (a proposal you miss expires after an hour) or trade on its own, and you can switch either way at any time.",
       },
       {
         question: "Who controls the agent’s wallet?",

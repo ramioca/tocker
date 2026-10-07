@@ -232,7 +232,7 @@ const STEPS: Step[] = [
       id: "trade",
       name: `place_trade ×${SAMPLE_BUYS.length}`,
       args: { tokens: SAMPLE_BUYS.map((r) => r.coin), side: "buy", amountUsd: SAMPLE_TRADE_USD },
-      result: `${countWord(SAMPLE_BUYS.length).replace(/^./, (c) => c.toUpperCase())} buys sent for your approval · paper · each expires in ${SAMPLE_PROPOSAL_TTL_MIN} min.`,
+      result: `${countWord(SAMPLE_BUYS.length).replace(/^./, (c) => c.toUpperCase())} buys sent for your approval · each expires in ${SAMPLE_PROPOSAL_TTL_MIN} min.`,
       status: "success",
       startedAt: 7400,
       completedAt: 8200,
@@ -310,7 +310,7 @@ export const REASONING: ReasoningStep[] = [
   },
   {
     id: "r5",
-    content: `Propose $${SAMPLE_TRADE_USD} on paper for TIBBIR and SOL, stop ${SAMPLE_STOP_PCT}%, take profit ${SAMPLE_TAKE_PROFIT_PCT}%. You decide; each proposal expires after an hour.`,
+    content: `Propose $${SAMPLE_TRADE_USD} each for TIBBIR and SOL, stop ${SAMPLE_STOP_PCT}%, take profit ${SAMPLE_TAKE_PROFIT_PCT}%. You decide; each proposal expires after an hour.`,
   },
 ];
 
@@ -319,7 +319,7 @@ export const CONSOLE_SUMMARY =
   `Sample, owner only: the ${SAMPLE_RUN_AT} run of ${SAMPLE_AGENT}, as its owner sees it. ` +
   `It screened ${SAMPLE_FOUND} candidates on Solana and Base, scored ${SAMPLE_SCORED} against a floor of ${SAMPLE_FLOOR} ` +
   `and bought ${usd3(DATA_TOTAL_USD)} of data: ${BOUGHT_WORDS}. ` +
-  `It proposed ${SAMPLE_BUYS.length} paper buys of $${SAMPLE_TRADE_USD}: ${SAMPLE_BUYS.map((r) => `${r.coin} at ${r.score}`).join(" and ")}. ` +
+  `It proposed ${SAMPLE_BUYS.length} buys of $${SAMPLE_TRADE_USD}: ${SAMPLE_BUYS.map((r) => `${r.coin} at ${r.score}`).join(" and ")}. ` +
   `${SAMPLE_SKIPS.map((r) => `${r.coin} stopped at ${r.score}`).join(", ")} and ${countWord(SAMPLE_OTHERS.length)} more scored lower, below the floor. ` +
   `Both wait for the owner's approval, starting with the request below. ` +
   `The next run is at ${SAMPLE_NEXT_RUN_AT}; exits are checked every 5 minutes in code, between runs too.`;
@@ -327,13 +327,13 @@ export const CONSOLE_SUMMARY =
 /** The approval request at the end of the run, and what each answer does (demo.tsx). */
 export const APPROVAL = {
   title: `${SAMPLE_AGENT} wants to buy TIBBIR`,
-  description: `$${SAMPLE_TRADE_USD} on paper at a score of ${TIBBIR.score}, against your floor of ${SAMPLE_FLOOR}. Stop ${SAMPLE_STOP_PCT}%, take profit ${SAMPLE_TAKE_PROFIT_PCT}%.`,
+  description: `$${SAMPLE_TRADE_USD} at a score of ${TIBBIR.score}, against your floor of ${SAMPLE_FLOOR}. Stop ${SAMPLE_STOP_PCT}%, take profit ${SAMPLE_TAKE_PROFIT_PCT}%.`,
   // A no-break space before each dot, so a wrap never starts a line with one.
   meta: `${TIBBIR.chain} · place_trade · expires in ${SAMPLE_PROPOSAL_TTL_MIN} min`,
   result: {
     approved: {
-      title: `Approved · $${SAMPLE_TRADE_USD} of TIBBIR on paper`,
-      note: "In the app it fills on paper and posts to the feed. This demo sends nothing.",
+      title: `Approved · $${SAMPLE_TRADE_USD} of TIBBIR`,
+      note: "In the app it fills and posts to the feed. This demo sends nothing.",
     },
     rejected: {
       title: "Skipped TIBBIR · no position opened",
@@ -433,14 +433,14 @@ export const STORY = [
     id: "trade",
     kicker: "Trade",
     title: "Then it asks you, or just trades.",
-    body: `${capitalise(countWord(SAMPLE_BUYS.length))} cleared the floor, so it proposes ${countWord(SAMPLE_BUYS.length)} paper buys and waits for your OK. Switch approvals off and it runs on its own, on schedule, every ${SAMPLE_EVERY_MIN} minutes. Try it: approve, skip, or flip the switch. Stops and take profit run in code either way.`,
+    body: `${capitalise(countWord(SAMPLE_BUYS.length))} cleared the floor, so it proposes ${countWord(SAMPLE_BUYS.length)} buys and waits for your OK. Switch approvals off and it runs on its own, on schedule, every ${SAMPLE_EVERY_MIN} minutes. Try it: approve, skip, or flip the switch. Stops and take profit run in code either way.`,
   },
 ] as const;
 
 /** The sample agent's strategy as its owner sees it in the builder: the rows, in pairs. */
 export const STRATEGY_PROMPT = SAMPLE_PROMPT;
 export const STRATEGY_ROWS: ReadonlyArray<readonly [string, string]> = [
-  ["Mode", `paper · ${SAMPLE_MODE}`],
+  ["Mode", SAMPLE_MODE],
   ["Runs", `every ${SAMPLE_EVERY_MIN} min`],
   ["Chains", "Solana · Base"],
   ["Score floor", `${SAMPLE_FLOOR} / 100`],

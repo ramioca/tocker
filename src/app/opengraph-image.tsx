@@ -91,7 +91,7 @@ export default async function Image() {
             color: "rgba(244,244,241,0.5)",
           }}
         >
-          <div>solana · base · paper by default</div>
+          <div>solana · base · on your schedule</div>
           <div>tocker.xyz</div>
         </div>
       </div>

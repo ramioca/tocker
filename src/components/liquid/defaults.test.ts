@@ -28,9 +28,9 @@ describe("the landing's defaults card", () => {
     expect(DEFAULT_ROWS.length % 2).toBe(0);
   });
 
-  it("says what the default mode does, and starts on paper", () => {
+  it("says what the default mode does", () => {
     const mode = DEFAULT_ROWS.find(([k]) => k === "Mode")?.[1];
-    expect(mode).toBe(`paper · ${MODE_WORDS[C.execution.mode]}`);
+    expect(mode).toBe(MODE_WORDS[C.execution.mode]);
     expect(MODE_WORDS.approve).toBe("asks first");
   });
 
@@ -68,7 +68,7 @@ describe("the landing's answers about where an agent thinks", () => {
   const KEY_MODEL =
     "The one you choose, on your own key: Anthropic, OpenAI or OpenRouter. Keys are encrypted at rest and decrypted only on our servers, to run your agent and to list the models your key can use. Your provider bills you for the model directly.";
   const KEY_START =
-    "An email address and an API key for the model your agent runs on (Anthropic, OpenAI or OpenRouter). Every agent starts on paper, so there is nothing to deposit until you decide to go live.";
+    "An email address and an API key for the model your agent runs on (Anthropic, OpenAI or OpenRouter).";
 
   it("are unchanged while pay-per-use is not open to everyone", () => {
     expect(thinkingAnswers(false)).toEqual({ model: KEY_MODEL, start: KEY_START });
@@ -95,7 +95,7 @@ describe("the landing's answers about where an agent thinks", () => {
     expect(start).not.toBe(KEY_START);
     expect(start).toContain("which is what we recommend");
     expect(start).toContain("pay per use");
-    // And a deposit is: the old "nothing to deposit" is narrowed to trading.
-    expect(start).toContain("nothing to deposit for trading");
+    // The landing no longer promises "nothing to deposit": there is no paper mode on it.
+    expect(start).not.toContain("nothing to deposit");
   });
 });
