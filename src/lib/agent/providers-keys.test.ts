@@ -836,7 +836,8 @@ describe("the list parsers", () => {
     ]);
   });
 
-  it("Hugging Face: models some live provider serves with tools, at the highest of those providers' prices", () => {
+  /** A plain model id leaves the choice of provider to the router, so none it could pick may be without tools. */
+  it("Hugging Face: models a live provider serves with tools and none serves without, at the highest of their prices", () => {
     const provider = (name: string, tools: boolean | undefined, pricing?: { input: number; output: number }, status = "live") => ({
       provider: name,
       status,
@@ -855,21 +856,28 @@ describe("the list parsers", () => {
             providers: [
               provider("novita", true, { input: 0.42, output: 3 }),
               provider("cerebras", true, { input: 0.99, output: 1.49 }),
-              provider("featherless-ai", undefined),
               provider("ovhcloud", true, { input: 0.47, output: 3.19 }),
-              // Dearer, but it cannot call tools, so its price says nothing about a run.
-              provider("no-tools-inc", false, { input: 9, output: 9 }),
+              // Not live, so the router cannot pick it: neither its answer on tools nor its price counts.
+              provider("staging-inc", false, { input: 9, output: 9 }, "staging"),
             ],
           },
           { id: "zai-org/GLM-5.3", providers: [provider("deepinfra", true, { input: 0.9, output: 4 }), provider("together", true)] },
+          // One fast provider without tools is enough: the router may send the run there.
+          { id: "some-org/One-Without", providers: [provider("slow", true, { input: 1, output: 1 }), provider("fast", false, { input: 1, output: 1 })] },
+          // A provider that says nothing is left out of the question: the model is kept on the other's word.
+          { id: "some-org/One-Silent", providers: [provider("x", true, { input: 1, output: 1 }), provider("featherless-ai", undefined)] },
+          // But nobody saying yes is not a yes.
+          { id: "some-org/All-Silent", providers: [provider("featherless-ai", undefined)] },
           { id: "some-org/No-Tools", providers: [provider("featherless-ai", undefined), provider("x", false, { input: 1, output: 1 })] },
           { id: "some-org/Not-Live", providers: [provider("x", true, { input: 1, output: 1 }, "staging")] },
+          { id: "some-org/Nobody", providers: [] },
           { id: "some-org/Unpriced", providers: [provider("x", true)] },
         ],
       })?.models,
     ).toEqual([
       { id: "Qwen/Qwen3.8-27B", label: "Qwen3.8-27B", inputPerMTok: 0.99, outputPerMTok: 3.19 },
       { id: "zai-org/GLM-5.3", label: "GLM-5.3", inputPerMTok: 0.9, outputPerMTok: 4 },
+      { id: "some-org/One-Silent", label: "One-Silent", inputPerMTok: 1, outputPerMTok: 1 },
       // No price in the list and none in the registry: listed without one.
       { id: "some-org/Unpriced", label: "Unpriced" },
     ]);

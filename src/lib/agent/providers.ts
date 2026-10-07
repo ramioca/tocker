@@ -826,17 +826,117 @@ export function filterProviders(query: string): LlmProvider[] {
   return searchProviders(PROVIDER_ORDER, query);
 }
 
+/** No provider issues a key this long; the forms stop at the same length. */
+export const KEY_MAX_CHARS = 512;
+/** Said for a value that cannot be a key under any provider. */
+export const KEY_NOT_A_KEY = "That does not look like an API key";
+
+// What a key gets wrapped in when it is copied out of a shell profile, a `.env` file, a
+// config file or a curl command instead of the provider's own page.
+const KEY_OPENERS = /^[\s"'`“”‘’«»<(\[{]+/;
+const KEY_CLOSER = /[\s"'`“”‘’«»>)\]};,]/;
+// `export NAME=`, `NAME=`, `"name": `. A colon only counts with a space or a quote after
+// it, and either only with a run of characters after it, so a key that ends in base64
+// padding or is written `id:secret` is left as it is.
+const KEY_ASSIGNMENT = /^(?:(?:export|set|setx)\s+)?[A-Za-z_][A-Za-z0-9_]*["'`”’]?\s*(?:=\s*|:(?=[\s"'`“‘])\s*)(?=(?:bearer\s+)?\S{8})/i;
+const KEY_SCHEME = /^bearer\s+/i;
+// The characters keys are written in: letters, digits, and the three marks of base64url
+// and of `id.secret`. A known prefix straight after anything else is a key with something
+// in front of it.
+const KEY_BODY_CHAR = /[A-Za-z0-9_.-]/;
+
+/** `value` with trailing quotes, brackets, `;` and `,` taken off. One pass from the end: any length costs its length. */
+function withoutClosers(value: string): string {
+  let end = value.length;
+  while (end > 0 && KEY_CLOSER.test(value[end - 1])) end -= 1;
+  return value.slice(0, end);
+}
+
+/**
+ * A pasted value with its wrapping taken off: surrounding whitespace, quotes and
+ * brackets, a leading `export`, a `NAME=` or `"name":` in front, a `Bearer`, a trailing
+ * semicolon or comma. Only for looking at: it says whose key is inside and whether there
+ * was wrapping. Nothing is ever stored or sent in this form; a wrapped key is refused and
+ * its owner pastes it again.
+ */
+export function bareKey(pasted: string): string {
+  const opened = pasted
+    .trim()
+    .replace(KEY_OPENERS, "")
+    .replace(KEY_ASSIGNMENT, "")
+    .replace(KEY_OPENERS, "")
+    .replace(KEY_SCHEME, "")
+    .replace(KEY_OPENERS, "");
+  return withoutClosers(opened);
+}
+
+/** The provider whose prefix `value` has at `index`, or null. */
+function prefixedAt(value: string, index: number): CatalogueId | null {
+  for (const id of CATALOGUE_IDS) {
+    if (CATALOGUE[id].keyPrefixes.some((prefix) => value.startsWith(prefix, index))) return id;
+  }
+  return null;
+}
+
+/**
+ * The provider whose prefix appears further in than the start, straight after a character
+ * no key is written with, or null. This is the wrapping `bareKey` has no rule for:
+ * `--api-key=sk-ant-…`, `x-api-key:sk-ant-…`, `$env:NAME=sk-ant-…`, `**sk-ant-…**`, a
+ * URL with `?key=AIza…`. The characters keys are written in never count as that
+ * boundary, so a prefix that merely occurs inside another key's body is not found.
+ * Nothing past the longest a key can be is looked at: a value that long is no key.
+ */
+function prefixFurtherIn(value: string): CatalogueId | null {
+  const end = Math.min(value.length, KEY_MAX_CHARS);
+  for (let index = 1; index < end; index += 1) {
+    if (KEY_BODY_CHAR.test(value[index - 1])) continue;
+    const id = prefixedAt(value, index);
+    if (id) return id;
+  }
+  return null;
+}
+
+/**
+ * Was more than the key pasted: quotes around it, a `NAME=` before it, or anything else
+ * in front of a key that can be recognised? Whitespace around it alone is not wrapping.
+ */
+export function keyIsWrapped(pasted: string): boolean {
+  const bare = bareKey(pasted);
+  if (bare !== pasted.trim()) return true;
+  return prefixedAt(bare, 0) === null && prefixFurtherIn(bare) !== null;
+}
+
+/** Said for a wrapped key, by the forms and by the server, before it is sent anywhere. */
+export const KEY_WRAPPED = "Paste only the key itself, with no quotes around it and no NAME= in front of it";
+
+/**
+ * Can this key be put in a request header? A header carries printable ASCII and nothing
+ * else, and a key is only ever sent in one, so a curly quote, a non-breaking space or a
+ * line break in the middle of a key means it could never be used. This is a rule of
+ * HTTP, not of any provider's key format. Ask it of the trimmed key: whitespace around a
+ * paste is taken off, not refused.
+ */
+export function keyFitsHeader(key: string): boolean {
+  return /^[\x21-\x7e]*$/.test(key);
+}
+
+/** Said for a key with a character no header can carry. */
+export const KEY_UNSENDABLE =
+  "That does not look like an API key: it has a space, a line break or a symbol no key contains. Copy it again from the provider's page";
+
 /**
  * The provider whose prefix this key starts with, enabled or not, or null when it starts
  * with none of them. A bare `sk-` names nobody: OpenAI's older keys, DeepSeek's and
  * others all start that way.
+ *
+ * The key is judged with its wrapping off (`bareKey`), so `"sk-ant-…"` in quotes and
+ * `ANTHROPIC_API_KEY=sk-ant-…` are still an Anthropic key and are never handed to
+ * whichever provider happened to be chosen. Where the wrapping is one `bareKey` has no
+ * rule for, the prefix is still found further in (`prefixFurtherIn`).
  */
 export function keyPrefixProvider(key: string): CatalogueId | null {
-  const k = key.trim();
-  for (const id of CATALOGUE_IDS) {
-    if (CATALOGUE[id].keyPrefixes.some((prefix) => k.startsWith(prefix))) return id;
-  }
-  return null;
+  const k = bareKey(key);
+  return prefixedAt(k, 0) ?? prefixFurtherIn(k);
 }
 
 /** Whether the refusal is for a new key or for replacing a saved one: the way out differs. */
@@ -862,14 +962,19 @@ export function wrongProviderSentence(detected: CatalogueId, chosen: CatalogueId
  * Why this key must not be sent to this provider, as the one sentence to show, or null
  * when nothing here speaks against it.
  *
- * Two refusals, both made before any request. The key starts the way another provider's
- * keys do: sending it would hand that provider's credential to this one. Or this
- * provider documents a prefix on every key and the key has none: it is some other
- * service's, or not all of it was pasted. Nothing is ever refused for its length or its
- * characters, because most providers publish neither.
+ * Four refusals, all made before any request. It is longer than any key. More than the
+ * key was pasted: quotes or brackets around it, a trailing `;` or `,`, a `NAME=` in
+ * front, or anything at all in front of a key that can be recognised; with the wrapping
+ * on it is nobody's key, so it is sent to nobody. The key starts the way another
+ * provider's keys do: sending it would hand that provider's credential to this one. Or
+ * this provider documents a prefix on every key and the key has none: it is some other
+ * service's, or not all of it was pasted. Beyond that nothing is refused for its length
+ * or its characters here, because most providers publish neither.
  */
 export function keyProblem(provider: CatalogueId, key: string, use: KeyUse = "add"): string | null {
   const row = providerRow(provider);
+  if (key.trim().length > KEY_MAX_CHARS) return KEY_NOT_A_KEY;
+  if (keyIsWrapped(key)) return KEY_WRAPPED;
   const detected = keyPrefixProvider(key);
   if (detected && detected !== provider) return wrongProviderSentence(detected, provider, use);
   if (row.requiresPrefix && !detected) {

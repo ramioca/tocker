@@ -36,6 +36,7 @@ vi.mock("@/lib/agent/anthropic-workspace", () => ({
 }));
 
 const { addLlmKey, attachKeyToKeylessAgents, removeLlmKey, rotateLlmKey } = await import("./users");
+const { countAgentsKeyFits } = await import("@/server/queries/users");
 
 let db: Db;
 
@@ -142,6 +143,29 @@ describe("attachKeyToKeylessAgents", () => {
    * OpenAI key on an agent set to Anthropic would ask OpenAI for a Claude model on every
    * run, so the key is attached only where the agent is set to the key's own provider.
    */
+  /** The Security tab's button quotes this count, so it has to be the number the attach then makes true. */
+  it("is offered for exactly the agents it will then attach to", async () => {
+    const mine = await account();
+    await setProvider(mine.alsoKeyless, "openai", "gpt-5");
+    const openai = await keyRow(mine.userId, "openai");
+
+    // Three agents: one set to OpenAI with no key, one set to Anthropic, one that pays per use.
+    expect(await countAgentsKeyFits(mine.userId, "openai")).toBe(1);
+    expect(await countAgentsKeyFits(mine.userId, "anthropic")).toBe(1);
+    expect(await countAgentsKeyFits(mine.userId, "openrouter")).toBe(0);
+    // A provider that is not offered fits nothing: the attach refuses its keys.
+    expect(await countAgentsKeyFits(mine.userId, "not-a-provider")).toBe(0);
+    // Someone else's agents are never counted.
+    expect(await countAgentsKeyFits("did:privy:nobody", "openai")).toBe(0);
+
+    expect(await attachKeyToKeylessAgents(openai)).toEqual({ ok: true, data: { attached: 1 } });
+    expect(await countAgentsKeyFits(mine.userId, "openai")).toBe(0);
+
+    // Under the scripted model nobody is missing a key, so nothing is offered.
+    vi.stubEnv("LLM_MOCK", "1");
+    expect(await countAgentsKeyFits(mine.userId, "anthropic")).toBe(0);
+  });
+
   it("attaches a key only to agents set to that key's provider", async () => {
     const mine = await account();
     await setProvider(mine.alsoKeyless, "openai", "gpt-5");

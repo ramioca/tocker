@@ -222,7 +222,7 @@ export interface ModelCallOptions {
  *  - The temperature by the registry's rule: as set, capped, or not at all. A key that
  *    is absent here is a parameter that is not sent.
  *  - An output limit only where the registry sets one.
- *  - Provider options for the two providers that need one, and no one else. Options are
+ *  - Provider options for the three providers that need one, and no one else. Options are
  *    keyed by provider, but a client is free to read another's key: the Vercel gateway
  *    forwards them all, so an option meant for Anthropic is not sent anywhere else.
  */
@@ -247,7 +247,61 @@ export function callOptionsFor(provider: CatalogueId, config: { llm: { temperatu
     // The generic client copies what is under the provider's name into the request body.
     options.providerOptions = { venice: { venice_parameters: { include_venice_system_prompt: false } } };
   }
+  if (provider === "xai") {
+    // xAI keeps every request and answer on its servers for thirty days unless told not
+    // to, and a step is the agent's strategy prompt, its reasoning and what it decided.
+    // `store` is an option of the Responses model, which is the one `modelFor` builds;
+    // the client sends `store: false` and asks for the reasoning back encrypted, so the
+    // next step can carry it in the request instead of xAI looking it up.
+    // Not proven against a real key: that xAI accepts a second step with storing off.
+    options.providerOptions = { ...options.providerOptions, xai: { store: false } };
+  }
   return options;
+}
+
+/** The most of a provider's own sentence that is read out of a refusal. */
+const SENTENCE_MAX = 2000;
+
+/**
+ * The sentence in the body of a provider's refusal, or "" when it has none to read.
+ *
+ * The same places `providers-keys.ts` looks when it checks a key (its reader is private
+ * to that file, so this repeats it): OpenAI's `error.message`, xAI's flat `error`,
+ * Cerebras's and Novita's `message`, Mistral's and Nebius's `detail`. Those two also
+ * answer a request they cannot validate with `detail` as a list, one entry per field;
+ * the first two are read, each with the field it is about. A body that is not a JSON
+ * object says nothing here: an HTML error page is never taken for a sentence.
+ *
+ * What comes back is the provider's text, on one line. It can repeat the key it refused,
+ * so it goes through the run's scrubber like anything else a provider said.
+ */
+export function sentenceInBody(body: unknown): string {
+  if (typeof body !== "string" || body.trim().length === 0) return "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return "";
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "";
+  const top = parsed as Record<string, unknown>;
+  const error = typeof top.error === "object" && top.error !== null ? (top.error as Record<string, unknown>) : null;
+  const oneLine = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, SENTENCE_MAX);
+  for (const candidate of [error?.message, top.error, top.message, top.detail]) {
+    if (typeof candidate === "string") return oneLine(candidate);
+  }
+  return Array.isArray(top.detail) ? oneLine(top.detail.flatMap(fieldRefusal).slice(0, 2).join("; ")) : "";
+}
+
+/** One entry of a validation list as "msg (field)", or nothing when it has no `msg` to read. */
+function fieldRefusal(entry: unknown): string[] {
+  if (typeof entry !== "object" || entry === null) return [];
+  const { msg, loc } = entry as { msg?: unknown; loc?: unknown };
+  if (typeof msg !== "string" || msg.trim().length === 0) return [];
+  // `loc` is the path to the field: ["body", "model"]. The leading "body" says nothing.
+  const path = Array.isArray(loc) ? loc.filter((part) => typeof part === "string" || typeof part === "number").map(String) : [];
+  const field = (path[0] === "body" ? path.slice(1) : path).join(".");
+  return [field && field.length <= 60 ? `${msg} (${field})` : msg];
 }
 
 /** Takes one key out of a piece of text. */

@@ -10,6 +10,8 @@ import { wrongProviderOnAdd, wrongProviderOnRotate } from "@/lib/agent/key-prefi
 import {
   CATALOGUE,
   CATALOGUE_IDS,
+  KEY_UNSENDABLE,
+  KEY_WRAPPED,
   PROVIDER_IDS,
   PROVIDER_ORDER,
   PROVIDER_UNSUPPORTED,
@@ -251,6 +253,47 @@ describe("the key field", () => {
 });
 
 describe("refusing a key before it is sent anywhere", () => {
+  /** Quotes, `NAME=`, `export`: with them on, the key would go to whichever provider was chosen. */
+  it("refuses a key pasted with wrapping, under any provider, in the server's words", () => {
+    const wrappings = [
+      (key: string) => `"${key}"`,
+      (key: string) => `“${key}”`,
+      (key: string) => `ANTHROPIC_API_KEY=${key}`,
+      (key: string) => `export FOO="${key}"`,
+      (key: string) => `Bearer ${key}`,
+    ];
+    for (const id of PROVIDER_IDS) {
+      for (const wrap of wrappings) {
+        for (const key of [keyOf(id), keyOf("anthropic"), PLAIN]) {
+          expect(keyRefusal(id, wrap(key)), `${id} ${wrap("…")}`).toBe(KEY_WRAPPED);
+          expect(keyRefusal(id, wrap(key), "rotate"), `${id} ${wrap("…")}`).toBe(KEY_WRAPPED);
+          expect(keyNote(id, wrap(key)), `${id} ${wrap("…")}`).toEqual({ text: KEY_WRAPPED, switchTo: null });
+        }
+      }
+      // Even a short one: "too short" would send its owner looking for the rest of a key that is all there.
+      expect(keyRefusal(id, `"${body(8)}"`), id).toBe(KEY_WRAPPED);
+    }
+    expect(keyRefusal("openai", `"${keyOf("anthropic")}"`)).toBe(
+      "Paste only the key itself, with no quotes around it and no NAME= in front of it",
+    );
+  });
+
+  /** A rule of request headers, not of any provider: saved, such a key fails every run. */
+  it("refuses a key with a character no request header can carry, and still takes whitespace around a paste", () => {
+    for (const id of PROVIDER_IDS) {
+      const key = keyOf(id);
+      for (const odd of [" ", "\n", "\u00a0", "\u200b", "’", "é"]) {
+        const broken = `${key.slice(0, 20)}${odd}${key.slice(20)}`;
+        expect(keyRefusal(id, broken), `${id} ${JSON.stringify(odd)}`).toBe(KEY_UNSENDABLE);
+        expect(keyRefusal(id, broken, "rotate"), `${id} ${JSON.stringify(odd)}`).toBe(KEY_UNSENDABLE);
+        expect(keyNote(id, broken), `${id} ${JSON.stringify(odd)}`).toEqual({ text: KEY_UNSENDABLE, switchTo: null });
+      }
+      expect(keyRefusal(id, `  ${key}\r\n`), id).toBeNull();
+      expect(keyRefusal(id, `\u00a0${key}\n`), id).toBeNull();
+      expect(keyNote(id, `${key}\n`), id).toBeNull();
+    }
+  });
+
   it("refuses what is too short to be a key, under any provider", () => {
     expect(KEY_MIN).toBe(16);
     for (const id of PROVIDER_IDS) {

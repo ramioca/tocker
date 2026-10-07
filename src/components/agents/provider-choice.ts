@@ -17,11 +17,15 @@
 import { mismatchedProvider } from "@/lib/agent/key-prefix";
 import {
   CATALOGUE,
+  KEY_UNSENDABLE,
+  KEY_WRAPPED,
   PROVIDER_ORDER,
   PROVIDER_UNSUPPORTED,
   filterProviders,
   isCatalogueId,
   isProvider,
+  keyFitsHeader,
+  keyIsWrapped,
   keyProblem,
   providerLabel,
   requestTemperature,
@@ -179,7 +183,12 @@ export const KEY_TOO_SHORT = "That doesn’t look like a full API key — paste 
  */
 export function keyRefusal(provider: string, key: string, use: KeyUse = "add"): string | null {
   const trimmed = key.trim();
+  // More than the key was pasted (quotes, `NAME=`). Said before anything about its
+  // length or its provider: with the wrapping on, neither can be judged.
+  if (keyIsWrapped(trimmed)) return KEY_WRAPPED;
   if (trimmed.length < KEY_MIN) return KEY_TOO_SHORT;
+  // A character no request header can carry. The surrounding whitespace is already off.
+  if (!keyFitsHeader(trimmed)) return KEY_UNSENDABLE;
   // A saved key whose provider has been switched off can still be listed. Replacing it
   // would send the new key to the server only to be refused there.
   if (!isProvider(provider)) return PROVIDER_UNSUPPORTED;
@@ -195,15 +204,19 @@ export interface KeyNote {
 /**
  * The note under the key box while a key is still being typed or has just been pasted.
  *
- * A key that carries another offered provider's prefix gets the offer to switch, as soon
- * as the prefix is there. Anything else `keyRefusal` would say waits for a whole key:
- * "Cerebras keys start with csk-" under the first letter typed would be nagging.
+ * Wrapping (quotes, `NAME=`) is said as soon as it is there: no key has any, and switching
+ * provider would not help while it is on. A key that carries another offered provider's
+ * prefix gets the offer to switch, as soon as the prefix is there. Anything else
+ * `keyRefusal` would say waits for a whole key: "Cerebras keys start with csk-" under
+ * the first letter typed would be nagging.
  */
 export function keyNote(provider: string, key: string): KeyNote | null {
   if (!isProvider(provider)) return null;
+  if (keyIsWrapped(key)) return { text: KEY_WRAPPED, switchTo: null };
   const other = mismatchedProvider(key, provider);
   if (other) return { text: `This looks like ${withArticle(other)} key.`, switchTo: other };
   if (key.trim().length < KEY_MIN) return null;
+  if (!keyFitsHeader(key.trim())) return { text: KEY_UNSENDABLE, switchTo: null };
   const problem = keyProblem(provider, key.trim());
   return problem ? { text: problem, switchTo: null } : null;
 }

@@ -2,12 +2,17 @@
 import { discoverAnthropicWorkspace, needsWorkspaceHeader } from "@/lib/agent/anthropic-workspace";
 import { thinkSource } from "@/lib/agent/inference";
 import { missingKeySql, paysPerUseSql } from "@/lib/agent/inference-gate";
+import { countAgentsKeyFits, setToProviderSql } from "@/server/queries/users";
 import { listModelsForKey } from "@/lib/agent/key-models";
 import { probeLlmKey } from "@/lib/agent/key-probe";
-import { isLlmMock } from "@/lib/agent/mock-model";
 import {
+  KEY_MAX_CHARS,
+  KEY_UNSENDABLE,
+  KEY_WRAPPED,
   PROVIDER_UNSUPPORTED,
   isProvider,
+  keyFitsHeader,
+  keyIsWrapped,
   keyProblem,
   providerLabel,
   providerRow,
@@ -41,13 +46,27 @@ function rejectedBy(provider: string): string {
 
 const HANDLE_RE = /^[a-z0-9_]{2,20}$/;
 
-/** No provider issues a key this long; the forms stop at the same length. */
-const MAX_KEY_CHARS = 512;
 /** Anthropic's own shape for a workspace id. Anything else in that field is a mistake. */
 const WORKSPACE_ID_RE = /^wrkspc_[A-Za-z0-9]{1,72}$/;
 /** Adding or replacing a key asks its provider about it, so it is paced like any outbound call. */
 const KEY_WRITE_LIMIT = { limit: 10, windowMs: 60_000 } as const;
 const LABEL_IS_A_KEY = "Label looks like an API key. A label is only a name; the key itself goes in the key field.";
+
+/**
+ * Why what was pasted cannot be a key under any provider, or null. Asked of the trimmed
+ * value first thing, so nothing below it, and no provider, ever sees one of these.
+ *
+ * More than the key was pasted (quotes, `NAME=`, `export`): said in its own words,
+ * because the fix is to paste less. Or it is too short or too long to be a key. Or it
+ * has a character no request header can carry, a space or a curly quote in the middle:
+ * saved, it would fail every run.
+ */
+function unusableKey(key: string): string | null {
+  if (key.length > KEY_MAX_CHARS) return "That does not look like an API key";
+  if (keyIsWrapped(key)) return KEY_WRAPPED;
+  if (key.length < 16) return "That does not look like an API key";
+  return keyFitsHeader(key) ? null : KEY_UNSENDABLE;
+}
 
 export async function updateProfile(input: {
   handle?: string;
@@ -108,27 +127,6 @@ export async function updateProfile(input: {
   return { ok: true, data: undefined };
 }
 
-/** An agent whose config names this provider: the only kind a key of that provider can think for. */
-function setToProviderSql(provider: LlmProvider) {
-  return sql<boolean>`(${agents.config} #>> '{llm,provider}') = ${provider}`;
-}
-
-/**
- * How many of an owner's agents are missing a key that this provider's key could be:
- * key agents with none attached, set to this provider. What "attach this key to my N
- * agents without one" offers, so the offer and what the attach does are the same number.
- * Under the scripted model nobody is missing a key.
- */
-async function countAgentsThisKeyFits(ownerId: string, provider: LlmProvider): Promise<number> {
-  if (isLlmMock()) return 0;
-  const db = await getDb();
-  const [row] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(agents)
-    .where(and(eq(agents.ownerId, ownerId), missingKeySql(), setToProviderSql(provider)));
-  return Number(row?.n ?? 0);
-}
-
 export async function addLlmKey(input: {
   provider: LlmProvider;
   key: string;
@@ -140,7 +138,8 @@ export async function addLlmKey(input: {
   if (!session) return fail("Sign in first");
 
   const key = typeof input.key === "string" ? input.key.trim() : "";
-  if (key.length < 16 || key.length > MAX_KEY_CHARS || /\s/.test(key)) return fail("That does not look like an API key");
+  const unusable = unusableKey(key);
+  if (unusable) return fail(unusable);
   // The type is erased at the wire. Only a provider that is switched on has a host a key
   // may be sent to; anything else stops here, before the key is looked at again.
   if (!isProvider(input.provider)) return fail("Unknown provider");
@@ -221,7 +220,7 @@ export async function addLlmKey(input: {
   // none. Saying how many lets the form offer to attach this one in the same breath. An
   // agent that pays for its own thinking has no key on purpose and is not counted, and
   // neither is one set to another provider, which this key could not think for.
-  const keylessAgents = await countAgentsThisKeyFits(session.userId, input.provider);
+  const keylessAgents = await countAgentsKeyFits(session.userId, input.provider);
   return {
     ok: true,
     data: { id, last4: last4(key), keylessAgents, ...(probe === "unreachable" ? { unverified: true } : {}) },
@@ -444,7 +443,8 @@ export async function rotateLlmKey(input: {
   if (!session) return fail("Sign in first");
 
   const key = typeof input.key === "string" ? input.key.trim() : "";
-  if (key.length < 16 || key.length > MAX_KEY_CHARS || /\s/.test(key)) return fail("That does not look like an API key");
+  const unusable = unusableKey(key);
+  if (unusable) return fail(unusable);
   const limited = slowDown("llm-key", session.userId, KEY_WRITE_LIMIT);
   if (limited) return fail(limited);
 

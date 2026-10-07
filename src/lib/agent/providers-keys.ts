@@ -612,19 +612,29 @@ function parseNovitaModels(body: unknown): ModelPage {
 
 /**
  * Pure: Hugging Face's public router list. A model is served by several companies, each
- * with its own price and its own answer on tools. Kept: models that at least one of them
- * serves live with tools. The price shown is the highest among those, so an estimate
- * made from it is never low.
+ * with its own price and its own answer on tools, and a plain model id leaves the choice
+ * among the live ones to the router, which takes the fastest. Every run calls tools, so
+ * a model is kept only when the router's pick can: a live provider says it supports
+ * tools, and no live provider says it does not.
+ *
+ * A live provider that says nothing about tools is left out of the question. On the list
+ * as published, the ones that say nothing report no speed either, so they are taken not
+ * to be the fastest. That is read off the list; it has not been confirmed with Hugging
+ * Face, and counting them as "cannot" would drop most of the list, the default model
+ * included. The price shown is the highest among the live providers that give one, so an
+ * estimate made from it is never low.
  */
 function parseHuggingFaceModels(body: unknown): ModelPage {
   const models: ModelOption[] = [];
   for (const model of dataOf(body)) {
     const id = modelId(model.id);
     if (!id) continue;
-    const serving = records(model.providers).filter((entry) => entry.status === "live" && entry.supports_tools === true);
-    if (serving.length === 0) continue;
+    const live = records(model.providers).filter((entry) => entry.status === "live");
+    const withTools = live.some((entry) => entry.supports_tools === true);
+    const without = live.some((entry) => entry.supports_tools === false);
+    if (!withTools || without) continue;
     const highest = (side: "input" | "output") => {
-      const prices = serving.flatMap((entry) => amount(record(entry.pricing)?.[side]) ?? []);
+      const prices = live.flatMap((entry) => amount(record(entry.pricing)?.[side]) ?? []);
       return prices.length > 0 ? Math.max(...prices) : undefined;
     };
     models.push(listed("huggingface", id, tail(id), price(highest("input"), highest("output"))));
@@ -811,8 +821,9 @@ export function keyVerdict(provider: CatalogueId, status: number, body: unknown)
  *
  * - `ok`: the provider accepted the key.
  * - `rejected`: the provider said this key is not a key. Also the answer, with no
- *   request made, for a key that starts the way another provider's keys do, lacks the
- *   prefix this provider documents, or names a provider that has no entry here.
+ *   request made, for a key pasted with wrapping (quotes, a `NAME=`), one that starts
+ *   the way another provider's keys do, one that lacks the prefix this provider
+ *   documents, or one that names a provider that has no entry here.
  * - `unreachable`: we could not tell. A timeout, a network error, a redirect, a 5xx, a
  *   rate limit, or a refusal that is about where the request came from.
  *

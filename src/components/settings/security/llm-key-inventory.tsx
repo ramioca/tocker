@@ -21,6 +21,42 @@ function agentsWithoutKey(n: number): string {
   return n === 1 ? "1 agent now has no key and cannot run." : `${n} agents now have no key and cannot run.`;
 }
 
+/**
+ * What the "agents have no key" notice offers. Pure, so the promise can be tested.
+ *
+ * Attaching is offered only with exactly one key, where it is unambiguous, and only for
+ * the agents that key fits: `attachKeyToKeylessAgents` attaches to agents whose settings
+ * name the key's provider and to no others. So the button quotes that count, never the
+ * count of every agent without a key, and is not shown when the key fits none of them.
+ */
+export type KeylessOffer =
+  | { kind: "none" }
+  | { kind: "add" }
+  | { kind: "pick" }
+  | { kind: "attach"; label: string };
+
+export function keylessOffer(input: {
+  keylessAgents: number;
+  /** Of those, the ones set to the only key's provider. */
+  attachable: number;
+  keyCount: number;
+  /** The last four characters of the only key, when there is exactly one. */
+  onlyKeyLast4: string | null;
+}): KeylessOffer {
+  if (input.keylessAgents <= 0) return { kind: "none" };
+  if (input.keyCount === 0) return { kind: "add" };
+  if (input.keyCount !== 1 || input.onlyKeyLast4 === null || input.attachable <= 0) return { kind: "pick" };
+  const key = `the key ending ${input.onlyKeyLast4}`;
+  // Every agent without a key fits: "it" and "them" are exact. Otherwise say how many.
+  if (input.attachable >= input.keylessAgents) {
+    return { kind: "attach", label: `Attach ${key} to ${input.keylessAgents === 1 ? "it" : "them"}` };
+  }
+  return {
+    kind: "attach",
+    label: `Attach ${key} to ${input.attachable === 1 ? "the 1 agent" : `the ${input.attachable} agents`} it fits`,
+  };
+}
+
 // Names the row's actions. Two keys from one provider otherwise gave two identical
 // "Rotate" and "Hold to revoke" buttons, with nothing to say which key each one acts on.
 function keyA11yName(key: LlmKeyDetail) {
@@ -42,11 +78,17 @@ export function LlmKeyInventory({
   keys: initial,
   isAdmin = false,
   keylessAgents = 0,
+  attachableAgents = 0,
 }: {
   keys: LlmKeyDetail[];
   isAdmin?: boolean;
   /** How many of the owner's agents have no key and so cannot run; read on the server. */
   keylessAgents?: number;
+  /**
+   * Of those, how many the only key can be attached to: the ones set to its provider.
+   * Read on the server, and only when there is exactly one key; zero otherwise.
+   */
+  attachableAgents?: number;
 }) {
   const router = useRouter();
   const [keys, setKeys] = useState(initial);
@@ -127,6 +169,12 @@ export function LlmKeyInventory({
 
   // One key: attaching it is unambiguous, so offer it here. Several: each agent picks.
   const onlyKey = keys.length === 1 ? keys[0] : null;
+  const offer = keylessOffer({
+    keylessAgents,
+    attachable: attachableAgents,
+    keyCount: keys.length,
+    onlyKeyLast4: onlyKey?.last4 ?? null,
+  });
   const attachOnlyKey = () => {
     if (!onlyKey || attaching) return;
     setAttaching(true);
@@ -156,7 +204,7 @@ export function LlmKeyInventory({
             {keylessAgents === 1 ? "1 agent has no key" : `${keylessAgents} agents have no key`}
             <span className="text-muted-foreground"> and can&rsquo;t run.</span>
           </span>
-          {onlyKey ? (
+          {offer.kind === "attach" ? (
             <button
               type="button"
               onClick={attachOnlyKey}
@@ -164,11 +212,9 @@ export function LlmKeyInventory({
               aria-busy={attaching || undefined}
               className="inline-flex h-8 items-center rounded-md border border-border px-2.5 text-xs font-medium transition-[background-color,transform,opacity] duration-150 hover:bg-muted active:scale-[0.97] disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
-              {attaching
-                ? "Attaching…"
-                : `Attach the key ending ${onlyKey.last4} to ${keylessAgents === 1 ? "it" : "them"}`}
+              {attaching ? "Attaching…" : offer.label}
             </button>
-          ) : keys.length === 0 ? (
+          ) : offer.kind === "add" ? (
             <Link href="/settings#keys" className="rounded text-xs underline underline-offset-2 hover:text-foreground focus-ring">
               Add a key
             </Link>

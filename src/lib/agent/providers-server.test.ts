@@ -22,7 +22,7 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 import { REDACTED, redactSecrets } from "@/lib/security/redact";
 import { CATALOGUE, CATALOGUE_IDS, PROVIDER_IDS, PROVIDER_UNSUPPORTED, requestTemperature, type CatalogueId } from "./providers";
-import { EMPTY_KEY, NOT_A_MODEL, callOptionsFor, keyScrubber, modelFor, noScrub } from "./providers-server";
+import { EMPTY_KEY, NOT_A_MODEL, callOptionsFor, keyScrubber, modelFor, noScrub, sentenceInBody } from "./providers-server";
 
 type Json = Record<string, unknown>;
 
@@ -575,9 +575,29 @@ describe("what a run sends with each step", () => {
       const options = callOptionsFor(id, config(0.4, CATALOGUE[id].defaultModel));
       if (id === "anthropic") expect(options.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral" } } });
       else expect(options.providerOptions?.anthropic, id).toBeUndefined();
-      // Two providers have options at all.
-      if (id !== "anthropic" && id !== "venice") expect("providerOptions" in options, id).toBe(false);
+      // Three providers have options at all.
+      if (id !== "anthropic" && id !== "venice" && id !== "xai") expect("providerOptions" in options, id).toBe(false);
     }
+  });
+
+  it("tells xAI not to keep what a step said, and tells nobody else", async () => {
+    expect(callOptionsFor("xai", config(0.4, CATALOGUE.xai.defaultModel)).providerOptions).toEqual({ xai: { store: false } });
+    for (const id of CATALOGUE_IDS) {
+      if (id !== "xai") expect(callOptionsFor(id, config(0.4, CATALOGUE[id].defaultModel)).providerOptions?.xai, id).toBeUndefined();
+    }
+    // The installed client reads it: both steps say so in the request itself, and ask
+    // for the reasoning back in a form the next request can carry.
+    await converse("xai");
+    expect(sent).toHaveLength(2);
+    for (const request of sent) {
+      expect(request.json.store).toBe(false);
+      expect(request.json.include).toContain("reasoning.encrypted_content");
+      expect("previous_response_id" in request.json).toBe(false);
+    }
+    // OpenAI's Responses API has a `store` of its own, and is not sent this one.
+    sent.length = 0;
+    await converse("openai");
+    for (const request of sent) expect(request.json.store).not.toBe(false);
   });
 
   it("tells Venice to leave its own system prompt out", async () => {
@@ -935,5 +955,53 @@ describe("keyScrubber", () => {
     expect(keyScrubber("")).toBe(noScrub);
     expect(noScrub("anything at all")).toBe("anything at all");
     expect(keyScrubber(undefined as unknown as string)("anything")).toBe("anything");
+  });
+});
+
+describe("sentenceInBody: a request the provider could not validate", () => {
+  it("reads the first two entries of a list, each with the field it is about", () => {
+    const detail = [
+      { type: "missing", loc: ["body", "model"], msg: "Field required" },
+      { type: "less_than_equal", loc: ["body", "messages", 0, "content"], msg: "Input should be\n a valid string" },
+      { type: "extra", loc: ["body", "third"], msg: "Never shown" },
+    ];
+    expect(sentenceInBody(JSON.stringify({ detail }))).toBe("Field required (model); Input should be a valid string (messages.0.content)");
+    // No path, or one too long to be worth a line: the message alone.
+    expect(sentenceInBody(JSON.stringify({ detail: [{ msg: "Bad request" }] }))).toBe("Bad request");
+    expect(sentenceInBody(JSON.stringify({ detail: [{ msg: "Bad", loc: ["body", "x".repeat(80)] }] }))).toBe("Bad");
+    // Entries with nothing to read are passed over, not counted.
+    expect(sentenceInBody(JSON.stringify({ detail: [{ loc: ["body"] }, { msg: "Too long", loc: ["query", "limit"] }] }))).toBe("Too long (query.limit)");
+  });
+});
+
+describe("sentenceInBody: the reason in a refusal's body", () => {
+  it("finds the sentence wherever a provider puts it", () => {
+    expect(sentenceInBody(JSON.stringify({ error: { message: "Incorrect API key provided.", type: "invalid_request_error" } }))).toBe("Incorrect API key provided.");
+    expect(sentenceInBody(JSON.stringify({ code: "Some requested entity was not found", error: "Incorrect API key." }))).toBe("Incorrect API key.");
+    expect(sentenceInBody(JSON.stringify({ message: "Wrong API Key", code: "wrong_api_key" }))).toBe("Wrong API Key");
+    expect(sentenceInBody(JSON.stringify({ detail: "Authentication failed" }))).toBe("Authentication failed");
+  });
+
+  it("puts a sentence that runs over several lines on one", () => {
+    expect(sentenceInBody(JSON.stringify({ message: "  Invalid key.\n\n  Check   your account. " }))).toBe("Invalid key. Check your account.");
+  });
+
+  it("reads nothing out of a body that is not a JSON object with a sentence in it", () => {
+    for (const body of [
+      "<html><body><h1>502 Bad Gateway</h1></body></html>",
+      "Unauthorized",
+      "",
+      "   ",
+      "[]",
+      '"a string"',
+      "null",
+      JSON.stringify({ detail: [{ loc: ["body", "model"] }, "field required", null] }),
+      JSON.stringify({ detail: [] }),
+      JSON.stringify({ error: { code: 401 } }),
+      undefined,
+      401,
+    ]) {
+      expect(sentenceInBody(body), String(body)).toBe("");
+    }
   });
 });

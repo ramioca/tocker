@@ -12,6 +12,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { APICallError, RetryError } from "ai";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Db } from "@/db";
@@ -21,7 +22,8 @@ import { REDACTED, redactSecrets } from "@/lib/security/redact";
 import { seedKnownTokens } from "@/lib/trading/tokens";
 import { DEFAULT_AGENT_CONFIG } from "./config";
 import { CATALOGUE, CATALOGUE_IDS, PROVIDER_IDS, PROVIDER_UNSUPPORTED, isProvider, type LlmProvider } from "./providers";
-import { resolveModel, runAgent } from "./run";
+import { explainProviderError, failureText, resolveModel, runAgent } from "./run";
+import { keyScrubber, noScrub } from "./providers-server";
 import { seedAgent, setupTestDb } from "./test-support";
 
 /** What each run handed `generateText`. The real function still runs. */
@@ -413,5 +415,166 @@ describe("what a run gives the model call", () => {
     expect(Object.keys(options).sort()).toEqual(ON_MAIN);
     expect(options.temperature).toBe(DEFAULT_AGENT_CONFIG.llm.temperature);
     expect(options.providerOptions).toEqual(CACHE);
+  });
+});
+
+/** A refused model call, as a provider's client throws it. */
+const refusal = (message: string, statusCode: number | undefined, responseBody: string | undefined) =>
+  new APICallError({ message, url: "https://provider.invalid/v1/chat/completions", requestBodyValues: {}, statusCode, responseBody });
+
+describe("failureText: what a failed run says went wrong", () => {
+  it("takes the provider's sentence from the body when the client's message is empty", () => {
+    const body = JSON.stringify({ detail: "Invalid API key" });
+    expect(failureText(refusal("", 401, body), noScrub)).toBe("401: Invalid API key");
+  });
+
+  it("does the same when the message is only the name of the status", () => {
+    const body = JSON.stringify({ message: "Your account has no credit left.", code: "insufficient_balance" });
+    for (const message of ["Unauthorized", "Bad Request", "Forbidden", "Not Found", "Too Many Requests", "Internal Server Error", "unauthorized.", "  "]) {
+      expect(failureText(refusal(message, 402, body), noScrub), message).toBe("402: Your account has no credit left.");
+    }
+  });
+
+  it("takes out a key the body repeats, whole or half masked, before anything is kept", () => {
+    const key = shapeless();
+    const half = `${key.slice(0, 10)}${"*".repeat(20)}${key.slice(-8)}`;
+    const body = JSON.stringify({ error: { message: `The key ${key} (${half}) is not valid.` } });
+    // Nothing about this key's shape gives it away: only the run's own scrubber finds it.
+    expect(redactSecrets(body)).toBe(body);
+
+    const said = failureText(refusal("", 401, body), keyScrubber(key));
+    expect(said).toBe(`401: The key ${REDACTED} (${REDACTED}) is not valid.`);
+    for (const piece of [key, key.slice(0, 10), key.slice(-8)]) expect(said).not.toContain(piece);
+  });
+
+  it("takes out a key the pattern rules know, with no scrubber at all", () => {
+    const key = plaintext();
+    const said = failureText(refusal("Unauthorized", 401, JSON.stringify({ message: `Bad key ${key}` })), noScrub);
+    expect(said).toBe(`401: Bad key ${REDACTED}`);
+  });
+
+  it("cuts a long sentence, and only after the key is out of it", () => {
+    const key = shapeless();
+    // The key straddles the place the sentence is cut.
+    const body = JSON.stringify({ message: `${"x ".repeat(140)}${key} ${"y ".repeat(400)}` });
+    const said = failureText(refusal("", 400, body), keyScrubber(key));
+    expect(said.length).toBeLessThanOrEqual("400: ".length + 300);
+    expect(said).toContain(REDACTED);
+    for (let at = 0; at + 8 <= key.length; at++) expect(said).not.toContain(key.slice(at, at + 8));
+  });
+
+  it("leaves a message that says something alone", () => {
+    const body = JSON.stringify({ error: { message: "something else entirely" } });
+    expect(failureText(refusal("The model `nope` does not exist.", 404, body), noScrub)).toBe("The model `nope` does not exist.");
+    // And an error that is not a refused model call is its own message, cleaned as before.
+    const key = shapeless();
+    expect(failureText(new Error(`could not reach ${key}`), keyScrubber(key))).toBe(`could not reach ${REDACTED}`);
+    expect(failureText(new Error(""), noScrub)).toBe("");
+    expect(failureText("a string was thrown", noScrub)).toBe("a string was thrown");
+  });
+
+  /** What the client throws once its retries are spent: its own error around each attempt's. */
+  const retriedOut = (last: unknown, attempts = 3) =>
+    new RetryError({
+      message: `Failed after ${attempts} attempts. Last error: ${last instanceof Error ? last.message : String(last)}`,
+      reason: "maxRetriesExceeded",
+      errors: Array.from({ length: attempts }, () => last),
+    });
+
+  it("reads the refusal inside a call that was retried until the client gave up", () => {
+    const limited = JSON.stringify({ detail: "Rate limit exceeded for this model, retry in 60s" });
+    expect(failureText(retriedOut(refusal("", 429, limited)), noScrub)).toBe("429: Rate limit exceeded for this model, retry in 60s (after 3 attempts)");
+    expect(failureText(retriedOut(refusal("Too Many Requests", 429, limited)), noScrub)).toBe(
+      "429: Rate limit exceeded for this model, retry in 60s (after 3 attempts)",
+    );
+    expect(failureText(retriedOut(refusal("", 503, JSON.stringify({ error: "model overloaded" })), 2), noScrub)).toBe("503: model overloaded (after 2 attempts)");
+    // Nothing to read in the body: the status stands in, and the body is not kept.
+    expect(failureText(retriedOut(refusal("", 503, "<html>busy</html>")), noScrub)).toBe("503: Service Unavailable (after 3 attempts)");
+  });
+
+  it("takes the key out of a retried refusal's body too", () => {
+    const key = "nb-0123456789abcdefghijklmnopqrstuv";
+    const said = failureText(retriedOut(refusal("", 429, JSON.stringify({ detail: `Key ${key} is over its limit` }))), keyScrubber(key));
+    expect(said).not.toContain(key);
+    expect(said).toContain("429: Key");
+  });
+
+  it("leaves a retried failure that says something as the client worded it", () => {
+    const said = retriedOut(refusal("Rate limit reached for this model.", 429, "{}"));
+    expect(failureText(said, noScrub)).toBe("Failed after 3 attempts. Last error: Rate limit reached for this model.");
+    // Not a refused model call inside: a dropped connection, say.
+    expect(failureText(retriedOut(new Error("socket hang up")), noScrub)).toBe("Failed after 3 attempts. Last error: socket hang up");
+  });
+
+  it("never keeps a body it cannot read a sentence in", () => {
+    const page = `<html><head><title>502</title></head><body><h1>Bad Gateway</h1><p>${"cloud ".repeat(200)}</p></body></html>`;
+    expect(failureText(refusal("", 502, page), noScrub)).toBe("502: Bad Gateway");
+    expect(failureText(refusal("Unauthorized", 401, "<html>denied</html>"), noScrub)).toBe("401: Unauthorized");
+    expect(failureText(refusal("", 401, undefined), noScrub)).toBe("401: Unauthorized");
+    // A status with no phrase here, and no status at all.
+    expect(failureText(refusal("", 520, page), noScrub)).toBe("520: the provider gave no reason");
+    expect(failureText(refusal("", undefined, page), noScrub)).toBe("The provider refused the request and gave no reason.");
+  });
+});
+
+describe("a run refused by a provider whose error body the client cannot read", () => {
+  it("stores the provider's sentence with the status, and none of the key it repeated", async () => {
+    const { userId, agentId } = await seedAgent(db);
+    const key = shapeless();
+    const row = CATALOGUE.nebius;
+    await attachKey(userId, agentId, key, "nebius", row.defaultModel);
+
+    // Nebius's shape: a flat `detail`, which the generic client has no schema for.
+    const host = new URL(row.origin).host;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (new URL(url).host === host) {
+        return new Response(JSON.stringify({ detail: `Invalid API key ${key.slice(0, 10)}${"*".repeat(20)}${key.slice(-8)}` }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    let result: Awaited<ReturnType<typeof runAgent>>;
+    try {
+      result = await runAgent({ agentId, trigger: "manual" });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe(`401: Invalid API key ${REDACTED}`);
+    const kept = await everythingKept(result.runId, userId);
+    expect(kept.runs[0]).toMatchObject({ status: "failed", error: result.error });
+    expect(kept.notices.find((notice) => notice.kind === "run_failed")?.body).toBe(result.error);
+    const everything = JSON.stringify({ result, ...kept });
+    for (const piece of [key, key.slice(0, 10), key.slice(-8)]) expect(everything).not.toContain(piece);
+  });
+});
+
+describe("explainProviderError", () => {
+  // What `ai` turns the gateway's refusal into: the first in production, the second
+  // (with its terminal colours) anywhere else.
+  const gateway = "Unauthenticated. Configure AI_GATEWAY_API_KEY or use a provider module. Learn more: https://ai-sdk.dev/unauthenticated-ai-gateway";
+  const coloured =
+    "\x1B[1m\x1B[31mUnauthenticated request to AI Gateway.\x1B[0m\n\nTo authenticate, set the \x1B[33mAI_GATEWAY_API_KEY\x1B[0m environment variable with your API key.\n\nAlternatively, you can use a provider module instead of the AI Gateway.\n";
+
+  it("says what the owner of a Vercel AI Gateway key can do, in place of advice for a developer", () => {
+    const said = explainProviderError(gateway, "vercel");
+    expect(said).toBe(
+      `${CATALOGUE.vercel.label} refused this key. Create a new one on its key page (${CATALOGUE.vercel.keyPage}), add it under Settings → LLM API keys, and select it on the agent.`,
+    );
+    expect(said).not.toContain("AI_GATEWAY_API_KEY");
+    expect(said).not.toContain("provider module");
+    expect(explainProviderError(coloured, "vercel")).toBe(said);
+  });
+
+  it("leaves the same words alone under any other provider, and other Vercel errors alone", () => {
+    expect(explainProviderError(gateway, "openai")).toBe(gateway);
+    expect(explainProviderError(gateway, null)).toBe(gateway);
+    expect(explainProviderError("Model not found: nope/nope", "vercel")).toBe("Model not found: nope/nope");
+    expect(explainProviderError("Unauthenticated", "vercel")).toBe("Unauthenticated");
   });
 });

@@ -45,7 +45,7 @@
 import { discoverAnthropicWorkspace, isWorkspaceScopeError, needsWorkspaceHeader } from "./anthropic-workspace";
 import { nanoid } from "nanoid";
 import { after } from "next/server";
-import { AISDKError, ToolChoiceViolationError, generateText, stepCountIs, type LanguageModel } from "ai";
+import { AISDKError, APICallError, RetryError, ToolChoiceViolationError, generateText, stepCountIs, type LanguageModel } from "ai";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { agentRuns, agents, getDb, llmKeys, notifications, tokens, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
@@ -73,7 +73,7 @@ import { createMockModel, isLlmMock } from "./mock-model";
 import { getAgentWallets, getPortfolio, snapshotEquity } from "./portfolio";
 import { buildSystemPrompt, buildTickPrompt, type RecentTrade } from "./prompts";
 import { PROVIDER_UNSUPPORTED, isProvider, providerLabel, providerRow, withArticle, type LlmProvider } from "./providers";
-import { callOptionsFor, keyScrubber, modelFor, noScrub, type KeyScrub } from "./providers-server";
+import { callOptionsFor, keyScrubber, modelFor, noScrub, sentenceInBody, type KeyScrub } from "./providers-server";
 import { RUN_DEFERRED, RunRefusedError } from "./run-gate";
 import { buildTools, type RunAgentRecord, type RunContext } from "./tools";
 
@@ -208,7 +208,84 @@ export function explainProviderError(message: string, provider: LlmProvider | nu
   if (provider === "anthropic" && /anthropic-workspace-id/i.test(message)) {
     return `${message} — This Anthropic key is organization-level and Tocker could not find a workspace it may act in. Under Settings → LLM API keys, add it again with a Workspace ID (Anthropic Console → Settings → Workspaces), or create the key inside a workspace; then select it on the agent.`;
   }
+  // The gateway's client answers a refused key with advice for whoever deploys it: set
+  // an environment variable, or use another module. The owner of an agent can do neither.
+  if (provider === "vercel" && /unauthenticated/i.test(message) && /AI_GATEWAY_API_KEY/.test(message)) {
+    const row = providerRow(provider);
+    return `${row.label} refused this key. Create a new one on its key page (${row.keyPage}), add it under Settings → LLM API keys, and select it on the agent.`;
+  }
   return message;
+}
+
+/** The phrase that goes with a status code, for the ones a provider refuses a request with. */
+const STATUS_PHRASES: Readonly<Record<number, string>> = {
+  400: "Bad Request",
+  401: "Unauthorized",
+  402: "Payment Required",
+  403: "Forbidden",
+  404: "Not Found",
+  405: "Method Not Allowed",
+  408: "Request Timeout",
+  409: "Conflict",
+  413: "Payload Too Large",
+  422: "Unprocessable Entity",
+  429: "Too Many Requests",
+  500: "Internal Server Error",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+  504: "Gateway Timeout",
+};
+
+const BARE_PHRASES: ReadonlySet<string> = new Set(
+  [...Object.values(STATUS_PHRASES), "Unprocessable Content", "Content Too Large", "Gateway Time-out", "Error"].map((phrase) => phrase.toLowerCase()),
+);
+
+/** How much of a provider's own sentence is kept as the reason a run failed. */
+const BODY_REASON_MAX = 300;
+
+/** True for a message that says nothing: empty, or the name of a status code and no more. */
+function saysNothing(message: string): boolean {
+  const bare = message
+    .trim()
+    .replace(/^\d{3}[:\s-]*/, "")
+    .replace(/[.!]$/, "")
+    .toLowerCase();
+  return bare.length === 0 || BARE_PHRASES.has(bare);
+}
+
+/**
+ * What a failed run says went wrong, with no key in it.
+ *
+ * Usually the error's own message. The exception is a refused model call whose message
+ * is empty or only "Unauthorized": the generic OpenAI-compatible client (Venice, Nebius,
+ * Novita, Hugging Face) and Mistral's on a 401 cannot read those hosts' error bodies, so
+ * the reason the provider gave is still in the body. It is taken from there, with the
+ * status code in front: "401: Invalid API key". A body with no sentence to read (an HTML
+ * error page) is never kept; the status code and its phrase stand in.
+ *
+ * A call the provider may be asked again (a rate limit, an overload) is retried by the
+ * client, which then throws its own error around the last refusal: "Failed after 3
+ * attempts. Last error: ". The refusal inside is read the same way, and the number of
+ * attempts is said after it.
+ *
+ * `scrub` is the run's own, and it runs after the text is chosen: a provider repeats the
+ * key it refused in its body as readily as in its message. The body's sentence is cut to
+ * length only once the key is out of it, so a cut never leaves half a key behind.
+ */
+export function failureText(err: unknown, scrub: KeyScrub): string {
+  const clean = (text: string) => redactSecrets(scrub(text));
+  const message = err instanceof Error ? err.message : String(err);
+  const retried = RetryError.isInstance(err);
+  const call = retried ? err.lastError : err;
+  if (!APICallError.isInstance(call) || !saysNothing(call.message)) return clean(message);
+
+  const tries = retried && err.errors.length > 1 ? ` (after ${err.errors.length} attempts)` : "";
+  const status = typeof call.statusCode === "number" ? call.statusCode : null;
+  const sentence = clean(sentenceInBody(call.responseBody)).slice(0, BODY_REASON_MAX).trim();
+  if (sentence.length > 0) return `${status === null ? sentence : `${status}: ${sentence}`}${tries}`;
+  // Nothing to read. Whatever the body is, it is not stored.
+  if (status === null) return clean(call.message).trim() || `The provider refused the request and gave no reason${tries}.`;
+  return `${status}: ${STATUS_PHRASES[status] ?? "the provider gave no reason"}${tries}`;
 }
 
 async function saveDiscoveredWorkspace(keyId: string, apiKey: string): Promise<string | null> {
@@ -937,7 +1014,9 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
     // an RPC or database client prints the address it was given, key and all. The run's
     // own key goes first, by its exact value: many providers' keys have no shape for
     // `redactSecrets` to know them by. Everything below is made from `raw`.
-    const raw = redactSecrets(scrub(err instanceof Error ? err.message : String(err)));
+    // Where the client could not read the provider's reason, it is taken from the body
+    // first and cleaned the same way (`failureText`).
+    const raw = failureText(err, scrub);
     // A multi-workspace key that still failed for want of the header: find the
     // workspace now, save it on the key, and make the agent due again so the next tick
     // simply works. Only for an agent that thinks on a key: no other run touches one.

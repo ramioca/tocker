@@ -5,10 +5,17 @@ import {
   CATALOGUE_IDS,
   PROVIDER_IDS,
   PROVIDER_ORDER,
+  KEY_MAX_CHARS,
+  KEY_NOT_A_KEY,
+  KEY_UNSENDABLE,
+  KEY_WRAPPED,
   PROVIDER_UNSUPPORTED,
+  bareKey,
   filterProviders,
   isCatalogueId,
   isProvider,
+  keyFitsHeader,
+  keyIsWrapped,
   keyPrefixProvider,
   keyProblem,
   providerLabel,
@@ -312,6 +319,174 @@ describe("keyPrefixProvider", () => {
     expect(keyPrefixProvider(PLAIN)).toBeNull();
     expect(keyPrefixProvider("")).toBeNull();
     expect(keyPrefixProvider(`wrkspc_${body(20)}`)).toBeNull();
+  });
+});
+
+/** The ways a key arrives when it was copied from a shell profile, a `.env` file or a config file. */
+const WRAPPINGS: readonly ((key: string) => string)[] = [
+  (key) => `"${key}"`,
+  (key) => `'${key}'`,
+  (key) => `\`${key}\``,
+  (key) => `“${key}”`,
+  (key) => `<${key}>`,
+  (key) => `PROVIDER_API_KEY=${key}`,
+  (key) => `PROVIDER_API_KEY="${key}"`,
+  (key) => `export FOO="${key}"`,
+  (key) => `export FOO=${key};`,
+  (key) => `api_key: ${key}`,
+  (key) => `"apiKey": "${key}",`,
+  (key) => `Authorization: Bearer ${key}`,
+  (key) => `Bearer ${key}`,
+  (key) => `  "${key}"\n`,
+];
+
+describe("a key pasted with wrapping", () => {
+  it("is read as the key inside, for every way of wrapping it", () => {
+    for (const wrap of WRAPPINGS) {
+      for (const key of [PLAIN, BARE_SK, keyWith("sk-ant-")]) {
+        expect(bareKey(wrap(key)), wrap("…")).toBe(key);
+        expect(keyIsWrapped(wrap(key)), wrap("…")).toBe(true);
+      }
+    }
+  });
+
+  it("still names the provider whose key is inside, under every prefix", () => {
+    for (const row of rows) {
+      for (const prefix of row.keyPrefixes) {
+        for (const wrap of WRAPPINGS) expect(keyPrefixProvider(wrap(keyWith(prefix))), `${wrap("…")} ${prefix}`).toBe(row.id);
+      }
+    }
+  });
+
+  it("leaves a key alone: whitespace around it is not wrapping, nor is anything a key is made of", () => {
+    for (const key of [PLAIN, BARE_SK, ...rows.flatMap((row) => row.keyPrefixes.map(keyWith))]) {
+      expect(keyIsWrapped(key), key.slice(0, 6)).toBe(false);
+      expect(keyIsWrapped(`  ${key}\n`), key.slice(0, 6)).toBe(false);
+      expect(bareKey(`\t${key}\r\n`), key.slice(0, 6)).toBe(key);
+    }
+    // Base64 padding, an id and a secret joined by a colon or a dot, dashes and underscores.
+    for (const key of [`${body(22)}==`, `${body(10)}=`, `${body(12)}:${body(24)}`, `${body(12)}.${body(24)}`, `a_b-${body(20)}`]) {
+      expect(keyIsWrapped(key), key).toBe(false);
+    }
+    expect(keyIsWrapped("")).toBe(false);
+  });
+
+  it("is refused under every provider, its own included, in one sentence that has none of the key", () => {
+    expect(KEY_WRAPPED).toBe("Paste only the key itself, with no quotes around it and no NAME= in front of it");
+    for (const row of rows) {
+      for (const wrap of WRAPPINGS) {
+        const own = wrap(keyWith(row.keyPrefixes[0] ?? ""));
+        expect(keyProblem(row.id, own), `${row.id} ${wrap("…")}`).toBe(KEY_WRAPPED);
+        expect(keyProblem(row.id, wrap(keyWith("sk-ant-")), "rotate"), `${row.id} ${wrap("…")}`).toBe(KEY_WRAPPED);
+      }
+    }
+  });
+});
+
+/**
+ * Ways of wrapping a key that `bareKey` has no rule for. With a key that can be
+ * recognised inside, they are still wrapping: the prefix is found after a character no
+ * key is written with.
+ */
+const ODD_WRAPPINGS: readonly ((key: string) => string)[] = [
+  (key) => `--api-key=${key}`,
+  (key) => `x-api-key:${key}`,
+  (key) => `ANTHROPIC_API_KEY:${key}`,
+  (key) => `PROVIDER-API-KEY=${key}`,
+  (key) => `provider.api.key=${key}`,
+  (key) => `$env:PROVIDER_API_KEY=${key}`,
+  (key) => `#PROVIDER_API_KEY=${key}`,
+  (key) => `**${key}**`,
+  (key) => `*${key}*`,
+  (key) => `|${key}|`,
+  (key) => `https://example.test/v1/models?key=${key}`,
+  (key) => `Authorization:Bearer/${key}`,
+];
+
+describe("a key with something in front that no rule names", () => {
+  it("is still wrapped, and still the key of the provider whose prefix is inside", () => {
+    for (const row of rows) {
+      for (const prefix of row.keyPrefixes) {
+        for (const wrap of ODD_WRAPPINGS) {
+          const pasted = wrap(keyWith(prefix));
+          expect(keyIsWrapped(pasted), `${wrap("…")} ${prefix}`).toBe(true);
+          expect(keyPrefixProvider(pasted), `${wrap("…")} ${prefix}`).toBe(row.id);
+        }
+      }
+    }
+  });
+
+  it("is refused under every provider before it is anyone's to send", () => {
+    for (const row of rows) {
+      for (const wrap of ODD_WRAPPINGS) {
+        expect(keyProblem(row.id, wrap(keyWith("sk-ant-"))), `${row.id} ${wrap("…")}`).toBe(KEY_WRAPPED);
+        expect(keyProblem(row.id, wrap(keyWith("AIza")), "rotate"), `${row.id} ${wrap("…")}`).toBe(KEY_WRAPPED);
+      }
+    }
+  });
+
+  it("does not take a prefix inside another key's body for one", () => {
+    // Every prefix, placed after each of the marks a key is written with, inside a key
+    // that starts with no known prefix and inside one that starts with its own.
+    const prefixes = rows.flatMap((row) => row.keyPrefixes);
+    for (const inner of prefixes) {
+      for (const mark of ["-", "_", "."]) {
+        const plain = `${body(12)}${mark}${inner}${body(20)}`;
+        expect(keyIsWrapped(plain), plain).toBe(false);
+        expect(keyPrefixProvider(plain), plain).toBeNull();
+        const openai = `sk-proj-${body(12)}${mark}${inner}${body(20)}`;
+        expect(keyIsWrapped(openai), openai).toBe(false);
+        expect(keyPrefixProvider(openai), openai).toBe("openai");
+      }
+    }
+    // A key that starts with its own prefix is that provider's, whatever follows.
+    expect(keyPrefixProvider(`sk-ant-${body(20)}=hf_${body(20)}`)).toBe("anthropic");
+  });
+});
+
+describe("a pasted value of any length", () => {
+  it("is not a key past the longest a key can be, whatever it holds", () => {
+    const long = `sk-ant-${"a".repeat(KEY_MAX_CHARS)}`;
+    for (const row of rows) expect(keyProblem(row.id, long), row.id).toBe(KEY_NOT_A_KEY);
+    // At the limit it is judged as any key is; whitespace around it is not counted.
+    const atLimit = `sk-ant-${"a".repeat(KEY_MAX_CHARS - 7)}`;
+    expect(keyProblem("anthropic", `  ${atLimit}\n`)).toBeNull();
+  });
+
+  it("costs its length to look at, not its square", () => {
+    // A megabyte shaped to make a careless pattern crawl: a long run of closers that is
+    // not at the end, a long run of spaces after a name, a long name with no `=`.
+    const shapes = [
+      `${body(16)}${'"'.repeat(1_000_000)}x`,
+      `NAME${" ".repeat(1_000_000)}x`,
+      `${"a".repeat(1_000_000)}`,
+      `${"=".repeat(1_000_000)}`,
+      `export ${" ".repeat(1_000_000)}`,
+    ];
+    const started = performance.now();
+    for (const shape of shapes) {
+      keyIsWrapped(shape);
+      keyPrefixProvider(shape);
+      // Whitespace at the ends is not counted, so the last shape is a six-letter word.
+      expect(keyProblem("openai", shape)).toBe(shape.trim().length > KEY_MAX_CHARS ? KEY_NOT_A_KEY : null);
+    }
+    // Quadratic work on a megabyte is minutes; linear is milliseconds. A wide margin for a slow machine.
+    expect(performance.now() - started).toBeLessThan(5_000);
+  });
+});
+
+describe("keyFitsHeader", () => {
+  it("takes what a key is made of", () => {
+    for (const key of [PLAIN, BARE_SK, `${body(22)}==`, "!~", ...rows.flatMap((row) => row.keyPrefixes.map(keyWith))]) {
+      expect(keyFitsHeader(key), key.slice(0, 6)).toBe(true);
+    }
+  });
+
+  it("refuses a character no request header can carry", () => {
+    for (const odd of [" ", "\n", "\t", "\u00a0", "\u200b", "’", "“", "é", "\u0000", "\u007f"]) {
+      expect(keyFitsHeader(`${body(20)}${odd}${body(20)}`), JSON.stringify(odd)).toBe(false);
+    }
+    expect(KEY_UNSENDABLE).toContain("That does not look like an API key");
   });
 });
 

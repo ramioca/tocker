@@ -18,7 +18,16 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
-import { CATALOGUE, CATALOGUE_IDS, PROVIDER_IDS, PROVIDER_UNSUPPORTED, type CatalogueId, type LlmProvider } from "@/lib/agent/providers";
+import {
+  CATALOGUE,
+  CATALOGUE_IDS,
+  KEY_UNSENDABLE,
+  KEY_WRAPPED,
+  PROVIDER_IDS,
+  PROVIDER_UNSUPPORTED,
+  type CatalogueId,
+  type LlmProvider,
+} from "@/lib/agent/providers";
 import { setupTestDb } from "@/lib/agent/test-support";
 import { limiter } from "@/lib/security/rate-limit";
 import type { Session } from "@/server/types";
@@ -92,6 +101,32 @@ async function savedKey(userId: string, provider: string, key: string): Promise<
 
 /** Every origin a provider's key is allowed to be sent to: its own, and the Hub for Hugging Face. */
 const allowed = (id: CatalogueId) => [CATALOGUE[id].origin, CATALOGUE[id].keyCheckOrigin].filter(Boolean);
+
+/** How a key arrives when it was copied from a shell profile, a `.env` file or a config file instead of the provider's page. */
+const WRAPPINGS: readonly ((key: string) => string)[] = [
+  (key) => `"${key}"`,
+  (key) => `'${key}'`,
+  (key) => `“${key}”`,
+  (key) => `PROVIDER_API_KEY=${key}`,
+  (key) => `api_key:"${key}"`,
+  (key) => `export FOO="${key}"`,
+  (key) => `Bearer ${key}`,
+];
+/** Wrapping no rule names: a flag, a header with no space, a commented line, markdown, a URL. A key that can be recognised inside is still found. */
+const ODD_WRAPPINGS: readonly ((key: string) => string)[] = [
+  (key) => `--api-key=${key}`,
+  (key) => `x-api-key:${key}`,
+  (key) => `PROVIDER-API-KEY=${key}`,
+  (key) => `provider.api.key=${key}`,
+  (key) => `$env:PROVIDER_API_KEY=${key}`,
+  (key) => `#PROVIDER_API_KEY=${key}`,
+  (key) => `**${key}**`,
+  (key) => `|${key}|`,
+  (key) => `https://example.test/v1/models?key=${key}`,
+];
+/** What no request header can carry, put in the middle of a key: a space, a line break, a non-breaking and a zero-width space, a curly quote, an accent. */
+const UNSENDABLE = [" ", "\n", "\u00a0", "\u200b", "’", "é"];
+const withInside = (key: string, odd: string) => `${key.slice(0, 20)}${odd}${key.slice(20)}`;
 
 /** How a provider says "this key is not a key": a 401 for all of them but Google, which answers 400 with a reason. */
 function refusalOf(id: CatalogueId): { status: number; body: unknown } {
@@ -191,6 +226,64 @@ describe("adding a key", () => {
     expect(await keysOf(userId)).toEqual([]);
   });
 
+  /** Before this, `"sk-ant-…"` in quotes under OpenAI was nobody's key by its first character, and went to OpenAI. */
+  it("refuses a key pasted with quotes or a NAME= around it before anything is sent, whoever's key is inside", async () => {
+    const userId = await signedInUser();
+    for (const chosen of PROVIDER_IDS) {
+      for (const wrap of WRAPPINGS) {
+        for (const key of [keyOf("anthropic"), keyOf(chosen), tail()]) {
+          limiter.reset();
+          expect(await addLlmKey({ provider: chosen, key: wrap(key) }), `${wrap("…")} under ${chosen}`).toEqual({ ok: false, error: KEY_WRAPPED });
+        }
+      }
+    }
+    expect(sent).toHaveLength(0);
+    expect(await keysOf(userId)).toEqual([]);
+  });
+
+  /** `--api-key=sk-ant-…` under OpenAI has no quotes and no NAME= a rule knows, and used to go to OpenAI whole. */
+  it("refuses a recognisable key with anything else in front of it, under every provider, before anything is sent", async () => {
+    const userId = await signedInUser();
+    for (const chosen of PROVIDER_IDS) {
+      for (const wrap of ODD_WRAPPINGS) {
+        for (const owner of ["anthropic", "openrouter"] as const) {
+          limiter.reset();
+          expect(await addLlmKey({ provider: chosen, key: wrap(keyOf(owner)) }), `${wrap("…")} ${owner} under ${chosen}`).toEqual({
+            ok: false,
+            error: KEY_WRAPPED,
+          });
+        }
+      }
+    }
+    expect(sent).toHaveLength(0);
+    expect(await keysOf(userId)).toEqual([]);
+  });
+
+  /** Saved "unverified", such a key failed every run: the request that carries it cannot be built. */
+  it("refuses a key with a character no request header can carry, and asks nobody", async () => {
+    const userId = await signedInUser();
+    for (const id of PROVIDER_IDS) {
+      for (const odd of UNSENDABLE) {
+        limiter.reset();
+        expect(await addLlmKey({ provider: id, key: withInside(keyOf(id), odd) }), `${id} ${JSON.stringify(odd)}`).toEqual({
+          ok: false,
+          error: KEY_UNSENDABLE,
+        });
+      }
+    }
+    expect(sent).toHaveLength(0);
+    expect(await keysOf(userId)).toEqual([]);
+  });
+
+  it("still takes a key with whitespace around it, and saves it without", async () => {
+    const userId = await signedInUser();
+    const key = keyOf("openai");
+    expect((await addLlmKey({ provider: "openai", key: `\u00a0 ${key}\r\n` })).ok).toBe(true);
+    expect(sent).toEqual([{ url: "https://api.openai.com/v1/models", headers: { authorization: `Bearer ${key}` }, redirect: "error" }]);
+    const [row] = await keysOf(userId);
+    expect(decryptSecret(row!.encryptedKey)).toBe(key);
+  });
+
   it("says the sentence the form says, for the pairs people actually mix up", async () => {
     await signedInUser();
     expect(await addLlmKey({ provider: "openai", key: keyOf("anthropic") })).toEqual({
@@ -246,6 +339,34 @@ describe("replacing a key", () => {
     });
     const groq = await rotateLlmKey({ id: keyId, key: keyOf("groq") });
     expect(groq.ok ? "" : groq.error).toContain("That looks like a Groq key; this is an Anthropic key");
+
+    expect(sent).toHaveLength(0);
+    const [row] = await keysOf(userId);
+    expect(decryptSecret(row!.encryptedKey)).toBe(old);
+  });
+
+  it("refuses a wrapped key, and one no header can carry, before anything is sent, and keeps the old secret", async () => {
+    const userId = await signedInUser();
+    const old = keyOf("openai");
+    const keyId = await savedKey(userId, "openai", old);
+
+    for (const wrap of WRAPPINGS) {
+      for (const key of [keyOf("anthropic"), keyOf("openai"), tail()]) {
+        limiter.reset();
+        expect(await rotateLlmKey({ id: keyId, key: wrap(key) }), wrap("…")).toEqual({ ok: false, error: KEY_WRAPPED });
+      }
+    }
+    for (const wrap of ODD_WRAPPINGS) {
+      limiter.reset();
+      expect(await rotateLlmKey({ id: keyId, key: wrap(keyOf("anthropic")) }), wrap("…")).toEqual({ ok: false, error: KEY_WRAPPED });
+    }
+    for (const odd of UNSENDABLE) {
+      limiter.reset();
+      expect(await rotateLlmKey({ id: keyId, key: withInside(keyOf("openai"), odd) }), JSON.stringify(odd)).toEqual({
+        ok: false,
+        error: KEY_UNSENDABLE,
+      });
+    }
 
     expect(sent).toHaveLength(0);
     const [row] = await keysOf(userId);

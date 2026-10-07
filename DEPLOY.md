@@ -30,7 +30,8 @@ DATABASE_URL="postgres://..." pnpm db:migrate
 
 Migration `0011` changes a column's type rather than adding one: `llm_keys.provider` goes
 from a Postgres enum to text. What that locks, and how to go back, is under "The
-database" in "Model providers, in full".
+database" in "Model providers, in full". Read it before the deploy that carries `0011`:
+it has one query to run first, and a warning about rolling back afterwards.
 
 Seed demo data into a staging database only. Never seed production.
 
@@ -1337,6 +1338,27 @@ and that were checked on an in-memory Postgres (PGlite), not on the production d
 The database no longer checks the column, so the code does: every place that reads a
 provider from a form or a row asks the registry first (`isProvider`).
 
+**Before deploying, list the agents this change will stop.** Before this change,
+"attach this key to my agents without one" put the key on every such agent, whatever
+provider the agent's settings named. So an agent can be set to one provider and hold a
+key of another. This change refuses to run such an agent: the run fails with a sentence
+that names both providers and tells the owner to pick a key for the provider the agent
+is set to, or to change the provider. Nothing is sent to either provider. This query
+lists them. It only reads, and it works before and after the migration:
+
+```sql
+select a.slug, a.config #>> '{llm,provider}' as set_to, k.provider::text as key_of
+from agents a
+join llm_keys k on k.id = a.llm_key_id
+where coalesce(a.config #>> '{llm,source}', 'key') <> 'usdc'
+  and (a.config #>> '{llm,provider}') is distinct from k.provider::text;
+```
+
+No rows means nobody is affected. For each row, `set_to` is what the agent's settings
+name and `key_of` is the provider its key belongs to. Fix your own in the agent's
+settings, and tell the other owners before you deploy rather than after their agent
+stops. Agents that pay per use are left out: they run on no key.
+
 Going back is by hand, and only works while no key of a later provider has been saved.
 Run the two statements in one transaction. Checked on the same in-memory Postgres, not
 on production:
@@ -1348,6 +1370,45 @@ ALTER TABLE "llm_keys" ALTER COLUMN "provider" SET DATA TYPE "public"."llm_provi
 
 With one row for any other provider the second statement fails ("invalid input value
 for enum") and the column is left as it is.
+
+**Never promote or roll back to a deployment older than this change while `llm_keys`
+holds a row for a provider other than `anthropic`, `openai` or `openrouter`.** The older
+code knows those three and has no answer for a fourth. Its model list
+(`listKeyModels`) decrypts the key and treats every provider that is not OpenAI or
+OpenRouter as Anthropic: it sends the key to `api.anthropic.com` in the `x-api-key`
+header. One owner opening the model list for a Groq key would hand that key to
+Anthropic. Its run loop is not the leak: for a provider it does not know it builds no
+client at all, so the run fails and the key is sent nowhere, but the agent never runs
+either. This was read from the code as it stood before this change, not tried against a
+deployment. Check first:
+
+```sql
+select provider, count(*) from llm_keys group by provider;
+```
+
+**To withdraw the new providers, go forward, not back.** Set `PROVIDER_IDS` in
+`src/lib/agent/providers.ts` back to the three and deploy. The later providers leave the
+chooser, no key can be added for them, and a saved key of theirs is refused before it is
+decrypted ("Adding or removing a provider", below). No key leaves the database.
+
+If the code truly must go back, do it in this order:
+
+1. Deploy forward with `PROVIDER_IDS` set to the three, as above. From then on nobody
+   can save a key the next step would miss.
+2. Delete the later providers' keys:
+
+   ```sql
+   DELETE FROM llm_keys WHERE provider NOT IN ('anthropic','openai','openrouter');
+   ```
+
+   This cannot be undone: the keys are gone and their owners must paste them again. No
+   agent is deleted. `agents.llm_key_id` is `ON DELETE SET NULL`, so each agent that
+   used one of those keys is left with no key. It stops running and its page says it
+   has no key, until its owner picks a provider, a model and a key in its settings.
+   Tell those owners first.
+3. Run the two reverse statements above, in one transaction. With the enum back, the
+   database itself refuses any other provider.
+4. Only then promote or roll back to the older deployment.
 
 ### Adding or removing a provider
 
