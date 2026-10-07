@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { BUILDER_STEPS, parseCard, parseStep, type BuilderStepId, type Place, type Via } from "./contract";
-import { neighbours, resumeStep, stepHref, stepOf } from "./flow";
+import { BUILDER_STEPS, type BuilderStepId, type Place, type Via } from "./contract";
+import { neighbours, requestedStep, resumeStep, stepHref, stepOf } from "./flow";
 
 interface Nav {
   step: BuilderStepId;
@@ -21,11 +21,12 @@ function directionOf(from: BuilderStepId, to: BuilderStepId): 1 | -1 {
  * Which step the builder is on.
  *
  * State is the source of truth, so a step change commits in the same render as the click
- * and focus never waits on the router. The address mirrors it (`?step=rules`): a move the
+ * and focus never waits on the router. The address mirrors it (`?step=limits`): a move the
  * user made is pushed, so the browser's Back button walks the steps; a move the page made
  * for them (a restored draft, a failed Create, Start over) replaces the entry. The first
  * value is read from the address during the first render, so the server paints the right
- * step and a deep link does not flash step 1.
+ * step and a deep link does not flash step 1. An old link (`?step=rules&open=risk`) is
+ * understood on the way in and never written on the way out.
  */
 export function useBuilderStep({ restored, errors }: { restored: boolean; errors: Record<string, string> }) {
   const searchParams = useSearchParams();
@@ -83,7 +84,7 @@ export function useBuilderStep({ restored, errors }: { restored: boolean; errors
     if (!restored || resumed.current) return;
     resumed.current = true;
     const params = new URLSearchParams(window.location.search);
-    if (parseStep(params.get("step")) || parseCard(params.get("open"))) return;
+    if (requestedStep(params) !== null) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- a restore is read from localStorage after mount, so its step can only follow it
     go({ step: resumeStep(errors) }, "auto");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per restore; `errors` and `go` change on every edit

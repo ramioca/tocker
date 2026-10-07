@@ -1,7 +1,7 @@
 "use client";
 
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
@@ -26,20 +26,16 @@ import { CommitBar } from "./commit-bar";
 import { CommitSentence } from "./commit-sentence";
 import {
   BUILDER_STEPS,
-  CARD_STEP,
-  parseCard,
   type BuilderStepId,
-  type CardId,
   type Place,
   type StepStatus,
   type SummaryLabels,
   type Via,
 } from "./contract";
-import { firstErrorKey, firstErrorPlace, neighbours, placeOfError, stepStatus } from "./flow";
+import { firstErrorKey, firstErrorPlace, neighbours, stepStatus } from "./flow";
 import { AgentPreview } from "./preview/agent-preview";
 import { PreviewPeek } from "./preview/preview-peek";
-import { RuleCard } from "./rule-card";
-import { StepPanel } from "./step-panel";
+import { NowLine, StepPanel } from "./step-panel";
 import {
   commitShortLine,
   costFacts,
@@ -83,16 +79,17 @@ import type { AgentConfig } from "@/db/schema";
 import type { Chain, DataSourceInfo, LlmKeyRow } from "@/server/types";
 
 /**
- * Four steps, none of them a gate: Strategy, Rules, Brain, Name and create. Only three
- * things are the user's to decide (a strategy, a way to think, a name) and the strategy
- * is already written, so Next never refuses and any step can be visited at any time.
- * Every rule domain (universe, data, risk, schedule, funding) is still a card whose
- * defaults read as one sentence and open only to be changed. Beside the form sits a card
- * of the agent being made, filled in from the draft as the user goes.
+ * Eight steps, none of them a gate: a name, a strategy, the four groups of rules (where it
+ * hunts, the data it buys, its risk limits, its schedule), how it thinks, then a review
+ * with the funding and the Create button. Only three things are the user's to decide (a
+ * name, a strategy, a way to think) and the strategy is already written, so Next never
+ * refuses and any step can be visited at any time. Every rule step opens on its defaults,
+ * read back as one sentence above the controls. Beside the form sits a card of the agent
+ * being made, filled in from the draft as the user goes.
  *
- * This file is the shell: the draft, the keys, which step is showing, which cards are
- * open, and the create itself. The steps' controls are `./steps`, the sentences every
- * part quotes are `./summaries`, and where an error or a link takes the user is `./flow`.
+ * This file is the shell: the draft, the keys, which step is showing, and the create
+ * itself. The steps' controls are `./steps`, the sentences every part quotes are
+ * `./summaries`, and where an error or a link takes the user is `./flow`.
  *
  * What a draft needs before it can be created is decided in `./validate.ts`.
  */
@@ -100,19 +97,31 @@ import type { Chain, DataSourceInfo, LlmKeyRow } from "@/server/types";
 /** The two labels the summaries cannot import themselves: they live in `.tsx` files. */
 const LABELS: SummaryLabels = { interval: intervalLabel, ttl: ttlLabel };
 
+/** One word each: eight of them share the width of the form. */
 const STEP_LABELS: Record<BuilderStepId, string> = {
+  name: "Name",
   strategy: "Strategy",
-  rules: "Rules",
+  hunts: "Hunts",
+  data: "Data",
+  limits: "Limits",
+  schedule: "Schedule",
   brain: "Brain",
   create: "Create",
 };
 
-/** What the Next button calls the step it leads to. */
-const NEXT_LABELS: Record<BuilderStepId, string> = {
+/**
+ * What a step is called where there is room for more than a word: the Next button, the
+ * phone's "Step 3 of 8" line and a screen reader.
+ */
+const STEP_NAMES: Record<BuilderStepId, string> = {
+  name: "Name",
   strategy: "Strategy",
-  rules: "Rules",
-  brain: "Brain",
-  create: "Name and create",
+  hunts: "Where it hunts",
+  data: "Data it buys",
+  limits: "Risk limits",
+  schedule: "Schedule & mode",
+  brain: "How it thinks",
+  create: "Review and create",
 };
 
 const STATUS_WORDS: Record<StepStatus, string> = {
@@ -125,13 +134,10 @@ const STATUS_WORDS: Record<StepStatus, string> = {
 
 /**
  * A move the page has been asked to make, kept until the render that makes it has
- * committed: only then is the step showing and the card open, so only then can a control
- * on it take focus.
+ * committed: only then is the step showing, so only then can a control on it take focus.
  */
 interface PendingMove {
   place: Place;
-  /** Arriving on an `?open=` link: bring the card into view, leave focus where it is. */
-  scrollOnly?: boolean;
   /** Called when none of the place's controls is on the page. */
   missing?: () => void;
 }
@@ -236,7 +242,6 @@ export function AgentBuilder({
   payPerUseAllowed?: boolean;
 }) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [keys, setKeys] = useState(initialKeys);
   // The draft starts on a key the account already has, so it needs to know them.
   const { draft, update, updateConfig, clear, restore, restored } = useDraft(userId, keys, payPerUseAllowed);
@@ -248,12 +253,6 @@ export function AgentBuilder({
   const [creating, setCreating] = useState(false);
   /** An agent that exists whose funding did not go through: offered the signature again, here. */
   const [fundingRetry, setFundingRetry] = useState<FundingRetry | null>(null);
-  // `?open=risk` opens that card once, on arrival. Toggling cards afterwards is local:
-  // it does not touch the address or the history.
-  const [open, setOpen] = useState<Set<CardId>>(() => {
-    const card = parseCard(searchParams.get("open"));
-    return new Set(card ? [card] : []);
-  });
 
   const errors = useMemo(
     () => validateDraft(draft, keys, { payPerUseAllowed }),
@@ -264,40 +263,29 @@ export function AgentBuilder({
   const nav = useBuilderStep({ restored, errors });
   const step = nav.step;
 
-  const toggle = (id: CardId) =>
-    setOpen((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
   const pendingPlace = useRef<PendingMove | null>(null);
   /** The step the effect below last saw, to tell a step change it was not told about. */
   const shownStep = useRef<BuilderStepId | null>(null);
   const columnRef = useRef<HTMLDivElement>(null);
-  // Counted so a move to a place that is already showing (the same step, a card already
-  // open) still reaches the effect.
+  // Counted so a move to a place on the step that is already showing still reaches the
+  // effect.
   const [moves, setMoves] = useState(0);
   // How the user last touched the page. The agent card reports a click on a row without
   // saying how it was made, and a keyboard move must not animate the step.
   const lastInput = useRef<Via>("pointer");
 
-  /** Go to a place: show its step, open its card, then put focus on its control. */
+  /** Go to a place: show its step, then put focus on its control. */
   const goTo = (place: Place, via: Via, missing?: () => void) => {
     // Nobody leaves the step while its agent is being created.
     if (creatingRef.current) return;
     pendingPlace.current = { place, missing };
-    const card = place.card;
-    if (card) setOpen((current) => (current.has(card) ? current : new Set([...current, card])));
     setMoves((count) => count + 1);
     nav.go(place, via);
   };
   const goFromCard = (place: Place) => goTo(place, lastInput.current);
 
-  // After the commit that un-hides the panel and opens the card, so focus can never land
-  // on a hidden control and the focused control already carries its error when a screen
-  // reader announces it.
+  // After the commit that un-hides the panel, so focus can never land on a hidden control
+  // and the focused control already carries its error when a screen reader announces it.
   useEffect(() => {
     const arriving = shownStep.current === null;
     const stepChanged = shownStep.current !== step;
@@ -305,11 +293,9 @@ export function AgentBuilder({
     let move = pendingPlace.current;
     pendingPlace.current = null;
     if (arriving) {
-      const [card] = open;
-      move =
-        card && CARD_STEP[card] === step
-          ? { place: { step, card, focusIds: [`rule-card-${card}`] }, scrollOnly: true }
-          : null;
+      // The first paint, a deep link included: the page is where it should be, and focus
+      // stays where the browser put it.
+      move = null;
     } else if (!move && stepChanged) {
       // The browser's Back or Forward button, or a restored draft resuming: the step
       // changed without a place, so focus goes to its heading.
@@ -319,34 +305,20 @@ export function AgentBuilder({
 
     const target = move.place.focusIds?.map((id) => document.getElementById(id)).find((el) => el !== null);
     if (target) {
-      const smooth = !move.scrollOnly && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const reveal = () => target.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "center" });
-      reveal();
-      if (!move.scrollOnly) target.focus({ preventScroll: true });
-      // A control inside a card that is still opening is not where it will be: once the
-      // card has finished, bring it into view again.
-      const panel = target.closest<HTMLElement>('[id^="rule-panel-"]');
-      if (panel) {
-        // Transitions of the controls inside bubble up here too; only the panel's own counts.
-        const settle = (event: TransitionEvent) => {
-          if (event.target !== panel) return;
-          panel.removeEventListener("transitionend", settle);
-          reveal();
-        };
-        panel.addEventListener("transitionend", settle);
-        window.setTimeout(() => panel.removeEventListener("transitionend", settle), 400);
-      }
+      const smooth = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      target.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "center" });
+      target.focus({ preventScroll: true });
       return;
     }
     move.missing?.();
     // A plain step change: the top of the form, at once, with focus on the step's heading.
     columnRef.current?.scrollIntoView({ behavior: "auto", block: "start" });
     document.getElementById(`step-${step}-title`)?.focus({ preventScroll: true });
-  }, [step, open, moves]);
+  }, [step, moves]);
 
   const providerLabel = providerLabelFor(draft.config.llm.provider);
   const payPerUse = shownSource(draft.config, payPerUseAllowed) === "usdc";
-  // Every figure the bar and the closed cards quote, worked out once (`./summaries`).
+  // Every figure the bar and the read-back lines quote, worked out once (`./summaries`).
   const facts = costFacts(draft, sources, { payPerUseAllowed, feeUsd });
   const ready = readyItems(draft, errors, keys, { payPerUseAllowed });
   const readyCount = ready.filter((item) => item.ready).length;
@@ -422,7 +394,7 @@ export function AgentBuilder({
     if (Object.keys(allErrors).length > 0) {
       setAttempted(true);
       // The earliest step with something wrong, then the control on it. The step is
-      // shown and its card opened before focus lands (`goTo`).
+      // shown before focus lands (`goTo`).
       const key = firstErrorKey(allErrors);
       const place = firstErrorPlace(allErrors, null);
       const stillMissing = () =>
@@ -431,8 +403,8 @@ export function AgentBuilder({
         });
       if (place) {
         // The focused field carries its own message; a toast repeating it only
-        // covers the commit bar on a phone. A card has no field of its own to carry one.
-        const hasField = !place.card && (place.focusIds?.length ?? 0) > 0;
+        // covers the commit bar on a phone. A rule step has no one field to carry one.
+        const hasField = (place.focusIds?.length ?? 0) > 0;
         goTo(place, "auto", hasField ? stillMissing : undefined);
         if (!hasField) stillMissing();
       }
@@ -582,6 +554,7 @@ export function AgentBuilder({
     return {
       id,
       label: STEP_LABELS[id],
+      name: STEP_NAMES[id],
       status,
       statusLabel: STATUS_WORDS[status],
       // Red is for after a failed Create. Before one, a missing thing is simply needed.
@@ -589,9 +562,7 @@ export function AgentBuilder({
     };
   });
   const { back, next } = neighbours(step);
-  /** A card is marked only after a failed Create, and only for an error that lives in it. */
-  const cardHasError = (id: CardId) =>
-    attempted && Object.keys(errors).some((key) => errors[key] && placeOfError(key).card === id);
+  const fix = (id: BuilderStepId) => stepStatus(id, errors, statusCtx) === "fix";
 
   const stepProps = { draft, update, updateConfig, errors: visibleErrors, hideHeading: true };
   const previewProps = {
@@ -649,14 +620,13 @@ export function AgentBuilder({
                     // memory, so clearing it gets the same Undo the preset cards have.
                     const previous = draft;
                     clear();
-                    setOpen(new Set());
                     setAttempted(false);
                     toast.success("Draft cleared", {
                       action: { label: "Undo", onClick: () => restore(previous) },
                     });
                     // This button unmounts with the draft, so focus goes to the first step's
                     // heading rather than falling back to the page.
-                    goTo({ step: "strategy" }, "auto");
+                    goTo({ step: "name" }, "auto");
                   }}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
@@ -667,9 +637,9 @@ export function AgentBuilder({
             ) : null}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            <span className="sm:hidden">A strategy, a way to think, a name. The rest is already set.</span>
+            <span className="sm:hidden">A name, a strategy, a way to think. The rest is already set.</span>
             <span className="hidden sm:inline">
-              Three things are yours to decide: a strategy, a way to think, a name. Everything else is already set.
+              Three things are yours to decide: a name, a strategy, a way to think. Everything else is already set.
             </span>
           </p>
 
@@ -685,6 +655,14 @@ export function AgentBuilder({
           {/* A minimum height, so a short step never makes the page shorter than the
               viewport and the bar below does not jump between steps. */}
           <div className="mt-8 min-h-[calc(100dvh-16rem)]">
+            <StepPanel
+              {...panel("name")}
+              title="Name it"
+              lead="The name sits above every trade it posts. The rest of this step is optional."
+            >
+              <IdentityStep {...stepProps} />
+            </StepPanel>
+
             <StepPanel
               {...panel("strategy")}
               title="What should it do?"
@@ -703,61 +681,57 @@ export function AgentBuilder({
             </StepPanel>
 
             <StepPanel
-              {...panel("rules")}
-              title="The rules it cannot break"
+              {...panel("hunts")}
+              title="Where it hunts"
               lead={
-                stepStatus("rules", errors, statusCtx) === "fix"
-                  ? "Enforced in code before any trade. One of them needs a look before you can create."
-                  : "Enforced in code before any trade. All four are already set. Open one only to change it."
+                fix("hunts")
+                  ? "Which tokens it is allowed to look at. It needs a look before you can create."
+                  : "Which tokens it is allowed to look at. Already set: change it only if you want to."
               }
+              now={universeSummary(draft.config.universe as AgentConfig["universe"], draft.config.chains)}
             >
-              <div className="space-y-3">
-                <RuleCard
-                  id="universe"
-                  title="Where it hunts"
-                  summary={universeSummary(draft.config.universe as AgentConfig["universe"], draft.config.chains)}
-                  open={open.has("universe")}
-                  onToggle={() => toggle("universe")}
-                  hasError={cardHasError("universe")}
-                >
-                  <UniverseStep {...stepProps} />
-                </RuleCard>
+              <UniverseStep {...stepProps} />
+            </StepPanel>
 
-                <RuleCard
-                  id="data"
-                  title="Data it buys"
-                  summary={dataSummary(facts)}
-                  open={open.has("data")}
-                  onToggle={() => toggle("data")}
-                  hasError={cardHasError("data")}
-                >
-                  <DataStep {...stepProps} sources={sources} />
-                </RuleCard>
+            <StepPanel
+              {...panel("data")}
+              title="Data it buys"
+              lead={
+                fix("data")
+                  ? "What it pays to read before it decides. It needs a look before you can create."
+                  : "What it pays to read before it decides. Already set: change it only if you want to."
+              }
+              now={dataSummary(facts)}
+            >
+              <DataStep {...stepProps} sources={sources} />
+            </StepPanel>
 
-                <RuleCard
-                  id="risk"
-                  title="Risk limits"
-                  // The fee closes the line: this is the one sentence about trades that is on
-                  // screen without opening anything, and nothing in the builder named the fee.
-                  summary={riskSummary(draft.config.risk, feeUsd)}
-                  open={open.has("risk")}
-                  onToggle={() => toggle("risk")}
-                  hasError={cardHasError("risk")}
-                >
-                  <RiskStep {...stepProps} feeUsd={feeUsd} />
-                </RuleCard>
+            <StepPanel
+              {...panel("limits")}
+              title="Risk limits"
+              lead={
+                fix("limits")
+                  ? "Enforced in code before any trade. One of them needs a look before you can create."
+                  : "Enforced in code before any trade. Already set: change them only if you want to."
+              }
+              // The fee closes the line: this is the one sentence about trades that is on
+              // screen before any control, and nothing else in the builder names the fee.
+              now={riskSummary(draft.config.risk, feeUsd)}
+            >
+              <RiskStep {...stepProps} feeUsd={feeUsd} />
+            </StepPanel>
 
-                <RuleCard
-                  id="schedule"
-                  title="Schedule & mode"
-                  summary={scheduleSummary(draft, facts, LABELS)}
-                  open={open.has("schedule")}
-                  onToggle={() => toggle("schedule")}
-                  hasError={cardHasError("schedule")}
-                >
-                  <ScheduleStep {...stepProps} payPerUseAllowed={payPerUseAllowed} />
-                </RuleCard>
-              </div>
+            <StepPanel
+              {...panel("schedule")}
+              title="Schedule & mode"
+              lead={
+                fix("schedule")
+                  ? "How often it runs and whether it asks you first. It needs a look before you can create."
+                  : "How often it runs and whether it asks you first. Already set: change it only if you want to."
+              }
+              now={scheduleSummary(draft, facts, LABELS)}
+            >
+              <ScheduleStep {...stepProps} payPerUseAllowed={payPerUseAllowed} />
             </StepPanel>
 
             <StepPanel
@@ -785,24 +759,21 @@ export function AgentBuilder({
 
             <StepPanel
               {...panel("create")}
-              title="Name it and create"
-              lead="The name sits above every trade it posts. Everything else on this screen is optional."
+              title="Review and create"
+              lead="Check the card, choose how to fund it, then create."
             >
               <div className="space-y-6">
-                <IdentityStep {...stepProps} />
-
-                {/* On the last step because it is the one card that decides what the user
-                    signs when they press Create, and that button is on this screen. */}
-                <RuleCard
-                  id="funding"
-                  title="Funding"
-                  summary={fundingSummary(draft, facts)}
-                  open={open.has("funding")}
-                  onToggle={() => toggle("funding")}
-                  hasError={attempted && Boolean(fundingBlocker)}
-                >
+                {/* On the last step because it decides what the user signs when they press
+                    Create, and that button is on this screen. */}
+                <section aria-labelledby="step-create-funding" className="space-y-4">
+                  <div>
+                    <h3 id="step-create-funding" className="text-sm font-medium">
+                      Funding
+                    </h3>
+                    <NowLine text={fundingSummary(draft, facts)} className="mt-2" />
+                  </div>
                   <FundingStep {...stepProps} />
-                </RuleCard>
+                </section>
 
                 {/* Below lg the agent card has no column: this copy is the read-back
                     before Create. */}
@@ -825,14 +796,14 @@ export function AgentBuilder({
 
       <CommitBar
         step={step}
-        nextLabel={next ? NEXT_LABELS[next] : null}
+        nextLabel={next ? STEP_NAMES[next] : null}
         onBack={back ? (via) => goTo({ step: back }, via) : null}
         onNext={(via) => {
           // Next never refuses: what is still missing is said by the stepper and the agent card.
           if (next) goTo({ step: next }, via);
         }}
         // Offered once the strategy and the way to think are ready: with a key on the
-        // account that is on arrival, and all that is left is a name.
+        // account that is on arrival, and the only thing that can still be missing is a name.
         onSkipToEnd={
           step !== "create" && ready.every((item) => item.ready || item.id === "name")
             ? (via) => goTo({ step: "create" }, via)

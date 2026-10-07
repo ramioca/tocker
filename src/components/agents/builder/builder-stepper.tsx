@@ -5,7 +5,10 @@ import { cn } from "@/lib/utils";
 
 export interface StepView {
   id: BuilderStepId;
+  /** One word, for under the dot: "Hunts". */
   label: string;
+  /** The step's name where there is room for it: "Where it hunts". */
+  name: string;
   status: StepStatus;
   /** The status as a word: "Needed", "Ready", "Defaults", "Edited", "Fix". */
   statusLabel: string;
@@ -17,13 +20,17 @@ export interface StepView {
 const waiting = (status: StepStatus) => status === "needed" || status === "fix";
 
 /**
- * The four steps, each a button: any of them can be visited at any time. A list of
+ * The eight steps, each a button: any of them can be visited at any time. A list of
  * buttons and not a tablist, so Tab reaches every one.
  *
- * From `sm` up each step is a dot, its name and its status word, joined by a hairline
- * that fills up to the current step. On a phone there is no room for four labels: the
- * steps are four segments, each still a 44px button, and one line of text says where
- * you are.
+ * From `sm` up each step is a dot, a one-word label and its status word, joined by a
+ * hairline that fills up to the current step. Eight of them share the form's width, about
+ * 73px each at its narrowest, which is why the labels are single words in 13px.
+ *
+ * On a phone there is no room for eight labels: the steps are eight segments and one line
+ * of text says where you are. The buttons touch, with the gap drawn inside each one, so
+ * every pixel of the row is a target: 44px tall, and as wide as an eighth of the screen
+ * allows (43px on a 375px phone).
  */
 export function BuilderStepper({
   steps,
@@ -43,10 +50,11 @@ export function BuilderStepper({
 
   return (
     <nav aria-label="Steps">
-      <ol className="relative grid grid-cols-4 gap-1.5 sm:gap-0">
-        {/* The hairline runs from the first dot's centre to the last one's. One bar,
-            scaled from the left: no width animates and no variable drives a child. */}
-        <li aria-hidden className="pointer-events-none absolute top-[22px] left-3 hidden h-px w-3/4 bg-border sm:block">
+      <ol className="relative grid grid-cols-8">
+        {/* The hairline runs from the first dot's centre to the last one's: seven of the
+            eight columns. One bar, scaled from the left: no width animates and no variable
+            drives a child. */}
+        <li aria-hidden className="pointer-events-none absolute top-[22px] left-3 hidden h-px w-[87.5%] bg-border sm:block">
           <span
             className="block h-full origin-left bg-foreground/70 transition-transform duration-[240ms] ease-[var(--ease-in-out-strong)] motion-reduce:transition-none"
             style={{ transform: `scaleX(${index / last})` }}
@@ -67,11 +75,11 @@ export function BuilderStepper({
                 // detail is 0 when a click comes from Enter or Space: a keyboard move swaps
                 // the step at once, a pointer move plays the short entrance.
                 onClick={(event) => onGo(step.id, event.detail === 0 ? "keyboard" : "pointer")}
-                className="group relative flex min-h-11 w-full flex-col justify-center rounded-lg text-left transition-colors duration-150 disabled:pointer-events-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:justify-start sm:py-2.5 sm:pr-3"
+                className="group relative flex min-h-11 w-full flex-col justify-center rounded-lg text-left transition-colors duration-150 disabled:pointer-events-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none px-[3px] sm:justify-start sm:px-0 sm:py-2.5 sm:pr-2"
               >
                 {/* One name for every width; what is drawn below is decoration on top of it. */}
                 <span className="sr-only">
-                  {step.label}: {step.statusLabel}
+                  {step.name}: {step.statusLabel}
                 </span>
 
                 {/* Phones: a segment, filled up to the current step. */}
@@ -101,7 +109,7 @@ export function BuilderStepper({
                   </span>
                   <span
                     className={cn(
-                      "mt-2 block truncate text-sm font-medium transition-colors duration-150",
+                      "mt-2 block truncate text-[13px] leading-5 font-medium transition-colors duration-150",
                       isCurrent ? "text-foreground" : "text-muted-foreground group-hover:text-foreground",
                     )}
                   >
@@ -126,14 +134,14 @@ export function BuilderStepper({
           say it to a screen reader. */}
       {active ? (
         <p aria-hidden className="tnum mt-1 text-xs text-muted-foreground sm:hidden">
-          Step {index + 1} of {steps.length} · {active.label} ·{" "}
+          Step {index + 1} of {steps.length} · {active.name} ·{" "}
           <span className={cn(active.tone === "error" && "text-destructive")}>{active.statusLabel}</span>
         </p>
       ) : null}
 
       {/* Announced when the step changes, however it changed. */}
       <p aria-live="polite" className="sr-only">
-        {active ? `Step ${index + 1} of ${steps.length}: ${active.label}` : ""}
+        {active ? `Step ${index + 1} of ${steps.length}: ${active.name}` : ""}
       </p>
     </nav>
   );

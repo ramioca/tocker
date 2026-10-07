@@ -463,15 +463,15 @@ describe("readyItems", () => {
   it("is always the three required things, in order, each with its place", () => {
     for (const items of [ready(emptyDraft(), []), ready(emptyDraft(), [anthropic])]) {
       expect(items.map((item) => item.id)).toEqual([...REQUIRED_ORDER]);
-      expect(items.map((item) => item.label)).toEqual(["Strategy", "A way to think", "Name"]);
+      expect(items.map((item) => item.label)).toEqual(["Name", "Strategy", "A way to think"]);
       for (const item of items) expect(item.place).toEqual(REQUIRED_PLACE[item.id]);
     }
   });
 
   it("a fresh draft with no key has one of three ready", () => {
     const items = ready(emptyDraft(), []);
-    expect(items.map((item) => item.ready)).toEqual([true, false, false]);
-    expect(items.map((item) => item.value)).toEqual(["written for you", "Needs an Anthropic key", "needed"]);
+    expect(items.map((item) => item.ready)).toEqual([false, true, false]);
+    expect(items.map((item) => item.value)).toEqual(["needed", "written for you", "Needs an Anthropic key"]);
   });
 
   it("a fresh draft on a key has two of three ready", () => {
@@ -479,8 +479,8 @@ describe("readyItems", () => {
       d.llmKeyId = "key_a";
     });
     const items = ready(draft, [anthropic]);
-    expect(items.map((item) => item.ready)).toEqual([true, true, false]);
-    expect(items[1].value).toBe(`Anthropic · ${DEFAULT_AGENT_CONFIG.llm.model} on your key`);
+    expect(items.map((item) => item.ready)).toEqual([false, true, true]);
+    expect(items[2].value).toBe(`Anthropic · ${DEFAULT_AGENT_CONFIG.llm.model} on your key`);
   });
 
   it("a named draft shows the trimmed name, and an empty prompt is needed", () => {
@@ -490,9 +490,9 @@ describe("readyItems", () => {
       d.config.strategyPrompt = "";
     });
     const items = ready(draft, [anthropic]);
-    expect(items.map((item) => item.ready)).toEqual([false, true, true]);
-    expect(items[0].value).toBe("needed");
-    expect(items[2].value).toBe("Momentum Mike");
+    expect(items.map((item) => item.ready)).toEqual([true, false, true]);
+    expect(items[1].value).toBe("needed");
+    expect(items[0].value).toBe("Momentum Mike");
   });
 });
 
@@ -519,7 +519,7 @@ describe("stillNeeded", () => {
         [anthropic],
       ),
     ).toBe("a name");
-    expect(needed(emptyDraft(), [])).toBe("a key and a name");
+    expect(needed(emptyDraft(), [])).toBe("a name and a key");
     expect(
       needed(
         draftWith((d) => {
@@ -527,7 +527,7 @@ describe("stillNeeded", () => {
         }),
         [],
       ),
-    ).toBe("a strategy, a key and a name");
+    ).toBe("a name, a strategy and a key");
   });
 
   it("on pay per use asks for a model, or for the limits to be checked", () => {
@@ -539,7 +539,7 @@ describe("stillNeeded", () => {
     const lowDay = payPerUse((d) => {
       d.config.llm.usdc = { ...d.config.llm.usdc!, maxUsdPerDay: 0.01 };
     });
-    expect(needed(lowDay, [], true)).toBe("its limits checked and a name");
+    expect(needed(lowDay, [], true)).toBe("a name and its limits checked");
     expect(
       needed(
         payPerUse((d) => {

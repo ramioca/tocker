@@ -19,7 +19,7 @@ const PRESS =
  * The commit bar: what it costs, then the way forward. Sticky glass so the
  * decision is always in reach, above the mobile tab bar on phones.
  *
- * On the first three steps the way forward is Next, which never refuses. On the last it
+ * On every step but the last the way forward is Next, which never refuses. On the last it
  * is the chrome Create button. While something required is still missing on that last
  * step, from `sm` up the cost sentence gives way to a button that says what and takes the
  * user to it, with the money a funded agent will ask them to sign in front of either. A
@@ -45,7 +45,7 @@ export function CommitBar({
   peek,
 }: {
   step: BuilderStepId;
-  /** Where Next goes, in words ("Rules"). Null on the last step, which has Create instead. */
+  /** Where Next goes, in words ("Where it hunts"). Null on the last step, which has Create instead. */
   nextLabel: string | null;
   /** Null on the first step. */
   onBack: ((via: Via) => void) | null;

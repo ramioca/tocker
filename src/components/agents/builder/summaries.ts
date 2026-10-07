@@ -1,14 +1,15 @@
 /**
- * The figures and sentences the builder quotes about a draft: the closed rule cards, the
- * cost sentence of the bottom bar, and the agent card. Each is worked out here, once, so
- * the card and the page can never quote two different numbers for the same draft.
+ * The figures and sentences the builder quotes about a draft: the read-back line of each
+ * rule step, the cost sentence of the bottom bar, and the agent card. Each is worked out
+ * here, once, so the card and the page can never quote two different numbers for the
+ * same draft.
  *
  * Pure, no React, and it imports only `.ts` modules so a node test can load it
  * (`summaries.test.ts`). The two labels that live in `.tsx` files arrive as `labels`,
  * and the hunts text arrives as a string.
  *
- * The card summaries and the one-line cost text were inline in `agent-builder.tsx`. They
- * are moved, not reworded: the tests pin them character for character.
+ * The summaries and the one-line cost text were inline in `agent-builder.tsx`. They are
+ * moved, not reworded: the tests pin them character for character.
  */
 import { formatUsd } from "@/components/common/format";
 import { checkUsdc, shownSource, usdcEstimate, walletNeedUsd } from "@/components/agents/thinking";
@@ -74,7 +75,7 @@ export function costFacts(
   };
 }
 
-/** The closed "Data it buys" card. */
+/** The "Data it buys" line: the step's read-back and the agent card's row. */
 export function dataSummary(facts: CostFacts): string {
   return facts.chosenCount === 0 && facts.radarPerRun === 0
     ? // Not "nothing to pay for": every sweep buys the launch radar whatever
@@ -89,8 +90,8 @@ export function dataSummary(facts: CostFacts): string {
 }
 
 /**
- * The closed "Risk limits" card. The fee closes the line: this is the one sentence about
- * trades that is on screen without opening anything, and nothing else names the fee.
+ * The "Risk limits" line. The fee closes it: this is the one sentence about trades that
+ * is on screen before any control, and nothing else names the fee.
  */
 export function riskSummary(risk: BuilderDraft["config"]["risk"], feeUsd: number): string {
   return `${formatUsd(risk.maxTradeUsd)}/trade · ${risk.maxDailyTrades}/day · ${risk.maxPositionPct}% max position · ${formatUsd(risk.maxDataSpendUsdPerRun)} data/run${
@@ -106,7 +107,7 @@ function holdLabel(hours: number): string {
 
 /**
  * The agent card's "When it sells" row: the exit rules that are on, in the order the
- * Risk card lists them. A rule that is off is left out.
+ * Risk limits step lists them. A rule that is off is left out.
  */
 export function exitSummary(risk: BuilderDraft["config"]["risk"]): string {
   const on = (value: number | null | undefined): value is number => value !== null && value !== undefined;
@@ -123,7 +124,7 @@ export function exitSummary(risk: BuilderDraft["config"]["risk"]): string {
   return line.charAt(0).toUpperCase() + line.slice(1);
 }
 
-/** The closed "Funding" card. */
+/** The "Funding" line. */
 export function fundingSummary(draft: BuilderDraft, facts: CostFacts): string {
   return draft.funding.mode === "paper"
     ? facts.thinkingNeedUsd !== null
@@ -133,7 +134,7 @@ export function fundingSummary(draft: BuilderDraft, facts: CostFacts): string {
     : `${formatUsd(draft.funding.amountUsd)} USDC, signed by you on create`;
 }
 
-/** The closed "Schedule & mode" card. */
+/** The "Schedule & mode" line. */
 export function scheduleSummary(draft: BuilderDraft, facts: CostFacts, labels: SummaryLabels): string {
   const interval = facts.intervalMinutes;
   const execution = executionLabel(draft.config.execution, labels);
@@ -146,8 +147,8 @@ export function scheduleSummary(draft: BuilderDraft, facts: CostFacts, labels: S
 
 /**
  * "asks before each trade (1 h to decide)" or "trades on its own". "Ask me first" is the
- * default, and an agent in it never fills until you approve; with the Schedule card
- * closed, nothing else on the page said so.
+ * default, and an agent in it never fills until you approve; away from the Schedule
+ * step, nothing else on the page says so.
  */
 export function executionLabel(execution: BuilderDraft["config"]["execution"], labels: SummaryLabels): string {
   return execution.mode === "approve"
@@ -155,7 +156,7 @@ export function executionLabel(execution: BuilderDraft["config"]["execution"], l
     : "trades on its own";
 }
 
-/** The paper balance in the short form of the Schedule card's buttons: "$10K". */
+/** The paper balance in the short form of the Schedule step's buttons: "$10K". */
 export function paperLabel(usd: number): string {
   return usd >= 1_000 ? `$${usd / 1_000}K` : formatUsd(usd);
 }
@@ -281,7 +282,7 @@ export function stillNeeded(items: ReadyItem[], errors: Record<string, string>):
 
 const ROW_ORDER: readonly PreviewRowId[] = ["hunts", "data", "limits", "exits", "runs", "thinks", "money"];
 
-// Each row is named after the card it opens, so the agent card and the page use the same words.
+// Each row is named after the step it leads to, so the agent card and the page use the same words.
 const ROW_LABEL: Record<PreviewRowId, string> = {
   hunts: "Where it hunts",
   data: "Data it buys",

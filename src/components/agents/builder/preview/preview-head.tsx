@@ -11,8 +11,8 @@ export const KICKER = "font-mono text-[11px] tracking-[0.14em] text-muted-foregr
 
 /**
  * Block A of the agent card: the avatar, the name, the tagline, who can see it, and how
- * often it runs on which chains. The name is the way to the name field, because for
- * three steps out of four it reads "Unnamed agent" and the field is on the last one.
+ * often it runs on which chains. The name is the way back to the name field, which is on
+ * the first step: on any other step, this is how to change it.
  */
 export function PreviewHead({
   draft,

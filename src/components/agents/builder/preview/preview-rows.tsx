@@ -32,7 +32,7 @@ const ROW =
 
 /**
  * Block C of the agent card: the strategy in the user's own words, then the seven rules
- * that are already set. Each row is the way to the card it names.
+ * that are already set. Each row is the way to the step it names.
  *
  * Values swap in place and never animate: a slider can change one many times a second.
  * The one exception is a choice that rewrites several rows at once (a strategy preset, a

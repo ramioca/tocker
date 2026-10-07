@@ -1,6 +1,14 @@
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CUSTOM_STRATEGY } from "./strategy-presets";
 import type { StrategyPreset } from "./types";
+
+const CARD =
+  "flex min-h-11 flex-col gap-1.5 rounded-xl border p-3 text-left " +
+  "transition-[border-color,background-color,scale] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97] " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const CARD_ON = "border-primary/50 bg-primary/8";
+const CARD_OFF = "border-border/70 bg-card/30 hover:border-border hover:bg-card/60";
 
 /**
  * The strategy presets as cards: what each one is, and a line of facts about the agent
@@ -13,6 +21,8 @@ export function StrategyPresetCards({
   factsLine,
   feeNote,
   onApply,
+  customPressed,
+  onCustom,
 }: {
   presets: StrategyPreset[];
   /** The preset whose prompt is the draft's, or null when the prompt is the owner's own. */
@@ -22,7 +32,11 @@ export function StrategyPresetCards({
   /** What the flat fee takes from this preset's ticket; empty when there is nothing to say. */
   feeNote: (preset: StrategyPreset) => string;
   onApply: (preset: StrategyPreset) => void;
+  /** The prompt is empty or the owner's own, so the blank card is the one that is on. */
+  customPressed: boolean;
+  onCustom: () => void;
 }) {
+  const custom = `strategy-preset-${CUSTOM_STRATEGY.id}`;
   return (
     <div className="grid gap-2 sm:grid-cols-2">
       {presets.map((preset) => {
@@ -38,14 +52,7 @@ export function StrategyPresetCards({
             aria-labelledby={`${base}-label`}
             aria-describedby={`${base}-blurb ${base}-facts`}
             onClick={() => onApply(preset)}
-            className={cn(
-              "flex min-h-11 flex-col gap-1.5 rounded-xl border p-3 text-left",
-              "transition-[border-color,background-color,scale] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              active
-                ? "border-primary/50 bg-primary/8"
-                : "border-border/70 bg-card/30 hover:border-border hover:bg-card/60",
-            )}
+            className={cn(CARD, active ? CARD_ON : CARD_OFF)}
           >
             <span className="flex items-center gap-1.5">
               <span id={`${base}-label`} className="text-sm font-medium">
@@ -69,6 +76,30 @@ export function StrategyPresetCards({
           </button>
         );
       })}
+      {/* The blank slate: across both columns and dashed, so it reads as an empty page
+          and not as a fifth way of trading. */}
+      <button
+        type="button"
+        aria-pressed={customPressed}
+        aria-labelledby={`${custom}-label`}
+        aria-describedby={`${custom}-blurb ${custom}-facts`}
+        onClick={onCustom}
+        className={cn(CARD, "border-dashed sm:col-span-2", customPressed ? CARD_ON : CARD_OFF)}
+      >
+        <span className="flex items-center gap-1.5">
+          <span id={`${custom}-label`} className="text-sm font-medium">
+            {CUSTOM_STRATEGY.label}
+          </span>
+          {customPressed ? <Check aria-hidden className="size-3.5 text-primary" /> : null}
+        </span>
+        <span id={`${custom}-blurb`} className="text-xs leading-relaxed text-muted-foreground">
+          {CUSTOM_STRATEGY.blurb}
+          <span className="sr-only"> Clears the strategy prompt; you can undo it.</span>
+        </span>
+        <span id={`${custom}-facts`} className="tnum pt-0.5 font-mono text-[11px] leading-4 text-muted-foreground">
+          {CUSTOM_STRATEGY.facts}
+        </span>
+      </button>
     </div>
   );
 }

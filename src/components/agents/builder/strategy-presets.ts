@@ -8,7 +8,7 @@
 import { formatUsd } from "@/components/common/format";
 import type { Chain } from "@/server/types";
 import type { SummaryLabels } from "./contract";
-import type { BuilderDraft, StrategyPreset } from "./types";
+import { STRATEGY_PRESETS, emptyDraft, type BuilderDraft, type StrategyPreset } from "./types";
 
 type Config = BuilderDraft["config"];
 
@@ -75,4 +75,37 @@ export function presetFacts(config: Config, labels: SummaryLabels): string {
     `up to ${formatUsd(config.risk.maxTradeUsd)} a trade`,
     config.execution.mode === "approve" ? "asks first" : "trades on its own",
   ].join(" · ");
+}
+
+/**
+ * The fifth card: no preset at all. It is written out here rather than added to
+ * STRATEGY_PRESETS because it is not one: it carries no prompt, no chains and no sources.
+ */
+export const CUSTOM_STRATEGY = {
+  id: "custom",
+  label: "Custom",
+  blurb: "Write your own from scratch.",
+  facts: "Keeps every rule as it is",
+} as const;
+
+/**
+ * The config Custom leaves behind: an empty prompt and every other value as it was.
+ * The input is not changed.
+ */
+export function applyCustomTo(config: Config): Config {
+  return { ...config, strategyPrompt: "" };
+}
+
+/**
+ * Whether the Custom card reads as pressed: the prompt is empty, or it is the owner's own
+ * words. A preset's prompt presses that preset's card instead, and the prompt a fresh
+ * draft starts with presses nothing, because nobody has chosen anything yet.
+ */
+export function isCustomPressed(
+  prompt: string,
+  presets: readonly StrategyPreset[] = STRATEGY_PRESETS,
+  defaultPrompt: string = emptyDraft().config.strategyPrompt,
+): boolean {
+  if (prompt.trim() === "") return true;
+  return prompt !== defaultPrompt && !presets.some((preset) => preset.prompt === prompt);
 }

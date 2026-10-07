@@ -54,7 +54,14 @@ import { parseBps } from "./parse-value";
 import { slippageMeaning } from "./slippage-copy";
 import { UniverseControls } from "./universe-controls";
 import { StrategyPresetCards } from "./strategy-preset-cards";
-import { applyPresetTo, presetChanges, presetFacts } from "./strategy-presets";
+import {
+  CUSTOM_STRATEGY,
+  applyCustomTo,
+  applyPresetTo,
+  isCustomPressed,
+  presetChanges,
+  presetFacts,
+} from "./strategy-presets";
 import { SimpleSelect } from "./simple-select";
 import {
   AVATAR_SEEDS,
@@ -654,6 +661,7 @@ export function StrategyStep({
   feeUsd?: number;
 }) {
   const pressedPreset = STRATEGY_PRESETS.find((preset) => preset.prompt === draft.config.strategyPrompt) ?? null;
+  const promptRef = useRef<HTMLTextAreaElement>(null);
   // A preset that sets a small ticket also decides how much of every trade the flat fee
   // takes, and its paper record starts that far under water. Said with the blurb, from
   // the preset's own size and the server's fee, so neither number is written twice.
@@ -686,6 +694,27 @@ export function StrategyStep({
     });
   };
 
+  const applyCustom = () => {
+    const previous = draft.config.strategyPrompt;
+    // Already on Custom with words in the box: those words are the user's own. Tapping the
+    // card again takes them to the box and clears nothing.
+    if (previous.trim() !== "" && isCustomPressed(previous)) {
+      promptRef.current?.focus();
+      return;
+    }
+    // Only the prompt is written, and only the prompt comes back on Undo: a rule changed
+    // while the toast is up is not Custom's to take away.
+    updateConfig({ strategyPrompt: applyCustomTo(draft.config).strategyPrompt });
+    // The card's whole point is the empty box, so that is where the caret goes.
+    promptRef.current?.focus();
+    if (previous.trim() === "") return;
+    toast(`${CUSTOM_STRATEGY.label} applied`, {
+      description: "Cleared the strategy prompt.",
+      action: { label: "Undo", onClick: () => updateConfig({ strategyPrompt: previous }) },
+      duration: 8_000,
+    });
+  };
+
   return (
     <div className="space-y-5">
       <div className="space-y-2">
@@ -697,6 +726,8 @@ export function StrategyStep({
           factsLine={(preset) => presetFacts(applyPresetTo(draft.config, preset), PRESET_LABELS)}
           feeNote={presetFeeNote}
           onApply={applyPreset}
+          customPressed={isCustomPressed(draft.config.strategyPrompt)}
+          onCustom={applyCustom}
         />
         {/* Screen readers get the same promise from each card's own description, so this
             line stays out of their way. */}
@@ -714,6 +745,7 @@ export function StrategyStep({
         <div className="space-y-2">
           <Textarea
             id="strategy-prompt"
+            ref={promptRef}
             value={draft.config.strategyPrompt}
             aria-invalid={Boolean(errors.strategyPrompt)}
             aria-describedby={errors.strategyPrompt ? "strategy-prompt-error" : undefined}

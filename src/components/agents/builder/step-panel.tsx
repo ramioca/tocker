@@ -11,6 +11,9 @@ import { cn } from "@/lib/utils";
  * deep link, a restored draft and the browser's Back button swap the panel at once.
  * Leaving has no motion at all, so an exit is always faster than an entrance. Where
  * `@starting-style` is not supported the panel simply appears.
+ *
+ * A step whose settings start on a default says what they are now (`now`), in the same
+ * sentence the agent card shows, so the user reads the setting before the controls.
  */
 export function StepPanel({
   id,
@@ -19,6 +22,7 @@ export function StepPanel({
   animate,
   title,
   lead,
+  now,
   children,
 }: {
   id: BuilderStepId;
@@ -28,6 +32,8 @@ export function StepPanel({
   animate: boolean;
   title: string;
   lead: React.ReactNode;
+  /** The step's settings as one sentence, read back under the lead. */
+  now?: string;
   children: React.ReactNode;
 }) {
   const titleId = `step-${id}-title`;
@@ -52,7 +58,21 @@ export function StepPanel({
         {title}
       </h2>
       <p className="mt-1 text-sm text-muted-foreground">{lead}</p>
+      {now ? <NowLine text={now} className="mt-3" /> : null}
       <div className="mt-6">{children}</div>
     </section>
+  );
+}
+
+/**
+ * What a group of settings comes to, as the one sentence the agent card shows for it.
+ * Quiet on purpose: it is a read-back, not a control and not an announcement.
+ */
+export function NowLine({ text, className }: { text: string; className?: string }) {
+  return (
+    <p className={cn("tnum border-l-2 border-border pl-3 text-xs leading-5 text-muted-foreground", className)}>
+      <span className="text-foreground/80">Now: </span>
+      {text}
+    </p>
   );
 }

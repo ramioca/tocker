@@ -7,7 +7,14 @@
  */
 import { describe, expect, it } from "vitest";
 import { agentConfigSchema } from "@/lib/agent/config";
-import { applyPresetTo, presetChanges, presetFacts } from "./strategy-presets";
+import {
+  CUSTOM_STRATEGY,
+  applyCustomTo,
+  applyPresetTo,
+  isCustomPressed,
+  presetChanges,
+  presetFacts,
+} from "./strategy-presets";
 import { STRATEGY_PRESETS, UNIVERSE_PRESETS, emptyDraft, type BuilderDraft, type StrategyPreset } from "./types";
 
 type Config = BuilderDraft["config"];
@@ -259,5 +266,76 @@ describe("presetFacts", () => {
     expect(presetFacts({ ...emptyDraft().config, schedule: { intervalMinutes: 0 } }, labels)).toBe(
       "Solana · manual only · up to $100.00 a trade · asks first",
     );
+  });
+});
+
+describe("applyCustomTo", () => {
+  it("empties the prompt and changes nothing else", () => {
+    const before = tuned();
+    const { strategyPrompt, ...rest } = applyCustomTo(before);
+    const { strategyPrompt: previous, ...restBefore } = before;
+    expect(strategyPrompt).toBe("");
+    expect(previous).not.toBe("");
+    expect(rest).toEqual(restBefore);
+  });
+
+  it("keeps what a preset set, whichever preset came first", () => {
+    for (const entry of STRATEGY_PRESETS) {
+      const after = applyPresetTo(emptyDraft().config, entry);
+      expect(applyCustomTo(after)).toEqual({ ...after, strategyPrompt: "" });
+    }
+  });
+
+  it("does not change the config it is given", () => {
+    const before = tuned();
+    const frozen = structuredClone(before);
+    applyCustomTo(before);
+    expect(before).toEqual(frozen);
+  });
+
+  it("leaves a prompt the server refuses, as clearing the box by hand does", () => {
+    expect(agentConfigSchema.safeParse(applyCustomTo(emptyDraft().config)).success).toBe(false);
+  });
+});
+
+describe("isCustomPressed", () => {
+  it("is not pressed on a fresh draft", () => {
+    expect(isCustomPressed(emptyDraft().config.strategyPrompt)).toBe(false);
+  });
+
+  it("is pressed once Custom has emptied the prompt", () => {
+    expect(isCustomPressed(applyCustomTo(emptyDraft().config).strategyPrompt)).toBe(true);
+    expect(isCustomPressed("  \n")).toBe(true);
+  });
+
+  it("is pressed on the owner's own words", () => {
+    expect(isCustomPressed(tuned().strategyPrompt)).toBe(true);
+  });
+
+  it.each(STRATEGY_PRESETS.map((entry) => [entry.id, entry] as const))(
+    "is not pressed while %s is",
+    (_id, entry) => {
+      expect(isCustomPressed(entry.prompt)).toBe(false);
+    },
+  );
+
+  it("is pressed as soon as a preset's prompt is edited", () => {
+    expect(isCustomPressed(`${preset("momentum").prompt} Never buy on a Sunday.`)).toBe(true);
+    expect(isCustomPressed(`${emptyDraft().config.strategyPrompt} Never buy on a Sunday.`)).toBe(true);
+  });
+});
+
+describe("CUSTOM_STRATEGY", () => {
+  it("does not share an id with a preset", () => {
+    expect(STRATEGY_PRESETS.map((entry) => entry.id)).not.toContain(CUSTOM_STRATEGY.id);
+  });
+
+  it("says what the card says", () => {
+    expect(CUSTOM_STRATEGY).toEqual({
+      id: "custom",
+      label: "Custom",
+      blurb: "Write your own from scratch.",
+      facts: "Keeps every rule as it is",
+    });
   });
 });
