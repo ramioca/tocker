@@ -1,7 +1,10 @@
+import type { CSSProperties } from "react";
 import type { PortfolioPoint } from "@/components/spectrumui/charts/portfolio-chart";
 import { TokenIcon } from "@/components/common/token-icon";
 import { COINS, type CoinName } from "./coins";
 import { PerformanceChart } from "./performance-chart";
+import { InView } from "./sec-in-view";
+import { Ticker } from "./sec-ticker";
 import { DEFAULT_DATA_BUDGET_USD, usd2 } from "./signals-data";
 
 /**
@@ -11,7 +14,10 @@ import { DEFAULT_DATA_BUDGET_USD, usd2 } from "./signals-data";
  * deliberately unnamed: it is not the hero's agent.
  *
  * A server component: the series and sparklines are computed here once, and
- * only the chart (performance-chart.tsx) and the token logos hydrate.
+ * only the chart (performance-chart.tsx), the token logos and two small motion
+ * leaves hydrate: the figures count up once (sec-ticker.tsx) and the sparklines
+ * and meter draw in once (sec-in-view.tsx), each from a server-rendered final
+ * state that is what paints without script or with reduced motion.
  */
 
 const DAY = 86_400_000;
@@ -33,6 +39,18 @@ const EQUITY: PortfolioPoint[] = (() => {
     out.push({ t: END - (89 - i) * DAY, value: Math.round(value * 100) / 100, basis: START_USD });
   }
   return out;
+})();
+
+/** The book's return over the window and its worst peak-to-trough fall, in percent. */
+const RETURN_PCT = ((EQUITY[EQUITY.length - 1]!.value - START_USD) / START_USD) * 100;
+const MAX_DRAWDOWN_PCT = (() => {
+  let peak = START_USD;
+  let worst = 0;
+  for (const p of EQUITY) {
+    peak = Math.max(peak, p.value);
+    worst = Math.max(worst, (peak - p.value) / peak);
+  }
+  return worst * 100;
 })();
 
 const TRADES = 163;
@@ -94,12 +112,37 @@ export function PerformancePanel() {
     <div className="lp-perf lp-frame" role="group" aria-label="Sample book">
       <div className="lp-perf-bar lp-label">
         <span>Sample book · paper · 90 days</span>
-        <span className="lp-perf-bar-stats">
-          {TRADES} trades · {WIN_RATE}% won
-        </span>
+        <span className="lp-perf-bar-stats">Illustrative figures</span>
       </div>
 
-      <div className="lp-perf-grid">
+      <dl className="lp-perf-kpis" aria-label="Sample book, 90 days">
+        <div className="lp-perf-kpi">
+          <dt className="lp-label">Return</dt>
+          <dd className="lp-mono lp-up">
+            <Ticker value={RETURN_PCT} decimals={1} suffix="%" signed />
+          </dd>
+        </div>
+        <div className="lp-perf-kpi">
+          <dt className="lp-label">Max drawdown</dt>
+          <dd className="lp-mono">
+            <Ticker value={MAX_DRAWDOWN_PCT} decimals={1} suffix="%" />
+          </dd>
+        </div>
+        <div className="lp-perf-kpi">
+          <dt className="lp-label">Trades</dt>
+          <dd className="lp-mono">
+            <Ticker value={TRADES} />
+          </dd>
+        </div>
+        <div className="lp-perf-kpi">
+          <dt className="lp-label">Won</dt>
+          <dd className="lp-mono">
+            <Ticker value={WIN_RATE} suffix="%" />
+          </dd>
+        </div>
+      </dl>
+
+      <InView className="lp-perf-grid">
         <div className="lp-perf-chart">
           <PerformanceChart
             data={EQUITY}
@@ -124,10 +167,10 @@ export function PerformancePanel() {
             {/* The rows are a picture of the list; the label carries every figure in it. */}
             <div role="img" aria-label={POSITIONS_LABEL}>
               <div className="lp-perf-rows" inert>
-                {POSITIONS.map((p) => {
+                {POSITIONS.map((p, i) => {
                   const v = show(p);
                   return (
-                  <div key={p.token} className="lp-pos">
+                  <div key={p.token} className="lp-pos" style={{ "--i": i } as CSSProperties}>
                     <TokenIcon token={COINS[p.token]} size="md" className="lp-pos-logo" />
                     <span className="lp-pos-id">
                       <span className="lp-pos-name">{p.token}</span>
@@ -141,15 +184,16 @@ export function PerformancePanel() {
                       preserveAspectRatio="none"
                       aria-hidden
                     >
-                      <path d={p.spark.area} fill="currentColor" opacity="0.08" />
+                      <path className="lp-pos-spark-area" d={p.spark.area} fill="currentColor" opacity="0.08" />
                       <path
+                        className="lp-pos-spark-line"
+                        pathLength={1}
                         d={p.spark.line}
                         fill="none"
                         stroke="currentColor"
-                        strokeWidth="1.5"
+                        strokeWidth="1.7"
                         strokeLinejoin="round"
                         strokeLinecap="round"
-                        vectorEffect="non-scaling-stroke"
                       />
                     </svg>
                     <span className={`lp-mono lp-pos-pnl ${v.up ? "lp-up" : "lp-down"}`}>{v.pnl}</span>
@@ -163,14 +207,15 @@ export function PerformancePanel() {
           <div className="lp-perf-data">
             <p className="lp-perf-label lp-label">Data per run</p>
             <p className="lp-perf-data-value lp-mono">
-              {usd2(DATA_PER_RUN_USD)} <span>avg · {usd2(DEFAULT_DATA_BUDGET_USD)} budget</span>
+              <Ticker value={DATA_PER_RUN_USD} decimals={2} prefix="$" />{" "}
+              <span className="lp-perf-data-meta">avg · {usd2(DEFAULT_DATA_BUDGET_USD)} budget</span>
             </p>
             <div className="lp-perf-meter" aria-hidden>
               <span style={{ width: `${(DATA_PER_RUN_USD / DEFAULT_DATA_BUDGET_USD) * 100}%` }} />
             </div>
           </div>
         </div>
-      </div>
+      </InView>
     </div>
   );
 }

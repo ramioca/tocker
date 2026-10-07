@@ -1,44 +1,56 @@
-import type { CSSProperties } from "react";
 import { AppLink } from "./app-link";
+import { HeroIntro } from "./hero-intro";
 import { HeroRun } from "./hero-run";
 import { HeroShader } from "./hero-shader";
 
 /**
  * Hero: an eyebrow, the two-line promise, one sentence on how, one action and
- * one quiet link. Under them sits a single flat card, the sample agent's latest
- * run as its owner sees it (hero-run.tsx). The action goes to sign-in, where a
- * new address makes an account; with a session cookie on the request it opens
- * the app instead.
+ * one quiet link. Under them sits a single card, the sample agent's latest run
+ * as its owner sees it (hero-run.tsx). The action goes to sign-in, where a new
+ * address makes an account; with a session cookie on the request it opens the
+ * app instead.
  *
- * The type rises in on load, in a short stagger. The headline only slides: it
- * is the largest text on the screen, and an element painted at opacity 0 is
- * not counted as painted, so a fade would hold back the first meaningful paint.
+ * Behind the type, three still layers and one moving one: a painted poster of
+ * the aurora (always there, and all there is under reduced motion or without
+ * WebGPU), the live aurora canvas that crossfades in over it once it has drawn,
+ * and a faint 1px grid masked to a pool of light at the top.
+ *
+ * Every word is in the server HTML. HeroIntro (a client leaf around this markup)
+ * plays the load-in once: the headline and the sentence rise line by line out of
+ * masks, then the actions, then the card out of depth. The parts it moves carry
+ * `lp-intro`; see landing-hero.css for how they wait for it, and for how long.
  */
-
-const delay = (s: string) => ({ "--reveal-delay": s }) as CSSProperties;
-
 export function Hero({ hasSession }: { hasSession: boolean }) {
   return (
-    <section className="lp-hero" aria-labelledby="lp-hero-title">
-      <HeroShader />
+    <HeroIntro labelledBy="lp-hero-title">
+      <div className="lp-hero-bg" aria-hidden>
+        <div className="lp-hero-poster" />
+        <HeroShader />
+        <div className="lp-hero-grid lp-grid-bg" />
+      </div>
       <div className="lp-hero-head lp-wrap">
-        <p className="lp-hero-eyebrow lp-eyebrow reveal" style={delay("0s")}>
+        <p className="lp-hero-eyebrow lp-eyebrow lp-intro">
           <span className="lp-hero-dot" aria-hidden />
           {/* One item beside the dot, so the two halves keep a word space between them. */}
           <span>
             Now open<span className="lp-hero-eyebrow-more"> · Solana and Base</span>
           </span>
         </p>
-        <h1 id="lp-hero-title" className="lp-h1 reveal" style={delay("0.06s")}>
-          <span className="lp-h1-line">Your agent trades</span>{" "}
-          <span className="lp-h1-line">
-            while you <span className="lp-mark">sleep</span>.
+        <h1 id="lp-hero-title" className="lp-h1 lp-intro">
+          {/* Two set lines from 640px (each half keeps to one line, and both never fit on one). */}
+          <span className="lp-h1-half">Your agent trades</span>{" "}
+          <span className="lp-h1-half">
+            while you{" "}
+            {/* Word and full stop as one unit: split into lines, they would otherwise be two boxes the line can break between. */}
+            <span className="lp-h1-end">
+              <span className="lp-mark">sleep</span>.
+            </span>
           </span>
         </h1>
-        <p className="lp-hero-sub reveal" style={delay("0.14s")}>
+        <p className="lp-hero-sub lp-intro">
           Describe a strategy in plain English. Your agent screens new tokens and trades the few that clear your bar.
         </p>
-        <div className="lp-hero-ctas reveal" style={delay("0.22s")}>
+        <div className="lp-hero-ctas lp-intro">
           <AppLink hasSession={hasSession} />
           <a href="#how" className="lp-hero-link">
             See how it decides
@@ -50,6 +62,6 @@ export function Hero({ hasSession }: { hasSession: boolean }) {
       </div>
 
       <HeroRun />
-    </section>
+    </HeroIntro>
   );
 }

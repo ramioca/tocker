@@ -11,7 +11,8 @@ type Canvas = typeof import("./hero-shader-canvas").default;
  * Kept off the critical path and out of the way:
  * - the library loads only after the page is idle, so it never delays the headline;
  * - it mounts only where WebGPU exists and motion is welcome; everyone else keeps
- *   the painted CSS glow that was there before;
+ *   the painted poster under it (hero.tsx, `.lp-hero-poster`), which the canvas
+ *   crossfades over once it has drawn its first frame;
  * - the renderer stops drawing while the hero is off screen (the library's own
  *   IntersectionObserver), and the canvas is rendered at a low cap and faded in;
  * - telemetry is off.

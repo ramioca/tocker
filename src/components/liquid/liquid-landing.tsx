@@ -11,6 +11,7 @@ import { Hero } from "./hero";
 import { Nav } from "./nav";
 import { PerformancePanel } from "./performance";
 import { SectionHead } from "./section-head";
+import { SmoothScroll } from "./smooth-scroll";
 import { DEFAULT_DATA_BUDGET_USD, LANDING_SOURCES, usd2, usd3, type LandingSource } from "./signals-data";
 import "./landing.css";
 import "./landing-hero.css";
@@ -32,6 +33,9 @@ import "./landing-sections.css";
  * nothing more: it turns "Sign in" and "Get started" into "Open the app" for
  * someone who is probably signed in already. Nothing is hidden or redirected on
  * it; the app does the real check.
+ *
+ * SmoothScroll (a client provider around the page) sets up Lenis, GSAP's ticker and
+ * ScrollTrigger together, and MotionConfig's reduced-motion policy; see smooth-scroll.tsx.
  *
  * Section order: Nav, Hero, 01 How, 02 Feed, 03 Data, 04 Performance,
  * 05 Guardrails, 06 Questions, closing call to action, Footer.
@@ -125,20 +129,22 @@ const faqTabs = (feeUsd: number, thinking: { model: string; start: string }): Fa
 
 export function LiquidLanding({ hasSession }: { hasSession: boolean }) {
   return (
-    <div className="lp">
-      <Nav hasSession={hasSession} />
-      <main id="main" tabIndex={-1}>
-        <Hero hasSession={hasSession} />
-        <How />
-        <PublicFeed eyebrow="02 — Feed" />
-        <Sources />
-        <Performance />
-        <Guardrails />
-        <Faq />
-        <Close hasSession={hasSession} />
-      </main>
-      <Footer />
-    </div>
+    <SmoothScroll>
+      <div className="lp">
+        <Nav hasSession={hasSession} />
+        <main id="main" tabIndex={-1}>
+          <Hero hasSession={hasSession} />
+          <How />
+          <PublicFeed eyebrow="02 — Feed" />
+          <Sources />
+          <Performance />
+          <Guardrails />
+          <Faq />
+          <Close hasSession={hasSession} />
+        </main>
+        <Footer />
+      </div>
+    </SmoothScroll>
   );
 }
 
