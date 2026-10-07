@@ -1,6 +1,7 @@
-import { Check, Circle, CircleAlert, Pencil } from "lucide-react";
+import { Check, CircleAlert } from "lucide-react";
 import type { BuilderStepId, StepStatus, Via } from "./contract";
-import { EASE, FOCUS, FOCUS_OFFSET, SILK, TYPE } from "./look";
+import { EASE, FOCUS, FOCUS_OFFSET, PartIcon, SILK, TYPE } from "./look";
+import { PART_STROKE } from "./parts";
 import { cn } from "@/lib/utils";
 
 export interface StepView {
@@ -20,20 +21,40 @@ export interface StepView {
 const waiting = (status: StepStatus) => status === "needed" || status === "fix";
 
 /**
- * A step's status as a shape, so no state is told by colour alone. A step still on its
- * defaults has none: nothing happened there.
+ * A step's status as a badge on the corner of its icon, a shape for each so no state is
+ * told by colour alone: a tick disc (ready), a dashed ring (needed), a dot (edited), an
+ * alert (fix). A step still on its defaults has none: nothing happened there.
+ *
+ * The wrapper is always in the tree, so a badge appearing is a transition that can be
+ * interrupted. The dot and the disc are fills, which forced colours would paint over, so
+ * each names a system colour there.
  */
-function StatusGlyph({ status, error, current }: { status: StepStatus; error: boolean; current: boolean }) {
-  const shape = "size-3 shrink-0";
-  if (error || status === "fix") return <CircleAlert className={cn(shape, "text-destructive")} strokeWidth={2.5} />;
-  if (status === "ready") return <Check className={cn(shape, "text-primary")} strokeWidth={2.5} />;
-  if (status === "edited") return <Pencil className={cn(shape, "text-muted-foreground")} strokeWidth={2.5} />;
-  if (status === "needed") {
-    return (
-      <Circle className={cn(shape, current ? "text-foreground" : "text-muted-foreground")} strokeWidth={2.5} />
-    );
-  }
-  return null;
+function StateBadge({ status, error }: { status: StepStatus; error: boolean }) {
+  const kind = error ? "fix" : status;
+  return (
+    <span
+      data-state={kind}
+      className={cn(
+        "absolute -right-2 -bottom-1 grid size-3 place-items-center rounded-full bg-background ring-1 ring-background",
+        "transition-[opacity,scale] duration-150",
+        EASE,
+        "motion-reduce:scale-100",
+        kind === "defaults" ? "scale-75 opacity-0" : "scale-100 opacity-100",
+      )}
+    >
+      {kind === "ready" ? (
+        <span className="grid size-3 place-items-center rounded-full bg-primary text-primary-foreground forced-colors:bg-[Highlight] forced-colors:text-[HighlightText]">
+          <Check className="size-2" strokeWidth={4} />
+        </span>
+      ) : kind === "needed" ? (
+        <span className="size-3 rounded-full border-[1.5px] border-dashed border-foreground/60" />
+      ) : kind === "edited" ? (
+        <span className="size-1.5 rounded-full bg-foreground/80 forced-colors:bg-[CanvasText]" />
+      ) : kind === "fix" ? (
+        <CircleAlert className="size-3 text-destructive" strokeWidth={2.5} />
+      ) : null}
+    </span>
+  );
 }
 
 /**
@@ -42,8 +63,9 @@ function StatusGlyph({ status, error, current }: { status: StepStatus; error: bo
  *
  * The steps are a rail: eight segments, filled up to the current step, each with its
  * slice of one gradient, so the first is always blue and the last always pink. From `sm`
- * up a one-word label and a status glyph sit under each segment. The status word is
- * printed once, in the line under the rail.
+ * up the step's icon, with its status on a badge, sits under each segment over a one-word
+ * label. The icon is the one the agent card draws for the same part. The status word is
+ * printed once, in the line under the rail, which carries the current step's icon too.
  *
  * On a phone there is no room for eight labels: the rail and that one line share a single
  * 44px row. The buttons touch, with the gap drawn inside each one, so every pixel of the
@@ -85,8 +107,10 @@ export function BuilderStepper({
                 // detail is 0 when a click comes from Enter or Space: a keyboard move swaps
                 // the step at once, a pointer move plays the short entrance.
                 onClick={(event) => onGo(step.id, event.detail === 0 ? "keyboard" : "pointer")}
+                data-step={step.id}
+                data-status={error ? "fix" : step.status}
                 className={cn(
-                  "group flex h-11 w-full flex-col justify-start rounded-md px-[3px] pt-2 text-left sm:h-10 sm:px-0 sm:pt-1 sm:pointer-coarse:h-11",
+                  "group flex h-11 w-full flex-col justify-start rounded-md px-[3px] pt-2 text-left sm:h-14 sm:px-0 sm:pt-1",
                   "disabled:pointer-events-none",
                   FOCUS,
                   FOCUS_OFFSET,
@@ -121,20 +145,30 @@ export function BuilderStepper({
                   <CircleAlert aria-hidden className="mx-auto mt-1 size-3 text-destructive sm:hidden" strokeWidth={2.5} />
                 ) : null}
 
-                {/* sm and up: status glyph and name. */}
+                {/* sm and up: the part's icon with its status on a badge, then the name. The
+                    label has the whole cell, so no name is cut short at any width. */}
                 <span
                   aria-hidden
                   className={cn(
-                    "mt-2 hidden items-center gap-1 text-xs leading-4 transition-colors duration-150 sm:flex",
+                    "mt-2.5 hidden origin-left flex-col items-start gap-1.5 transition-[color,scale] duration-150",
+                    EASE,
+                    "group-active:scale-[0.97] motion-reduce:group-active:scale-100 sm:flex",
                     isCurrent
-                      ? "font-semibold text-foreground"
+                      ? "text-foreground"
                       : error
-                        ? "font-medium text-destructive"
-                        : "font-medium text-muted-foreground group-hover:text-foreground",
+                        ? "text-destructive"
+                        : "text-muted-foreground group-hover:text-foreground",
                   )}
                 >
-                  <StatusGlyph status={step.status} error={error} current={isCurrent} />
-                  <span className="truncate">{step.label}</span>
+                  <span className="relative block size-4">
+                    <PartIcon part={step.id} strokeWidth={isCurrent ? 2 : PART_STROKE} />
+                    <StateBadge status={step.status} error={error} />
+                  </span>
+                  <span
+                    className={cn("block w-full truncate text-xs leading-4", isCurrent ? "font-semibold" : "font-medium")}
+                  >
+                    {step.label}
+                  </span>
                 </span>
               </button>
             </li>
@@ -143,19 +177,26 @@ export function BuilderStepper({
       </ol>
 
       {/* Where you are and how the step stands, in words, directly above the step's title.
-          The buttons above and the line below already say it to a screen reader. */}
+          The buttons above and the line below already say it to a screen reader. It leads
+          with the step's icon, which on a phone is the only place the icon shows. */}
       {active ? (
         <p
           aria-hidden
-          className={cn(TYPE.kicker, "pointer-events-none absolute inset-x-0 bottom-0 truncate sm:static sm:mt-6")}
+          className={cn(
+            TYPE.kicker,
+            "pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1.5 sm:static sm:mt-4",
+          )}
         >
-          Step {index + 1} of {steps.length} ·{" "}
-          <span
-            className={cn(
-              active.tone === "error" ? "text-destructive" : waiting(active.status) ? "text-foreground" : null,
-            )}
-          >
-            {active.statusLabel}
+          <PartIcon part={active.id} className="size-3.5" strokeWidth={2} />
+          <span className="truncate">
+            Step {index + 1} of {steps.length} ·{" "}
+            <span
+              className={cn(
+                active.tone === "error" ? "text-destructive" : waiting(active.status) ? "text-foreground" : null,
+              )}
+            >
+              {active.statusLabel}
+            </span>
           </span>
         </p>
       ) : null}

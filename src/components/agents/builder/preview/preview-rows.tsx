@@ -1,22 +1,11 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import {
-  Brain,
-  CalendarClock,
-  ChevronRight,
-  Crosshair,
-  Database,
-  EyeOff,
-  LogOut,
-  ScrollText,
-  ShieldCheck,
-  Wallet,
-  type LucideIcon,
-} from "lucide-react";
+import { ChevronRight, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { REQUIRED_PLACE, type Place, type PreviewRow, type PreviewRowId } from "../contract";
-import { Facts, HAIR, TYPE } from "../look";
+import { REQUIRED_PLACE, type BuilderStepId, type Place, type PreviewRow } from "../contract";
+import { Facts, HAIR, PartIcon, TYPE } from "../look";
+import { ROW_PART } from "../parts";
 import { KICKER } from "./preview-head";
 import { rowsToTint } from "./tint";
 
@@ -46,18 +35,26 @@ const ROW =
   "transition-colors duration-150 hover:bg-white/[0.04] disabled:pointer-events-none " +
   "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
-/** Decorative: the label beside each says what the row is. */
-const ROW_ICON: Record<PreviewRowId, LucideIcon> = {
-  hunts: Crosshair,
-  data: Database,
-  limits: ShieldCheck,
-  exits: LogOut,
-  runs: CalendarClock,
-  thinks: Brain,
-  money: Wallet,
-};
+/** A row's icon is its part's, the one the rail draws. Brighter on the row for the step being edited. */
+const rowIconClass = (current: boolean) =>
+  cn("relative mt-0.5 transition-colors duration-150", current ? "text-foreground" : "text-muted-foreground");
 
-const ROW_ICON_CLASS = "relative mt-0.5 size-4 text-muted-foreground";
+/**
+ * The mark on the row for the step being edited: a bar at its left edge, above the tint.
+ * Always in the tree and opacity only, so there is nothing to drop for reduced motion.
+ */
+export function CurrentBar({ on, className }: { on: boolean; className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "pointer-events-none absolute top-2.5 bottom-2.5 left-0 w-0.5 rounded-full bg-primary transition-opacity duration-150 forced-colors:bg-[Highlight]",
+        on ? "opacity-100" : "opacity-0",
+        className,
+      )}
+    />
+  );
+}
 
 const CHEVRON =
   "relative mt-[3px] size-3.5 text-muted-foreground/60 transition-[color,translate] duration-150 ease-[var(--ease-out-strong)] " +
@@ -72,11 +69,14 @@ const CHEVRON =
  * The one exception is a choice that rewrites several rows at once (a strategy preset, a
  * posture): those rows are tinted for a moment, so it is clear what the choice touched.
  * A draft swapped whole (`quietKey` changed) is not such a choice, and tints nothing.
+ *
+ * The rows edited on the step that is open are marked, by a bar and a brighter icon.
  */
 export function PreviewRows({
   prompt,
   rows,
   onGo,
+  currentStep,
   quietKey,
   disabled = false,
   className,
@@ -85,6 +85,8 @@ export function PreviewRows({
   prompt: string;
   rows: PreviewRow[];
   onGo: (place: Place) => void;
+  /** The step that is open: the rows edited there are marked. */
+  currentStep?: BuilderStepId;
   /** Changes in the same render as the rows when the whole draft was swapped. */
   quietKey?: unknown;
   disabled?: boolean;
@@ -112,6 +114,8 @@ export function PreviewRows({
     return () => window.clearTimeout(timer);
   }, [tinted]);
 
+  const strategyCurrent = currentStep === REQUIRED_PLACE.strategy.step;
+
   return (
     <div className={cn("border-t px-2 pt-4 pb-2 xl:px-3", HAIR, className)} style={style}>
       <h3 id={headingId} className={cn(KICKER, "px-2")}>
@@ -125,11 +129,13 @@ export function PreviewRows({
         data-go
         disabled={disabled}
         aria-label="Strategy. Go to the strategy field."
+        aria-current={strategyCurrent ? "true" : undefined}
         onClick={() => onGo(REQUIRED_PLACE.strategy)}
         className={cn(ROW, "mt-1")}
       >
         <Tint on={tinted.has("strategy")} />
-        <ScrollText aria-hidden className={ROW_ICON_CLASS} strokeWidth={1.75} />
+        <CurrentBar on={strategyCurrent} />
+        <PartIcon part="strategy" className={rowIconClass(strategyCurrent)} />
         <span className="relative min-w-0">
           <span className="flex items-center gap-2">
             <span className="text-[13px] leading-5 font-medium">Strategy</span>
@@ -154,12 +160,20 @@ export function PreviewRows({
 
       <ul aria-labelledby={headingId} className="[&>li]:border-t [&>li]:border-white/[0.05]">
         {rows.map((row) => {
-          const Icon = ROW_ICON[row.id];
+          const current = row.place.step === currentStep;
           return (
             <li key={row.id}>
-              <button type="button" data-go disabled={disabled} onClick={() => onGo(row.place)} className={ROW}>
+              <button
+                type="button"
+                data-go
+                disabled={disabled}
+                aria-current={current ? "true" : undefined}
+                onClick={() => onGo(row.place)}
+                className={ROW}
+              >
                 <Tint on={tinted.has(row.id)} />
-                <Icon aria-hidden className={ROW_ICON_CLASS} strokeWidth={1.75} />
+                <CurrentBar on={current} />
+                <PartIcon part={ROW_PART[row.id]} className={rowIconClass(current)} />
                 <span className="relative min-w-0">
                   <span className="block text-[13px] leading-5 font-medium">{row.label}</span>
                   <span

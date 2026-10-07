@@ -1,8 +1,9 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { RiskSlider, Toggle } from "@/components/agents/builder/field";
-import { parseMagnitude, type ParseValue } from "@/components/agents/builder/parse-value";
+import { useState, type ReactNode } from "react";
+import { Module } from "@/components/agents/builder/module";
+import { SPECS } from "@/components/agents/builder/module-specs";
+import { sayHold, type ValueSpec } from "@/components/agents/builder/typed-value";
 import type { AgentConfig } from "@/db/schema";
 
 type Risk = AgentConfig["risk"];
@@ -35,7 +36,9 @@ export function ExitRulesFields({
 
   return (
     <div className={className}>
-      <div className="space-y-3">
+      {/* One card per rule. Top-aligned, so a rule that is off does not stretch to match
+          an open neighbour. */}
+      <div className="grid items-start gap-3 sm:grid-cols-2">
         <OptionalRule
           id="exit-stop-loss"
           label="Stop loss"
@@ -43,8 +46,8 @@ export function ExitRulesFields({
           value={value.stopLossPct}
           defaultValue={15}
           onChange={(next) => set("stopLossPct", next)}
-          // Shown as a drop, so a typed "-20" means 20, not the −1% minimum.
-          slider={{ min: 1, max: 90, step: 1, format: (v) => `−${v}%`, parse: parseMagnitude }}
+          spec={SPECS.stopLossPct}
+          slider={{ min: 1, max: 90, step: 1 }}
           meaning={(v) => `A position ${v}% below entry is sold on the next pass, at most five minutes later.`}
         />
 
@@ -55,7 +58,8 @@ export function ExitRulesFields({
           value={value.takeProfitPct}
           defaultValue={40}
           onChange={(next) => set("takeProfitPct", next)}
-          slider={{ min: 5, max: 500, step: 5, format: (v) => `+${v}%` }}
+          spec={SPECS.takeProfitPct}
+          slider={{ min: 5, max: 500, step: 5 }}
           meaning={(v) => `Gains are banked at +${v}% instead of waiting for the next thought.`}
         />
 
@@ -66,7 +70,8 @@ export function ExitRulesFields({
           value={value.trailingStopPct}
           defaultValue={25}
           onChange={(next) => set("trailingStopPct", next)}
-          slider={{ min: 5, max: 90, step: 1, format: (v) => `${v}% off peak` }}
+          spec={SPECS.trailingStopPct}
+          slider={{ min: 5, max: 90, step: 1 }}
           meaning={(v) =>
             `A winner that gives back ${v}% of its peak is closed. Set it loose: a ${v}% retrace is ordinary for a launch that is working.`
           }
@@ -79,8 +84,9 @@ export function ExitRulesFields({
           value={value.maxHoldHours}
           defaultValue={24}
           onChange={(next) => set("maxHoldHours", next)}
-          slider={{ min: 1, max: 168, step: 1, format: hoursLabel }}
-          meaning={(v) => `Anything still open after ${hoursLabel(v)} is closed. Capital stops being tied up in a thesis that had its window.`}
+          spec={SPECS.maxHoldHours}
+          slider={{ min: 1, max: 168, step: 1 }}
+          meaning={(v) => `Anything still open after ${sayHold(v)} is closed. Capital stops being tied up in a thesis that had its window.`}
         />
 
         <OptionalRule
@@ -90,7 +96,8 @@ export function ExitRulesFields({
           value={value.exitScoreBelow}
           defaultValue={40}
           onChange={(next) => set("exitScoreBelow", next)}
-          slider={{ min: 5, max: 90, step: 1, format: (v) => `${v}/100` }}
+          spec={SPECS.exitScoreBelow}
+          slider={{ min: 5, max: 90, step: 1 }}
           meaning={(v) =>
             `A holding that rescores under ${v}/100 — or picks up a hard-gate failure — is sold. Scoring is free, so this costs nothing to leave on.`
           }
@@ -103,7 +110,8 @@ export function ExitRulesFields({
           value={value.exitOnLiquidityDropPct}
           defaultValue={50}
           onChange={(next) => set("exitOnLiquidityDropPct", next)}
-          slider={{ min: 10, max: 90, step: 5, format: (v) => `−${v}%`, parse: parseMagnitude }}
+          spec={SPECS.exitOnLiquidityDropPct}
+          slider={{ min: 10, max: 90, step: 5 }}
           meaning={(v) => `Half the point of an exit is being able to take it: ${v}% of the pool gone means the door is closing.`}
         />
       </div>
@@ -117,16 +125,11 @@ export function ExitRulesFields({
   );
 }
 
-function hoursLabel(hours: number): string {
-  if (hours < 48) return `${hours}h`;
-  return `${(hours / 24).toFixed(hours % 24 === 0 ? 0 : 1)}d`;
-}
-
 /**
- * A rule that can be off. The toggle is the rule's existence; the slider is its value.
- * Turning it off preserves nothing — `null` is what the config means by "off" — and
- * turning it back on restores the default rather than the last value, because a
- * half-remembered threshold is worse than a stated one.
+ * A rule that can be off, as one card. The switch is the rule's existence; the value
+ * and the slider are its threshold. Turning it off preserves nothing — `null` is what
+ * the config means by "off" — and turning it back on restores the default rather than
+ * the last value, because a half-remembered threshold is worse than a stated one.
  */
 function OptionalRule({
   id,
@@ -135,6 +138,7 @@ function OptionalRule({
   value,
   defaultValue,
   onChange,
+  spec,
   slider,
   meaning,
 }: {
@@ -144,35 +148,28 @@ function OptionalRule({
   value: number | null;
   defaultValue: number;
   onChange: (next: number | null) => void;
-  slider: { min: number; max: number; step: number; format: (value: number) => string; parse?: ParseValue };
+  /** What may be typed into the threshold, and how it is printed. */
+  spec: ValueSpec;
+  /** The track. */
+  slider: { min: number; max: number; step: number };
   meaning: (value: number) => ReactNode;
 }) {
-  const armed = value !== null;
+  // While the card closes, its body goes on saying the threshold the rule just had,
+  // not the default; nothing is stored from this.
+  const [last, setLast] = useState(value ?? defaultValue);
+  if (value !== null && value !== last) setLast(value);
   return (
-    <div>
-      <Toggle
-        id={`${id}-toggle`}
-        label={label}
-        description={description}
-        checked={armed}
-        onChange={(next) => onChange(next ? defaultValue : null)}
-      />
-      {armed ? (
-        <div className="mt-1.5 ml-3 border-l border-border/70 pl-3">
-          <RiskSlider
-            id={id}
-            label={`${label} threshold`}
-            value={value}
-            min={slider.min}
-            max={slider.max}
-            step={slider.step}
-            format={slider.format}
-            parse={slider.parse}
-            meaning={String(meaning(value))}
-            onChange={onChange}
-          />
-        </div>
-      ) : null}
-    </div>
+    <Module
+      id={id}
+      label={label}
+      description={description}
+      spec={spec}
+      value={value}
+      toggle={{ defaultValue }}
+      sliderRest={last}
+      slider={slider}
+      meaning={meaning(value ?? last)}
+      onChange={onChange}
+    />
   );
 }

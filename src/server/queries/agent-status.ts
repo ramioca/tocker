@@ -134,7 +134,7 @@ export function humanDuration(ms: number): string {
 export function describeWindow(maxAgeHours: number | null): string | null {
   if (maxAgeHours === null || !Number.isFinite(maxAgeHours) || maxAgeHours <= 0) return null;
   if (maxAgeHours < 1) return `${Math.round(maxAgeHours * 60)}-minute`;
-  if (maxAgeHours < 48) return `${Number(maxAgeHours.toFixed(1))}-hour`;
+  if (maxAgeHours < 48) return `${Number(maxAgeHours.toFixed(2))}-hour`;
   return `${Math.round(maxAgeHours / 24)}-day`;
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import type { CostLine, Place, PreviewRow, ReadyItem } from "../contract";
+import type { BuilderStepId, CostLine, Place, PreviewRow, ReadyItem } from "../contract";
 import { SILK_EDGE } from "../look";
 import type { BuilderDraft } from "../types";
 import { PreviewHead } from "./preview-head";
@@ -25,6 +25,8 @@ export interface AgentPreviewProps {
    */
   runsPerDay: number | null;
   onGo: (place: Place) => void;
+  /** The step that is open: the card marks the rows edited there. */
+  currentStep?: BuilderStepId;
   /** Column copy only: play the one-pass entrance. */
   reveal?: boolean;
   /**
@@ -59,6 +61,7 @@ export function AgentPreview({
   runLine,
   runsPerDay,
   onGo,
+  currentStep,
   reveal = false,
   quietKey,
   disabled = false,
@@ -88,11 +91,12 @@ export function AgentPreview({
         )}
       />
       <PreviewHead draft={draft} onGo={onGo} disabled={disabled} {...rise(0)} />
-      <ReadyList items={ready} onGo={onGo} disabled={disabled} {...rise(1)} />
+      <ReadyList items={ready} onGo={onGo} currentStep={currentStep} disabled={disabled} {...rise(1)} />
       <PreviewRows
         prompt={draft.config.strategyPrompt}
         rows={rows}
         onGo={onGo}
+        currentStep={currentStep}
         quietKey={quietKey}
         disabled={disabled}
         {...rise(2)}
