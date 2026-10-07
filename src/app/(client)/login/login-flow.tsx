@@ -11,6 +11,8 @@ import { safeNext } from "./safe-next";
 const RENEWABLE_COOKIE = "privy-session=";
 /** How long "Checking your session…" may stand before the form is offered instead. */
 const CHECKING_CAP_MS = 10_000;
+/** Longer than the card's 280 ms entrance (auth.css), which must not be cut short. */
+const INTRO_MS = 400;
 
 const noSubscribe = () => () => {};
 
@@ -93,8 +95,19 @@ export function LoginFlow({ sessionCookie }: { sessionCookie: boolean }) {
   // rather than flashing a sign-in form at someone who is signed in.
   const status = signedIn ? "Signed in. Taking you back…" : checking ? "Checking your session…" : null;
 
+  // Presentation only: the card's entrance (auth.css) plays while `data-intro` is on the
+  // wrapper, and this takes it off once the entrance is over, so a card that mounts
+  // later (the form replacing "Checking your session…") appears in place instead of
+  // fading in a second time. A timer, not `animationend`: the entrance starts with the
+  // server's HTML and has usually finished before this component hydrates.
+  const [intro, setIntro] = useState(true);
+  useEffect(() => {
+    const id = setTimeout(() => setIntro(false), INTRO_MS);
+    return () => clearTimeout(id);
+  }, []);
+
   return (
-    <main className="flex min-h-dvh items-center justify-center p-6">
+    <main className="auth-main" data-intro={intro ? "" : undefined}>
       {status ? (
         <SignInStatus message={status} />
       ) : (

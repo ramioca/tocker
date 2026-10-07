@@ -25,3 +25,14 @@ describe("embedded wallets at sign-in", () => {
     expect(SOURCE).not.toMatch(/createOnLogin:\s*"off"/);
   });
 });
+
+describe("the vendor modal's appearance", () => {
+  it("takes its surface and accent as hex colours", () => {
+    expect(SOURCE).toMatch(/\btheme:\s*"#[0-9a-f]{6}"/);
+    expect(SOURCE).toMatch(/\baccentColor:\s*"#[0-9a-f]{6}"/);
+  });
+
+  it("still offers exactly the methods the sign-in card draws", () => {
+    expect(SOURCE).toMatch(/loginMethods:\s*\[\.\.\.ENABLED_LOGIN_METHODS\]/);
+  });
+});
