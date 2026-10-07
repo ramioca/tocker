@@ -940,7 +940,9 @@ describe("a transfer the ledger does not know", () => {
       const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
       expect(counts).toMatchObject({ strayTransfers: 1, heldAgents: 1, halted: false });
       const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
-      expect(agent.inferenceHold).toBe("paused");
+      // Its own reason: the owner is told this one agent is paused while a transfer is
+      // checked, not that pay-per-use is paused for everybody.
+      expect(agent.inferenceHold).toBe("transfer_check");
       expect(agent.inferenceHoldUntil!.getTime()).toBeGreaterThan(NOW.getTime());
     });
 

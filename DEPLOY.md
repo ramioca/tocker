@@ -568,7 +568,7 @@ pay.
 
 **`SOLANA_RPC_URL` must be your own provider's URL, and the code does not check that it
 is.** The pay path refuses one thing only: an empty value (the agent is held with
-"Pay-per-use is not set up"). Any other value passes, including the public endpoint
+"Waiting on the Solana network"). Any other value passes, including the public endpoint
 `https://api.mainnet-beta.solana.com`, which is the value `.env.example` ships. With the
 public endpoint set, payments **are** signed, and the wallet read before each run and
 the reconciler after it then depend on a rate-limited node nobody answers for, which is

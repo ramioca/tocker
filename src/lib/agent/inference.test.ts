@@ -335,9 +335,9 @@ describe("holds", () => {
   });
 
   describe("a hold that is nobody's fault", () => {
-    const NO_FAULT = ["halted", "paused", "flag_off", "platform_day_cap"] as const;
+    const NO_FAULT = ["halted", "paused", "flag_off", "platform_day_cap", "transfer_check"] as const;
 
-    it("is an admin's halt, a breaker's pause, the switch being off, and the platform's day: nothing else", () => {
+    it("is an admin's halt, a breaker's pause, the switch being off, the platform's day, and a transfer being checked: nothing else", () => {
       expect(REASONS.filter((reason) => holdsAgent(reason) && !countsAsStrike(reason)).sort()).toEqual([...NO_FAULT].sort());
     });
 
