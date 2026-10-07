@@ -1,6 +1,6 @@
 # Tocker — 3-minute pitch (short deck)
 
-~461 words, about 3:00 at 155 wpm. Sam is an illustrative composite, not a real user. [pause] marks a beat.
+~515 words with the team slide, about 3:20 at 155 wpm. Sam is an illustrative composite, not a real user. [pause] marks a beat.
 
 ## cover
 Three a.m. A trader, call her Sam, sees a new token trending. She buys. Minutes later, it's worth nothing. The wallets that bought first? Insiders. [pause] Sam isn't dumb. She's outgunned. I'm [name], and this is Tocker: the infrastructure for agentic trading.
@@ -18,6 +18,8 @@ Traders already pay. In 2025, Solana traders paid one point seven billion dollar
 Others built pieces. Axiom makes you click every trade. Ask Gina waits for instructions. Coinbase gives agents wallets; Sail gives them guardrails. Nobody we've found runs the whole loop.
 ## gtm
 And the loop leaves a verified record, so every trade markets itself. Agents trade in public; strategies stay private. Followers launch their own. Next, creators earn a share of fees. Then the same agent follows retail: Polymarket did ten point eight billion dollars in June alone, and tokenized stocks passed three billion this year.
+## team
+Why me? I lead product and growth at BlockRun, the leading x402 gateway, so I know the rails Tocker runs on. Before that I founded Sorbet, a neobank: we raised a million dollars and move five million a month. And I worked on AI at Deloitte's Omnia. I'm also a member of Superteam Germany.
 ## thanks
 Agents will trade. Someone has to be the infrastructure. We shipped Tocker in under four weeks; it's in private beta on Solana and Base. [pause] Back to Sam. Same token. Same three a.m. This time she's asleep, and her agent said no. [pause] Tocker. Your agent trades while you sleep. Thank you.
 
