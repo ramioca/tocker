@@ -44,12 +44,21 @@ const TOOL_LABEL: Record<string, string> = {
 };
 
 /**
- * Where both islands sit. Phone: just above the tab bar. Desktop: bottom-centre,
- * because the approvals island is persistent and the top bar holds the nav and
- * Search — anything docked there covers them for as long as a proposal waits.
- * `data-run-island` on the dock is how the toaster knows to lift above it.
+ * Where the run island sits: top centre, just under the top bar. A run is the thing
+ * happening now, so it is shown where the eye already is, and it leaves by itself a few
+ * seconds after the run settles. Under the bar and not on it: the bar holds the nav and
+ * Search, and nothing may cover those.
  */
-const ISLAND_DOCK =
+const RUN_DOCK = "pointer-events-none fixed inset-x-0 top-[calc(3.5rem+0.625rem)] z-50 flex justify-center px-4";
+
+/**
+ * Where the approvals island sits. Phone: just above the tab bar. Desktop: bottom-centre.
+ * It stays at the bottom because it is persistent: docked at the top it would sit over
+ * the head of every page for as long as a proposal waits. `data-run-island` on this dock
+ * is how the toaster and the page's bottom padding know to clear it; the run island is
+ * at the other end of the screen and needs neither.
+ */
+const APPROVALS_DOCK =
   "pointer-events-none fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4 md:bottom-6";
 
 /**
@@ -100,7 +109,7 @@ export function RunIsland() {
       .find((step) => step.toolName)?.toolName ?? null;
 
   return (
-    <div data-run-island className={ISLAND_DOCK}>
+    <div data-run-dock className={RUN_DOCK}>
       <div className="pointer-events-auto">
         {/* The beam rides the border only while the run is live — it IS the
             running indicator, and `active` freezes it the moment the run settles. */}
@@ -282,7 +291,7 @@ function ApprovalsIsland({
   const href = latest ? `/agents/${latest.agentSlug}?proposal=${latest.tradeId}` : "/notifications";
 
   return (
-    <div data-run-island className={ISLAND_DOCK}>
+    <div data-run-island className={APPROVALS_DOCK}>
       <div className="pointer-events-auto">
         <DynamicIsland view="proposals" className="border border-white/10">
           <DynamicIslandView id="proposals" className={VIEW_FIT}>
