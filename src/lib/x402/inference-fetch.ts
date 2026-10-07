@@ -14,7 +14,8 @@
  *   e. reserve   `ledger.reserve`, all or nothing. A refusal means nothing is signed.
  *   f. sign      the agent's wallet, under `SIGN_TIMEOUT_MS`.
  *   g. verify    the signed bytes are read back and must be exactly the priced payment;
- *                then `ledger.markSigned` with the memo, blockhash and signature.
+ *                then `ledger.markSigned` with the memo, blockhash and signature, under
+ *                its own short clock; then the run's clock is read once more.
  *   h. pay       one paid POST, on its own clock, never the caller's.
  *   i. resolve   settle, or record that the step was paid for and not answered.
  *
@@ -43,22 +44,62 @@
  *
  * The gateway's 402 is compared with constants and never obeyed. What the wallet is
  * asked to sign is checked before it is asked, and what will be sent is checked again
- * after, by `verifySignedPayment`. The gateway's word that it charged, or did not, only
- * chooses between two ledger states that both count as charged; the reconciler settles
- * the truth from the chain.
+ * after, by `verifySignedPayment`.
+ *
+ * ## What the gateway's word decides once the payment has left
+ *
+ * Never whether a step counts as charged: from the moment the payment leaves it does,
+ * until the chain says otherwise. What the gateway says decides only this:
+ *
+ *  - An answered step always ends in `ledger.settle`, and the answer goes back to the
+ *    model. The gateway's receipt decides one field of that row, the proof. `txHash` is
+ *    passed ONLY when a receipt gives a transaction id AND says the settlement
+ *    succeeded. In every other answered case (no receipt, a receipt saying it did not
+ *    settle, a receipt without an id) `txHash` is `null`. A `settled` row with no
+ *    transaction id is a claim, not a fact: the reconciler checks it against the chain,
+ *    and it is not counted in public P&L until it has.
+ *  - "Gives a transaction id" is not taken on trust either. A Solana transaction's id is
+ *    its fee payer's signature over the message, and we hold the message, so an id is
+ *    kept only if it is that signature over the bytes we signed
+ *    (`isPaymentTransactionId`). Receipts that name two different ids, or that say
+ *    settled in one header and not settled in another, give no id.
+ *  - An answer another model gave is never returned. If the gateway also says it took
+ *    no payment, the row is left `unconfirmed` for the reconciler; otherwise it is
+ *    settled under the rule above.
+ *  - With no usable answer, a receipt that passes the same test (an id of this payment,
+ *    said to have settled) makes the row `paid_no_answer` with that id. Anything less
+ *    makes it `unconfirmed`, and the chain decides.
+ *
+ * What is left on the gateway's word alone is therefore one thing: that a transaction
+ * it co-signed, and says it settled, did land. Rows with that id are the only ones the
+ * reconciler has no need to look for.
+ *
+ * These rules were written from documentation: no paid response had been seen when they
+ * were. While the switch is at `owner`, each paid response's payment and reroute headers
+ * are logged with how they were read (`noteGatewayHeaders`), so the first real ones can
+ * be compared with the rules before anyone else is let in.
  *
  * ## What the run can rely on
  *
  *  - `ctx.stop` is set on every stop, and a stopped run stays stopped.
- *  - An abort of the caller's signal is honoured until the payment is about to leave,
- *    and is reported as the stop `deadline`: the signal is the run's own clock. After
- *    that point the signal is ignored and the answer, if one comes, is still returned.
- *  - `ctx.spentUsd`, `ctx.requests` and `ctx.maxStepUsd` move when the ledger row
- *    becomes `signed`, which is when the step starts to count as charged. They do not
- *    move for a free answer or for a step that stopped before that.
+ *  - An abort of the caller's signal is honoured until the payment leaves, and is
+ *    reported as the stop `deadline`: the signal is the run's own clock. Once the paid
+ *    request has been sent the signal is ignored and the answer, if one comes, is still
+ *    returned.
+ *  - The last thing before the payment leaves is a look at that clock. The ledger write
+ *    before it (`markSigned`) is given `markSignedTimeoutMs` and no longer; if it has
+ *    not answered by then, or it answered and the paid request no longer fits before the
+ *    deadline, nothing is sent. Such a step can leave a row `signed` (or `reserved`)
+ *    with nothing behind it. The reconciler gives both back: no money moved.
+ *  - `ctx.spentUsd`, `ctx.requests` and `ctx.maxStepUsd` move when the paid request is
+ *    about to leave: the ledger row is `signed` and the last look at the clock passed.
+ *    From then the step counts as charged. They do not move for a free answer or for a
+ *    step that stopped before that.
  *  - `ctx.maxStepMs` is the longest whole call so far: quote, signature and paid request.
  *  - `ctx.inFlight` is a promise from the reservation until the step's ledger row is
- *    where it will stay, and `null` otherwise. It never rejects.
+ *    where it will stay, and `null` otherwise. It never rejects. The one exception is a
+ *    `markSigned` that did not answer in time: the step does not wait for it, so the run
+ *    is not held by a ledger that has stopped answering.
  *  - With `INFERENCE_USDC` off the real path stops with `flag_off` before anything is
  *    sent. Mock mode does not ask: nothing real can happen in it.
  *
@@ -80,6 +121,7 @@ import type { TransactionPartialSigner } from "@solana/kit";
 import { dbErrorForLog, redactSecrets } from "@/lib/security/redact";
 import {
   guardInferenceBody,
+  isPaymentTransactionId,
   isSolanaAddress,
   pinInferenceRequirement,
   readPaymentRequired,
@@ -124,22 +166,36 @@ export interface InferenceClocks {
   /** The pause before the first retry of an unpaid request; the second waits twice as long. */
   retryDelayMs: number;
   signTimeoutMs: number;
+  /**
+   * How long the ledger is given to record a signature (`markSigned`), the one wait
+   * between the last look at the run's clock and the paid request. Past it nothing is sent.
+   */
+  markSignedTimeoutMs: number;
   paidTimeoutMs: number;
 }
+
+/**
+ * A single-row update on a connection the reservation has just used. Three seconds is a
+ * ledger in trouble, and a payment should not leave on the word of one.
+ */
+const MARK_SIGNED_TIMEOUT_MS = 3_000;
 
 export const INFERENCE_CLOCKS: InferenceClocks = {
   quoteTimeoutMs: QUOTE_TIMEOUT_MS,
   quoteRetries: QUOTE_RETRIES,
   retryDelayMs: 500,
   signTimeoutMs: SIGN_TIMEOUT_MS,
+  markSignedTimeoutMs: MARK_SIGNED_TIMEOUT_MS,
   paidTimeoutMs: PAID_TIMEOUT_MS,
 };
 
 /**
- * Once the wallet has signed, this much must be left before the deadline for the paid
- * request to run its whole clock, with room for the ledger write on either side of it.
+ * What must still be left before the deadline when the paid request leaves: its whole
+ * clock, and this much after it for the ledger to record how it ended. Before
+ * `markSigned` the same sum is asked for with that write's own clock on top, so a write
+ * that answers in time never fails the second look.
  */
-const PAID_LEDGER_MARGIN_MS = 5_000;
+const RESOLVE_MARGIN_MS = 2_000;
 
 /** An unpaid request is never held up longer than this by a `Retry-After`. */
 const MAX_RETRY_WAIT_MS = 2_000;
@@ -516,30 +572,64 @@ async function step(
   const paymentId = progress.paymentId;
   if (paymentId === null) stop("signature_failed", "a payment was signed that the ledger never reserved; nothing was sent");
 
-  // The point of no return. Up to here an abort or a short clock costs nothing, because
-  // the signature has not left the process.
+  // Up to here an abort or a short clock costs nothing at all: the row is still
+  // `reserved`, so it is simply given back. The clock must cover the ledger write that
+  // comes next as well as the paid request.
   if (signal?.aborted) {
     await release("not sent: the run was aborted before the payment left");
     stop("deadline", "the run was aborted before the payment was sent");
   }
-  if (ctx.deadlineAt - deps.now() < deps.clocks.paidTimeoutMs + PAID_LEDGER_MARGIN_MS) {
+  if (ctx.deadlineAt - deps.now() < deps.clocks.paidTimeoutMs + deps.clocks.markSignedTimeoutMs + RESOLVE_MARGIN_MS) {
     await release("not sent: too little time was left for the paid request");
     stop("deadline", "signing took too long to leave time for the paid request; nothing was sent");
   }
-  try {
-    await ctx.ledger.markSigned(paymentId, {
+  // The one wait between that look at the clock and the paid request. It is not allowed
+  // to be an open-ended one: a ledger that stalls here would otherwise let the payment
+  // leave whenever it came back, past the run's deadline and with nobody left to read
+  // the answer.
+  const marking = (async () =>
+    ctx.ledger.markSigned(paymentId, {
       memo: signed.check.memo,
       blockhash: signed.check.blockhash,
       payerSignature: signed.check.payerSignature,
-    });
-  } catch (err) {
+    }))();
+  const marked = await within(marking, deps.clocks.markSignedTimeoutMs);
+  if (marked.how === "failed") {
     // Without a `signed` row a crash after the send would leave a payment nobody looks
     // for. So nothing is sent.
-    const detail = `nothing sent: the ledger could not record the signature (${dbErrorForLog(err)})`;
+    const detail = `nothing sent: the ledger could not record the signature (${dbErrorForLog(marked.error)})`;
     await release(detail);
     stop("signature_failed", detail);
   }
+  if (marked.how === "late") {
+    // Nothing is sent, and nothing more is waited for: a second write to a ledger that
+    // is not answering would only be a second open-ended wait. The first one may still
+    // land. If it does, the row is `signed` with no payment behind it, and the reconciler
+    // gives it back once the blockhash has expired. If it fails, the row is still
+    // `reserved` and is given back here, or by the reconciler if this process has gone.
+    const detail = `nothing sent: the ledger did not record the signature within ${deps.clocks.markSignedTimeoutMs} ms`;
+    void marking.then(
+      () => console.warn(`[inference] run ${ctx.runId}: payment ${paymentId} was recorded as signed after the step had given up on the ledger; nothing was sent, and the reconciler returns it`),
+      () => ledgerWrite("release", () => ctx.ledger.release(paymentId, clean(detail))),
+    );
+    stop("signature_failed", detail);
+  }
   progress.row = "signed";
+
+  // The point of no return is the next request, so the run's clock is read once more,
+  // here, with nothing left to wait for between this line and the send. A row that stops
+  // here stays `signed`: it cannot be released, because a signature is on record, and it
+  // is not marked as a failed payment, because none was made. The reconciler finds no
+  // memo on chain, waits out the blockhash and gives the amount back.
+  const unsent = signal?.aborted
+    ? "the run was aborted while the signature was being recorded"
+    : ctx.deadlineAt - deps.now() < deps.clocks.paidTimeoutMs + RESOLVE_MARGIN_MS
+      ? "recording the signature left too little time for the paid request"
+      : null;
+  if (unsent) {
+    console.warn(`[inference] run ${ctx.runId}: payment ${paymentId} is signed and was not sent (${unsent}); the reconciler returns it`);
+    stop("deadline", `${unsent}; nothing was sent`);
+  }
   progress.phase = "paid";
 
   // From here the step counts as charged, whatever comes back.
@@ -548,7 +638,26 @@ async function step(
   ctx.maxStepUsd = Math.max(ctx.maxStepUsd, quotedUsd);
 
   // h and i. The paid request, and its ledger row.
-  return payAndResolve(ctx, deps, gateway.url, guarded.body, signed.header, paymentId, quotedUsd, progress);
+  return payAndResolve(ctx, deps, gateway.url, guarded.body, { header: signed.header, transaction: signed.transaction }, paymentId, quotedUsd, progress);
+}
+
+/** How a wait with a clock on it ended. `late` means the clock won; the work may still finish. */
+type Bounded = { how: "done" } | { how: "failed"; error: unknown } | { how: "late" };
+
+function within(work: Promise<unknown>, ms: number): Promise<Bounded> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ how: "late" }), ms);
+    work.then(
+      () => {
+        clearTimeout(timer);
+        resolve({ how: "done" });
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        resolve({ how: "failed", error });
+      },
+    );
+  });
 }
 
 // ---------- a: the request as the caller made it ----------
@@ -818,36 +927,134 @@ async function readAnswer(
  * is not compared: gateways rename models freely, and a rule keyed on a string that
  * merely differs would stop every run.
  */
-function readReroute(headers: Headers): { rerouted: boolean; servedModel: string | null; settlementSkipped: boolean } {
+function readReroute(headers: Headers): { rerouted: boolean; servedModel: string | null } {
   const yes = (name: string) => headers.get(name)?.trim().toLowerCase() === "true";
   const served = headers.get("x-served-model") ?? headers.get("x-fallback-model");
-  // The gateway serves a paid request from a free model with the settlement skipped,
-  // and says so with this header. That is a substitution too.
-  const settlementSkipped = headers.get("x-settlement-skipped") !== null;
   return {
-    rerouted: yes("x-fallback-used") || yes("x-health-reroute") || settlementSkipped,
+    // A paid request served from a free model with its settlement skipped is a
+    // substitution too, whatever the other two headers say.
+    rerouted: yes("x-fallback-used") || yes("x-health-reroute") || skippedSettlement(headers) !== null,
     servedModel: served ? clean(served, 120) : null,
-    settlementSkipped,
   };
 }
 
-/** What the gateway says about the payment itself. `null` where it says nothing. */
-function readReceipt(headers: Headers): { settled: boolean | null; txHash: string | null } {
+/** How a yes-or-no header says no. */
+const SAYS_NO: ReadonlySet<string> = new Set(["false", "0", "no"]);
+
+/**
+ * `X-Settlement-Skipped`: the gateway served a paid request from a free model and says
+ * it took no payment for it. Returns the header's value when it says so, else `null`.
+ *
+ * It is read by what it says, not by being there. Absent, empty or a plain no is "not
+ * skipped": a gateway that starts sending `false` on every ordinary answer must not make
+ * every step a paid-for answer thrown away. Any other value is a skip. Only
+ * `free-fallback` has been seen, and of the two mistakes, handing the model an answer
+ * from a model nobody chose is the worse one.
+ */
+function skippedSettlement(headers: Headers): string | null {
+  const said = headers.get("x-settlement-skipped")?.trim();
+  if (said === undefined || said === "" || SAYS_NO.has(said.toLowerCase())) return null;
+  // Kept as it was written, for the ledger row: what a real gateway sends here is not yet known.
+  return clean(said, 60);
+}
+
+/** What the gateway says about the payment itself, reduced to the two things the ledger is told. */
+interface Receipt {
+  /**
+   * The payment's transaction id, and only when the gateway names one, says the
+   * settlement succeeded, says nothing to the contrary anywhere else, and the id is
+   * this payment's own (see `isPaymentTransactionId`). `null` in every other case.
+   */
+  txHash: string | null;
+  /** The gateway said, in any of its ways, that it did not settle. */
+  saysNotSettled: boolean;
+}
+
+const NO_RECEIPT: Receipt = { txHash: null, saysNotSettled: false };
+
+/**
+ * The gateway speaks about a payment in up to five headers: the x402 receipt under its
+ * current and its older name, a bare transaction id, a settled flag and a skipped flag.
+ * All of them are read, because a receipt is only as good as its weakest line. An id is
+ * kept when a line that names it also says the payment settled, no line says otherwise,
+ * every id named is the same one, and that one is the id of `transaction`, the payment
+ * as it was sent.
+ */
+function readReceipt(headers: Headers, transaction: string): Receipt {
   const signatureShaped = (value: unknown) => (typeof value === "string" && /^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(value) ? value : null);
-  const bare = signatureShaped(headers.get("x-payment-receipt")?.trim());
-  const raw = headers.get("payment-response") ?? headers.get("x-payment-response");
-  if (raw) {
+  // Ids are only collected from a line that also says the payment settled.
+  const ids = new Set<string>();
+  let saysNotSettled = skippedSettlement(headers) !== null;
+
+  for (const name of ["payment-response", "x-payment-response"]) {
+    const raw = headers.get(name);
+    if (!raw) continue;
+    let decoded: unknown;
     try {
-      const decoded: unknown = decodePaymentResponseHeader(raw);
-      if (isRecord(decoded) && typeof decoded.success === "boolean") {
-        return { settled: decoded.success, txHash: signatureShaped(decoded.transaction) ?? bare };
-      }
+      decoded = decodePaymentResponseHeader(raw);
     } catch {
       // An unreadable receipt says nothing.
+      continue;
     }
+    if (!isRecord(decoded) || typeof decoded.success !== "boolean") continue;
+    if (!decoded.success) {
+      saysNotSettled = true;
+      continue;
+    }
+    const id = signatureShaped(decoded.transaction);
+    if (id) ids.add(id);
   }
-  if (headers.get("x-payment-settled")?.trim().toLowerCase() === "false") return { settled: false, txHash: bare };
-  return { settled: bare ? true : null, txHash: bare };
+
+  // A bare receipt names the settlement's transaction, which is the gateway saying there was one.
+  const bare = signatureShaped(headers.get("x-payment-receipt")?.trim());
+  if (bare) ids.add(bare);
+
+  const flag = headers.get("x-payment-settled")?.trim().toLowerCase();
+  if (flag !== undefined && SAYS_NO.has(flag)) saysNotSettled = true;
+
+  const [id] = ids;
+  const proven = !saysNotSettled && ids.size === 1 && id !== undefined && isPaymentTransactionId({ transaction, txId: id });
+  return { txHash: proven ? id : null, saysNotSettled };
+}
+
+/** Every header the rules above read, and the two beside them a gateway is known to send. */
+const GATEWAY_HEADERS = [
+  "payment-response",
+  "x-payment-response",
+  "x-payment-receipt",
+  "x-payment-settled",
+  "x-settlement-skipped",
+  "x-fallback-used",
+  "x-fallback-model",
+  "x-health-reroute",
+  "x-served-model",
+  "x-original-model",
+] as const;
+
+/**
+ * Owner-only stage: write down what the gateway really sent with a paid response, and
+ * how it was read. The rules that read these headers were written from documentation
+ * and have never seen a paid answer, so the first real ones are recorded before the
+ * switch goes to `on`. One log line: names and short, cleaned values. An x402 receipt
+ * is shown decoded, as the two fields the rules read; everything in it is public.
+ */
+function noteGatewayHeaders(runId: string, status: number, headers: Headers, receipt: Receipt): void {
+  const shown = (name: string, value: string): string => {
+    if (!name.endsWith("payment-response")) return JSON.stringify(clean(value, 100));
+    try {
+      const decoded: unknown = decodePaymentResponseHeader(value);
+      if (isRecord(decoded)) return `{success: ${clean(String(decoded.success), 12)}, transaction: ${JSON.stringify(clean(String(decoded.transaction ?? ""), 100))}}`;
+    } catch {
+      // Shown as unreadable below.
+    }
+    return `(unreadable, ${value.length} chars)`;
+  };
+  const said = GATEWAY_HEADERS.flatMap((name) => {
+    const value = headers.get(name);
+    return value === null ? [] : [`${name}=${shown(name, value)}`];
+  });
+  const read = receipt.txHash ? "this payment's transaction id, settled" : receipt.saysNotSettled ? "not settled" : "no proof of settlement";
+  console.info(`[inference] run ${runId}: paid response ${status} said ${said.length > 0 ? said.join(" ") : "nothing about the payment or the model"}; read as ${read}`);
 }
 
 // ---------- e to g: reserve, sign, verify ----------
@@ -871,6 +1078,8 @@ type SigningResult =
       ok: true;
       /** The `PAYMENT-SIGNATURE` header value: the payload that was checked, encoded. */
       header: string;
+      /** The transaction inside that payload, base64: what a receipt's transaction id is checked against. */
+      transaction: string;
       check: { memo: string; blockhash: string; payerSignature: string | null; feePayer: string };
       signMs: number;
     }
@@ -1115,6 +1324,7 @@ function checkPayload(payload: PaymentPayload, attempt: SigningAttempt, payer: s
   return {
     ok: true,
     header: encodePaymentSignatureHeader(payload),
+    transaction,
     check: { memo: check.memo, blockhash: check.blockhash, payerSignature: check.payerSignature, feePayer: check.feePayer },
     signMs,
   };
@@ -1126,14 +1336,18 @@ function checkPayload(payload: PaymentPayload, attempt: SigningAttempt, payer: s
  * The one line in this file that sends a payment, and what is made of the answer. Called
  * once per step, after `markSigned`. Its clock is its own: the caller's abort signal is
  * not passed in, because aborting here loses an answer that may already be paid for.
- * Whatever happens, the ledger row leaves `signed` before this returns or throws.
+ * Whatever happens, the ledger row leaves `signed` before this returns or throws, unless
+ * the ledger itself cannot be written; a row left `signed` is the reconciler's.
+ *
+ * What the gateway says about the payment chooses the row's proof and nothing else: see
+ * "What the gateway's word decides" at the top of this file.
  */
 async function payAndResolve(
   ctx: InferencePayContext,
   deps: InferenceFetchDeps,
   url: string,
   body: string,
-  paymentHeader: string,
+  payment: { header: string; transaction: string },
   paymentId: string,
   quotedUsd: number,
   progress: StepProgress,
@@ -1145,7 +1359,7 @@ async function payAndResolve(
   try {
     response = await deps.fetch(url, {
       method: "POST",
-      headers: { ...JSON_HEADERS, "PAYMENT-SIGNATURE": paymentHeader },
+      headers: { ...JSON_HEADERS, "PAYMENT-SIGNATURE": payment.header },
       body,
       redirect: "manual",
       signal: clock.signal,
@@ -1164,7 +1378,8 @@ async function payAndResolve(
   }
 
   const status = response ? response.status : null;
-  const receipt = response ? readReceipt(response.headers) : { settled: null, txHash: null };
+  const receipt = response ? readReceipt(response.headers, payment.transaction) : NO_RECEIPT;
+  if (response && inferenceFlags(deps.env).stage === "owner") noteGatewayHeaders(ctx.runId, response.status, response.headers, receipt);
   const requestId = response?.headers.get("x-blockrun-gateway-request-id");
   const gatewayRequestId = requestId ? clean(requestId, 120) : null;
 
@@ -1172,14 +1387,21 @@ async function payAndResolve(
     const completion = answer.completion;
     const httpStatus = response.status;
     const reroute = readReroute(response.headers);
-    const saysNotCharged = reroute.settlementSkipped || receipt.settled === false;
-    if (reroute.rerouted && saysNotCharged) {
+    if (reroute.rerouted && receipt.saysNotSettled) {
       // Another model answered and the gateway says no money moved. Its word is not
       // taken for that: the row stays counted as charged until the chain has been read.
-      const detail = clean(`another model answered (${reroute.servedModel ?? "unnamed"}) and the gateway says it did not settle`);
+      const skipped = skippedSettlement(response.headers);
+      const detail = clean(
+        `another model answered (${reroute.servedModel ?? "unnamed"}) and the gateway says it did not settle${skipped ? ` (x-settlement-skipped: ${skipped})` : ""}`,
+      );
       if (await ledgerWrite("markUnconfirmed", () => ctx.ledger.markUnconfirmed(paymentId, { httpStatus: status, detail }))) progress.row = "resolved";
       stopRun(ctx, "rerouted", detail);
     }
+    // An answered step is always booked `settled`. What the gateway said decides only
+    // whether the row carries proof: `receipt.txHash` is set when a receipt names this
+    // payment's own transaction id and says it settled, and is `null` when there is no
+    // receipt, when the receipt says it did not settle, or when it names no id. A
+    // `settled` row with no id is then checked against the chain by the reconciler.
     const settled = await ledgerWrite("settle", () =>
       ctx.ledger.settle(paymentId, {
         txHash: receipt.txHash,
@@ -1199,10 +1421,14 @@ async function payAndResolve(
   }
 
   // Paid for, or possibly paid for, and no answer to show for it. Never sent again.
+  // `paid_no_answer` is a final state the reconciler does not revisit, so it is written
+  // here only on the same proof a settled row needs: this payment's own transaction id,
+  // said to have settled. A receipt that falls short of that leaves the chain to decide.
   const detail = clean(`the paid request did not return an answer (${failure || "no response"})${gatewayRequestId ? ` [gateway request ${gatewayRequestId}]` : ""}`);
+  const proof = receipt.txHash;
   const written =
-    receipt.settled === true
-      ? await ledgerWrite("markPaidNoAnswer", () => ctx.ledger.markPaidNoAnswer(paymentId, { txHash: receipt.txHash, httpStatus: status, detail }))
+    proof !== null
+      ? await ledgerWrite("markPaidNoAnswer", () => ctx.ledger.markPaidNoAnswer(paymentId, { txHash: proof, httpStatus: status, detail }))
       : await ledgerWrite("markUnconfirmed", () => ctx.ledger.markUnconfirmed(paymentId, { httpStatus: status, detail }));
   if (written) progress.row = "resolved";
   stopRun(ctx, "paid_no_answer", detail);

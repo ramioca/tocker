@@ -32,7 +32,8 @@ const listAdminUsers = vi.fn(async () => []);
 const listAdminSlotRequests = vi.fn(async () => []);
 // The pay-per-use ledger: what every account paid to think, and the wallets that paid.
 // It is asserted on too, and made to fail in one test: the page must still render.
-const getAdminInference = vi.fn(async (): Promise<unknown> => {
+const getAdminInference = vi.fn(async (adminUserId?: string): Promise<unknown> => {
+  void adminUserId;
   throw new Error("no such table");
 });
 vi.mock("@/server/queries/admin", () => ({
@@ -59,7 +60,7 @@ vi.mock("@/server/queries/admin", () => ({
     waitlistSignups: 0,
   })),
   getAdminSeries: vi.fn(async () => ({ signups: [], volumeUsd: [], feesUsd: [] })),
-  getAdminInference: () => getAdminInference(),
+  getAdminInference: (adminUserId: string) => getAdminInference(adminUserId),
   listAdminUsers: () => listAdminUsers(),
   listAdminSlotRequests: () => listAdminSlotRequests(),
   listAdminAgents: vi.fn(async () => []),
@@ -131,6 +132,33 @@ describe("GET /settings/admin", () => {
     // The pay-per-use read failed (the mock throws, as a missing table would) and the
     // page rendered all the same: every other number on it is still worth showing.
     expect(getAdminInference).toHaveBeenCalledTimes(1);
+    // It was asked as this admin: the wallets the signature test offers are chosen by
+    // owner inside the query, not narrowed on the page from a list of every account's.
+    expect(getAdminInference).toHaveBeenCalledWith(ADMIN.userId);
+  });
+
+  it("hands the card the wallets exactly as the query returned them, narrowing nothing itself", async () => {
+    vi.stubEnv("ADMIN_EMAILS", "admin@example.com");
+    getSession.mockResolvedValue(ADMIN);
+    const wallets = [{ walletId: "pw_own", address: "OwnSolanaAddress", agentName: "Mine", agentSlug: "mine", payPerUse: true }];
+    getAdminInference.mockResolvedValueOnce({ wallets, marker: "as-returned" });
+
+    const { default: AdminSettingsPage } = await import("./page");
+    const tree = await AdminSettingsPage();
+
+    // Find the card's props in the tree the page returned: the very object the query gave.
+    const found: unknown[] = [];
+    const walk = (node: unknown) => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (!node || typeof node !== "object") return;
+      const props = (node as { props?: Record<string, unknown> }).props;
+      if (!props) return;
+      if (props.data && typeof props.data === "object" && (props.data as { marker?: unknown }).marker === "as-returned") found.push(props.data);
+      walk(props.children);
+    };
+    walk(tree);
+    expect(found).toHaveLength(1);
+    expect((found[0] as { wallets: unknown }).wallets).toBe(wallets);
   });
 });
 

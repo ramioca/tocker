@@ -1,11 +1,31 @@
 import "server-only";
 import { and, asc, eq, gte, sql } from "drizzle-orm";
-import { agents, equitySnapshots, getDb, platformFees, positions, tokens, trades, x402Payments, type Db } from "@/db";
+import { unionAll } from "drizzle-orm/pg-core";
+import {
+  agents,
+  equitySnapshots,
+  getDb,
+  inferencePayments,
+  platformFees,
+  positions,
+  tokens,
+  trades,
+  x402Payments,
+  type Db,
+} from "@/db";
 import { computeAnalytics, type AnalyticsFill } from "@/lib/analytics";
 import { toNum } from "@/lib/money";
 import { unrealized } from "@/lib/pnl";
 import type { AgentAnalytics, Chain, ExitReason, LeaderboardWindow, TradeRow } from "@/server/types";
-import { fillFeeUsd, loadTokens, snapshotInCurrentMode, toTradeRow } from "./_shared";
+import {
+  fillFeeUsd,
+  loadTokens,
+  snapshotInCurrentMode,
+  thinkingPaidAtSql,
+  thinkingPaidUsdSql,
+  thinkingProvenSql,
+  toTradeRow,
+} from "./_shared";
 import { isAgentOwner } from "./visibility";
 
 type TradeRecord = typeof trades.$inferSelect;
@@ -43,20 +63,88 @@ const WINDOW_MS: Record<LeaderboardWindow, number | null> = {
  *
  * Current mode only — `snapshotInCurrentMode` explains why. A paper→live flip is a
  * −99.9% step that would otherwise be reported as the agent's max drawdown forever.
+ *
+ * **Net of what the agent paid for its own thinking.** A pay-per-use agent buys each
+ * model step from the wallet it trades from, so its equity falls a little with every run
+ * whether or not it trades. Its P&L and its place on the leaderboard have those payments
+ * taken out (`loadMoneyFlows`), and this figure sits beside them on the same tab: left
+ * on raw equity, an agent that held cash and made no trade read 0% P&L over a drawdown
+ * that grew every day. So each mark is read with the thinking paid since the first mark
+ * of the slice added back, which is the book the P&L describes. The same payments the
+ * P&L nets, cut the same way: proven on chain only (`thinkingProvenSql`), live books
+ * only, and a payment made at the instant of a mark is inside that mark.
+ *
+ * An agent that has never paid per use has nothing added to any mark, and the number is
+ * the one it always was (a mark plus zero is that mark, exactly). Deposits and
+ * withdrawals are NOT added back here, as before: a withdrawal still reads as a fall on
+ * this one figure, for every agent.
  */
 async function loadMaxDrawdownPct(db: Db, agentId: string, since: Date | null): Promise<number | null> {
-  const marks = db
+  const inSlice = and(
+    eq(equitySnapshots.agentId, agentId),
+    snapshotInCurrentMode(),
+    since ? gte(equitySnapshots.at, since) : undefined,
+  );
+  const paidAt = thinkingPaidAtSql();
+  // The marks of the slice, and the thinking payments made after the first of them, as
+  // one list of events in time. Both halves name the same five columns in the same order.
+  const markEvents = db
     .select({
-      equity: sql<number>`${equitySnapshots.equityUsd}::float8`.as("equity"),
-      peak: sql<number>`max(${equitySnapshots.equityUsd}::float8) over (order by ${equitySnapshots.at} asc, ${equitySnapshots.id} asc rows between unbounded preceding and current row)`.as(
-        "peak",
-      ),
+      at: sql<Date>`${equitySnapshots.at}`.as("at"),
+      id: sql<string>`${equitySnapshots.id}`.as("id"),
+      // 0 for a payment and 1 for a mark, so a payment made at the instant of a mark
+      // sorts before it and is counted in it.
+      isMark: sql<number>`1`.as("is_mark"),
+      equity: sql<number | null>`${equitySnapshots.equityUsd}::float8`.as("equity"),
+      paid: sql<number>`0::float8`.as("paid"),
     })
     .from(equitySnapshots)
     .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
+    .where(inSlice);
+  const paidEvents = db
+    .select({
+      at: sql<Date>`${paidAt}`.as("at"),
+      id: sql<string>`${inferencePayments.id}`.as("id"),
+      isMark: sql<number>`0`.as("is_mark"),
+      equity: sql<number | null>`null::float8`.as("equity"),
+      paid: sql<number>`${thinkingPaidUsdSql()}::float8`.as("paid"),
+    })
+    .from(inferencePayments)
+    .innerJoin(agents, eq(agents.id, inferencePayments.agentId))
     .where(
-      and(eq(equitySnapshots.agentId, agentId), snapshotInCurrentMode(), since ? gte(equitySnapshots.at, since) : undefined),
-    )
+      and(
+        eq(inferencePayments.agentId, agentId),
+        // A paper book is a notional: real USDC leaving the wallet is no part of it.
+        eq(agents.mode, "live"),
+        thinkingProvenSql(),
+        // After the first mark of the slice, so that mark reads as it stands and every
+        // later one is measured against it.
+        sql`${paidAt} > (select min(${equitySnapshots.at}) from ${equitySnapshots} where ${inSlice})`,
+      ),
+    );
+  const events = unionAll(markEvents, paidEvents).as("events");
+  const running = db
+    .select({
+      at: events.at,
+      id: events.id,
+      isMark: events.isMark,
+      // The mark, with every payment up to it added back.
+      equity: sql<number>`${events.equity} + sum(${events.paid}) over (order by ${events.at} asc, ${events.isMark} asc, ${events.id} asc rows between unbounded preceding and current row)`.as(
+        "net_equity",
+      ),
+    })
+    .from(events)
+    .as("running");
+  const marks = db
+    .select({
+      equity: sql<number>`${running.equity}`.as("equity"),
+      peak: sql<number>`max(${running.equity}) over (order by ${running.at} asc, ${running.id} asc rows between unbounded preceding and current row)`.as(
+        "peak",
+      ),
+    })
+    .from(running)
+    // The window above runs after this filter, so the peak is over marks alone.
+    .where(eq(running.isMark, 1))
     .as("marks");
   const [row] = await db
     .select({

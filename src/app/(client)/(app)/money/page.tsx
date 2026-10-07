@@ -6,8 +6,8 @@ import { EquityChart } from "@/components/charts/equity-chart";
 import { EmptyState } from "@/components/common/empty-state";
 import { formatSignedUsd } from "@/components/common/format";
 import { AgentMoneyTable } from "@/components/money/agent-money-table";
-import { sumCosts } from "@/components/money/cost-totals";
-import { CostsNote } from "@/components/money/costs-note";
+import { costsHint, sumCosts } from "@/components/money/cost-totals";
+import { CostsNote, FormerThinkingNote } from "@/components/money/costs-note";
 import { MoneyHeadline } from "@/components/money/money-headline";
 import { PnlByDay } from "@/components/money/pnl-by-day";
 import { getSession } from "@/lib/auth";
@@ -176,11 +176,9 @@ export default async function MoneyPage() {
             <SectionHeading
               id="money-costs-heading"
               title="Costs"
-              hint={
-                costScope === "live"
-                  ? "Separate bills, only one of which we collect."
-                  : "What your paper agents have cost so far. The fee is simulated; the model tokens are a real bill on your own key."
-              }
+              // Word for word what it always was, unless this owner's page has the
+              // pay-per-use line on it (`costsHint`).
+              hint={costsHint(costScope, summary.thinking !== null)}
             />
             <CostsNote
               summary={summary}
@@ -189,6 +187,15 @@ export default async function MoneyPage() {
               feeUsd={platformFeeUsd()}
               settleMinUsd={settleMinUsd()}
             />
+          </section>
+        ) : summary.thinking ? (
+          // No agent left, and the ledger still holds what the deleted ones paid for
+          // their own thinking. That record outlives the agent, so it is still shown: the
+          // amount, and the steps that got no answer. An account that never paid for a
+          // step has no `thinking` and sees the empty page exactly as before.
+          <section aria-labelledby="money-costs-heading" className="space-y-4">
+            <SectionHeading id="money-costs-heading" title="Costs" hint={costsHint("former", true)} />
+            <FormerThinkingNote thinking={summary.thinking} />
           </section>
         ) : null}
       </div>

@@ -42,8 +42,16 @@
  *    disagree about whether money moved).
  *  - A `simulated` row is written whole by `reserve` and never moves; `settle` only fills
  *    in the answer's figures on it.
+ *
+ * One status carries two meanings, told apart by `tx_hash`. A `settled` row WITH a
+ * transaction id is paid and answered, and final. A `settled` row with NO transaction id
+ * is "answered, settlement not yet proven": the gateway answered and gave no receipt. It
+ * is counted as charged like any settled row, and the reconciler looks for its memo on
+ * chain. Found: `confirmSettled` writes the transaction id and the row stays `settled`.
+ * Proven never to have landed: `resolveInferencePayment` makes it `not_charged` and the
+ * amount goes back to its day, once (the answer was free). No other move leaves `settled`.
  */
-import { and, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { agentRuns, getDb, inferenceBudgetDays, inferenceControl, inferencePayments, type Db } from "@/db";
 import { toNum, toNumeric } from "@/lib/money";
@@ -78,17 +86,35 @@ export const INFERENCE_CONTROL_ID = "global";
 export const PLATFORM_SCOPE_ID = "all";
 /** What the reason column starts with while the halt is off: the ISO time it was cleared follows. */
 const CLEARED_PREFIX = "cleared ";
+/** After the admin's own note in a cleared reason: the transaction ids the clearing acknowledged. */
+const ACKNOWLEDGED_MARK = " | acknowledged: ";
+/** A Solana transaction id as it appears in a halt reason. Addresses are shorter and are not matched. */
+const TRANSACTION_ID = /[1-9A-HJ-NP-Za-km-z]{64,90}/g;
+/** How many acknowledged transaction ids a cleared reason keeps. */
+const MAX_ACKNOWLEDGED = 24;
+/** The most a halt reason grows to as further evidence is added to it. */
+export const MAX_HALT_REASON = 4000;
+/** Ends a halt reason that had no room for more. The rest is in the server log. */
+const MORE_IN_LOG = " | more was found: see the server log";
+/** Opens a halt reason that holds more than one finding, so a screen that shows only its start still says so. */
+const FINDINGS_PREFIX = /^\[(\d+) findings\] /;
+/** The detail a row gets when it is closed without a verdict. See `closeUncheckedPayments`. */
+export const CLOSED_UNCHECKED_DETAIL = "Could not be checked against the chain in time. Counted as charged.";
 
 /**
  * Where a row may go from each status. Anything not listed is refused. `simulated` rows
  * are written whole by `reserve` and never move.
+ *
+ * `settled` to `not_charged` is open only to a row with no transaction id (answered,
+ * settlement never proven), and only to the reconciler: `move` refuses to run it without
+ * that guard in the UPDATE itself.
  */
 export const INFERENCE_MOVES: Readonly<Record<InferencePaymentStatus, readonly InferencePaymentStatus[]>> = {
   reserved: ["released", "signed"],
   signed: ["settled", "paid_no_answer", "unconfirmed", "not_charged"],
   unconfirmed: ["paid_no_answer", "not_charged"],
   released: [],
-  settled: [],
+  settled: ["not_charged"],
   paid_no_answer: [],
   not_charged: [],
   simulated: [],
@@ -159,6 +185,11 @@ function fits(spent: number, amount: number, cap: number): boolean {
   return spent + amount <= cap + EPSILON_USD;
 }
 
+/** Every transaction id a text names, each once, in the order they appear. */
+function transactionIdsIn(text: string | null | undefined): string[] {
+  return [...new Set(text?.match(TRANSACTION_ID) ?? [])];
+}
+
 function scopesOf(row: { ownerId: string; agentId: string | null }): Array<{ scope: "platform" | "owner" | "agent"; scopeId: string }> {
   // Always this order. See the note on lock order at the top of the file.
   const scopes: Array<{ scope: "platform" | "owner" | "agent"; scopeId: string }> = [
@@ -189,11 +220,14 @@ async function readControl(runner: Runner): Promise<InferenceControlState> {
   if (!row) return INFERENCE_CONTROL_CLEAR;
   // While the halt is off, the reason column holds when it was last cleared (see
   // `setInferenceHalt`). Readers get that as a date, and no reason for a halt that is not on.
-  const cleared = !row.halted && row.haltReason?.startsWith(CLEARED_PREFIX) ? new Date(row.haltReason.slice(CLEARED_PREFIX.length, CLEARED_PREFIX.length + 24)) : null;
+  const wasCleared = !row.halted && row.haltReason?.startsWith(CLEARED_PREFIX) ? row.haltReason : null;
+  const cleared = wasCleared ? new Date(wasCleared.slice(CLEARED_PREFIX.length, CLEARED_PREFIX.length + 24)) : null;
+  const mark = wasCleared ? wasCleared.lastIndexOf(ACKNOWLEDGED_MARK) : -1;
   return {
     ...row,
     haltReason: row.halted ? row.haltReason : null,
     haltClearedAt: cleared && Number.isFinite(cleared.getTime()) ? cleared : null,
+    haltAcknowledged: wasCleared && mark >= 0 ? transactionIdsIn(wasCleared.slice(mark + ACKNOWLEDGED_MARK.length)) : [],
   };
 }
 
@@ -244,15 +278,22 @@ async function move(
   from: readonly InferencePaymentStatus[],
   to: InferencePaymentStatus,
   patch: PaymentPatch,
-  options: { giveBack?: boolean; now?: Date } = {},
+  options: { giveBack?: boolean; now?: Date; unprovenOnly?: boolean } = {},
 ): Promise<boolean> {
   for (const status of from) {
     // The table above is the rule; this keeps the code below from drifting away from it.
     if (!INFERENCE_MOVES[status].includes(to)) throw new InferenceLedgerError(`A ${status} payment cannot become ${to}.`);
   }
+  // A settled row leaves `settled` only while nothing proves it was paid. The condition is
+  // part of the UPDATE, so a transaction id written a moment earlier makes this a no-op.
+  if (from.includes("settled") && !options.unprovenOnly) throw new InferenceLedgerError(`A settled payment cannot become ${to}.`);
   const now = options.now ?? new Date();
   const db = await getDb();
-  const guarded = and(eq(inferencePayments.id, paymentId), inArray(inferencePayments.status, [...from]));
+  const guarded = and(
+    eq(inferencePayments.id, paymentId),
+    inArray(inferencePayments.status, [...from]),
+    options.unprovenOnly ? isNull(inferencePayments.txHash) : undefined,
+  );
   if (!options.giveBack) {
     const moved = await db
       .update(inferencePayments)
@@ -558,6 +599,12 @@ export function createInferenceLedger(): InferenceLedger {
  * is on chain, so the row becomes `paid_no_answer` and keeps its place in the counters.
  * Not charged: it can no longer land, so the row becomes `not_charged` and its amount
  * goes back to the day it was reserved on. Returns whether this call made the move.
+ *
+ * A not-charged verdict also applies to a `settled` row with no transaction id: it was
+ * answered, and the chain proves it was never paid for. That row keeps `answered` (the
+ * answer did arrive, free) and its amount goes back the same way, once. A `settled` row
+ * WITH a transaction id is never touched, and a charged verdict on a settled row is
+ * `confirmSettled`'s to record, not this function's.
  */
 export async function resolveInferencePayment(
   paymentId: string,
@@ -572,13 +619,65 @@ export async function resolveInferencePayment(
       resolvedAt: now,
     });
   }
-  return move(
-    paymentId,
-    ["signed", "unconfirmed"],
-    "not_charged",
-    { answered: false, detail: clean(verdict.detail, MAX_DETAIL), resolvedAt: now },
-    { giveBack: true, now },
-  );
+  const detail = clean(verdict.detail, MAX_DETAIL);
+  if (await move(paymentId, ["signed", "unconfirmed"], "not_charged", { answered: false, detail, resolvedAt: now }, { giveBack: true, now })) return true;
+  return move(paymentId, ["settled"], "not_charged", { detail, resolvedAt: now }, { giveBack: true, now, unprovenOnly: true });
+}
+
+/**
+ * The reconciler found the payment of an answered row on chain: write its transaction id.
+ * The row stays `settled` and keeps its place in the counters; all that changes is that
+ * its settlement is now proven. One guarded UPDATE: it touches only a `settled` row that
+ * has no transaction id yet, so a row already proven, already called not charged, or in
+ * any other status is left exactly as it is. Returns whether this call wrote it.
+ */
+export async function confirmSettled(paymentId: string, txHash: string): Promise<boolean> {
+  const hash = cleanOrNull(txHash);
+  if (!hash) throw new InferenceLedgerError("confirmSettled needs the transaction id that was found.");
+  const db = await getDb();
+  const confirmed = await db
+    .update(inferencePayments)
+    .set({ txHash: hash })
+    .where(and(eq(inferencePayments.id, paymentId), eq(inferencePayments.status, "settled"), isNull(inferencePayments.txHash)))
+    .returning({ id: inferencePayments.id });
+  return confirmed.length > 0;
+}
+
+/**
+ * Close rows that are still `signed` or `unconfirmed` from before `olderThan` and that no
+ * verdict could be reached on: the chain could not be read, or could not be read well
+ * enough, for all that time.
+ *
+ * A closed row is `unconfirmed` with `resolved_at` set and `CLOSED_UNCHECKED_DETAIL` at
+ * the head of its detail. That is its end state unless someone later proves otherwise:
+ * it stays counted as charged in every cap and every total, because nothing shows the
+ * money did not move, and a cap is never given back on a guess. The two verdicts remain
+ * open to it (`resolveInferencePayment`), so a later look that does reach the chain can
+ * still replace the guess with the fact. Bounded. Returns how many this call closed.
+ */
+export async function closeUncheckedPayments(olderThan: Date, limit = 50, now: Date = new Date()): Promise<number> {
+  const db = await getDb();
+  const open: InferencePaymentStatus[] = ["signed", "unconfirmed"];
+  const stale = await db
+    .select({ id: inferencePayments.id, detail: inferencePayments.detail })
+    .from(inferencePayments)
+    .where(and(inArray(inferencePayments.status, open), isNull(inferencePayments.resolvedAt), lt(inferencePayments.createdAt, olderThan)))
+    .orderBy(inferencePayments.createdAt)
+    .limit(Math.max(1, Math.min(limit, 500)));
+  let closed = 0;
+  for (const row of stale) {
+    // What the row already said (a time-out, a status) is kept behind the new sentence.
+    const detail = clean(row.detail ? `${CLOSED_UNCHECKED_DETAIL} Before that: ${row.detail}` : CLOSED_UNCHECKED_DETAIL, MAX_DETAIL);
+    const written = await db
+      .update(inferencePayments)
+      .set({ status: "unconfirmed", answered: false, detail, resolvedAt: now })
+      .where(and(eq(inferencePayments.id, row.id), inArray(inferencePayments.status, open), isNull(inferencePayments.resolvedAt)))
+      .returning({ id: inferencePayments.id });
+    if (written.length === 0) continue;
+    closed += 1;
+    console.error(`[inference] payment ${row.id} closed unchecked: no verdict could be reached in time. It stays counted as charged.`);
+  }
+  return closed;
 }
 
 /**
@@ -690,40 +789,120 @@ export async function readInferenceControl(): Promise<InferenceControlState> {
  *
  * Clearing it records the moment in the reason column (the table has no column of its
  * own for it). That moment is what stops the reconciler from throwing the halt again
- * five minutes later over the same transaction the admin has just looked at.
+ * five minutes later over the same transaction the admin has just looked at. The
+ * transaction ids named in the reason being cleared are kept beside it, for the
+ * transactions a node reports with no time on them: those cannot be placed before or
+ * after the moment, so they are recognised by id.
  */
 export async function setInferenceHalt(input: { halted: boolean; reason: string | null; by: string }): Promise<void> {
   const now = new Date();
   const note = cleanOrNull(input.reason, MAX_DETAIL);
-  const values = {
-    halted: input.halted,
-    haltReason: input.halted ? note : `${CLEARED_PREFIX}${now.toISOString()}${note ? ` ${note}` : ""}`.slice(0, MAX_DETAIL),
-    updatedBy: clean(input.by),
-    updatedAt: now,
-  };
+  const by = clean(input.by);
   const db = await getDb();
-  await db
-    .insert(inferenceControl)
-    .values({ id: INFERENCE_CONTROL_ID, ...values })
-    .onConflictDoUpdate({ target: inferenceControl.id, set: values });
+  if (input.halted) {
+    const values = { halted: true, haltReason: note, updatedBy: by, updatedAt: now };
+    await db
+      .insert(inferenceControl)
+      .values({ id: INFERENCE_CONTROL_ID, ...values })
+      .onConflictDoUpdate({ target: inferenceControl.id, set: values });
+    return;
+  }
+  const clearedNote = `${CLEARED_PREFIX}${now.toISOString()}${note ? ` ${note}` : ""}`.slice(0, MAX_DETAIL);
+  await db.transaction(async (tx) => {
+    // Locked, so evidence added to the reason at this very moment is either read here
+    // and acknowledged, or lands after the clear and is judged as new.
+    const [current] = await tx
+      .select({ halted: inferenceControl.halted, haltReason: inferenceControl.haltReason })
+      .from(inferenceControl)
+      .where(eq(inferenceControl.id, INFERENCE_CONTROL_ID))
+      .limit(1)
+      .for("update");
+    // What this clear acknowledges: the ids in the reason that was on, or, when no halt
+    // was on, the ones the last clear already acknowledged.
+    const reason = current?.haltReason ?? "";
+    const mark = reason.lastIndexOf(ACKNOWLEDGED_MARK);
+    const before = current?.halted ? reason : mark >= 0 ? reason.slice(mark) : "";
+    const acknowledged = transactionIdsIn(before).slice(-MAX_ACKNOWLEDGED);
+    const values = {
+      halted: false,
+      haltReason: acknowledged.length > 0 ? `${clearedNote}${ACKNOWLEDGED_MARK}${acknowledged.join(" ")}` : clearedNote,
+      updatedBy: by,
+      updatedAt: now,
+    };
+    await tx
+      .insert(inferenceControl)
+      .values({ id: INFERENCE_CONTROL_ID, ...values })
+      .onConflictDoUpdate({ target: inferenceControl.id, set: values });
+  }, READ_COMMITTED);
 }
 
 /**
- * Throw the halt on the system's own evidence (the reconciler, the ledger). Does nothing
- * when a halt is already on, so the first reason is the one an admin reads. Returns
+ * Throw the halt on the system's own evidence (the reconciler, the ledger). Returns
  * whether this call threw it.
+ *
+ * When a halt is already on, the first reason stays at the head and stays the one whose
+ * author is recorded, but the new finding is not dropped: it is logged, and added to the
+ * stored reason (bounded, each finding once). Clearing a halt tells the reconciler that
+ * everything up to that moment has been looked at, so an admin must be able to read
+ * everything the clear will acknowledge, not only what was found first.
  */
 export async function haltInferenceOnce(reason: string, by: string): Promise<boolean> {
   const now = new Date();
-  const values = { halted: true, haltReason: clean(reason, MAX_DETAIL), updatedBy: clean(by), updatedAt: now };
+  const text = clean(reason, MAX_DETAIL);
+  const who = clean(by);
+  const values = { halted: true, haltReason: text, updatedBy: who, updatedAt: now };
   const db = await getDb();
   const thrown = await db
     .insert(inferenceControl)
     .values({ id: INFERENCE_CONTROL_ID, ...values })
     .onConflictDoUpdate({ target: inferenceControl.id, set: values, setWhere: eq(inferenceControl.halted, false) })
     .returning({ id: inferenceControl.id });
-  if (thrown.length > 0) console.error(`[inference] HALTED by ${values.updatedBy}: ${values.haltReason}`);
-  return thrown.length > 0;
+  if (thrown.length > 0) {
+    console.error(`[inference] HALTED by ${who}: ${text}`);
+    return true;
+  }
+  try {
+    const added = await addToHaltReason(text, who, now);
+    // Said once, when it is first recorded: the reconciler finds the same transaction on
+    // every pass, and a line every five minutes would bury the ones that matter.
+    if (added !== "known") console.error(`[inference] found while already halted (${who}): ${text}${added === "full" ? " (not added to the stored reason: it is full)" : ""}`);
+  } catch (err) {
+    console.error(`[inference] found while already halted (${who}): ${text}`);
+    console.error(`[inference] that finding could not be added to the stored halt reason: ${dbErrorForLog(err)}`);
+  }
+  return false;
+}
+
+/** Add one finding to the reason of a halt that is on. Each finding once; bounded by `MAX_HALT_REASON`. */
+async function addToHaltReason(text: string, by: string, now: Date): Promise<"added" | "known" | "full"> {
+  const db = await getDb();
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ haltReason: inferenceControl.haltReason })
+      .from(inferenceControl)
+      .where(and(eq(inferenceControl.id, INFERENCE_CONTROL_ID), eq(inferenceControl.halted, true)))
+      .limit(1)
+      .for("update");
+    // Cleared between the two statements: there is no halt to add to, and the caller's
+    // next pass throws a fresh one if the evidence is newer than the clear.
+    if (!row) return "known" as const;
+    const current = row.haltReason ?? "";
+    if (text === "" || current.includes(text)) return "known" as const;
+    // Already closed off with the note that more is in the log: nothing further is stored.
+    if (current.endsWith(MORE_IN_LOG)) return "full" as const;
+    // The count goes at the head, where a screen that shows only the start of the reason
+    // still shows that there is more than the first finding to read.
+    const counted = FINDINGS_PREFIX.exec(current);
+    const first = counted ? current.slice(counted[0].length) : current;
+    const findings = (counted ? Number(counted[1]) : 1) + 1;
+    const grown = `[${findings} findings] ${first} | also (${by}): ${text}`;
+    const fits = grown.length + MORE_IN_LOG.length <= MAX_HALT_REASON;
+    await tx
+      .update(inferenceControl)
+      .set({ haltReason: fits ? grown : `${current}${MORE_IN_LOG}`, updatedAt: now })
+      .where(eq(inferenceControl.id, INFERENCE_CONTROL_ID));
+    return fits ? ("added" as const) : ("full" as const);
+  }, READ_COMMITTED);
 }
 
 /**
@@ -793,6 +972,7 @@ export async function applyInferenceBreakers(now: Date = new Date()): Promise<{ 
       .select({
         status: inferencePayments.status,
         agentId: inferencePayments.agentId,
+        ownerId: inferencePayments.ownerId,
         signedAt: inferencePayments.signedAt,
         createdAt: inferencePayments.createdAt,
       })
@@ -809,7 +989,7 @@ export async function applyInferenceBreakers(now: Date = new Date()): Promise<{ 
   const trip = breakerDecision(
     {
       payments: payments
-        .map((row) => ({ status: row.status, agentId: row.agentId, at: row.signedAt ?? row.createdAt }))
+        .map((row) => ({ status: row.status, agentId: row.agentId, ownerId: row.ownerId, at: row.signedAt ?? row.createdAt }))
         .filter((row) => row.at.getTime() > dealtWith),
       stops: stops.map((row) => ({ reason: row.reason, at: row.finishedAt ?? row.createdAt })).filter((row) => row.at.getTime() > dealtWith),
     },

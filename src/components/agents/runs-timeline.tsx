@@ -11,7 +11,7 @@ import { formatDuration, formatUsd } from "@/components/common/format";
 import { RunSteps } from "./run-steps";
 import { fetchAgentRuns, fetchRunDetail } from "./agent-actions";
 import { LoadMoreFailed } from "./load-more-failed";
-import { readRunThinking, thinkingUsd } from "./thinking";
+import { readRunThinking, runThinkingShown } from "./thinking";
 import { cn } from "@/lib/utils";
 import type { Page, RunSummary } from "@/server/types";
 
@@ -46,6 +46,11 @@ function RunRow({
   // Owner only, and only for a run that paid for its own thinking: the query sends
   // nothing for a key run or to a visitor, and such a row renders as it always has.
   const thinking = readRunThinking(run);
+  // The words for it. The amount on a run row is what was counted when the run ended and
+  // is never rewritten, so it is not called paid; and a run that stopped on a step that
+  // got no answer is not told that step was paid for, because the chain may since have
+  // shown it never was (`runThinkingShown`).
+  const shown = thinking ? runThinkingShown(thinking) : null;
 
   return (
     <li>
@@ -91,7 +96,11 @@ function RunRow({
                 run.error ? "text-destructive/90" : "text-foreground/85",
               )}
             >
-              {run.error ?? run.summary ?? (run.status === "running" ? "Working…" : "No summary")}
+              {/* `shown.sentence` stands in for the stored error of one kind of stop only,
+                  and only where there is an error to stand in for (the owner's view). */}
+              {run.error && shown?.sentence
+                ? shown.sentence
+                : (run.error ?? run.summary ?? (run.status === "running" ? "Working…" : "No summary"))}
             </span>
             <span className="tnum mt-0.5 block font-mono text-[11px] text-muted-foreground sm:hidden">
               {plural(run.tradeCount, "trade")}
@@ -101,23 +110,23 @@ function RunRow({
             {/* Its own line under the summary, at every width: the figure columns on the
                 right are fixed, and a fifth would move every key run's numbers too. The
                 reason is `describeInferenceStop`'s title, the words the banner and the
-                notification use; its full sentence is the run's own summary or error. */}
-            {thinking ? (
+                notification use, for every stop but the one whose sentence claims a
+                payment (`runThinkingShown`); its full sentence is the run's own summary or
+                error. */}
+            {shown ? (
               <span className="tnum mt-0.5 block text-[11px] text-muted-foreground sm:truncate">
-                <span className="font-mono" title="Paid in USDC from the agent's own wallet">
-                  {thinkingUsd(thinking.spendUsd)}
+                <span className="font-mono" title={shown.amountNote}>
+                  {shown.amount}
                 </span>{" "}
                 thinking
-                {thinking.stop ? (
+                {shown.stop ? (
                   <>
                     {" · "}
                     <span
-                      title={thinking.stop.detail}
-                      className={
-                        thinking.stop.kind === "limit" ? "text-amber-700 dark:text-amber-400" : "text-destructive/90"
-                      }
+                      title={shown.stop.detail}
+                      className={shown.stop.kind === "limit" ? "text-amber-700 dark:text-amber-400" : "text-destructive/90"}
                     >
-                      {thinking.stop.title}
+                      {shown.stop.title}
                     </span>
                   </>
                 ) : null}

@@ -591,8 +591,10 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
 
   /** Ends a pay-per-use run that stopped on one of its own limits: a normal end, as far as it got. */
   const finishAtLimit = async (reason: InferenceStopReason, paid: InferencePayContext): Promise<RunAgentResult> => {
-    const said = describeInferenceStop(reason, { runCapUsd: paid.caps.runUsd, dayCapUsd: paid.caps.agentDayUsd, model: paid.model });
-    const summary = ctx.finished.summary ?? said.detail;
+    // No figures, here as in the success branch below: a run's summary is public (the run
+    // list and the run page show it to anyone who can see the agent), and the limits are
+    // the owner's own settings. Which limit it was is on the row as `stop_reason`.
+    const summary = ctx.finished.summary ?? describeInferenceStop(reason, { model: paid.model }).detail;
     await logger.flush();
 
     const finalPortfolio = await getPortfolio(input.agentId);
@@ -750,6 +752,9 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
                 // A step is the model's answer and the tools it then runs; the fetch only times the first.
                 maxStepMs: Math.max(pay.maxStepMs, slowestStepMs),
                 deadlineAt: pay.deadlineAt,
+                // The same moment the `stopWhen` above ends the run at. The wrap-up has to
+                // come before it, or the run is cut with nothing written down.
+                noNewStepAt: modelStartedAt + NO_NEW_STEP_AFTER_MS,
                 now,
               });
               // The scripted model never calls the gateway, so the step it is about to

@@ -98,9 +98,13 @@ export default async function AdminSettingsPage() {
     getMfaStatus(session.userId),
     // The pay-per-use card must not take the page down with it either: its tables are new,
     // and a deployment that has not run their migration yet still has an admin to serve.
-    getAdminInference().then(
-      // The signature test signs only with the admin's own agents' wallets, so only those are offered.
-      (data): { data: AdminInference | null } => ({ data: { ...data, wallets: data.wallets.filter((wallet) => wallet.ownerHandle === session.handle) } }),
+    //
+    // It is given the admin's own id for one thing: the signature test signs only with
+    // the admin's own agents' wallets, and the query picks those out itself. Nothing is
+    // narrowed here: a list read for every account and filtered on the page could be
+    // cut off before it reached the admin's own wallet.
+    getAdminInference(session.userId).then(
+      (data): { data: AdminInference | null } => ({ data }),
       (): { data: AdminInference | null } => ({ data: null }),
     ),
   ]);

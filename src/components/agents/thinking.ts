@@ -476,3 +476,89 @@ export function thinkingUsd(value: number): string {
   if (value < 0.01) return `$${value.toFixed(4)}`;
   return value < 10 ? `$${value.toFixed(3).replace(/0$/, "")}` : usd(value);
 }
+
+// ---------- a run's thinking line, as the run list words it ----------
+
+/**
+ * The stops after which what a run was charged may still come down. Each ends a run on a
+ * step that was signed for and gave no usable answer, and whether that step's payment
+ * landed is decided afterwards, against the chain: the reconciler either finds it or
+ * proves it never landed, and then nothing was charged for it.
+ */
+const SPEND_NOT_FINAL_AFTER: ReadonlySet<string> = new Set(["paid_no_answer", "rerouted"]);
+
+/**
+ * What the figure on a run row is. A run's amount is written once, when the run ends,
+ * from everything the ledger then counted as charged. It is not rewritten when the chain
+ * later proves a payment never landed, so the row says what the figure is ("counted when
+ * the run ended") and where the confirmed one lives, and never that it was paid.
+ */
+export const RUN_SPEND_NOTE =
+  "What this run's steps were counted at when it ended, in USDC from the agent's own wallet. Money has what the chain confirmed.";
+
+/** The same, for a run that ended on a step whose payment was still in question. */
+export const RUN_SPEND_NOT_FINAL_NOTE =
+  "Counted when the run ended, and it includes one step that was signed for and got no usable answer. If the chain shows that payment never landed, it was not charged and the real figure is lower. Money has what the chain confirmed.";
+
+/**
+ * The owner's words for a run that stopped because a signed step got no answer.
+ *
+ * `describeInferenceStop("paid_no_answer")` says "The agent paid for one step … The
+ * charge is listed under Money". At the moment a run stops that is not known: the step
+ * is as often `unconfirmed`, and the reconciler may go on to prove it was never charged.
+ * A run row is read long after that verdict and cannot be rewritten by it, so the run
+ * list says only what stays true either way. (The contract's own sentence, which the
+ * notification and the banner still use, should say the same; it is not this file's to
+ * change.)
+ */
+export const NO_ANSWER_RUN_WORDS = {
+  title: "A step got no answer",
+  detail:
+    "The agent signed a payment for one step and the provider did not return an answer. The run stopped so it would not pay again. If that payment landed it is listed under Money; if the chain shows it never did, nothing was charged.",
+} as const;
+
+/** One run's thinking line, in the words the run list prints. */
+export interface RunThinkingShown {
+  /** The amount as printed: "$0.073", or "up to $0.073" when it may still come down. */
+  amount: string;
+  /** What that amount is, for its tooltip. Never "paid". */
+  amountNote: string;
+  /** True when the amount includes a step whose payment was still in question at run end. */
+  notFinal: boolean;
+  /** Why the run ended early, when it did. */
+  stop: { kind: InferenceStopKind; title: string; detail: string } | null;
+  /**
+   * A sentence to print in place of the run's stored error, or null to print that as it
+   * is. Set only for a stop whose stored sentence asserts a payment that may not have
+   * been made.
+   */
+  sentence: string | null;
+}
+
+/**
+ * Pure: how the run list words a run's thinking.
+ *
+ * Every other reason keeps the title and sentence the banner and the notification use
+ * (`stopWords`). Two things differ from the stored row, both so that a step the chain
+ * later showed was never charged is not called paid here: the amount is "counted", never
+ * "paid", and is "up to" when its last step was in question; and a `paid_no_answer` stop
+ * is worded as {@link NO_ANSWER_RUN_WORDS}.
+ */
+export function runThinkingShown(thinking: RunThinking): RunThinkingShown {
+  const reason = thinking.stop?.reason ?? null;
+  const notFinal = reason !== null && SPEND_NOT_FINAL_AFTER.has(reason) && thinking.spendUsd > 0;
+  const noAnswer = reason === "paid_no_answer";
+  return {
+    amount: `${notFinal ? "up to " : ""}${thinkingUsd(thinking.spendUsd)}`,
+    amountNote: notFinal ? RUN_SPEND_NOT_FINAL_NOTE : RUN_SPEND_NOTE,
+    notFinal,
+    stop: thinking.stop
+      ? {
+          kind: thinking.stop.kind,
+          title: noAnswer ? NO_ANSWER_RUN_WORDS.title : thinking.stop.title,
+          detail: noAnswer ? NO_ANSWER_RUN_WORDS.detail : thinking.stop.detail,
+        }
+      : null,
+    sentence: noAnswer ? NO_ANSWER_RUN_WORDS.detail : null,
+  };
+}

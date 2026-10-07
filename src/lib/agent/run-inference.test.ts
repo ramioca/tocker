@@ -35,7 +35,9 @@ import {
   type InferenceReserveResult,
   type InferenceStopReason,
 } from "@/lib/x402/inference-types";
+import { getAgentRuns, getRun } from "@/server/queries/agents";
 import { DEFAULT_AGENT_CONFIG } from "./config";
+import { countsAsStrike } from "./inference";
 import { INFERENCE_HOLD_NOTICE, applyInferenceHold } from "./inference-gate";
 import { RUN_DEFERRED, RunRefusedError } from "./run-gate";
 import { ABANDONED_RUN_ERROR, paidStop, reapStaleRuns, resolveModel, runAgent, runSummary, startRun } from "./run";
@@ -327,7 +329,8 @@ describe("with INFERENCE_USDC unset", () => {
     expect(await runsOf(agent.agentId)).toHaveLength(0);
     expect(await paymentsOf(agent.agentId)).toHaveLength(0);
     expect(await db.select().from(schema.inferenceBudgetDays)).toHaveLength(0);
-    expect(await agentRow(agent.agentId)).toMatchObject({ inferenceHold: "flag_off", inferenceStrikes: 1 });
+    // Held, and not counted against it: the switch being off is nobody's fault.
+    expect(await agentRow(agent.agentId)).toMatchObject({ inferenceHold: "flag_off", inferenceStrikes: 0 });
     const notices = await noticesOf(agent.userId);
     expect(notices).toHaveLength(1);
     expect(notices[0]?.kind).toBe(INFERENCE_HOLD_NOTICE);
@@ -488,12 +491,15 @@ describe("how each stop ends the run", () => {
     seam.refuse = { atSeq: 2, reason };
 
     const result = await runAgent({ agentId: agent.agentId, trigger: "schedule" });
-    const said = describeInferenceStop(reason, { runCapUsd: 0.3 });
+    // The sentence with no figure in it: a summary is public, the limits are the owner's.
+    const said = describeInferenceStop(reason);
+    expect(said.detail).not.toContain("$");
     expect(result).toMatchObject({ status: "succeeded", stopReason: reason, summary: said.detail });
     expect(result.error).toBeUndefined();
 
     const [run] = await runsOf(agent.agentId);
     expect(run).toMatchObject({ status: "succeeded", stopReason: reason, summary: said.detail, error: null, llmSource: "usdc" });
+    expect(run?.summary).not.toContain("$");
     expect(run?.finishedAt).not.toBeNull();
 
     // The two steps it took are paid for and on the row; the refused third is not.
@@ -529,10 +535,11 @@ describe("how each stop ends the run", () => {
     expect(Number(run?.inferenceSpendUsd)).toBeCloseTo(sum(payments), 6);
     expect(Number(run?.inferenceSpendUsd)).toBeGreaterThan(0);
 
-    // Held, for this reason, until the time the rule for it gives.
+    // Held, for this reason, until the time the rule for it gives. A stop that is nobody's
+    // fault (a halt, a pause, the switch, the platform's day) is not counted against it.
     const row = await agentRow(agent.agentId);
     expect(row.inferenceHold).toBe(reason);
-    expect(row.inferenceStrikes).toBe(1);
+    expect(row.inferenceStrikes).toBe(countsAsStrike(reason) ? 1 : 0);
     const finished = run?.finishedAt as Date;
     expect(finished.getTime()).toBeGreaterThanOrEqual(started);
     expect(row.inferenceHoldUntil).toEqual(holdUntil(reason, 1, finished));
@@ -550,6 +557,35 @@ describe("how each stop ends the run", () => {
     expect(error?.payload).toMatchObject({ error: said.detail, reason });
     expect(row.nextRunAt).not.toBeNull();
     expect(await findDueAgents(50, new Date(Date.now() + 60_000))).not.toContain(agent.agentId);
+  });
+
+  /**
+   * The owner's limit for one run is theirs alone (`AgentDetail.config` is null for
+   * anyone else), and a run's summary is public. A run that stopped on that limit used to
+   * be summarised WITH the figure, so the run list and the run page showed every visitor
+   * what the owner had set. Each limit is tried, with a limit the form allows.
+   */
+  it.each(LIMITS)("%s: a visitor's view of the run carries no dollar figure, in the list or on the run page", async (reason) => {
+    const agent = await payingAgent({ maxUsdPerRun: 0.05, maxUsdPerDay: 0.75 });
+    seam.refuse = { atSeq: 2, reason };
+    const result = await runAgent({ agentId: agent.agentId, trigger: "schedule" });
+    expect(result).toMatchObject({ status: "succeeded", stopReason: reason });
+
+    // A signed-out visitor, and another account: neither is the owner.
+    for (const viewer of [null, "did:privy:someone-else"]) {
+      const listed = (await getAgentRuns(agent.agentId, null, viewer)).items.find((run) => run.id === result.runId);
+      const opened = await getRun(result.runId, viewer);
+      for (const view of [listed, opened]) {
+        expect(view?.status).toBe("succeeded");
+        expect(view?.summary).toBe(describeInferenceStop(reason).detail);
+        // Nowhere in what a visitor is sent, and neither limit in the words they read.
+        expect(JSON.stringify(view)).not.toContain("$");
+        expect(`${view?.summary} ${view?.error}`).not.toMatch(/0\.05|0\.75/);
+      }
+    }
+    // The stored row itself has none either: whoever reads it next cannot leak one.
+    const [run] = await runsOf(agent.agentId);
+    expect(run?.summary).not.toMatch(/\$|0\.05|0\.75/);
   });
 
   it("says nothing the second time, waits longer, and starts afresh after a run that works", async () => {
@@ -751,12 +787,18 @@ describe("the scheduler and a held agent", () => {
     await db.update(schema.agents).set({ nextRunAt: new Date(Date.now() - 60_000) }).where(eq(schema.agents.id, agent.agentId));
     delete process.env.INFERENCE_USDC;
     await runAgent({ agentId: agent.agentId, trigger: "schedule" });
-    await db.update(schema.agents).set({ inferenceHoldUntil: new Date(Date.now() - 1_000) }).where(eq(schema.agents.id, agent.agentId));
+    // Sixteen minutes on: the hold began then, and its first wait has run out.
+    await db
+      .update(schema.agents)
+      .set({ inferenceHoldSince: new Date(Date.now() - 16 * 60_000), inferenceHoldUntil: new Date(Date.now() - 1_000) })
+      .where(eq(schema.agents.id, agent.agentId));
 
     const tick = await tickDueAgents(50);
     expect(tick.results.some((result) => result.agentId === agent.agentId)).toBe(false);
     const row = await agentRow(agent.agentId);
-    expect(row).toMatchObject({ inferenceHold: "flag_off", inferenceStrikes: 2 });
+    // Still held and looked at later than last time, with nothing counted against it:
+    // the switch being off is not the agent's doing.
+    expect(row).toMatchObject({ inferenceHold: "flag_off", inferenceStrikes: 0 });
     expect((row.inferenceHoldUntil as Date).getTime()).toBeGreaterThan(Date.now() + 29 * 60_000);
     expect(await runsOf(agent.agentId)).toHaveLength(0);
     expect(await noticesOf(agent.userId)).toHaveLength(1);

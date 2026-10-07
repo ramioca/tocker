@@ -6,12 +6,14 @@ import {
   databaseStep,
   evaluateFirstTradeRisk,
   paperPositionsStep,
+  firstTradeChain,
   simulateFirstTrade,
   withFirstTradePreset,
   type DatabaseStepInput,
 } from "./live-readiness";
 import { dataChainsFor } from "@/lib/data-sources/registry";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { thinkingReserveUsd, usdcChoiceProblem } from "@/lib/agent/inference";
 import type { AgentConfig } from "@/db/schema";
 
 function config(overrides: Partial<AgentConfig["risk"]> = {}, chains: AgentConfig["chains"] = ["base"]): AgentConfig {
@@ -155,6 +157,55 @@ describe("withFirstTradePreset", () => {
     expect(after.universe).toEqual(before.universe);
     expect(after.llm).toEqual(before.llm);
   });
+
+  /**
+   * An agent that pays for its own thinking pays from its Solana wallet. A Base agent
+   * whose owner added Solana to use pay-per-use has it second, and "keep the first chain"
+   * took it away: a config the server refuses on every other save, which then blocked
+   * every later save of the agent's settings.
+   */
+  describe("for an agent that pays per use", () => {
+    const paying = (chains: AgentConfig["chains"]): AgentConfig => {
+      const base = config({ maxTradeUsd: 500, maxDailyTrades: 20 }, chains);
+      return { ...base, llm: { ...base.llm, source: "usdc", usdc: { model: "google/gemini-2.5-flash", maxUsdPerRun: 0.3, maxUsdPerDay: 3 } } };
+    };
+
+    it("keeps Solana, the chain that pays, wherever it sits in the list", () => {
+      for (const chains of [["base", "solana"], ["solana", "base"]] as Array<AgentConfig["chains"]>) {
+        const before = paying(chains);
+        expect(usdcChoiceProblem(before)).toBeNull();
+        const after = withFirstTradePreset(before);
+        expect(after.chains).toEqual(["solana"]);
+        // What the preset writes is a config every other save would accept.
+        expect(usdcChoiceProblem(after)).toBeNull();
+        expect(after.llm).toEqual(before.llm);
+        expect(after.risk.maxTradeUsd).toBe(FIRST_TRADE_PRESET.maxTradeUsd);
+      }
+    });
+
+    it("leaves a Solana-only one as it is, and does not invent Solana for one that never had it", () => {
+      expect(withFirstTradePreset(paying(["solana"])).chains).toEqual(["solana"]);
+      // Already a config the settings form refuses; the preset does not make it look sound.
+      expect(withFirstTradePreset(paying(["base"])).chains).toEqual(["base"]);
+    });
+
+    it("names that chain, so the screen that says which one is kept says the same", () => {
+      expect(firstTradeChain(paying(["base", "solana"]))).toBe("solana");
+      expect(firstTradeChain(paying(["solana", "base"]))).toBe("solana");
+      expect(firstTradeChain(paying(["base"]))).toBe("base");
+    });
+  });
+
+  it("still keeps a key agent's first chain, whichever that is", () => {
+    expect(withFirstTradePreset(config({}, ["base", "solana"])).chains).toEqual(["base"]);
+    expect(withFirstTradePreset(config({}, ["solana", "base"])).chains).toEqual(["solana"]);
+    expect(firstTradeChain(config({}, ["base", "solana"]))).toBe("base");
+    expect(firstTradeChain(config({}, []))).toBeNull();
+    // Old pay-per-use limits left in a key agent's config change nothing.
+    const back = config({}, ["base", "solana"]);
+    const withOldLimits: AgentConfig = { ...back, llm: { ...back.llm, source: "key", usdc: { model: "google/gemini-2.5-flash", maxUsdPerRun: 0.3, maxUsdPerDay: 3 } } };
+    expect(withFirstTradePreset(withOldLimits).chains).toEqual(["base"]);
+  });
 });
 
 /**
@@ -201,7 +252,7 @@ describe("simulateFirstTrade", () => {
   });
 
   /**
-   * An agent that pays for its own thinking keeps one run's worth of it, and the wallet
+   * An agent that pays for its own thinking keeps two runs' worth of it, and the wallet
    * floor, out of its trades. The checklist has to simulate against what is left, or it
    * says green over a wallet whose first buy the guard will refuse.
    */
@@ -212,17 +263,29 @@ describe("simulateFirstTrade", () => {
     };
 
     it("refuses a wallet that covers the ticket but not the ticket and the thinking, and says why", async () => {
-      // $2.50 covers a $2.00 buy and its $0.10 fee. Not once $0.55 is kept back.
+      // $2.50 covers a $2.00 buy and its $0.10 fee. Not once $0.85 is kept back.
       expect(await simulateFirstTrade(config({ maxTradeUsd: 2, maxPositionPct: 100 }, ["solana"]), 2.5)).toBeNull();
       const refusal = await simulateFirstTrade(paying(0.3), 2.5);
       expect(refusal).toMatch(/Insufficient cash/);
-      expect(refusal).toMatch(/\$0\.55 is kept back to pay for its own thinking/);
+      expect(refusal).toMatch(/\$0\.85 is kept back to pay for its own thinking/);
     });
 
     it("passes once the wallet covers both", async () => {
-      expect(await simulateFirstTrade(paying(0.3), 2.65)).toBeNull();
-      expect(await simulateFirstTrade(paying(2), 4.35)).toBeNull();
-      expect(await simulateFirstTrade(paying(2), 4.3)).toMatch(/Insufficient cash/);
+      // The ticket, its fee, and two runs and the floor: 2.00 + 0.10 + 0.85, and 2.00 + 0.10 + 4.25.
+      expect(await simulateFirstTrade(paying(0.3), 2.95)).toBeNull();
+      expect(await simulateFirstTrade(paying(0.3), 2.9)).toMatch(/Insufficient cash/);
+      expect(await simulateFirstTrade(paying(2), 6.35)).toBeNull();
+      expect(await simulateFirstTrade(paying(2), 6.3)).toMatch(/Insufficient cash/);
+    });
+
+    /** The checklist and the live book must hold back one and the same figure. */
+    it("holds back exactly what the live book does: the one function's figure", async () => {
+      for (const maxUsdPerRun of [0.05, 0.3, 1, 2]) {
+        const agent = paying(maxUsdPerRun);
+        const needed = 2 + 0.1 + thinkingReserveUsd(agent);
+        expect(await simulateFirstTrade(agent, needed)).toBeNull();
+        expect(await simulateFirstTrade(agent, needed - 0.01)).toMatch(/Insufficient cash/);
+      }
     });
 
     it("still measures concentration against the whole wallet: the money kept back is the agent's", async () => {

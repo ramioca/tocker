@@ -31,6 +31,7 @@ function data(overrides: Partial<AdminInference> = {}): AdminInference {
       platformDayUsd: 2,
       agentDayRequests: 600,
       rpcConfigured: true,
+      rpcPublic: false,
       mock: false,
     },
     day: "2026-10-06",
@@ -47,16 +48,19 @@ function data(overrides: Partial<AdminInference> = {}): AdminInference {
       ],
     },
     open: [],
-    openCounts: { reserved: 0, signed: 0, unconfirmed: 0 },
+    openCounts: { reserved: 0, signed: 0, unconfirmed: 0, answered_unproven: 0 },
+    noVerdictInTime: 0,
+    checkedForHours: 6,
+    lateLookDays: 7,
     control: { halted: false, haltReason: null, haltClearedAt: null, pausedUntil: null, pauseReason: null, updatedBy: null, updatedAt: null, stops: null },
     breakers: [
-      { rule: "unanswered", count: 1, agents: 1, threshold: 3, windowMinutes: 15, tripped: false },
-      { rule: "gateway", count: 0, agents: null, threshold: 5, windowMinutes: 10, tripped: false },
-      { rule: "signature", count: 0, agents: null, threshold: 5, windowMinutes: 10, tripped: false },
-      { rule: "pin_mismatch", count: 0, agents: null, threshold: 1, windowMinutes: 30, tripped: false },
+      { rule: "unanswered", count: 1, accounts: 1, accountsThreshold: 2, threshold: 3, windowMinutes: 15, tripped: false },
+      { rule: "gateway", count: 0, accounts: null, accountsThreshold: null, threshold: 5, windowMinutes: 10, tripped: false },
+      { rule: "signature", count: 0, accounts: null, accountsThreshold: null, threshold: 5, windowMinutes: 10, tripped: false },
+      { rule: "pin_mismatch", count: 0, accounts: null, accountsThreshold: null, threshold: 1, windowMinutes: 30, tripped: false },
     ],
     holds: [],
-    wallets: [{ walletId: "pw_1", address: "PayerSolanaAddress1111111111111111111111111", agentName: "Alpha", agentSlug: "alpha", ownerHandle: "rami", payPerUse: true }],
+    wallets: [{ walletId: "pw_1", address: "PayerSolanaAddress1111111111111111111111111", agentName: "Alpha", agentSlug: "alpha", payPerUse: true }],
     ...overrides,
   };
 }
@@ -95,6 +99,16 @@ describe("what a payment asked for right now would be told", () => {
     expect(render(data({ today: { ...data().today, platformUsd: 2 } }))).toContain("Refused: the platform&#x27;s daily limit is reached.");
   });
 
+  it("warns, without refusing, when the RPC is the public endpoint: a payment would still be signed", () => {
+    const html = render(withSwitches({ rpcPublic: true }));
+    // Not a refusal, because the pay path does not refuse it. The caution is the point.
+    expect(html).toContain("Allowed for admins and invited accounts, within every cap. But SOLANA_RPC_URL is the public Solana endpoint");
+    expect(html).toContain("a payment would still be signed");
+    expect(html).not.toContain("Refused");
+    // And nothing of the kind for an operator's own provider.
+    expect(render(data())).not.toContain("public Solana endpoint");
+  });
+
   it("says who is allowed when nothing refuses, and that mock mode pays nothing", () => {
     expect(render(data())).toContain("Allowed for admins and invited accounts, within every cap.");
     expect(render(withSwitches({ stage: "on" }))).toContain("Allowed for every account, within every cap.");
@@ -116,11 +130,13 @@ describe("the figures", () => {
   it("names a tripped breaker and the agents that are held", () => {
     const html = render(
       data({
-        breakers: [{ rule: "unanswered", count: 3, agents: 2, threshold: 3, windowMinutes: 15, tripped: true }, ...data().breakers.slice(1)],
+        breakers: [{ rule: "unanswered", count: 3, accounts: 2, accountsThreshold: 2, threshold: 3, windowMinutes: 15, tripped: true }, ...data().breakers.slice(1)],
         holds: [{ reason: "needs_funds", agents: 4 }],
       }),
     );
-    expect(html).toContain("3 from 2 agents in 15 min · pauses at 3 from 2 agents · tripped");
+    expect(html).toContain("3 from 2 accounts in 15 min · pauses at 3 from 2 accounts · tripped");
+    // The rules that need only a count say nothing about accounts.
+    expect(html).toContain("0 in 10 min · pauses at 5<");
     expect(html).toContain("4 · Add USDC to keep thinking");
   });
 });
@@ -137,6 +153,7 @@ describe("rows still open", () => {
           {
             id: "p1",
             status: "unconfirmed",
+            noVerdictInTime: false,
             agentName: "Alpha",
             agentSlug: "alpha",
             ownerHandle: "rami",
@@ -147,9 +164,9 @@ describe("rows still open", () => {
             httpStatus: 502,
             detail: '<img src=x onerror="alert(1)"> upstream [redacted]',
           },
-          { id: "p2", status: "reserved", agentName: null, agentSlug: null, ownerHandle: null, model: "openai/gpt-4o-mini", quotedUsd: 0.02, createdAt: "2026-10-06T12:01:00.000Z", signedAt: null, httpStatus: null, detail: null },
+          { id: "p2", status: "reserved", noVerdictInTime: false, agentName: null, agentSlug: null, ownerHandle: null, model: "openai/gpt-4o-mini", quotedUsd: 0.02, createdAt: "2026-10-06T12:01:00.000Z", signedAt: null, httpStatus: null, detail: null },
         ],
-        openCounts: { reserved: 1, signed: 0, unconfirmed: 1 },
+        openCounts: { reserved: 1, signed: 0, unconfirmed: 1, answered_unproven: 0 },
       }),
     );
     expect(html).not.toContain("<img");
@@ -158,6 +175,30 @@ describe("rows still open", () => {
     expect(html).toContain("@rami");
     expect(html).toContain("deleted agent");
     expect(html).toContain("1 reserved · 0 signed · 1 unconfirmed");
+    // Nothing answered-and-unproven and nothing stuck: neither is named in the tile.
+    expect(html).not.toContain("0 answered, unproven");
+    expect(html).not.toMatch(/\d with no verdict in time/);
+  });
+
+  it("names an answered step whose payment is unproven, and a row no verdict was reached on in time", () => {
+    const html = render(
+      data({
+        open: [
+          { id: "p3", status: "unconfirmed", noVerdictInTime: true, agentName: "Alpha", agentSlug: "alpha", ownerHandle: "rami", model: "google/gemini-2.5-flash", quotedUsd: 0.2, createdAt: "2026-10-06T02:00:00.000Z", signedAt: "2026-10-06T02:00:01.000Z", httpStatus: 503, detail: null },
+          { id: "p4", status: "answered_unproven", noVerdictInTime: false, agentName: "Alpha", agentSlug: "alpha", ownerHandle: "rami", model: "google/gemini-2.5-flash", quotedUsd: 0.09, createdAt: "2026-10-06T12:00:00.000Z", signedAt: "2026-10-06T12:00:01.000Z", httpStatus: 200, detail: null },
+        ],
+        openCounts: { reserved: 0, signed: 0, unconfirmed: 1, answered_unproven: 1 },
+        noVerdictInTime: 1,
+      }),
+    );
+    expect(html).toContain("0 reserved · 0 signed · 1 unconfirmed · 1 answered, unproven · 1 with no verdict in time");
+    expect(html).toContain(">answered, unproven<");
+    expect(html).toContain(">no verdict in time<");
+    // What the fourth kind means, how long a row is checked for, and what to do past it.
+    expect(html).toContain("kept out of the owner’s Money total and out of every P&amp;L");
+    expect(html).toContain("for 6 hours from when a row was written");
+    expect(html).toContain("looked at again only now and then, until 7 days old, and after that not at all");
+    expect(html).toContain("scripts/inference-audit.ts");
   });
 });
 
@@ -169,12 +210,17 @@ describe("the controls", () => {
     // No reason typed yet: the halt button cannot be pressed.
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>(?:<svg[\s\S]*?<\/svg>)?Halt pay-per-use<\/button>/);
     expect(html).toContain("Test a signature (nothing is sent)");
-    expect(html).toContain("Alpha · @rami · Paye…1111 · pays per use");
+    // The admin's own agents only, and the card says so; no other account is named.
+    expect(html).toContain("Alpha · Paye…1111 · pays per use");
+    expect(html).toContain("Only the wallets of your own agents are offered");
     // Not paused, so there is no pause to end.
     expect(html).not.toContain("End the pause now");
   });
 
-  it("say so when there is no wallet that could sign", () => {
-    expect(render(data({ wallets: [] }))).toContain("No real Solana agent wallet exists yet.");
+  it("say so, truthfully, when none of the admin's own agents has a wallet that could sign", () => {
+    const html = render(data({ wallets: [] }));
+    // Other accounts may well have real Solana wallets; what is true is that this admin has none.
+    expect(html).toContain("None of your own agents has a real Solana wallet yet.");
+    expect(html).not.toContain("No real Solana agent wallet exists yet");
   });
 });

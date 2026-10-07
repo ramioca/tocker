@@ -21,7 +21,6 @@ import { thinkingModel } from "@/lib/agent/inference";
 import { closedSells, type AnalyticsFill } from "@/lib/analytics";
 import { toNum, toNumOrNull } from "@/lib/money";
 import { flowsBetween, pnlNetOfFlows, type MoneyFlow } from "@/lib/pnl";
-import type { InferencePaymentStatus } from "@/lib/x402/inference-types";
 import type {
   AgentCard,
   Chain,
@@ -434,89 +433,117 @@ export function withdrawnUsdc(metadata: Record<string, unknown> | null | undefin
 }
 
 /**
- * The ledger statuses in which a pay-per-use payment is known to have left the wallet:
- * paid and answered, and paid with no answer. The Money page's "Thinking" figure and the
- * flow taken out of P&L are both made from exactly these, so they cannot disagree.
+ * A pay-per-use payment PROVEN to have left the wallet, as a condition on
+ * `inference_payments`:
  *
- * Left out on purpose: `signed` and `unconfirmed` (signed, and whether the money moved is
- * not yet known; the reconciler turns each into `paid_no_answer` or `not_charged` within
- * minutes), `reserved`, `released` and `not_charged` (nothing left the wallet), and
- * `simulated` (mock mode, no money). An amount that is only maybe gone is not taken out
- * of a public P&L: until it is settled it reads as a few cents of loss, never as a gain.
+ *  - `paid_no_answer`: the gateway's own receipt or the reconciler's sighting on chain
+ *    says the money moved, and no usable answer came;
+ *  - `settled` WITH a transaction id: answered, and the payment is named on chain.
+ *
+ * The Money page's "Thinking" figure and the flow taken out of P&L are both made from
+ * exactly this condition, so the two cannot disagree, and the page's Net (P&L less costs)
+ * is right whichever side of it a row is on.
+ *
+ * Left out on purpose, because a public P&L is not adjusted on an assumption:
+ *
+ *  - `settled` with NO transaction id: the step was answered, and whether its payment
+ *    landed is still being checked. The ledger counts it as charged against every limit
+ *    (the safe side for a cap). It is the unsafe side for a P&L: netted and never landed,
+ *    it would read as a gain nobody made, for good. It joins when the reconciler writes
+ *    the transaction id, and never joins if the reconciler finds it was not charged.
+ *  - `signed` and `unconfirmed`: signed, and whether the money moved is not yet known.
+ *  - `reserved`, `released` and `not_charged`: nothing left the wallet.
+ *  - `simulated`: mock mode, no money.
+ *
+ * Until a row is proven its amount is in no Thinking total and stays in the P&L as it
+ * fell out of the wallet: a few cents of loss, never a gain.
  */
-export const THINKING_PAID_STATUSES = ["settled", "paid_no_answer"] as const satisfies readonly InferencePaymentStatus[];
+export function thinkingProvenSql() {
+  return sql<boolean>`(${inferencePayments.status} = 'paid_no_answer' or (${inferencePayments.status} = 'settled' and ${inferencePayments.txHash} is not null))`;
+}
+
+/**
+ * Answered, and not yet proven on chain: a `settled` row the gateway gave no transaction
+ * id for. Counted as charged, shown as being checked, and netted from nothing (see
+ * {@link thinkingProvenSql}).
+ */
+export function thinkingAnsweredUnprovenSql() {
+  return sql<boolean>`(${inferencePayments.status} = 'settled' and ${inferencePayments.txHash} is null)`;
+}
 
 /** What one ledger row took from the wallet: the settled amount, or the quote when the gateway named none. */
 export function thinkingPaidUsdSql() {
   return sql<string>`coalesce(${inferencePayments.settledUsd}, ${inferencePayments.quotedUsd})`;
 }
 
+/** When a ledger row's payment was made: its signature, or the row's own time before there was one. */
+export function thinkingPaidAtSql() {
+  return sql<Date>`coalesce(${inferencePayments.signedAt}, ${inferencePayments.createdAt})`;
+}
+
 /**
- * What each live agent paid for its own thinking, as one row per run: the run's total,
- * at the time of its last payment.
+ * What each live agent paid for its own thinking, as flows: one row per run and per
+ * stretch between two marks of the book, dated at the last payment in it.
  *
  * Per run and not per step because a run pays for up to twenty-one steps inside a few
- * minutes and marks are five minutes apart, so the run's total nets the same and is a
- * tenth of the rows. The last payment's time and not the first's, so that a mark taken
- * in the middle of a run reads a few cents low until the next mark, never a few cents
- * high.
+ * minutes, so its total nets the same and is a tenth of the rows. But never across a
+ * mark. Every reader of these flows measures between two marks of the agent's current
+ * book and asks which side of each a flow falls on (`flowsBetween`), and a mark taken
+ * while a run is paying already lacks the steps before it and still holds the ones
+ * after. A run's whole total at its last payment's time puts the earlier steps on the
+ * wrong side of that mark: measured from it (a 7 or 30 day window's baseline, or the
+ * book's first mark), the P&L read high by what was paid before it. So the cut is made
+ * here, step by step: each payment is keyed by the latest mark strictly before it, and
+ * only payments between the same two marks are added up. A flow dated exactly at a mark
+ * is inside that mark, as `flowsBetween` reads it, hence "strictly".
  *
- * Payments made at or before the book's first mark are left out, and that is done here,
- * step by step, before the steps are added up. Every reader measures from a mark at or
- * after that one, so those payments are already inside it. Left to the reader's own cut
- * they would be wrong for exactly one run: the one in flight when the agent went live.
- * Its total carries its last payment's time, so its steps from before the mark would be
- * netted as well, and the agent's all-time P&L would be too high by that much for good.
+ * A payment with no mark before it (made at or before the book's first mark, or by an
+ * agent never marked) is no flow at all: every reader measures from a mark at or after
+ * the first, so that money is already inside it.
+ *
+ * Only payments proven to have left the wallet ({@link thinkingProvenSql}).
  *
  * The ledger has no foreign keys, so the join to `agents` is also what drops the rows of
- * agents that no longer exist. An agent with no ledger row costs this nothing: the first
- * marks are read only for the agents that paid.
+ * agents that no longer exist. An agent with no ledger row costs this nothing: marks are
+ * looked up per payment, through the snapshots' own (agent, time) index.
  */
-async function loadThinkingFlows(db: Db, ids: string[]): Promise<Array<{ agentId: string; at: number | string; usd: string }>> {
+async function loadThinkingFlows(db: Db, ids: string[]): Promise<Array<{ agentId: string; atMs: number | string | bigint; usd: string }>> {
+  const paidAt = thinkingPaidAtSql();
+  // The latest snapshot, strictly before this payment, of the book the agent is running
+  // now: the same rows `loadBookMarks` and the leaderboard's windows measure between.
+  const markBefore = sql<Date | null>`(
+    select max(${equitySnapshots.at}) from ${equitySnapshots}
+    where ${equitySnapshots.agentId} = ${agents.id}
+      and (${equitySnapshots.mode} is null or ${equitySnapshots.mode} = ${agents.mode})
+      and ${equitySnapshots.at} < ${paidAt}
+  )`;
   const paid = db.$with("thinking_paid").as(
     db
       .select({
         agentId: sql<string>`${agents.id}`.as("thinking_agent_id"),
         runKey: sql<string>`coalesce(${inferencePayments.runId}, ${inferencePayments.id})`.as("thinking_run_key"),
-        at: sql<Date>`coalesce(${inferencePayments.signedAt}, ${inferencePayments.createdAt})`.as("thinking_paid_at"),
+        at: sql<Date>`${paidAt}`.as("thinking_paid_at"),
         usd: thinkingPaidUsdSql().as("thinking_usd"),
+        markBefore: markBefore.as("thinking_mark_before"),
       })
       .from(inferencePayments)
       .innerJoin(agents, eq(agents.id, inferencePayments.agentId))
-      .where(
-        and(
-          inArray(inferencePayments.agentId, ids),
-          eq(agents.mode, "live"),
-          inArray(inferencePayments.status, [...THINKING_PAID_STATUSES]),
-        ),
-      ),
-  );
-  // The first snapshot of the book the agent is running now: the same row
-  // `loadBookMarks` measures all-time P&L from.
-  const firstMark = db.$with("thinking_first_mark").as(
-    db
-      .select({
-        agentId: sql<string>`${equitySnapshots.agentId}`.as("mark_agent_id"),
-        firstAt: sql<Date>`min(${equitySnapshots.at})`.as("mark_first_at"),
-      })
-      .from(equitySnapshots)
-      .innerJoin(agents, eq(agents.id, equitySnapshots.agentId))
-      .where(and(inArray(equitySnapshots.agentId, db.select({ agentId: paid.agentId }).from(paid)), snapshotInCurrentMode()))
-      .groupBy(equitySnapshots.agentId),
+      .where(and(inArray(inferencePayments.agentId, ids), eq(agents.mode, "live"), thinkingProvenSql())),
   );
   return db
-    .with(paid, firstMark)
+    .with(paid)
     .select({
       agentId: paid.agentId,
-      // Epoch seconds, not the timestamp: a raw aggregate is not column-mapped, and
-      // Postgres prints a timestamptz as "… +00", which `Date` cannot parse.
-      at: sql<number | string>`extract(epoch from max(${paid.at}))::float8`,
+      // Whole epoch milliseconds, not the timestamp (a raw aggregate is not column-mapped,
+      // and Postgres prints a timestamptz as "… +00", which `Date` cannot parse) and not
+      // float seconds either: a payment dated at the instant of a mark has to compare
+      // equal to that mark's own time, and a double times a thousand lands a hair off.
+      atMs: sql<number | string | bigint>`floor(extract(epoch from max(${paid.at})) * 1000)::bigint`,
       usd: sql<string>`coalesce(sum(${paid.usd}), 0)`,
     })
     .from(paid)
-    .innerJoin(firstMark, eq(firstMark.agentId, paid.agentId))
-    .where(sql`${paid.at} > ${firstMark.firstAt}`)
-    .groupBy(paid.agentId, paid.runKey);
+    .where(sql`${paid.markBefore} is not null`)
+    .groupBy(paid.agentId, paid.runKey, paid.markBefore);
 }
 
 /**
@@ -535,8 +562,9 @@ async function loadThinkingFlows(db: Db, ids: string[]): Promise<Array<{ agentId
  * wallet, so real money moving through that wallet (a deposit, or a paper agent paying
  * for its thinking) changes nothing in it and gets no entry.
  *
- * Thinking arrives one flow per run, and only for payments after the book's first mark
- * (`loadThinkingFlows`), so an agent that has never been marked has none.
+ * Thinking arrives one flow per run and per stretch between two marks, only for payments
+ * proven on chain and made after the book's first mark (`loadThinkingFlows`), so an
+ * agent that has never been marked has none.
  *
  * These are what every live P&L nets out, the same sources `/money`'s daily table reads.
  * What is not here cannot be netted: USDC sent to an agent's address from outside Tocker
@@ -599,7 +627,7 @@ export async function loadMoneyFlows(db: Db, agentIds: string[]): Promise<Map<st
     if (row.agentId && usdc > 0) add(row.agentId, { at: row.at, amountUsd: -usdc });
   }
   for (const row of thinking) {
-    const ms = epochMs(row.at);
+    const ms = Number(row.atMs);
     const paidUsd = toNum(row.usd);
     if (Number.isFinite(ms) && paidUsd > 0) add(row.agentId, { at: ms, amountUsd: -paidUsd, kind: "thinking" });
   }

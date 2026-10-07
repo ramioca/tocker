@@ -226,40 +226,72 @@ describe("breakers", () => {
     expect(breakerDecision(none, NOW)).toBeNull();
   });
 
-  it("pauses 30 minutes when 3 paid steps from 2 agents got no answer within 15 minutes", () => {
+  it("pauses 30 minutes when 3 paid steps from 2 accounts got no answer within 15 minutes", () => {
     const evidence: BreakerEvidence = {
       payments: [
-        { status: "paid_no_answer", agentId: "a", at: minutesAgo(14) },
-        { status: "unconfirmed", agentId: "a", at: minutesAgo(9) },
-        { status: "unconfirmed", agentId: "b", at: minutesAgo(2) },
+        { status: "paid_no_answer", agentId: "a", ownerId: "one", at: minutesAgo(14) },
+        { status: "unconfirmed", agentId: "a", ownerId: "one", at: minutesAgo(9) },
+        { status: "unconfirmed", agentId: "b", ownerId: "two", at: minutesAgo(2) },
       ],
       stops: [],
     };
     const trip = breakerDecision(evidence, NOW);
     expect(trip?.rule).toBe("unanswered");
+    expect(trip?.reason).toBe("3 paid steps from 2 accounts got no answer within 15 minutes");
     // Thirty minutes from the last of the three, not from the moment it was noticed.
     expect(trip?.pauseUntil.getTime()).toBe(minutesAgo(2).getTime() + 30 * MINUTE);
   });
 
+  it("counts accounts, not agents: one owner's several agents cannot pause everyone", () => {
+    const oneOwner: BreakerEvidence = {
+      payments: [
+        { status: "unconfirmed", agentId: "a", ownerId: "one", at: minutesAgo(9) },
+        { status: "unconfirmed", agentId: "b", ownerId: "one", at: minutesAgo(6) },
+        { status: "paid_no_answer", agentId: "c", ownerId: "one", at: minutesAgo(3) },
+        { status: "unconfirmed", agentId: "d", ownerId: "one", at: minutesAgo(1) },
+      ],
+      stops: [],
+    };
+    expect(breakerTrips(oneOwner, NOW)).toEqual([]);
+    // One agent id under two owners is two accounts (ids are not shared, but the rule reads the owner).
+    const twoOwners: BreakerEvidence = { payments: oneOwner.payments.map((payment, n) => ({ ...payment, agentId: "a", ownerId: n === 0 ? "two" : "one" })), stops: [] };
+    expect(breakerDecision(twoOwners, NOW)?.rule).toBe("unanswered");
+  });
+
+  it("falls back to the agent for a row that names no owner, and treats rows that name neither as one", () => {
+    // A reader of this type written before the owner was added: counted as it used to be.
+    const byAgent: BreakerEvidence = {
+      payments: [
+        { status: "unconfirmed", agentId: "a", at: minutesAgo(9) },
+        { status: "unconfirmed", agentId: "a", at: minutesAgo(6) },
+        { status: "unconfirmed", agentId: "b", at: minutesAgo(3) },
+      ],
+      stops: [],
+    };
+    expect(breakerDecision(byAgent, NOW)?.rule).toBe("unanswered");
+    const nameless: BreakerEvidence = { payments: [1, 2, 3, 4].map((n) => ({ status: "unconfirmed", agentId: null, ownerId: null, at: minutesAgo(n) })), stops: [] };
+    expect(breakerDecision(nameless, NOW)).toBeNull();
+  });
+
   it("does not pause for one agent's bad luck, for two rows, or for rows outside the window", () => {
     const oneAgent: BreakerEvidence = {
-      payments: [1, 2, 3, 4].map((n) => ({ status: "unconfirmed", agentId: "a", at: minutesAgo(n) })),
+      payments: [1, 2, 3, 4].map((n) => ({ status: "unconfirmed", agentId: "a", ownerId: "one", at: minutesAgo(n) })),
       stops: [],
     };
     expect(breakerDecision(oneAgent, NOW)).toBeNull();
     const twoRows: BreakerEvidence = {
       payments: [
-        { status: "unconfirmed", agentId: "a", at: minutesAgo(1) },
-        { status: "paid_no_answer", agentId: "b", at: minutesAgo(2) },
+        { status: "unconfirmed", agentId: "a", ownerId: "one", at: minutesAgo(1) },
+        { status: "paid_no_answer", agentId: "b", ownerId: "two", at: minutesAgo(2) },
       ],
       stops: [],
     };
     expect(breakerDecision(twoRows, NOW)).toBeNull();
     const old: BreakerEvidence = {
       payments: [
-        { status: "unconfirmed", agentId: "a", at: minutesAgo(16) },
-        { status: "unconfirmed", agentId: "b", at: minutesAgo(3) },
-        { status: "unconfirmed", agentId: "b", at: minutesAgo(2) },
+        { status: "unconfirmed", agentId: "a", ownerId: "one", at: minutesAgo(16) },
+        { status: "unconfirmed", agentId: "b", ownerId: "two", at: minutesAgo(3) },
+        { status: "unconfirmed", agentId: "b", ownerId: "two", at: minutesAgo(2) },
       ],
       stops: [],
     };
@@ -269,10 +301,10 @@ describe("breakers", () => {
   it("counts only the two unanswered statuses", () => {
     const answered: BreakerEvidence = {
       payments: [
-        { status: "settled", agentId: "a", at: minutesAgo(1) },
-        { status: "not_charged", agentId: "b", at: minutesAgo(2) },
-        { status: "released", agentId: "c", at: minutesAgo(3) },
-        { status: "simulated", agentId: "d", at: minutesAgo(3) },
+        { status: "settled", agentId: "a", ownerId: "one", at: minutesAgo(1) },
+        { status: "not_charged", agentId: "b", ownerId: "two", at: minutesAgo(2) },
+        { status: "released", agentId: "c", ownerId: "three", at: minutesAgo(3) },
+        { status: "simulated", agentId: "d", ownerId: "four", at: minutesAgo(3) },
       ],
       stops: [],
     };
@@ -350,9 +382,9 @@ describe("breakers", () => {
     expect(breakerDecision(evidence, NOW)?.rule).toBe("pin_mismatch");
   });
 
-  it("keeps the numbers the brief names", () => {
+  it("keeps the numbers the brief names, counting the two as accounts", () => {
     expect(BREAKER_RULES).toEqual({
-      unanswered: { rows: 3, agents: 2, windowMinutes: 15, pauseMinutes: 30 },
+      unanswered: { rows: 3, owners: 2, windowMinutes: 15, pauseMinutes: 30 },
       gateway: { failures: 5, windowMinutes: 10, pauseMinutes: 15 },
       signature: { failures: 5, windowMinutes: 10, pauseMinutes: 15 },
       pin_mismatch: { failures: 1, windowMinutes: 30, pauseMinutes: 30 },

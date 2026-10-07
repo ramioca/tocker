@@ -440,21 +440,43 @@ answer comes back.
   or an upstream parameter rejection after that point **is charged**. Tocker's runs are
   non-streaming. When that happens the run stops rather than pay again, and the step is
   listed for the owner under **Money → Costs → Thinking (pay per use)**, with its
-  transaction. BlockRun's terms: "Payments are non-refundable once settled on-chain".
+  transaction when there is one. BlockRun's terms: "Payments are non-refundable once
+  settled on-chain".
 
 Where it shows:
 
-- **Money.** An exact "Thinking (pay per use)" line and a per-agent column, read from the
-  ledger; the steps that were paid for and not answered; and, for comparison, what the
-  same tokens would have cost at list price on the owner's own key. None of it appears
-  for an owner who has never paid for a step.
+- **Money.** A "Thinking (pay per use)" line and a per-agent column, read from the
+  ledger; the steps that were signed for and got no answer; and, for comparison, what
+  the same tokens would have cost at list price on the owner's own key. None of it
+  appears for an owner who has never paid for a step. The figure counts only payments
+  **proven** to have left the wallet (next point). What is counted as charged and not
+  yet proven is said beside the figure, never inside it: "being checked against the
+  chain" for the first six hours, "could not be checked in time" after that. An owner
+  who has deleted every agent still sees what those agents paid.
 - **P&L.** What a live agent paid for thinking is a money flow out of its book, like a
-  withdrawal, so its P&L and its place on the leaderboard do not read it as a trading
-  loss. Only payments the ledger holds as paid are netted (`settled`, `paid_no_answer`).
-  One still being checked reads as a few cents of loss until the chain has answered,
-  never as a gain.
+  withdrawal, so its P&L, its max drawdown and its place on the leaderboard do not read
+  it as a trading loss. **A payment is netted only once it is proven**: a
+  `paid_no_answer` row, or a `settled` row that carries its transaction id. A `settled`
+  row with **no** transaction id is an answered step the gateway gave no proof of
+  payment for. The ledger counts it as charged against every limit, which is the safe
+  side for a cap; it is **not** taken out of P&L and not in the Money total until the
+  reconciler has found the payment on chain and written its transaction id, because a
+  public P&L adjusted on an assumption would read as a gain nobody made if the
+  assumption were wrong. The same goes for `signed` and `unconfirmed` rows. Until then
+  the amount reads as a few cents of loss, never as a gain; the Money page's Net is right
+  throughout, since the amount is in the P&L or in the costs and never in both. A
+  `not_charged` row (the reconciler proved the payment never landed) is never netted and
+  never shown as paid.
+- **Runs.** The owner's run list shows what each pay-per-use run was *counted at* when
+  it ended. That figure is written once and is not rewritten if the chain later shows a
+  payment never landed, so the row does not call it paid, and after a step that got no
+  answer it reads "up to". Money is where the confirmed amount is.
 - **Admin.** Settings → Admin → Pay-per-use thinking: today's counters against each cap,
-  the rows still open, what the breakers see, the halt, and the signature test.
+  the rows still open (answered steps whose payment is unproven among them), what the
+  breakers see, the halt, and the signature test. The signature test offers, and the
+  server signs with, **only the wallets of the admin's own agents**: it has a wallet sign
+  a real payment before throwing it away, and being an admin is no reason to make another
+  account's wallet sign one.
 
 ### What stands between a fault and a wallet
 
@@ -472,11 +494,23 @@ In the order one step runs (`src/lib/x402/inference-fetch.ts`, reached only thro
 4. The amount is reserved in the ledger against every cap, in one transaction. A refusal
    means nothing is signed.
 5. Privy signs. The signed bytes are decoded and checked **before sending**: one USDC
-   transfer of the quoted amount to the pinned account, one memo, nothing else.
+   transfer of the quoted amount to the pinned account, one memo, nothing else. The run's
+   clock is read once more; if the paid request no longer fits before the deadline,
+   nothing is sent.
 6. The paid request is sent **once**. Whatever happens after that, no second payment is
-   made for the step.
-7. Every five minutes `/api/cron/inference` looks for each unresolved payment on chain by
-   its memo, through `SOLANA_RPC_URL`, and settles the row one way or the other.
+   made for the step. From here the step counts as charged until the chain says
+   otherwise. The gateway's word decides one thing only: an answered step's row gets a
+   transaction id when a receipt names one that is this payment's own and says it
+   settled, and gets none in every other case.
+7. Every five minutes `/api/cron/inference` looks on chain, by memo, through
+   `SOLANA_RPC_URL`, for every payment that is not proven: rows left `signed` or
+   `unconfirmed`, and answered (`settled`) rows with no transaction id. Found: an open
+   row becomes `paid_no_answer`, an answered row keeps `settled` and gets its
+   transaction id. Proven unable to land: `not_charged`, and the amount goes back to its
+   day's limits. Neither within six hours: the row stays counted as charged and is
+   looked at again only now and then, until it is seven days old. After that nothing
+   looks; `scripts/inference-audit.ts` (read-only) is how a person then finds out what
+   the chain says about it.
 
 ### Every switch and cap
 

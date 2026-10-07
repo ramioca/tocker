@@ -9,19 +9,24 @@ import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Db } from "@/db";
 import { inferenceBudgetDays, inferenceControl, inferencePayments } from "@/db/schema";
-import { setupTestDb } from "@/lib/agent/test-support";
-import { createInferenceLedger, readInferenceControl, setInferenceHalt } from "./inference-ledger";
+import { agents } from "@/db/schema";
+import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
+import { CLOSED_UNCHECKED_DETAIL, createInferenceLedger, readInferenceControl, setInferenceHalt } from "./inference-ledger";
 import {
   GIVE_UP_AFTER_MS,
+  LATE_LOOK_MS,
   NOT_CHARGED_AFTER_MS,
   RECONCILE_AFTER_MS,
   STALE_RESERVED_MS,
   baseUnitsOf,
   compareLedgerWithChain,
   createSolanaChainReader,
+  looksLikePayment,
   payerTokenAccount,
   readGatewayPayments,
   reconcileInferencePayments,
+  transactionBlockTime,
+  transactionFeePayer,
   transactionMemos,
   usdcMovement,
   type InferenceChainReader,
@@ -30,6 +35,8 @@ import {
 import { INFERENCE_GATEWAY, type InferenceCaps } from "./inference-types";
 
 const MINUTE = 60_000;
+/** Minutes: a row signed this long ago is old enough to be called not charged. */
+const OLD = NOT_CHARGED_AFTER_MS / MINUTE + 5;
 const NOW = new Date("2031-03-10T12:00:00.000Z");
 const DAY = "2031-03-10";
 const GATEWAY = INFERENCE_GATEWAY.solana;
@@ -53,6 +60,8 @@ const ago = (minutes: number) => new Date(NOW.getTime() - minutes * MINUTE);
 const seconds = (at: Date) => Math.floor(at.getTime() / 1000);
 /** A public address made at run time. Only ever the public half. */
 const newAddress = () => Keypair.generate().publicKey.toBase58();
+/** A transaction id of the real length, made at run time from public halves. */
+const newSignature = () => `${newAddress()}${newAddress()}`.slice(0, 87);
 const newMemo = () => Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
 
 interface Fixture {
@@ -69,21 +78,24 @@ interface Fixture {
  */
 async function openRow(
   options: {
-    status?: "signed" | "unconfirmed";
+    /** `settled` is an answered row: with no `txHash`, its settlement is not yet proven. */
+    status?: "signed" | "unconfirmed" | "settled";
     signedAt?: Date;
     payer?: string;
     memo?: string | null;
     blockhash?: string | null;
     quotedUsd?: number;
     agentId?: string;
+    ownerId?: string;
+    txHash?: string | null;
   } = {},
 ): Promise<Fixture> {
-  const signedAt = options.signedAt ?? ago(6);
+  const signedAt = options.signedAt ?? ago(OLD);
   const payer = options.payer ?? newAddress();
   const memo = options.memo === undefined ? newMemo() : options.memo;
   const blockhash = options.blockhash === undefined ? `Blockhash${nanoid(8)}` : options.blockhash;
   const reserved = await ledger.reserve({
-    ownerId: "owner-1",
+    ownerId: options.ownerId ?? "owner-1",
     agentId: options.agentId ?? "agent-1",
     runId: `run-${nanoid(8)}`,
     seq: 0,
@@ -102,9 +114,16 @@ async function openRow(
     now: signedAt,
   });
   if (!reserved.ok) throw new Error(`reserve refused: ${reserved.reason}`);
+  const status = options.status ?? "unconfirmed";
   await db
     .update(inferencePayments)
-    .set({ status: options.status ?? "unconfirmed", signedAt, memo, blockhash })
+    .set({
+      status,
+      signedAt,
+      memo,
+      blockhash,
+      ...(status === "settled" ? { answered: true, txHash: options.txHash ?? null, resolvedAt: signedAt } : {}),
+    })
     .where(eq(inferencePayments.id, reserved.paymentId));
   return { id: reserved.paymentId, payer, account: payerTokenAccount(payer, MINT)!, memo: memo ?? "", blockhash: blockhash ?? "" };
 }
@@ -122,12 +141,25 @@ async function heldUsd(scope: string, scopeId: string, day = DAY): Promise<numbe
   return Number(row?.usd ?? 0);
 }
 
-/** A `jsonParsed` transaction that moves `units` of `mint` from `payer` to `payTo` under a memo. */
-function paymentTx(input: { payer: string; payTo?: string; units: number; memo?: string | null; err?: unknown; mint?: string }): unknown {
+/**
+ * A `jsonParsed` transaction that moves `units` of `mint` from `payer` to `payTo` under a
+ * memo. `feePayer` is who paid its fee (the first account), when the test cares.
+ */
+function paymentTx(input: {
+  payer: string;
+  payTo?: string;
+  units: number;
+  memo?: string | null;
+  err?: unknown;
+  mint?: string;
+  feePayer?: string;
+  blockTime?: number | null;
+}): unknown {
   const mint = input.mint ?? MINT;
   const payTo = input.payTo ?? PAY_TO;
   const moved = input.err ? 0 : input.units;
   return {
+    ...(input.blockTime === undefined ? {} : { blockTime: input.blockTime }),
     meta: {
       err: input.err ?? null,
       logMessages: input.memo ? [`Program log: Memo (len ${input.memo.length}): "${input.memo}"`] : [],
@@ -142,6 +174,14 @@ function paymentTx(input: { payer: string; payTo?: string; units: number; memo?:
     },
     transaction: {
       message: {
+        ...(input.feePayer
+          ? {
+              accountKeys: [
+                { pubkey: input.feePayer, signer: true, writable: true, source: "transaction" },
+                ...(input.feePayer === input.payer ? [] : [{ pubkey: input.payer, signer: true, writable: false, source: "transaction" }]),
+              ],
+            }
+          : {}),
         instructions: [
           { program: "spl-token", programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", parsed: { type: "transferChecked" } },
           ...(input.memo ? [{ program: "spl-memo", programId: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr", parsed: input.memo }] : []),
@@ -161,6 +201,20 @@ function fakeChain() {
   const blockTimes = new Map<number, number | null>();
   const calls: Array<{ method: string; args: unknown[] }> = [];
   const failing = new Set<string>();
+  /** Accounts the node knows nothing about: it returns no history for them at all. */
+  const unfunded = new Set<string>();
+  /**
+   * Every token account that has paid was funded first, so its history is never empty.
+   * The deposit that opened it sits at the end of every account's list, a month back,
+   * unless the test says the node does not know the account.
+   */
+  const funding = (address: string): SignatureEntry => ({
+    signature: `Fund${address.slice(0, 12)}`,
+    slot: 1,
+    err: null,
+    memo: null,
+    blockTime: seconds(new Date(NOW.getTime() - 30 * 24 * 60 * MINUTE)),
+  });
 
   const asked = (method: string, ...args: unknown[]) => {
     calls.push({ method, args });
@@ -170,7 +224,8 @@ function fakeChain() {
   const reader: InferenceChainReader = {
     async signaturesFor(address, options) {
       asked("signaturesFor", address, options);
-      const all = (options.minContextSlot !== undefined ? secondRead.get(address) : undefined) ?? history.get(address) ?? [];
+      const listed = (options.minContextSlot !== undefined ? secondRead.get(address) : undefined) ?? history.get(address) ?? [];
+      const all = unfunded.has(address) ? listed : [...listed, funding(address)];
       const from = options.before ? all.findIndex((entry) => entry.signature === options.before) + 1 : 0;
       return all.slice(from, from + options.limit);
     },
@@ -192,16 +247,20 @@ function fakeChain() {
     reader,
     calls,
     failing,
+    unfunded,
     history,
     secondRead,
     transactions,
     count: (method: string) => calls.filter((call) => call.method === method).length,
     /** Put a transaction in an account's history (newest first) and make it fetchable. */
-    land(account: string, entry: { signature?: string; at?: Date; memo?: string | null; reportedMemo?: string | null; err?: unknown; tx?: unknown }): string {
+    land(
+      account: string,
+      entry: { signature?: string; at?: Date; memo?: string | null; reportedMemo?: string | null; err?: unknown; tx?: unknown; blockTime?: number | null },
+    ): string {
       const signature = entry.signature ?? `Sig${nanoid(10)}`;
       const reported = entry.reportedMemo === undefined ? (entry.memo ? `[${entry.memo.length}] ${entry.memo}` : null) : entry.reportedMemo;
       const list = history.get(account) ?? [];
-      list.unshift({ signature, slot: 100, err: entry.err ?? null, memo: reported, blockTime: seconds(entry.at ?? ago(5)) });
+      list.unshift({ signature, slot: 100, err: entry.err ?? null, memo: reported, blockTime: entry.blockTime === undefined ? seconds(entry.at ?? ago(5)) : entry.blockTime });
       history.set(account, list);
       if (entry.tx !== undefined) transactions.set(signature, entry.tx);
       return signature;
@@ -314,20 +373,102 @@ describe("found on chain", () => {
     expect(control.updatedBy).toBe("reconciler");
   });
 
-  it("halts, and leaves the row counted, when the memo is on a transaction that took nothing from the wallet", async () => {
-    const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(3) });
-    chain.land(row.account, { memo: row.memo, at: ago(3), tx: paymentTx({ payer: newAddress(), units: 10_000, memo: row.memo }) });
-    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
-    expect(counts).toMatchObject({ charged: 0, waiting: 1, mismatches: 1, halted: true });
-    expect((await rowOf(row.id)).status).toBe("unconfirmed");
+  describe("a memo copied onto someone else's transaction", () => {
+    /** What a stranger can make: 1 base unit of their own USDC sent to the agent's account, under any memo they like. */
+    const dust = (to: string, memo: string) => paymentTx({ payer: newAddress(), payTo: to, units: 1, memo });
+
+    it("does not hide the real payment behind it, and halts nothing", async () => {
+      const chain = fakeChain();
+      const row = await openRow({ signedAt: ago(3) });
+      // The payment landed, which made its memo public. A stranger then copied the memo
+      // onto a dust transfer, which is now the NEWEST transaction carrying it.
+      const real = chain.land(row.account, { memo: row.memo, at: ago(3), tx: paymentTx({ payer: row.payer, units: 10_000, memo: row.memo }) });
+      chain.land(row.account, { memo: row.memo, at: ago(2), tx: dust(row.payer, row.memo) });
+      chain.land(row.account, { memo: row.memo, at: ago(1), tx: dust(row.payer, row.memo) });
+
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+
+      expect(counts).toMatchObject({ examined: 1, charged: 1, waiting: 0, mismatches: 0, unknownTransfers: 0, halted: false });
+      expect(await rowOf(row.id)).toMatchObject({ status: "paid_no_answer", txHash: real });
+      expect((await readInferenceControl()).halted).toBe(false);
+      // Found on the first transaction that carried the memo: the decoys behind it are not even read.
+      expect(chain.calls.filter((call) => call.method === "transaction").map((call) => call.args[0])).toEqual([real]);
+    });
+
+    it("is counted and passed over when it came first, and the payment behind it is still found", async () => {
+      const chain = fakeChain();
+      const row = await openRow({ signedAt: ago(3) });
+      chain.land(row.account, { memo: row.memo, at: ago(3), tx: dust(row.payer, row.memo) });
+      const real = chain.land(row.account, { memo: row.memo, at: ago(2), tx: paymentTx({ payer: row.payer, units: 10_000, memo: row.memo }) });
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+      expect(counts).toMatchObject({ charged: 1, decoys: 1, mismatches: 0, halted: false });
+      expect(await rowOf(row.id)).toMatchObject({ status: "paid_no_answer", txHash: real });
+    });
+
+    it("never halts pay-per-use on its own, however often it is sent", async () => {
+      const chain = fakeChain();
+      const row = await openRow({ signedAt: ago(3) });
+      for (let n = 0; n < 3; n += 1) chain.land(row.account, { memo: row.memo, at: ago(2), tx: dust(row.payer, row.memo) });
+      for (let pass = 0; pass < 2; pass += 1) {
+        const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+        expect(counts).toMatchObject({ charged: 0, waiting: 1, decoys: 3, mismatches: 0, unknownTransfers: 0, halted: false });
+      }
+      expect((await rowOf(row.id)).status).toBe("unconfirmed");
+      expect((await readInferenceControl()).halted).toBe(false);
+      expect(await db.select().from(inferenceControl)).toHaveLength(0);
+    });
+
+    it("does not stand in the way of a not-charged verdict either: a decoy is not a payment", async () => {
+      const chain = fakeChain();
+      const row = await openRow({ signedAt: ago(OLD), quotedUsd: 0.04 });
+      chain.expire(row.blockhash);
+      chain.land(row.account, { memo: row.memo, at: ago(OLD - 1), tx: dust(row.payer, row.memo) });
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+      expect(counts).toMatchObject({ notCharged: 1, decoys: 1, halted: false });
+      expect((await rowOf(row.id)).status).toBe("not_charged");
+      expect(await heldUsd("agent", "agent-1")).toBe(0);
+    });
+
+    it("leaves the row waiting while a transaction carrying the memo cannot be read: it might be the payment", async () => {
+      const chain = fakeChain();
+      const row = await openRow({ signedAt: ago(OLD) });
+      chain.expire(row.blockhash);
+      chain.land(row.account, { memo: row.memo, at: ago(OLD - 1), tx: dust(row.payer, row.memo) });
+      chain.land(row.account, { memo: row.memo, at: ago(OLD - 2) }); // cannot be fetched
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+      expect(counts).toMatchObject({ charged: 0, notCharged: 0, waiting: 1, halted: false });
+      expect((await rowOf(row.id)).status).toBe("unconfirmed");
+    });
+
+    it("carrying the memo of a row already given back is not a payment for it", async () => {
+      const chain = fakeChain();
+      const payer = newAddress();
+      const open = await openRow({ payer, signedAt: ago(3) });
+      const returned = await openRow({ payer, signedAt: ago(4) });
+      await db.update(inferencePayments).set({ status: "not_charged" }).where(eq(inferencePayments.id, returned.id));
+      chain.land(open.account, { memo: returned.memo, at: ago(2), tx: dust(payer, returned.memo) });
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+      expect(counts).toMatchObject({ unknownTransfers: 0, halted: false });
+      expect((await readInferenceControl()).halted).toBe(false);
+    });
+
+    it("still halts when the wallet itself paid under the memo, but not what the row describes: no outsider can make that", async () => {
+      const chain = fakeChain();
+      const row = await openRow({ signedAt: ago(3), quotedUsd: 0.01 });
+      chain.land(row.account, { memo: row.memo, at: ago(2), tx: dust(row.payer, row.memo) });
+      // The right amount left the wallet under the memo, and went somewhere that is not the gateway.
+      const odd = chain.land(row.account, { memo: row.memo, at: ago(3), tx: paymentTx({ payer: row.payer, payTo: newAddress(), units: 10_000, memo: row.memo }) });
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+      expect(counts).toMatchObject({ charged: 1, mismatches: 1, halted: true });
+      expect((await readInferenceControl()).haltReason).toContain(odd);
+    });
   });
 });
 
 describe("not found on chain", () => {
   it("leaves the row alone while our node says the blockhash is still valid", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(6) });
+    const row = await openRow({ signedAt: ago(OLD) });
     // The default answer of the fake chain is "still valid".
     const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
     expect(counts).toMatchObject({ examined: 1, charged: 0, notCharged: 0, waiting: 1 });
@@ -340,7 +481,7 @@ describe("not found on chain", () => {
 
   it("calls it not charged once the blockhash has expired and a second read still finds nothing", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(6), quotedUsd: 0.04 });
+    const row = await openRow({ signedAt: ago(OLD), quotedUsd: 0.04 });
     await openRow({ payer: row.payer, signedAt: ago(1), quotedUsd: 0.03 }); // too recent to look at; keeps its place
     const slot = chain.expire(row.blockhash);
 
@@ -361,7 +502,7 @@ describe("not found on chain", () => {
 
   it("returns the amount to the day it was reserved on when the verdict comes after midnight", async () => {
     const chain = fakeChain();
-    const signedAt = new Date("2031-03-09T23:57:00.000Z");
+    const signedAt = new Date("2031-03-09T23:20:00.000Z");
     const now = new Date("2031-03-10T00:04:00.000Z");
     const row = await openRow({ signedAt, quotedUsd: 0.04 });
     chain.expire(row.blockhash, new Date("2031-03-10T00:03:00.000Z"));
@@ -375,7 +516,7 @@ describe("not found on chain", () => {
 
   it("gives the amount back once, however many passes run", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(6), quotedUsd: 0.04 });
+    const row = await openRow({ signedAt: ago(OLD), quotedUsd: 0.04 });
     await openRow({ signedAt: ago(1), quotedUsd: 0.03 });
     chain.expire(row.blockhash);
     await Promise.all([reconcileInferencePayments({ now: NOW, reader: chain.reader }), reconcileInferencePayments({ now: NOW, reader: chain.reader })]);
@@ -395,22 +536,22 @@ describe("not found on chain", () => {
 
   it("does not believe a node that judges from a block no later than the signature", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(6) });
+    const row = await openRow({ signedAt: ago(OLD) });
     // A node that is behind says "not valid" about a blockhash it has not seen yet.
-    chain.expire(row.blockhash, ago(6));
+    chain.expire(row.blockhash, ago(OLD));
     expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ notCharged: 0, waiting: 1 });
     expect((await rowOf(row.id)).status).toBe("unconfirmed");
 
     // Fifty-nine seconds after the signature is still not enough; sixty is.
-    chain.expire(row.blockhash, new Date(ago(6).getTime() + 59_000));
+    chain.expire(row.blockhash, new Date(ago(OLD).getTime() + 59_000));
     expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).notCharged).toBe(0);
-    chain.expire(row.blockhash, new Date(ago(6).getTime() + 60_000));
+    chain.expire(row.blockhash, new Date(ago(OLD).getTime() + 60_000));
     expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).notCharged).toBe(1);
   });
 
   it("does not decide when the node cannot say when the judging block was", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(6) });
+    const row = await openRow({ signedAt: ago(OLD) });
     const slot = chain.expire(row.blockhash);
     chain.reader.blockTime = async (asked) => {
       expect(asked).toBe(slot);
@@ -421,11 +562,11 @@ describe("not found on chain", () => {
 
   it("charges instead when the second read finds the payment", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(6) });
+    const row = await openRow({ signedAt: ago(OLD) });
     chain.expire(row.blockhash);
     // The first read misses it (an index that is behind); the pinned read has it.
     const signature = "SigLate";
-    chain.secondRead.set(row.account, [{ signature, slot: 100, err: null, memo: `[32] ${row.memo}`, blockTime: seconds(ago(6)) }]);
+    chain.secondRead.set(row.account, [{ signature, slot: 100, err: null, memo: `[32] ${row.memo}`, blockTime: seconds(ago(OLD)) }]);
     chain.transactions.set(signature, paymentTx({ payer: row.payer, units: 10_000, memo: row.memo }));
 
     const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
@@ -436,8 +577,8 @@ describe("not found on chain", () => {
 
   it("treats a failed transaction carrying the memo as no payment, and still needs the blockhash to expire", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(6) });
-    chain.land(row.account, { memo: row.memo, at: ago(6), err: { InstructionError: [2, "Custom"] } });
+    const row = await openRow({ signedAt: ago(OLD) });
+    chain.land(row.account, { memo: row.memo, at: ago(OLD), err: { InstructionError: [2, "Custom"] } });
     expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).waiting).toBe(1);
     chain.expire(row.blockhash);
     expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).notCharged).toBe(1);
@@ -454,10 +595,10 @@ describe("not found on chain", () => {
   describe("a transfer to the gateway that the ledger cannot explain is never read as no payment", () => {
     it("when the payment is there under a memo the row does not hold", async () => {
       const chain = fakeChain();
-      const row = await openRow({ signedAt: ago(6), quotedUsd: 0.01 });
+      const row = await openRow({ signedAt: ago(OLD), quotedUsd: 0.01 });
       chain.expire(row.blockhash);
       // Exactly this row's payment, except that the ledger recorded its memo wrongly.
-      chain.land(row.account, { memo: "9".repeat(32), at: ago(6), tx: paymentTx({ payer: row.payer, units: 10_000, memo: "9".repeat(32) }) });
+      chain.land(row.account, { memo: "9".repeat(32), at: ago(OLD), tx: paymentTx({ payer: row.payer, units: 10_000, memo: "9".repeat(32) }) });
 
       const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
       expect(counts).toMatchObject({ notCharged: 0, waiting: 1, unknownTransfers: 1, halted: true });
@@ -469,9 +610,9 @@ describe("not found on chain", () => {
 
     it("when a transaction with an unfamiliar memo cannot be read to rule it out", async () => {
       const chain = fakeChain();
-      const row = await openRow({ signedAt: ago(6) });
+      const row = await openRow({ signedAt: ago(OLD) });
       chain.expire(row.blockhash);
-      const unread = chain.land(row.account, { memo: "8".repeat(32), at: ago(6) });
+      const unread = chain.land(row.account, { memo: "8".repeat(32), at: ago(OLD) });
       expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ notCharged: 0, waiting: 1, unchecked: 1, halted: false });
       // Read, and it went somewhere else: now the window is clean.
       chain.transactions.set(unread, paymentTx({ payer: row.payer, payTo: newAddress(), units: 10_000, memo: "8".repeat(32) }));
@@ -480,7 +621,7 @@ describe("not found on chain", () => {
 
     it("when it only shows up in the second read", async () => {
       const chain = fakeChain();
-      const row = await openRow({ signedAt: ago(6) });
+      const row = await openRow({ signedAt: ago(OLD) });
       chain.expire(row.blockhash);
       const late = "SigLateUnknown";
       chain.secondRead.set(row.account, [{ signature: late, slot: 100, err: null, memo: `[32] ${"7".repeat(32)}`, blockTime: seconds(ago(5)) }]);
@@ -493,8 +634,8 @@ describe("not found on chain", () => {
 
     it("counts one such transfer once, however many reads show it", async () => {
       const chain = fakeChain();
-      const row = await openRow({ signedAt: ago(6) });
-      const other = await openRow({ payer: row.payer, signedAt: ago(7) });
+      const row = await openRow({ signedAt: ago(OLD) });
+      const other = await openRow({ payer: row.payer, signedAt: ago(OLD + 1) });
       chain.expire(row.blockhash);
       chain.expire(other.blockhash);
       const stray = { signature: "SigStray", slot: 100, err: null, memo: `[32] ${"6".repeat(32)}`, blockTime: seconds(ago(5)) };
@@ -508,7 +649,7 @@ describe("not found on chain", () => {
   describe("an incomplete read of the history shows nothing", () => {
     it("when the window is longer than the pages read", async () => {
       const chain = fakeChain();
-      const row = await openRow({ signedAt: ago(6) });
+      const row = await openRow({ signedAt: ago(OLD) });
       chain.expire(row.blockhash);
       // Six unrelated transactions, all inside the window, read two at a time for two pages.
       for (let n = 0; n < 6; n += 1) chain.land(row.account, { memo: `other-${n}`, at: ago(4), tx: paymentTx({ payer: newAddress(), units: 1, memo: `other-${n}` }) });
@@ -521,7 +662,7 @@ describe("not found on chain", () => {
 
     it("when a transaction in the window has no memo reported and cannot be read", async () => {
       const chain = fakeChain();
-      const row = await openRow({ signedAt: ago(6) });
+      const row = await openRow({ signedAt: ago(OLD) });
       chain.expire(row.blockhash);
       const unread = chain.land(row.account, { reportedMemo: null, at: ago(5) });
       expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ notCharged: 0, waiting: 1 });
@@ -532,7 +673,7 @@ describe("not found on chain", () => {
 
     it("when the pass may fetch no more transactions", async () => {
       const chain = fakeChain();
-      const row = await openRow({ signedAt: ago(6) });
+      const row = await openRow({ signedAt: ago(OLD) });
       chain.expire(row.blockhash);
       for (let n = 0; n < 3; n += 1) chain.land(row.account, { reportedMemo: null, at: ago(5), tx: paymentTx({ payer: newAddress(), units: 5, memo: null }) });
       expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { txFetches: 2 } })).toMatchObject({ notCharged: 0, waiting: 1 });
@@ -541,7 +682,7 @@ describe("not found on chain", () => {
 
     it("when only the first read is incomplete: both reads must show absence, not one", async () => {
       const chain = fakeChain();
-      const row = await openRow({ signedAt: ago(6) });
+      const row = await openRow({ signedAt: ago(OLD) });
       chain.expire(row.blockhash);
       // The first read has a transaction that cannot be accounted for; the pinned read
       // does not list it at all. One clean read out of two is not two.
@@ -553,7 +694,7 @@ describe("not found on chain", () => {
 
     it("when only the second read is incomplete", async () => {
       const chain = fakeChain();
-      const row = await openRow({ signedAt: ago(6) });
+      const row = await openRow({ signedAt: ago(OLD) });
       chain.expire(row.blockhash);
       // The first read is empty and complete; by the pinned read a transaction has
       // appeared that cannot be read. It might be the payment.
@@ -565,7 +706,7 @@ describe("not found on chain", () => {
 
     it("but transactions older than the window do not count against it", async () => {
       const chain = fakeChain();
-      const row = await openRow({ signedAt: ago(6) });
+      const row = await openRow({ signedAt: ago(OLD) });
       chain.expire(row.blockhash);
       // Read newest first: one inside the window, then one from an hour ago ends the read.
       chain.land(row.account, { reportedMemo: null, at: ago(60) });
@@ -579,7 +720,7 @@ describe("not found on chain", () => {
 describe("the RPC failing", () => {
   it("changes nothing when the history cannot be read", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(6) });
+    const row = await openRow({ signedAt: ago(OLD) });
     chain.expire(row.blockhash);
     chain.failing.add("signaturesFor");
     const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
@@ -590,7 +731,7 @@ describe("the RPC failing", () => {
 
   it("changes nothing when the blockhash cannot be judged", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(6) });
+    const row = await openRow({ signedAt: ago(OLD) });
     chain.failing.add("blockhashValid");
     expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ notCharged: 0, waiting: 1, rpcErrors: 1 });
     expect((await rowOf(row.id)).status).toBe("unconfirmed");
@@ -598,7 +739,7 @@ describe("the RPC failing", () => {
 
   it("changes nothing when the second read fails, though everything before it said not charged", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(6) });
+    const row = await openRow({ signedAt: ago(OLD) });
     chain.expire(row.blockhash);
     let reads = 0;
     const read = chain.reader.signaturesFor;
@@ -624,7 +765,7 @@ describe("the RPC failing", () => {
 
   it("keeps the error text out of the result", async () => {
     const chain = fakeChain();
-    await openRow({ signedAt: ago(6) });
+    await openRow({ signedAt: ago(OLD) });
     chain.failing.add("signaturesFor");
     const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
     expect(JSON.stringify(counts)).not.toMatch(/rpc down/);
@@ -669,11 +810,125 @@ describe("a transfer the ledger does not know", () => {
     expect(next).toEqual({ ok: false, reason: "halted" });
   });
 
-  it("finds one with no memo at all", async () => {
+  it("halts on one that has the shape of a payment: a memo, and a fee someone else paid", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(3) });
-    chain.land(row.account, { reportedMemo: null, at: ago(2), tx: paymentTx({ payer: row.payer, units: 70_000, memo: null }) });
-    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ unknownTransfers: 1, halted: true });
+    const row = await openRow({ signedAt: ago(3), blockhash: null });
+    const hold = vi.fn(async () => {});
+    chain.land(row.account, { memo: "f".repeat(32), at: ago(2), tx: paymentTx({ payer: row.payer, units: 70_000, memo: "f".repeat(32), feePayer: newAddress() }) });
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, holdAgent: hold });
+    expect(counts).toMatchObject({ unknownTransfers: 1, strayTransfers: 0, heldAgents: 0, halted: true });
+    expect(hold).not.toHaveBeenCalled();
+  });
+
+  describe("one the payment client cannot have sent (an owner's own transfer to the gateway's address)", () => {
+    /** A withdrawal as the app builds it: Tocker's platform wallet pays the fee, and there is no memo. */
+    const withdrawal = (payer: string, units = 1_000_000) => paymentTx({ payer, units, memo: null, feePayer: newAddress() });
+
+    it("does not halt pay-per-use for everyone: it is counted, said loudly, and only that agent is held", async () => {
+      const chain = fakeChain();
+      const row = await openRow({ signedAt: ago(3), agentId: "agent-of-the-owner" });
+      await openRow({ signedAt: ago(4), agentId: "someone-elses-agent", ownerId: "owner-2" });
+      const hold = vi.fn(async () => {});
+      const signature = chain.land(row.account, { reportedMemo: null, at: ago(2), tx: withdrawal(row.payer) });
+
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, holdAgent: hold });
+
+      expect(counts).toMatchObject({ strayTransfers: 1, heldAgents: 1, unknownTransfers: 0, halted: false });
+      expect((await readInferenceControl()).halted).toBe(false);
+      expect(await db.select().from(inferenceControl)).toHaveLength(0);
+      // The agent whose wallet did it, and nobody else's.
+      expect(hold.mock.calls).toEqual([["agent-of-the-owner", NOW]]);
+      const logged = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(logged).toContain(signature);
+      expect(logged).toContain(row.payer);
+      expect(logged).toContain("NOT halted");
+      // Everyone else goes on paying.
+      const next = await ledger.reserve({
+        ownerId: "owner-2",
+        agentId: "someone-elses-agent",
+        runId: "run-after-a-withdrawal",
+        seq: 0,
+        requestHash: "ab".repeat(32),
+        chain: "solana",
+        network: GATEWAY.network,
+        host: GATEWAY.host,
+        model: "m",
+        payerWalletId: "w",
+        payerAddress: newAddress(),
+        payTo: PAY_TO,
+        asset: MINT,
+        quotedUsd: 0.01,
+        caps: CAPS,
+        runSpentUsd: 0,
+        now: NOW,
+      });
+      expect(next.ok).toBe(true);
+    });
+
+    it("is not a payment either when it carries a memo but the wallet paid its own fee", async () => {
+      const chain = fakeChain();
+      const row = await openRow({ signedAt: ago(3) });
+      const hold = vi.fn(async () => {});
+      chain.land(row.account, { memo: "a note", at: ago(2), tx: paymentTx({ payer: row.payer, units: 500_000, memo: "a note", feePayer: row.payer }) });
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, holdAgent: hold });
+      expect(counts).toMatchObject({ strayTransfers: 1, heldAgents: 1, unknownTransfers: 0, halted: false });
+    });
+
+    it("keeps that wallet's open payments counted: none is called not charged while the transfer is in view", async () => {
+      const chain = fakeChain();
+      const row = await openRow({ signedAt: ago(OLD), quotedUsd: 0.04 });
+      chain.expire(row.blockhash);
+      chain.land(row.account, { reportedMemo: null, at: ago(OLD - 2), tx: withdrawal(row.payer) });
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, holdAgent: async () => {} });
+      expect(counts).toMatchObject({ notCharged: 0, waiting: 1, strayTransfers: 1, halted: false });
+      expect((await rowOf(row.id)).status).toBe("unconfirmed");
+      expect(await heldUsd("agent", "agent-1")).toBe(0.04);
+    });
+
+    it("holds the agent once a pass, counts the transfer once, and survives the hold failing", async () => {
+      const chain = fakeChain();
+      const row = await openRow({ signedAt: ago(OLD) });
+      chain.expire(row.blockhash);
+      chain.land(row.account, { reportedMemo: null, at: ago(4), tx: withdrawal(row.payer) });
+      chain.land(row.account, { reportedMemo: null, at: ago(3), tx: withdrawal(row.payer, 2_000_000) });
+      const hold = vi.fn(async () => {
+        throw new Error("Failed query: update agents set inference_hold = $1 params: secret-parameter");
+      });
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, holdAgent: hold });
+      expect(counts).toMatchObject({ examined: 1, waiting: 1, strayTransfers: 2, heldAgents: 0, halted: false });
+      expect(hold).toHaveBeenCalledTimes(1);
+      const logged = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(logged).toContain("could not be put on hold");
+      expect(logged).not.toContain("secret-parameter");
+    });
+
+    it("puts the agent on hold through the run loop's own hold when nothing else is given", async () => {
+      const chain = fakeChain();
+      const { agentId } = await seedAgent(db);
+      const row = await openRow({ signedAt: ago(3), agentId });
+      chain.land(row.account, { reportedMemo: null, at: ago(2), tx: withdrawal(row.payer) });
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+      expect(counts).toMatchObject({ strayTransfers: 1, heldAgents: 1, halted: false });
+      const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
+      expect(agent.inferenceHold).toBe("paused");
+      expect(agent.inferenceHoldUntil!.getTime()).toBeGreaterThan(NOW.getTime());
+    });
+
+    it("is not raised again once an admin has cleared a halt since it landed", async () => {
+      const chain = fakeChain();
+      const row = await openRow({ signedAt: ago(4), blockhash: null });
+      chain.land(row.account, { reportedMemo: null, at: ago(3), tx: withdrawal(row.payer) });
+      vi.useFakeTimers({ now: ago(1), toFake: ["Date"] });
+      try {
+        await setInferenceHalt({ halted: false, reason: "looked at it", by: "admin-1" });
+      } finally {
+        vi.useRealTimers();
+      }
+      const hold = vi.fn(async () => {});
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, holdAgent: hold });
+      expect(counts).toMatchObject({ strayTransfers: 1, heldAgents: 0, halted: false });
+      expect(hold).not.toHaveBeenCalled();
+    });
   });
 
   it("is not fooled by the agent's ordinary trading: USDC that left for somewhere else", async () => {
@@ -697,10 +952,9 @@ describe("a transfer the ledger does not know", () => {
     const chain = fakeChain();
     const payer = newAddress();
     const open = await openRow({ payer, signedAt: ago(3) });
-    const settled = await openRow({ payer, signedAt: ago(4) });
-    await db.update(inferencePayments).set({ status: "settled" }).where(eq(inferencePayments.id, settled.id));
+    const settled = await openRow({ payer, signedAt: ago(4), status: "settled", txHash: "SigSettledAlready" });
     const openSignature = chain.land(open.account, { memo: open.memo, at: ago(3), tx: paymentTx({ payer, units: 10_000, memo: open.memo }) });
-    chain.land(open.account, { memo: settled.memo, at: ago(4), tx: paymentTx({ payer, units: 10_000, memo: settled.memo }) });
+    chain.land(open.account, { signature: "SigSettledAlready", memo: settled.memo, at: ago(4), tx: paymentTx({ payer, units: 10_000, memo: settled.memo }) });
 
     const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
     expect(counts).toMatchObject({ charged: 1, unknownTransfers: 0, halted: false });
@@ -725,9 +979,8 @@ describe("a transfer the ledger does not know", () => {
 
   it("looks at wallets that paid lately even when none of their rows is open", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(4) });
-    await db.update(inferencePayments).set({ status: "settled" }).where(eq(inferencePayments.id, row.id));
-    chain.land(row.account, { memo: row.memo, at: ago(4), tx: paymentTx({ payer: row.payer, units: 10_000, memo: row.memo }) });
+    const row = await openRow({ signedAt: ago(4), status: "settled", txHash: "SigSettledAlready" });
+    chain.land(row.account, { signature: "SigSettledAlready", memo: row.memo, at: ago(4), tx: paymentTx({ payer: row.payer, units: 10_000, memo: row.memo }) });
     expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ examined: 0, unknownTransfers: 0, halted: false });
     expect(chain.count("signaturesFor")).toBe(1);
 
@@ -737,10 +990,7 @@ describe("a transfer the ledger does not know", () => {
 
   it("samples a bounded number of wallets, and none when told to", async () => {
     const chain = fakeChain();
-    for (let n = 0; n < 6; n += 1) {
-      const row = await openRow({ signedAt: ago(4) });
-      await db.update(inferencePayments).set({ status: "settled" }).where(eq(inferencePayments.id, row.id));
-    }
+    for (let n = 0; n < 6; n += 1) await openRow({ signedAt: ago(4), status: "settled", txHash: `SigSettled${n}` });
     await reconcileInferencePayments({ now: NOW, reader: chain.reader });
     expect(chain.count("signaturesFor")).toBe(3);
     chain.calls.length = 0;
@@ -801,11 +1051,12 @@ describe("which rows a pass looks at", () => {
     expect((await rowOf(row.id)).status).toBe("unconfirmed");
   });
 
-  it("looks at nothing but signed and unconfirmed rows", async () => {
+  it("looks at nothing but open rows and answered rows with no transaction id", async () => {
     const chain = fakeChain();
     for (const status of ["reserved", "released", "settled", "paid_no_answer", "not_charged", "simulated"]) {
-      const row = await openRow({ signedAt: ago(6) });
-      await db.update(inferencePayments).set({ status }).where(eq(inferencePayments.id, row.id));
+      const row = await openRow({ signedAt: ago(OLD) });
+      // The settled one is proven: it has its transaction id.
+      await db.update(inferencePayments).set({ status, txHash: "SigAlreadyKnown" }).where(eq(inferencePayments.id, row.id));
     }
     const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { samplePayers: 0 } });
     expect(counts).toMatchObject({ examined: 0, charged: 0, notCharged: 0, stuck: 0 });
@@ -814,10 +1065,10 @@ describe("which rows a pass looks at", () => {
 
   it("counts as stuck the rows it cannot look up: no memo, or too old", async () => {
     const chain = fakeChain();
-    const noMemo = await openRow({ signedAt: ago(6), memo: null });
+    const noMemo = await openRow({ signedAt: ago(OLD), memo: null });
     const ancient = await openRow({ signedAt: new Date(NOW.getTime() - GIVE_UP_AFTER_MS - MINUTE) });
     chain.expire(ancient.blockhash);
-    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { samplePayers: 0 } });
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { samplePayers: 0, lateRows: 0 } });
     expect(counts).toMatchObject({ examined: 0, stuck: 2, notCharged: 0 });
     // Both stay counted as charged.
     expect((await rowOf(noMemo.id)).status).toBe("unconfirmed");
@@ -827,7 +1078,7 @@ describe("which rows a pass looks at", () => {
 
   it("does not search for a memo too short to be the payment client's", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(6), memo: "ab" });
+    const row = await openRow({ signedAt: ago(OLD), memo: "ab" });
     chain.expire(row.blockhash);
     // "ab" would match a great many unrelated memos; a match must not charge the row.
     chain.land(row.account, { memo: "cabbage", at: ago(5), tx: paymentTx({ payer: newAddress(), units: 5, memo: "cabbage" }) });
@@ -840,7 +1091,7 @@ describe("which rows a pass looks at", () => {
   it("looks at a bounded number of rows per pass, newest first", async () => {
     const chain = fakeChain();
     const rows: Fixture[] = [];
-    for (let n = 0; n < 5; n += 1) rows.push(await openRow({ signedAt: ago(10 + n) }));
+    for (let n = 0; n < 5; n += 1) rows.push(await openRow({ signedAt: ago(OLD + n) }));
     for (const row of rows) chain.expire(row.blockhash);
     const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { rows: 2 } });
     expect(counts).toMatchObject({ examined: 2, notCharged: 2 });
@@ -854,7 +1105,7 @@ describe("which rows a pass looks at", () => {
   it("makes a bounded number of RPC calls per pass", async () => {
     const chain = fakeChain();
     for (let n = 0; n < 6; n += 1) {
-      const row = await openRow({ signedAt: ago(6 + n) });
+      const row = await openRow({ signedAt: ago(OLD + n) });
       chain.expire(row.blockhash);
     }
     const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { rpcCalls: 7 } });
@@ -866,7 +1117,7 @@ describe("which rows a pass looks at", () => {
 
   it("starts no RPC call once its time is up", async () => {
     const chain = fakeChain();
-    const row = await openRow({ signedAt: ago(6) });
+    const row = await openRow({ signedAt: ago(OLD) });
     chain.expire(row.blockhash);
     const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { deadlineMs: 0 } });
     expect(counts).toMatchObject({ examined: 1, waiting: 1, rpcCalls: 0 });
@@ -894,7 +1145,7 @@ describe("when the chain must not be touched", () => {
   it("makes no call in mock mode, and still releases rows that were never signed", async () => {
     vi.stubEnv("X402_MOCK", "1");
     const chain = fakeChain();
-    const open = await openRow({ signedAt: ago(6) });
+    const open = await openRow({ signedAt: ago(OLD) });
     chain.expire(open.blockhash);
     const stale = await openRow({ signedAt: ago(30) });
     await db.update(inferencePayments).set({ status: "reserved", signedAt: null, memo: null }).where(eq(inferencePayments.id, stale.id));
@@ -909,7 +1160,7 @@ describe("when the chain must not be touched", () => {
     vi.stubEnv("X402_MOCK", "0");
     vi.stubEnv("SOLANA_RPC_URL", "");
     const fetched = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("the network must not be touched"));
-    const open = await openRow({ signedAt: ago(6) });
+    const open = await openRow({ signedAt: ago(OLD) });
     const counts = await reconcileInferencePayments({ now: NOW });
     expect(counts).toMatchObject({ skipped: "no_rpc", examined: 0, rpcCalls: 0 });
     expect(fetched).not.toHaveBeenCalled();
@@ -925,12 +1176,18 @@ describe("when the chain must not be touched", () => {
     expect(counts).toEqual({
       skipped: null,
       staleReleased: 0,
+      gaveUp: 0,
       examined: 0,
       charged: 0,
+      confirmed: 0,
       notCharged: 0,
       waiting: 0,
       stuck: 0,
+      unproven: 0,
       unknownTransfers: 0,
+      strayTransfers: 0,
+      heldAgents: 0,
+      decoys: 0,
       mismatches: 0,
       unchecked: 0,
       rpcCalls: 0,
@@ -941,6 +1198,470 @@ describe("when the chain must not be touched", () => {
     expect(await db.select().from(inferencePayments)).toHaveLength(0);
     expect(await db.select().from(inferenceBudgetDays)).toHaveLength(0);
     expect(await db.select().from(inferenceControl)).toHaveLength(0);
+  });
+});
+
+describe("what a not-charged verdict rests on", () => {
+  it("waits well past the old five minutes: the row stays counted meanwhile", async () => {
+    expect(NOT_CHARGED_AFTER_MS).toBeGreaterThanOrEqual(30 * MINUTE);
+    const chain = fakeChain();
+    // Everything else says not charged: expired blockhash, complete and clean history.
+    const row = await openRow({ signedAt: ago(20), quotedUsd: 0.04 });
+    chain.expire(row.blockhash);
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ examined: 1, notCharged: 0, waiting: 1 });
+    expect((await rowOf(row.id)).status).toBe("unconfirmed");
+    expect(await heldUsd("agent", "agent-1")).toBe(0.04);
+  });
+
+  it("does not take an empty history for a complete one: a node that knows nothing about the account proves nothing", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(OLD), quotedUsd: 0.04 });
+    chain.expire(row.blockhash);
+    // The payment landed. This endpoint returns no history at all for the account.
+    chain.unfunded.add(row.account);
+
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+    expect(counts).toMatchObject({ examined: 1, notCharged: 0, waiting: 1, halted: false });
+    expect(await rowOf(row.id)).toMatchObject({ status: "unconfirmed", resolvedAt: null });
+    expect(await heldUsd("agent", "agent-1")).toBe(0.04);
+    // Absence was not even considered: the blockhash is never asked about.
+    expect(chain.count("blockhashValid")).toBe(0);
+
+    // Once the node does know the account, the same row is settled on the facts.
+    chain.unfunded.delete(row.account);
+    expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).notCharged).toBe(1);
+  });
+
+  it("does not take an empty second read either", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(OLD) });
+    chain.expire(row.blockhash);
+    const read = chain.reader.signaturesFor;
+    chain.reader.signaturesFor = async (address, options) => (options.minContextSlot === undefined ? read(address, options) : []);
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ notCharged: 0, waiting: 1 });
+    expect((await rowOf(row.id)).status).toBe("unconfirmed");
+  });
+
+  describe("the same read must show the wallet's payments that are known to have landed", () => {
+    it("believes no absence from a read that is missing one of them", async () => {
+      const chain = fakeChain();
+      const payer = newAddress();
+      // Two steps of one run: the first settled with its transaction id, the second lost its answer.
+      const settled = await openRow({ payer, signedAt: ago(OLD + 1), status: "settled", txHash: "SigOfTheSettledStep" });
+      const row = await openRow({ payer, signedAt: ago(OLD), quotedUsd: 0.04 });
+      chain.expire(row.blockhash);
+      // The node's history index is behind: it shows neither payment, only older things.
+      chain.land(row.account, { memo: "unrelated", at: ago(OLD + 3), tx: paymentTx({ payer: newAddress(), units: 5, memo: "unrelated" }) });
+
+      const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+      expect(counts).toMatchObject({ examined: 1, notCharged: 0, waiting: 1, halted: false });
+      expect((await rowOf(row.id)).status).toBe("unconfirmed");
+      expect(await heldUsd("agent", "agent-1")).toBe(0.05);
+      expect(chain.count("blockhashValid")).toBe(0);
+
+      // The index catches up and shows the settled step: now its silence about the other means something.
+      chain.land(row.account, { signature: "SigOfTheSettledStep", memo: settled.memo, at: ago(OLD + 1), tx: paymentTx({ payer, units: 10_000, memo: settled.memo }) });
+      expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).notCharged).toBe(1);
+      expect(await heldUsd("agent", "agent-1")).toBe(0.01);
+    });
+
+    it("needs them in the second read too", async () => {
+      const chain = fakeChain();
+      const payer = newAddress();
+      const settled = await openRow({ payer, signedAt: ago(OLD + 1), status: "settled", txHash: "SigOfTheSettledStep" });
+      const row = await openRow({ payer, signedAt: ago(OLD) });
+      chain.expire(row.blockhash);
+      chain.land(row.account, { signature: "SigOfTheSettledStep", memo: settled.memo, at: ago(OLD + 1), tx: paymentTx({ payer, units: 10_000, memo: settled.memo }) });
+      // The endpoint that answers the pinned read knows less than the first one did.
+      chain.secondRead.set(row.account, []);
+      expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ notCharged: 0, waiting: 1 });
+      expect((await rowOf(row.id)).status).toBe("unconfirmed");
+    });
+
+    it("recognises one by its memo when the ledger's transaction id is not the one on chain", async () => {
+      const chain = fakeChain();
+      const payer = newAddress();
+      const settled = await openRow({ payer, signedAt: ago(OLD + 1), status: "settled", txHash: "WhatTheGatewayCalledIt" });
+      const row = await openRow({ payer, signedAt: ago(OLD) });
+      chain.expire(row.blockhash);
+      chain.land(row.account, { memo: settled.memo, at: ago(OLD + 1), tx: paymentTx({ payer, units: 10_000, memo: settled.memo }) });
+      expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).notCharged).toBe(1);
+    });
+
+    it("does not ask for a payment too recent for any node to have indexed, or one from before the window", async () => {
+      const chain = fakeChain();
+      const payer = newAddress();
+      await openRow({ payer, signedAt: ago(1), status: "settled", txHash: "SigJustNow" });
+      await openRow({ payer, signedAt: ago(OLD + 60), status: "settled", txHash: "SigLongBefore" });
+      const row = await openRow({ payer, signedAt: ago(OLD) });
+      chain.expire(row.blockhash);
+      expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).notCharged).toBe(1);
+    });
+  });
+
+  it("needs the second read to show everything the first did", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(OLD) });
+    chain.expire(row.blockhash);
+    chain.land(row.account, { memo: "a swap", at: ago(10), tx: paymentTx({ payer: row.payer, payTo: newAddress(), units: 5, memo: "a swap" }) });
+    // Complete and clean on its own, but it has lost a transaction the first read had:
+    // it came from a node that is behind.
+    chain.secondRead.set(row.account, []);
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ notCharged: 0, waiting: 1 });
+    expect((await rowOf(row.id)).status).toBe("unconfirmed");
+    chain.secondRead.delete(row.account);
+    expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).notCharged).toBe(1);
+  });
+
+  it("finds a row's own memo whatever block time the chain gave it", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(OLD), quotedUsd: 0.04 });
+    chain.expire(row.blockhash);
+    // The chain's clock is twelve minutes behind this server's: the payment's block time
+    // is before the signature, and before the start of the window read for it.
+    const signature = chain.land(row.account, { memo: row.memo, at: ago(OLD + 12), tx: paymentTx({ payer: row.payer, units: 40_000, memo: row.memo }) });
+
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+    expect(counts).toMatchObject({ examined: 1, charged: 1, notCharged: 0, halted: false });
+    expect(await rowOf(row.id)).toMatchObject({ status: "paid_no_answer", txHash: signature });
+    expect(await heldUsd("agent", "agent-1")).toBe(0.04);
+  });
+
+  it("does not read someone else's old memo for the row's", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(OLD) });
+    chain.expire(row.blockhash);
+    chain.land(row.account, { memo: "9".repeat(32), at: ago(OLD + 12), tx: paymentTx({ payer: row.payer, units: 10_000, memo: "9".repeat(32) }) });
+    // Outside the window and not the memo looked for: it is not read at all.
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ notCharged: 1, unknownTransfers: 0 });
+    expect(chain.count("transaction")).toBe(0);
+  });
+});
+
+describe("an answered row whose settlement is not yet proven (settled, no transaction id)", () => {
+  it("gets its transaction id when the payment is found, and stays settled and counted", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ status: "settled", signedAt: ago(3), quotedUsd: 0.04 });
+    const before = await rowOf(row.id);
+    expect(before).toMatchObject({ status: "settled", answered: true, txHash: null });
+    const signature = chain.land(row.account, { memo: row.memo, at: ago(3), tx: paymentTx({ payer: row.payer, units: 40_000, memo: row.memo }) });
+
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+
+    expect(counts).toMatchObject({ examined: 1, confirmed: 1, charged: 0, notCharged: 0, waiting: 0, mismatches: 0, halted: false });
+    // Nothing but the transaction id changed.
+    expect(await rowOf(row.id)).toEqual({ ...before, txHash: signature });
+    expect(await heldUsd("agent", "agent-1")).toBe(0.04);
+    expect(await heldUsd("platform", "all")).toBe(0.04);
+    // And it is not looked at again.
+    chain.calls.length = 0;
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { samplePayers: 0 } })).toMatchObject({ examined: 0, confirmed: 0 });
+    expect(chain.calls).toHaveLength(0);
+  });
+
+  it("is left alone for the first two minutes, like any other row", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ status: "settled", signedAt: new Date(NOW.getTime() - RECONCILE_AFTER_MS + 5000) });
+    chain.land(row.account, { memo: row.memo, at: ago(1), tx: paymentTx({ payer: row.payer, units: 10_000, memo: row.memo }) });
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { samplePayers: 0 } })).toMatchObject({ examined: 0, confirmed: 0 });
+    expect((await rowOf(row.id)).txHash).toBeNull();
+  });
+
+  it("becomes not charged, and its amount goes back exactly once, when the chain proves it was never paid for", async () => {
+    const chain = fakeChain();
+    const payer = newAddress();
+    const row = await openRow({ payer, status: "settled", signedAt: ago(OLD), quotedUsd: 0.04 });
+    await openRow({ payer, signedAt: ago(1), quotedUsd: 0.03 }); // too recent to look at; keeps its place
+    const slot = chain.expire(row.blockhash);
+
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+
+    expect(counts).toMatchObject({ examined: 1, confirmed: 0, notCharged: 1, waiting: 0, halted: false });
+    // The answer did arrive; it turned out to be free.
+    expect(await rowOf(row.id)).toMatchObject({ status: "not_charged", answered: true, txHash: null });
+    expect((await rowOf(row.id)).detail).toMatch(/never paid for/);
+    expect(await heldUsd("platform", "all")).toBe(0.03);
+    expect(await heldUsd("owner", "owner-1")).toBe(0.03);
+    expect(await heldUsd("agent", "agent-1")).toBe(0.03);
+    // By the same strict rule as any other: two reads, the second pinned to the judging block.
+    const reads = chain.calls.filter((call) => call.method === "signaturesFor").map((call) => (call.args[1] as { minContextSlot?: number }).minContextSlot);
+    expect(reads).toEqual([undefined, slot]);
+
+    // Further passes, alone or together, give nothing more back.
+    await Promise.all([reconcileInferencePayments({ now: NOW, reader: chain.reader }), reconcileInferencePayments({ now: NOW, reader: chain.reader })]);
+    expect(await heldUsd("agent", "agent-1")).toBe(0.03);
+  });
+
+  it("returns the amount to the day it was reserved on", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ status: "settled", signedAt: new Date("2031-03-09T23:20:00.000Z"), quotedUsd: 0.04 });
+    chain.expire(row.blockhash, new Date("2031-03-10T00:03:00.000Z"));
+    expect((await reconcileInferencePayments({ now: new Date("2031-03-10T00:04:00.000Z"), reader: chain.reader })).notCharged).toBe(1);
+    expect(await heldUsd("agent", "agent-1", "2031-03-09")).toBe(0);
+    expect(await db.select().from(inferenceBudgetDays).where(eq(inferenceBudgetDays.day, "2031-03-10"))).toHaveLength(0);
+  });
+
+  it("is held to every condition an open row is: age, blockhash, a complete and clean history, a second read", async () => {
+    const stillValid = fakeChain();
+    const row = await openRow({ status: "settled", signedAt: ago(OLD) });
+    expect(await reconcileInferencePayments({ now: NOW, reader: stillValid.reader })).toMatchObject({ notCharged: 0, waiting: 1 });
+
+    const young = fakeChain();
+    const recent = await openRow({ status: "settled", signedAt: ago(20) });
+    young.expire(recent.blockhash);
+    young.expire(row.blockhash);
+    young.unfunded.add(row.account);
+    // One too young, the other on a node that returns no history for its account.
+    expect(await reconcileInferencePayments({ now: NOW, reader: young.reader })).toMatchObject({ examined: 2, notCharged: 0, waiting: 2 });
+
+    const unreadable = fakeChain();
+    unreadable.expire(row.blockhash);
+    unreadable.land(row.account, { reportedMemo: null, at: ago(OLD - 1) });
+    expect(await reconcileInferencePayments({ now: NOW, reader: unreadable.reader })).toMatchObject({ notCharged: 0 });
+
+    const noBlockhash = fakeChain();
+    await db.update(inferencePayments).set({ blockhash: null }).where(eq(inferencePayments.id, row.id));
+    expect(await reconcileInferencePayments({ now: NOW, reader: noBlockhash.reader })).toMatchObject({ notCharged: 0 });
+
+    expect(await rowOf(row.id)).toMatchObject({ status: "settled", txHash: null });
+    expect(await rowOf(recent.id)).toMatchObject({ status: "settled", txHash: null });
+    expect(await heldUsd("agent", "agent-1")).toBe(0.02);
+  });
+
+  it("is not proven by a stranger's transaction carrying its memo", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ status: "settled", signedAt: ago(3) });
+    chain.land(row.account, { memo: row.memo, at: ago(2), tx: paymentTx({ payer: newAddress(), payTo: row.payer, units: 1, memo: row.memo }) });
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+    expect(counts).toMatchObject({ confirmed: 0, waiting: 1, decoys: 1, halted: false });
+    expect(await rowOf(row.id)).toMatchObject({ status: "settled", txHash: null });
+  });
+
+  it("records the transaction and halts when the wallet paid something other than the row describes", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ status: "settled", signedAt: ago(3), quotedUsd: 0.01 });
+    const signature = chain.land(row.account, { memo: row.memo, at: ago(3), tx: paymentTx({ payer: row.payer, units: 250_000, memo: row.memo }) });
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+    expect(counts).toMatchObject({ confirmed: 1, mismatches: 1, halted: true });
+    expect(await rowOf(row.id)).toMatchObject({ status: "settled", txHash: signature });
+    expect((await readInferenceControl()).haltReason).toContain(signature);
+  });
+
+  it("never touches a settled row that has its transaction id", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ status: "settled", signedAt: ago(OLD), txHash: "SigFromTheReceipt" });
+    const before = await rowOf(row.id);
+    chain.expire(row.blockhash);
+    // Nothing on chain for it at all, and the blockhash long expired: still not this pass's business.
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { samplePayers: 0 } });
+    expect(counts).toMatchObject({ examined: 0, notCharged: 0, confirmed: 0 });
+    expect(await rowOf(row.id)).toEqual(before);
+    expect(chain.calls).toHaveLength(0);
+  });
+
+  it("is looked at after the open rows, which hold cap room and an owner's attention", async () => {
+    const chain = fakeChain();
+    const answered = await openRow({ status: "settled", signedAt: ago(3) });
+    const open = await openRow({ signedAt: ago(5) });
+    for (const row of [answered, open]) chain.land(row.account, { memo: row.memo, at: ago(3), tx: paymentTx({ payer: row.payer, units: 10_000, memo: row.memo }) });
+    // Room for one row: the open one, though the answered one is newer.
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { rows: 1, samplePayers: 0 } })).toMatchObject({ examined: 1, charged: 1, confirmed: 0 });
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { rows: 1, samplePayers: 0 } })).toMatchObject({ examined: 1, charged: 0, confirmed: 1 });
+  });
+
+  it("counts the ones still unproven past the give-up age, and leaves them settled and counted", async () => {
+    const chain = fakeChain();
+    const old = await openRow({ status: "settled", signedAt: new Date(NOW.getTime() - GIVE_UP_AFTER_MS - MINUTE), quotedUsd: 0.04 });
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { samplePayers: 0, lateRows: 0 } });
+    expect(counts).toMatchObject({ examined: 0, unproven: 1, stuck: 0, gaveUp: 0 });
+    expect(await rowOf(old.id)).toMatchObject({ status: "settled", txHash: null });
+    expect(await heldUsd("agent", "agent-1", "2031-03-10")).toBe(0.04);
+    expect(chain.calls).toHaveLength(0);
+  });
+});
+
+describe("a row no verdict could be reached on", () => {
+  const longAgo = new Date(NOW.getTime() - GIVE_UP_AFTER_MS - MINUTE);
+
+  it("is closed past the give-up age: still counted as charged, and it says so", async () => {
+    const chain = fakeChain();
+    const failed = await openRow({ signedAt: longAgo, quotedUsd: 0.04 });
+    const left = await openRow({ status: "signed", signedAt: longAgo, quotedUsd: 0.03 });
+    const young = await openRow({ signedAt: ago(OLD) });
+    chain.failing.add("signaturesFor");
+
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { lateRows: 0 } });
+
+    expect(counts).toMatchObject({ gaveUp: 2, examined: 1, notCharged: 0, charged: 0, stuck: 2 });
+    for (const row of [failed, left]) {
+      const closed = await rowOf(row.id);
+      // The end state: unconfirmed, marked resolved, with the reason at the head of its detail.
+      expect(closed).toMatchObject({ status: "unconfirmed", answered: false, txHash: null });
+      expect(closed.resolvedAt?.toISOString()).toBe(NOW.toISOString());
+      expect(closed.detail?.startsWith(CLOSED_UNCHECKED_DETAIL)).toBe(true);
+    }
+    expect(await rowOf(young.id)).toMatchObject({ status: "unconfirmed", resolvedAt: null });
+    // No cap was released on a guess.
+    expect(await heldUsd("agent", "agent-1")).toBe(0.08);
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(`payment ${failed.id} closed unchecked`);
+
+    // Closing happens once.
+    expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { lateRows: 0 } })).gaveUp).toBe(0);
+  });
+
+  it("is closed with no chain at all, in mock mode too", async () => {
+    vi.stubEnv("X402_MOCK", "1");
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: longAgo });
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+    expect(counts).toMatchObject({ skipped: "mock", gaveUp: 1, rpcCalls: 0 });
+    expect((await rowOf(row.id)).resolvedAt).not.toBeNull();
+    expect(chain.calls).toHaveLength(0);
+  });
+
+  it("is looked at again now and then, and settled on the facts when the chain can be read after all", async () => {
+    const chain = fakeChain();
+    const landed = await openRow({ signedAt: longAgo, quotedUsd: 0.04 });
+    const never = await openRow({ signedAt: new Date(longAgo.getTime() - MINUTE), quotedUsd: 0.03 });
+    // The RPC was down for all six hours: both are closed unchecked.
+    chain.failing.add("signaturesFor");
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ gaveUp: 2, charged: 0, notCharged: 0 });
+    expect(await heldUsd("agent", "agent-1")).toBe(0.07);
+
+    // It comes back. One payment is there; the other's blockhash expired with nothing on chain.
+    chain.failing.clear();
+    const signature = chain.land(landed.account, { memo: landed.memo, at: longAgo, tx: paymentTx({ payer: landed.payer, units: 40_000, memo: landed.memo }) });
+    chain.expire(never.blockhash);
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+    expect(counts).toMatchObject({ gaveUp: 0, examined: 2, charged: 1, notCharged: 1, halted: false });
+    expect(await rowOf(landed.id)).toMatchObject({ status: "paid_no_answer", txHash: signature });
+    expect((await rowOf(never.id)).status).toBe("not_charged");
+    expect(await heldUsd("agent", "agent-1")).toBe(0.04);
+  });
+
+  it("looks again at a bounded number per pass, and not at all past the late-look age", async () => {
+    const chain = fakeChain();
+    const rows: Fixture[] = [];
+    for (let n = 0; n < 5; n += 1) rows.push(await openRow({ signedAt: new Date(longAgo.getTime() - n * MINUTE) }));
+    const ancient = await openRow({ signedAt: new Date(NOW.getTime() - LATE_LOOK_MS - MINUTE) });
+    for (const row of [...rows, ancient]) chain.expire(row.blockhash);
+
+    const first = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { lateRows: 2 } });
+    expect(first).toMatchObject({ gaveUp: 6, examined: 2, notCharged: 2 });
+    await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { lateRows: 2 } });
+    const third = await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { lateRows: 2 } });
+    expect(third).toMatchObject({ examined: 1, notCharged: 1 });
+    // The one from before the late-look age is never asked about: it stays closed and counted.
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader, limits: { lateRows: 2 } })).toMatchObject({ examined: 0, stuck: 1 });
+    expect(await rowOf(ancient.id)).toMatchObject({ status: "unconfirmed" });
+    expect((await rowOf(ancient.id)).resolvedAt).not.toBeNull();
+  });
+
+  it("looks again at an answered row still unproven past the give-up age", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ status: "settled", signedAt: longAgo });
+    const signature = chain.land(row.account, { memo: row.memo, at: longAgo, tx: paymentTx({ payer: row.payer, units: 10_000, memo: row.memo }) });
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ unproven: 1, examined: 1, confirmed: 1 });
+    expect(await rowOf(row.id)).toMatchObject({ status: "settled", txHash: signature });
+    expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).unproven).toBe(0);
+  });
+});
+
+describe("evidence found while a halt is already on", () => {
+  it("is added to the halt's reason, so clearing it does not acknowledge something nobody read", async () => {
+    const chain = fakeChain();
+    await setInferenceHalt({ halted: true, reason: "an admin is checking one wallet", by: "admin-1" });
+    const row = await openRow({ signedAt: ago(3), blockhash: null });
+    const stray = chain.land(row.account, { memo: "f".repeat(32), at: ago(2), tx: paymentTx({ payer: row.payer, units: 70_000, memo: "f".repeat(32) }) });
+
+    const counts = await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+
+    // This pass did not throw the halt, and its finding is on record all the same.
+    expect(counts).toMatchObject({ unknownTransfers: 1, halted: false });
+    const control = await readInferenceControl();
+    expect(control).toMatchObject({ halted: true, updatedBy: "admin-1" });
+    expect(control.haltReason).toMatch(/^\[2 findings\] an admin is checking one wallet \| also \(reconciler\): USDC went from an agent wallet to the gateway with no ledger row\./);
+    expect(control.haltReason).toContain(stray);
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(`found while already halted (reconciler): USDC went from an agent wallet to the gateway with no ledger row. Transaction ${stray}`);
+
+    // Found again on the next pass: neither stored nor said a second time.
+    const said = () => vi.mocked(console.error).mock.calls.flat().filter((line) => String(line).includes("found while already halted")).length;
+    const before = said();
+    await reconcileInferencePayments({ now: NOW, reader: chain.reader });
+    expect((await readInferenceControl()).haltReason).toBe(control.haltReason);
+    expect(said()).toBe(before);
+  });
+
+  it("records a second finding of the same pass behind the first", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(3), quotedUsd: 0.01 });
+    const wrongAmount = chain.land(row.account, { memo: row.memo, at: ago(3), tx: paymentTx({ payer: row.payer, units: 250_000, memo: row.memo }) });
+    const stray = chain.land(row.account, { memo: "f".repeat(32), at: ago(2), tx: paymentTx({ payer: row.payer, units: 70_000, memo: "f".repeat(32) }) });
+    expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ mismatches: 1, unknownTransfers: 1, halted: true });
+    const reason = (await readInferenceControl()).haltReason ?? "";
+    expect(reason.startsWith("[2 findings] ")).toBe(true);
+    expect(reason).toContain(wrongAmount);
+    expect(reason).toContain(stray);
+  });
+});
+
+describe("a transfer the node reports with no block time", () => {
+  /** An unexplained, payment-shaped transfer whose history entry carries no time. */
+  function timeless(chain: ReturnType<typeof fakeChain>, row: Fixture, memo: string, blockTime: number | null = null): string {
+    return chain.land(row.account, {
+      signature: newSignature(),
+      memo,
+      blockTime: null,
+      tx: paymentTx({ payer: row.payer, units: 70_000, memo, feePayer: newAddress(), blockTime }),
+    });
+  }
+
+  async function adminClears(at: Date): Promise<void> {
+    vi.useFakeTimers({ now: at, toFake: ["Date"] });
+    try {
+      await setInferenceHalt({ halted: false, reason: "looked at it", by: "admin-1" });
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it("is placed by the time on the transaction itself, and does not halt again once cleared", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(4), blockhash: null });
+    timeless(chain, row, "f".repeat(32), seconds(ago(3)));
+    expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).halted).toBe(true);
+    await adminClears(ago(1));
+    for (let pass = 0; pass < 2; pass += 1) {
+      expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ unknownTransfers: 1, halted: false });
+    }
+    expect((await readInferenceControl()).halted).toBe(false);
+    // One that landed after the clear is new, time or no time on its history entry.
+    timeless(chain, row, "c".repeat(32), seconds(new Date(NOW.getTime() - 30_000)));
+    expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).halted).toBe(true);
+  });
+
+  it("with no time anywhere, is recognised by its id in the reason that was cleared, and does not halt again", async () => {
+    const chain = fakeChain();
+    const row = await openRow({ signedAt: ago(4), blockhash: null });
+    const first = timeless(chain, row, "f".repeat(32));
+    expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).halted).toBe(true);
+    expect((await readInferenceControl()).haltReason).toContain(first);
+
+    await adminClears(ago(1));
+    expect((await readInferenceControl()).haltAcknowledged).toEqual([first]);
+    // The same transaction, every five minutes, for as long as the wallet has an open row.
+    for (let pass = 0; pass < 3; pass += 1) {
+      expect(await reconcileInferencePayments({ now: NOW, reader: chain.reader })).toMatchObject({ unknownTransfers: 1, halted: false });
+    }
+    expect((await readInferenceControl()).halted).toBe(false);
+
+    // A different timeless transfer was not in the reason that was cleared: it halts.
+    const second = timeless(chain, row, "c".repeat(32));
+    expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).halted).toBe(true);
+    expect((await readInferenceControl()).haltReason).toContain(second);
+    // And clearing that one keeps it acknowledged in its turn.
+    await adminClears(new Date(NOW.getTime() - 10_000));
+    expect((await reconcileInferencePayments({ now: NOW, reader: chain.reader })).halted).toBe(false);
   });
 });
 
@@ -1161,7 +1882,8 @@ describe("compareLedgerWithChain", () => {
     quotedUsd: "0.010000",
     settledUsd: null,
     memo: "aa".repeat(16),
-    txHash: null,
+    // A settled row is proven by default: the gateway's receipt named its transaction.
+    txHash: "TxFromTheReceipt",
     ...overrides,
   });
   const payment = (overrides: Partial<Parameters<typeof compareLedgerWithChain>[1][number]>) => ({
@@ -1223,6 +1945,33 @@ describe("compareLedgerWithChain", () => {
     // Two rows cannot both be paid by the same transfer.
     const twice = compareLedgerWithChain([row({ id: "a" }), row({ id: "b" })], [payment({ signature: "S1" })]);
     expect(twice.differences).toEqual([expect.objectContaining({ kind: "ledger_charged_not_on_chain", rowId: "b" })]);
+  });
+
+  it("reports an answered row with no transaction id as a row to check, whatever the chain shows", () => {
+    const result = compareLedgerWithChain(
+      [
+        row({ id: "paid", txHash: null }),
+        row({ id: "free", txHash: null, memo: "bb".repeat(16), quotedUsd: "0.020000" }),
+        row({ id: "other-amount", txHash: null, memo: "cc".repeat(16) }),
+        row({ id: "proven", memo: "dd".repeat(16) }),
+      ],
+      [
+        payment({ signature: "S1" }),
+        payment({ signature: "S3", memoText: `[32] ${"cc".repeat(16)}`, paid: BigInt(12_000) }),
+        payment({ signature: "S4", memoText: `[32] ${"dd".repeat(16)}` }),
+      ],
+    );
+    expect(result.differences.map((difference) => [difference.kind, difference.rowId, difference.signature])).toEqual([
+      ["unproven", "paid", "S1"],
+      ["unproven", "free", null],
+      ["unproven", "other-amount", "S3"],
+      ["amount_differs", "other-amount", "S3"],
+    ]);
+    expect(result.differences[0].detail).toMatch(/no transaction id; the chain shows it paid \(10000 base units\)/);
+    expect(result.differences[1].detail).toMatch(/no transfer found/);
+    // Counted as charged until the chain says otherwise, exactly as the caps count it.
+    expect(result.ledgerChargedUnits).toBe(BigInt(50_000));
+    expect(result.chainPaidUnits).toBe(BigInt(32_000));
   });
 
   it("leaves simulated and never-signed rows out of it", () => {

@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { base58 } from "@scure/base";
 import {
   AddressLookupTableAccount,
   ComputeBudgetProgram,
@@ -17,6 +18,7 @@ import { associatedTokenAddress, SOLANA_USDC_MINT, TOKEN_PROGRAM_ID } from "@/li
 import {
   guardInferenceBody,
   INFERENCE_MAX_REQUEST_BYTES,
+  isPaymentTransactionId,
   isSolanaAddress,
   measureChatMessages,
   pinInferenceRequirement,
@@ -42,6 +44,7 @@ import {
   TEST_MEMO,
   TEST_RPC_URL,
   TOKEN_2022_PROGRAM,
+  transactionIdOf,
   transferChecked,
   USDT_MINT,
 } from "./inference-test-support";
@@ -614,6 +617,64 @@ describe("verifySignedPayment", () => {
     expect(verifySignedPayment({ transaction, payer: "PaperSolAddress", pinned: pinnedFor() }).ok).toBe(false);
     // Another wallet's payment is not this wallet's payment.
     expect(verifySignedPayment({ transaction, payer: wallet().address, pinned: pinnedFor() }).ok).toBe(false);
+  });
+});
+
+describe("isPaymentTransactionId", () => {
+  /** A payment whose fee payer is a key this test holds, the way the gateway holds its own. */
+  function settleable() {
+    const payer = wallet();
+    const gateway = wallet();
+    const { transaction, tx } = buildPayment({ payer: payer.keypair, feePayer: gateway.address });
+    const check = verifySignedPayment({
+      transaction,
+      payer: payer.address,
+      pinned: { asset: SOLANA.asset, payTo: PAY_TO, feePayer: gateway.address, amount: "11961" },
+    });
+    if (!check.ok || !check.payerSignature) throw new Error("the payment did not verify");
+    return { payer, gateway, transaction, tx, payerSignature: check.payerSignature };
+  }
+
+  it("knows the id a payment has on chain: the fee payer's signature over the bytes the agent signed", () => {
+    const { gateway, transaction, tx } = settleable();
+    const txId = transactionIdOf(transaction, gateway.keypair);
+    expect(txId).toMatch(/^[1-9A-HJ-NP-Za-km-z]{64,88}$/);
+    expect(isPaymentTransactionId({ transaction, txId })).toBe(true);
+    // Working the id out did not touch the payment: the fee payer's place is still empty.
+    expect(Buffer.from(tx.signatures[0]).every((byte) => byte === 0)).toBe(true);
+    // The same answer for the transaction as the gateway would broadcast it, both signatures in place.
+    tx.sign([gateway.keypair]);
+    expect(isPaymentTransactionId({ transaction: Buffer.from(tx.serialize()).toString("base64"), txId })).toBe(true);
+  });
+
+  it("refuses the agent's own signature: real, over the same bytes, and not the id", () => {
+    const { transaction, payerSignature } = settleable();
+    expect(isPaymentTransactionId({ transaction, txId: payerSignature })).toBe(false);
+  });
+
+  it("refuses the id of any other transaction, including the same gateway's other payments", () => {
+    const { payer, gateway, transaction } = settleable();
+    // The same wallet, gateway and amount, a moment later: another memo, another payment.
+    const next = buildPayment({ payer: payer.keypair, feePayer: gateway.address, memo: "fedcba9876543210fedcba9876543210" });
+    expect(isPaymentTransactionId({ transaction, txId: transactionIdOf(next.transaction, gateway.keypair) })).toBe(false);
+    // The very same instructions and memo, settled by a fee payer that is not this payment's.
+    const stranger = wallet();
+    const theirs = buildPayment({ payer: payer.keypair, feePayer: stranger.address });
+    expect(isPaymentTransactionId({ transaction, txId: transactionIdOf(theirs.transaction, stranger.keypair) })).toBe(false);
+    // Shaped like an id, and nobody's.
+    expect(isPaymentTransactionId({ transaction, txId: base58.encode(randomBytes(64)) })).toBe(false);
+  });
+
+  it("refuses anything that is not an id, or not a transaction, without throwing", () => {
+    const { gateway, transaction } = settleable();
+    const txId = transactionIdOf(transaction, gateway.keypair);
+    for (const bad of ["", "<script>alert(1)</script>", txId.slice(0, 40), `${txId}1`, base58.encode(randomBytes(63)), base58.encode(randomBytes(65)), txId.replace(/.$/, "0")]) {
+      expect(isPaymentTransactionId({ transaction, txId: bad }), bad).toBe(false);
+    }
+    expect(isPaymentTransactionId({ transaction, txId: undefined as unknown as string })).toBe(false);
+    for (const notATransaction of ["", "AAAA", "not base64 at all", transaction.slice(0, 80)]) {
+      expect(isPaymentTransactionId({ transaction: notATransaction, txId }), notATransaction).toBe(false);
+    }
   });
 });
 

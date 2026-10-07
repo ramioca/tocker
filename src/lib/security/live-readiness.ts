@@ -127,13 +127,43 @@ export function evaluateFirstTradeRisk(config: AgentConfig, capUsd: number): Ris
 }
 
 /**
+ * The one chain the first-trade preset leaves an agent on, or null for an agent with none.
+ *
+ * The first of its chains, with one exception: an agent that pays for its own thinking
+ * pays from its Solana wallet, so if it trades Solana that is the chain it keeps,
+ * wherever Solana sits in the list. A Base agent whose owner added Solana in order to
+ * use pay-per-use has it second, and keeping "the first" took its paying chain away: a
+ * config every other save refuses (`usdcChoiceProblem`), which then blocked every later
+ * save of its settings until the owner worked out why.
+ */
+export function firstTradeChain(config: Pick<AgentConfig, "chains" | "llm">): Chain | null {
+  if (thinkSource(config) === "usdc" && config.chains.includes("solana")) return "solana";
+  return (config.chains[0] as Chain | undefined) ?? null;
+}
+
+/**
+ * An agent's chains with the one the preset would keep first. For a key agent this is
+ * its chains as stored. The checklist reports them in this order, so the screen that
+ * says "Base and Solana → Base only" from the first of them names the chain the server
+ * will really keep.
+ */
+function chainsPresetFirst(config: Pick<AgentConfig, "chains" | "llm">): Chain[] {
+  const kept = firstTradeChain(config);
+  const chains = [...config.chains] as Chain[];
+  return kept === null ? chains : [kept, ...chains.filter((chain) => chain !== kept)];
+}
+
+/**
  * Apply the preset to a config without touching anything else about it.
  *
  * `maxPositionPct` is deliberately left alone — see {@link FIRST_TRADE_PRESET}. Clamping
  * it here is what made every buy fail at the funded size the wizard recommends.
+ *
+ * One chain is kept: see {@link firstTradeChain} for which.
  */
 export function withFirstTradePreset(config: AgentConfig): AgentConfig {
-  const chains: Chain[] = config.chains.length > 1 ? [config.chains[0] as Chain] : [...config.chains];
+  const kept = firstTradeChain(config);
+  const chains: Chain[] = config.chains.length > 1 && kept !== null ? [kept] : [...config.chains];
   return {
     ...config,
     chains: chains.length > 0 ? chains : ["base"],
@@ -162,10 +192,11 @@ export function withFirstTradePreset(config: AgentConfig): AgentConfig {
  * limit, cash against the platform fee, and `maxPositionPct` against equity. Those are
  * the ones the operator can fix before going live, and the ones a preset can break.
  *
- * An agent that pays for its own thinking keeps one run's worth of it, and the wallet
- * floor, out of its trades (`thinkingReserveUsd`; the live book does the same in
- * `getPortfolio`). The guard is given the cash a buy may actually use, so a wallet that
- * covers the ticket but not the ticket and the thinking fails here, not on the first tick.
+ * An agent that pays for its own thinking keeps two runs' worth of it, and the wallet
+ * floor, out of its trades (`thinkingReserveUsd`; the live book reads the same function
+ * in `getPortfolio`, so the two cannot disagree). The guard is given the cash a buy may
+ * actually use, so a wallet that covers the ticket but not the ticket and the thinking
+ * fails here, not on the first tick.
  *
  * Returns `null` when the trade would be allowed.
  */
@@ -300,7 +331,8 @@ export async function evaluateLiveReadiness(input: ReadinessInput): Promise<Live
     caps: {
       maxTradeUsd: input.config.risk.maxTradeUsd,
       maxDailyTrades: input.config.risk.maxDailyTrades,
-      chains: input.config.chains,
+      // The chain the preset would keep comes first. A key agent's are as stored.
+      chains: chainsPresetFirst(input.config),
     },
     checkedAt: new Date().toISOString(),
   };

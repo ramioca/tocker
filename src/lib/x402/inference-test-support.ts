@@ -6,6 +6,7 @@
  * "network" is whatever function a test hands in. The 402 bodies are public data,
  * recorded from unpaid requests on 2026-10-06.
  */
+import { base58 } from "@scure/base";
 import {
   ComputeBudgetProgram,
   Keypair,
@@ -280,6 +281,12 @@ export class FakeLedger implements InferenceLedger {
   failing = new Set<LedgerMethod>();
   /** Runs inside `reserve`, before it answers. For tests that need something to happen mid-reserve. */
   duringReserve: (() => void | Promise<void>) | null = null;
+  /**
+   * Runs inside `markSigned`, before the row moves: a ledger that is slow to answer, or
+   * a clock that moves while it writes. A promise that never resolves is a ledger that
+   * never answers.
+   */
+  duringMarkSigned: (() => void | Promise<void>) | null = null;
   /** Called on every event, so a test can record sends and ledger writes on one timeline. */
   onEvent: ((event: string) => void) | null = null;
   private next = 1;
@@ -344,6 +351,7 @@ export class FakeLedger implements InferenceLedger {
     signed: { memo: string | null; blockhash: string | null; payerSignature: string | null },
   ): Promise<void> {
     this.note("markSigned");
+    await this.duringMarkSigned?.();
     this.check("markSigned");
     const row = this.row(paymentId);
     if (row.status !== "reserved") throw new Error(`markSigned on a ${row.status} row`);
@@ -584,6 +592,18 @@ export function buildPayment(input: {
   const signers = input.signers ?? [input.payer];
   if (signers.length > 0) tx.sign(signers);
   return { transaction: Buffer.from(tx.serialize()).toString("base64"), tx };
+}
+
+/**
+ * The id a payment has on chain: its fee payer's signature over the message, which the
+ * gateway adds before it settles. `feePayer` is a key the test made, standing in for the
+ * gateway's, so a test can hand back the receipt a real settlement would carry. The
+ * transaction itself is left as it was.
+ */
+export function transactionIdOf(transaction: string, feePayer: Keypair): string {
+  const tx = VersionedTransaction.deserialize(Uint8Array.from(Buffer.from(transaction, "base64")));
+  tx.sign([feePayer]);
+  return base58.encode(tx.signatures[0]);
 }
 
 export { Keypair };

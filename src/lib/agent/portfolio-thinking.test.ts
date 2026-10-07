@@ -1,7 +1,7 @@
 /**
  * The live book of an agent that pays for its own thinking.
  *
- * One run's worth of thinking, and the wallet floor, is kept out of its trades, taken
+ * Two runs' worth of thinking, and the wallet floor, are kept out of its trades, taken
  * from the Solana wallet's USDC because that is the wallet that pays. The two reads that
  * leave the process are stand-ins: the Solana balance (the chain) and the Base balance
  * (Privy). The fee ledger and the rest of `getPortfolio` are the real code on PGlite.
@@ -16,6 +16,7 @@ import { toNumeric } from "@/lib/money";
 import { seedKnownTokens, tokenId, USDC_SOLANA } from "@/lib/trading/tokens";
 import { WALLET_FLOOR_USD } from "@/lib/x402/inference-types";
 import { DEFAULT_AGENT_CONFIG } from "./config";
+import { runFundsNeededUsd, thinkingReserveUsd } from "./inference";
 import { seedAgent, setupTestDb } from "./test-support";
 
 /** What each wallet holds, in USDC: Solana by its token account, Base by its wallet id. */
@@ -99,17 +100,33 @@ async function oweFee(agent: { agentId: string; userId: string }, usd: number) {
 }
 
 describe("a live agent that pays per use", () => {
-  it("keeps its run limit and the wallet floor out of what a buy may spend, and in its cash and equity", async () => {
+  it("keeps two run limits and the wallet floor out of what a buy may spend, and in its cash and equity", async () => {
     const agent = await liveAgent({ paysPerUse: true, solana: 5 });
     const portfolio = await getPortfolio(agent.agentId);
 
-    expect(portfolio.thinkingReserveUsd).toBeCloseTo(0.3 + WALLET_FLOOR_USD, 6);
+    // This run's remaining thinking, the next run's, and the floor: the one function's figure.
+    expect(portfolio.thinkingReserveUsd).toBeCloseTo(2 * 0.3 + WALLET_FLOOR_USD, 6);
+    expect(portfolio.thinkingReserveUsd).toBeCloseTo(thinkingReserveUsd({ llm: PAYS_PER_USE }), 6);
     // Still its money: the public record and the equity curve do not move.
     expect(portfolio.cashUsd).toBeCloseTo(5, 6);
     expect(portfolio.equityUsd).toBeCloseTo(5, 6);
     // What the risk guard sizes a buy against.
-    expect(toRiskPortfolio(portfolio).cashUsd).toBeCloseTo(4.45, 6);
+    expect(toRiskPortfolio(portfolio).cashUsd).toBeCloseTo(4.15, 6);
     expect(toRiskPortfolio(portfolio).equityUsd).toBeCloseTo(5, 6);
+  });
+
+  /**
+   * The reviewer's wallet, to the cent. The agent buys with everything a buy may spend
+   * (ticket and fee), the same run then thinks on by its whole limit, and what is left
+   * must still be what the check before the next run asks for: the limit and the floor.
+   * With one run held back it was left a whole limit short of that.
+   */
+  it("is left able to pay for its next run after a buy that used all its spendable cash", async () => {
+    const agent = await liveAgent({ paysPerUse: true, solana: 5 });
+    const spendable = toRiskPortfolio(await getPortfolio(agent.agentId)).cashUsd;
+    const afterTheBuy = 5 - spendable;
+    const afterTheRun = afterTheBuy - PAYS_PER_USE.usdc.maxUsdPerRun;
+    expect(afterTheRun + 1e-9).toBeGreaterThanOrEqual(runFundsNeededUsd({ llm: PAYS_PER_USE }));
   });
 
   it("holds back no more than the Solana wallet has: USDC on Base cannot pay for thinking", async () => {

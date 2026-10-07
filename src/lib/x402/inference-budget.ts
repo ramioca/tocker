@@ -98,6 +98,12 @@ export interface InferenceControlState {
    * to that moment, so evidence older than this does not throw the halt again.
    */
   haltClearedAt: Date | null;
+  /**
+   * The transaction ids named in the reason that clearing acknowledged. A transaction the
+   * node reports with no time on it cannot be placed before or after `haltClearedAt`, so
+   * it is recognised by its id instead and does not throw the halt a second time.
+   */
+  haltAcknowledged: readonly string[];
   pausedUntil: Date | null;
   pauseReason: string | null;
   updatedBy: string | null;
@@ -108,6 +114,7 @@ export const INFERENCE_CONTROL_CLEAR: InferenceControlState = {
   halted: false,
   haltReason: null,
   haltClearedAt: null,
+  haltAcknowledged: [],
   pausedUntil: null,
   pauseReason: null,
   updatedBy: null,
@@ -174,7 +181,9 @@ export function holdUntil(reason: InferenceStopReason, strikes: number, now: Dat
  * When pay-per-use is paused for everyone, and for how long.
  *
  *  - `unanswered`: steps that were paid for (or may have been) and got no answer, from
- *    more than one agent, mean the gateway is taking money and not serving.
+ *    more than one ACCOUNT, mean the gateway is taking money and not serving. Counted by
+ *    owner, not by agent: the rule exists so that one account's bad luck (or one account's
+ *    doing) cannot stop everyone, and one account may have several agents.
  *  - `gateway` and `signature`: runs that stopped before any payment because the gateway
  *    or the wallet would not do its part. Nothing was lost, but every further run would
  *    stop the same way.
@@ -182,7 +191,7 @@ export function holdUntil(reason: InferenceStopReason, strikes: number, now: Dat
  *    One is enough.
  */
 export const BREAKER_RULES = {
-  unanswered: { rows: 3, agents: 2, windowMinutes: 15, pauseMinutes: 30 },
+  unanswered: { rows: 3, owners: 2, windowMinutes: 15, pauseMinutes: 30 },
   gateway: { failures: 5, windowMinutes: 10, pauseMinutes: 15 },
   signature: { failures: 5, windowMinutes: 10, pauseMinutes: 15 },
   pin_mismatch: { failures: 1, windowMinutes: 30, pauseMinutes: 30 },
@@ -199,8 +208,12 @@ export const BREAKER_PAYMENT_STATUSES = ["paid_no_answer", "unconfirmed"] as con
 export const BREAKER_STOP_REASONS = ["quote_failed", "gateway_error", "signature_failed", "pin_mismatch"] as const;
 
 export interface BreakerEvidence {
-  /** Ledger rows, by when the payment was signed. Only the two unanswered statuses count. */
-  payments: ReadonlyArray<{ status: string; agentId: string | null; at: Date }>;
+  /**
+   * Ledger rows, by when the payment was signed. Only the two unanswered statuses count.
+   * `ownerId` is what tells one account from another; a caller that has only the agent
+   * (an older reader of this type) is counted by agent, which can only trip sooner.
+   */
+  payments: ReadonlyArray<{ status: string; agentId: string | null; ownerId?: string | null; at: Date }>;
   /** Runs that stopped, by when they finished, with the reason they recorded. */
   stops: ReadonlyArray<{ reason: string | null; at: Date }>;
 }
@@ -236,13 +249,14 @@ export function breakerTrips(evidence: BreakerEvidence, now: Date): BreakerTrip[
     (payment) =>
       (BREAKER_PAYMENT_STATUSES as readonly string[]).includes(payment.status) && within(payment.at, now, BREAKER_RULES.unanswered.windowMinutes),
   );
-  // A row with no agent on it cannot be told apart from another: all such count as one.
-  const agents = new Set(unanswered.map((payment) => payment.agentId ?? ""));
-  if (unanswered.length >= BREAKER_RULES.unanswered.rows && agents.size >= BREAKER_RULES.unanswered.agents) {
+  // Two agents of one owner are one account. A row with nothing to tell it apart by
+  // cannot be told from another: all such count as one.
+  const owners = new Set(unanswered.map((payment) => (payment.ownerId ? `owner:${payment.ownerId}` : `agent:${payment.agentId ?? ""}`)));
+  if (unanswered.length >= BREAKER_RULES.unanswered.rows && owners.size >= BREAKER_RULES.unanswered.owners) {
     trips.push({
       rule: "unanswered",
       pauseUntil: new Date(latest(unanswered.map((payment) => payment.at)) + BREAKER_RULES.unanswered.pauseMinutes * MINUTE_MS),
-      reason: `${unanswered.length} paid steps from ${agents.size} agents got no answer within ${BREAKER_RULES.unanswered.windowMinutes} minutes`,
+      reason: `${unanswered.length} paid steps from ${owners.size} accounts got no answer within ${BREAKER_RULES.unanswered.windowMinutes} minutes`,
     });
   }
 

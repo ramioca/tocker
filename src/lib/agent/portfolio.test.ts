@@ -169,9 +169,10 @@ describe("getPortfolio", () => {
 });
 
 /**
- * A live agent that pays for its own thinking keeps one run's worth of it, and the wallet
+ * A live agent that pays for its own thinking keeps two runs' worth of it, and the wallet
  * floor, out of its trades. The money is still its own: it stays in cash and equity, and
- * is only left out of what a buy may spend.
+ * is only left out of what a buy may spend. (The figures below are a book's, handed in;
+ * `portfolio-thinking.test.ts` is where the size of the reserve is pinned.)
  */
 describe("what is held back for thinking", () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -215,6 +216,21 @@ describe("what is held back for thinking", () => {
     expect(said).toMatch(/Cash: \$10\.00/);
     expect(said).toMatch(/\$0\.55 is held back to pay for your own thinking/);
     expect(said).toMatch(/\$9\.45 is available to trade/);
+  });
+
+  /**
+   * The figure is worked out from a limit only the owner may read, and the model that is
+   * told it writes text anyone can read. It is told so, in the words the prompt already
+   * uses for its other thresholds.
+   */
+  it("is told to the model as private: never to be stated in a rationale, a post or its summary", () => {
+    const held = book({ mode: "live", cashUsd: 10, equityUsd: 10, thinkingReserveUsd: 0.85 });
+    const line = describePortfolio(held, config)
+      .split("\n")
+      .find((text) => text.includes("held back to pay for your own thinking"));
+    expect(line).toMatch(/never state it in a rationale, a post or your summary/);
+    // Nothing of the kind is said to an agent that holds nothing back.
+    expect(describePortfolio(book({ mode: "live", cashUsd: 10, equityUsd: 10 }), config)).not.toMatch(/never state it/);
   });
 
   it("is not held back from a paper agent, whose cash is not what pays", async () => {

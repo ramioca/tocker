@@ -332,7 +332,7 @@ export function describeInferenceStop(
     case "paid_no_answer":
       return { title: "A step was paid for but not answered", detail: "The agent paid for one step and the provider did not return an answer. The run stopped so it would not pay again. The charge is listed under Money." };
     case "rerouted":
-      return { title: "A different model answered", detail: `The provider answered with a different model than ${context.model ?? "the one chosen"}. The answer was not used and the run stopped.` };
+      return { title: "A different model answered", detail: `The provider answered with a different model than ${context.model ?? "the one chosen"}. The answer was not used and the run stopped. If that step was charged, it is listed under Money.` };
     case "bad_request":
       return { title: "The request was refused", detail: "The provider refused the request before any payment, so nothing was paid and the run stopped." };
   }

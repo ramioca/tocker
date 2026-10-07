@@ -1,5 +1,7 @@
 import { getAddress, isAddress } from "viem";
 import { USDC_MINT } from "@/lib/wallets/funding";
+// Constants only, from a file with no imports of its own: safe in the browser.
+import { INFERENCE_GATEWAY } from "@/lib/x402/inference-types";
 import type { Chain } from "@/server/types";
 
 /**
@@ -47,13 +49,36 @@ export const NAME_NOT_SUPPORTED = "Names like .sol or .eth aren't supported here
 export const USDC_TOKEN_NOT_A_WALLET =
   "That's the USDC token itself, not a wallet. Paste the address of the wallet you want the USDC to arrive in.";
 
+/** Shown when a withdrawal's destination is the address pay-per-use thinking is paid to. */
+export const THINKING_PROVIDER_NOT_A_WALLET =
+  "That's an address agents make payments to, not a wallet of yours, so a withdrawal can't be sent there. Paste the address of the wallet you want this to arrive in.";
+
+/**
+ * True for an address pay-per-use thinking is paid to (`INFERENCE_GATEWAY`): the
+ * gateway's own, on any chain it is pinned for. Base58 is case-sensitive, so the
+ * comparison is exact.
+ */
+export function isThinkingProviderAddress(address: string): boolean {
+  const value = address.trim();
+  return Object.values(INFERENCE_GATEWAY).some((gateway) => (gateway.payTo as readonly string[]).includes(value));
+}
+
 /**
  * What is wrong with `address` as the place a withdrawal on `chain` is sent, or `null`.
  *
  * Everything {@link addressProblemForChain} refuses, in more specific words where the
- * mistake has a name (the other chain's address, a .sol or .eth name), plus one address
- * that is well-formed and still never a wallet: USDC itself, which the Deposit sheet puts
- * on the clipboard with its own copy button. It only ever refuses more.
+ * mistake has a name (the other chain's address, a .sol or .eth name), plus two addresses
+ * that are well-formed and still never the owner's wallet:
+ *
+ *  - USDC itself, which the Deposit sheet puts on the clipboard with its own copy button;
+ *  - the address pay-per-use thinking is paid to. Money an agent sends there outside a
+ *    paid step is a gift to the provider, and it is more than that: every transfer from
+ *    an agent's wallet to that address is expected to match a row in the thinking ledger,
+ *    and one that matches none is taken as a payment the ledger missed, which stops
+ *    pay-per-use for every agent until an admin has looked. A withdrawal must never be
+ *    able to look like that.
+ *
+ * It only ever refuses more.
  *
  * Apart from `addressProblemForChain` because that one also checks token addresses (the
  * blocklist, the trade picker), where the USDC contract is a valid answer and nothing is
@@ -67,6 +92,9 @@ export function destinationProblemForChain(chain: Chain, address: string): strin
   if (value === USDC_MINT.solana || value.toLowerCase() === USDC_MINT.base.toLowerCase()) {
     return USDC_TOKEN_NOT_A_WALLET;
   }
+  // Before the wrong-chain sentences, for the same reason: switching the chain would
+  // only lead here.
+  if (isThinkingProviderAddress(value)) return THINKING_PROVIDER_NOT_A_WALLET;
   if (chain === "solana" && EVM.test(value)) {
     return "That's a Base (0x…) address. This withdrawal leaves on Solana. Paste a Solana address, or switch the chain to Base.";
   }

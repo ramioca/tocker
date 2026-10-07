@@ -11,14 +11,18 @@ import {
   INVOCATION_PAY_UNTIL_MS,
   NO_INFERENCE_HOLD,
   USDC_NOT_AVAILABLE,
+  RESERVED_RUNS,
   brainOf,
   canThink,
+  countsAsStrike,
   fitsInvocation,
   holdsAgent,
   isHeldAt,
+  lastStepStartAt,
   nextHold,
   paidStepLimit,
   payDeadlineAt,
+  runFundsNeededUsd,
   stopOutcome,
   thinkSource,
   thinkingModel,
@@ -27,13 +31,17 @@ import {
   wrapUpReason,
   type HoldState,
 } from "./inference";
+import { capsFor } from "@/lib/x402/inference-budget";
 import {
   DEFAULT_PAY_PER_USE_MODEL,
   INFERENCE_STOPS,
   MAX_PAID_STEPS,
   MIN_INVOCATION_REMAINING_MS,
+  NO_NEW_STEP_AFTER_MS,
   SIGN_MIN_REMAINING_MS,
+  USDC_RUN_CAP,
   WALLET_FLOOR_USD,
+  inferenceFlags,
   type InferenceStopReason,
 } from "@/lib/x402/inference-types";
 
@@ -125,15 +133,43 @@ describe("what a live pay-per-use agent keeps out of its trades", () => {
     expect(thinkingReserveUsd(null)).toBe(0);
   });
 
-  it("is one run's limit plus the wallet floor", () => {
-    expect(thinkingReserveUsd(usdc({ maxUsdPerRun: 0.3 }))).toBeCloseTo(0.3 + WALLET_FLOOR_USD, 6);
-    expect(thinkingReserveUsd(usdc({ maxUsdPerRun: 2 }))).toBeCloseTo(2 + WALLET_FLOOR_USD, 6);
+  it("is two runs' limits plus the wallet floor: the rest of this run, and the next one", () => {
+    expect(RESERVED_RUNS).toBe(2);
+    expect(thinkingReserveUsd(usdc({ maxUsdPerRun: 0.3 }))).toBeCloseTo(2 * 0.3 + WALLET_FLOOR_USD, 6);
+    expect(thinkingReserveUsd(usdc({ maxUsdPerRun: 2 }))).toBeCloseTo(2 * 2 + WALLET_FLOOR_USD, 6);
   });
 
   it("is the floor alone when the limit is missing, and never more than the product's ceiling", () => {
     expect(thinkingReserveUsd({ llm: { ...KEY.llm, source: "usdc" } })).toBeCloseTo(WALLET_FLOOR_USD, 6);
     expect(thinkingReserveUsd(usdc({ maxUsdPerRun: Number.NaN }))).toBeCloseTo(WALLET_FLOOR_USD, 6);
-    expect(thinkingReserveUsd(usdc({ maxUsdPerRun: 500 }))).toBeCloseTo(2 + WALLET_FLOOR_USD, 6);
+    expect(thinkingReserveUsd(usdc({ maxUsdPerRun: 500 }))).toBeCloseTo(2 * USDC_RUN_CAP.max + WALLET_FLOOR_USD, 6);
+  });
+
+  describe("what a run needs in the wallet before it starts", () => {
+    it("is the run limit plus the floor, the sum the check before a run makes from the run's caps", () => {
+      expect(runFundsNeededUsd(KEY)).toBe(0);
+      expect(runFundsNeededUsd(null)).toBe(0);
+      for (const maxUsdPerRun of [USDC_RUN_CAP.min, 0.15, 0.3, 0.45, 1, USDC_RUN_CAP.max, 500, Number.NaN]) {
+        const config = usdc({ maxUsdPerRun });
+        expect(runFundsNeededUsd(config)).toBeCloseTo(capsFor(config, inferenceFlags({})).runUsd + WALLET_FLOOR_USD, 9);
+      }
+    });
+
+    /**
+     * The point of holding back two runs. A buy is placed mid-run with every dollar a buy
+     * may spend, so the wallet is left at exactly the reserve; the run then goes on
+     * thinking, by as much as its whole limit; and the next run must still be let in.
+     * With one run held back (the reserve equal to what the next run needs) the last
+     * line fails by whatever the run spent after its buy.
+     */
+    it("is still there after a buy that used all the spendable cash and a whole run's thinking on top", () => {
+      for (const maxUsdPerRun of [USDC_RUN_CAP.min, 0.15, 0.3, 0.45, 1, USDC_RUN_CAP.max]) {
+        const config = usdc({ maxUsdPerRun });
+        const leftAfterTheBuy = thinkingReserveUsd(config);
+        const leftAfterTheRun = leftAfterTheBuy - maxUsdPerRun;
+        expect(leftAfterTheRun + 1e-9).toBeGreaterThanOrEqual(runFundsNeededUsd(config));
+      }
+    });
   });
 });
 
@@ -165,7 +201,18 @@ describe("one run's clocks and steps", () => {
   });
 
   describe("when the next step must be the last", () => {
-    const base = { stepNumber: 3, stepLimit: 20, runCapUsd: 0.3, spentUsd: 0.05, maxStepUsd: 0.01, maxStepMs: 8_000, now: 0, deadlineAt: 240_000 };
+    // A run whose model call began at 0: no new step after 150 s, nothing signed after 165 s.
+    const base = {
+      stepNumber: 3,
+      stepLimit: 20,
+      runCapUsd: 0.3,
+      spentUsd: 0.05,
+      maxStepUsd: 0.01,
+      maxStepMs: 8_000,
+      now: 0,
+      deadlineAt: 240_000,
+      noNewStepAt: NO_NEW_STEP_AFTER_MS,
+    };
 
     it("is not yet, with money, time and steps to spare", () => {
       expect(wrapUpReason(base)).toBeNull();
@@ -179,12 +226,62 @@ describe("one run's clocks and steps", () => {
       expect(wrapUpReason({ ...base, spentUsd: 0.3 })).toBe("run_cap");
     });
 
-    it("is when the time left would not cover a signature and two of the slowest step", () => {
-      const needed = SIGN_MIN_REMAINING_MS + 2 * 8_000;
-      expect(wrapUpReason({ ...base, now: 240_000 - needed })).toBeNull();
-      expect(wrapUpReason({ ...base, now: 240_000 - needed + 1 })).toBe("deadline");
+    it("knows the last moment a step can start: no new step, or no signature, whichever is first", () => {
+      expect(lastStepStartAt(base)).toBe(NO_NEW_STEP_AFTER_MS);
+      // A run started late in its invocation: the deadline, less the time a signature needs, comes first.
+      expect(lastStepStartAt({ deadlineAt: 200_000, noNewStepAt: NO_NEW_STEP_AFTER_MS })).toBe(200_000 - SIGN_MIN_REMAINING_MS);
+    });
+
+    it("is when the time left before that moment would not cover two of the slowest step", () => {
+      const last = NO_NEW_STEP_AFTER_MS;
+      expect(wrapUpReason({ ...base, now: last - 2 * 8_000 })).toBeNull();
+      expect(wrapUpReason({ ...base, now: last - 2 * 8_000 + 1 })).toBe("deadline");
       // A slow run wraps up earlier.
-      expect(wrapUpReason({ ...base, maxStepMs: 40_000, now: 240_000 - needed })).toBe("deadline");
+      expect(wrapUpReason({ ...base, maxStepMs: 40_000, now: last - 2 * 8_000 })).toBe("deadline");
+    });
+
+    it("is measured to the deadline when that, less a signature's time, comes before the no-new-step moment", () => {
+      const late = { ...base, deadlineAt: 200_000 };
+      const last = 200_000 - SIGN_MIN_REMAINING_MS;
+      expect(wrapUpReason({ ...late, now: last - 2 * 8_000 })).toBeNull();
+      expect(wrapUpReason({ ...late, now: last - 2 * 8_000 + 1 })).toBe("deadline");
+      // Before the first step nothing is known about how long one takes: only a run with no time at all is wrapped up.
+      expect(wrapUpReason({ ...late, stepNumber: 0, maxStepMs: 0, maxStepUsd: 0, spentUsd: 0, now: last })).toBeNull();
+      expect(wrapUpReason({ ...late, stepNumber: 0, maxStepMs: 0, maxStepUsd: 0, spentUsd: 0, now: last + 1 })).toBe("deadline");
+    });
+
+    /**
+     * The run loop asks before every step, and ends the run once a step finishes at or
+     * after the no-new-step moment. Measured to the deadline alone, the wrap-up never
+     * came first for steps under about eleven seconds: fifteen ten-second steps were paid
+     * for and the run was cut with no `finish`. Here every pace is walked the way the
+     * loop walks it, and the model is always told to finish before the run is cut.
+     */
+    it.each([1, 2, 5, 7.5, 8, 10, 11, 12, 14, 15, 20, 30, 45, 60, 74, 100, 149])("tells the model to finish before the run is cut, at %s s a step", (seconds) => {
+      const stepMs = seconds * 1_000;
+      let wrapUp: string | null = null;
+      let slowest = 0;
+      let cutWithoutFinish = false;
+      for (let stepNumber = 0, now = 0; ; stepNumber += 1) {
+        // prepareStep
+        wrapUp = wrapUpReason({ ...base, stepNumber, spentUsd: 0, maxStepUsd: 0, maxStepMs: slowest, now });
+        if (wrapUp) break;
+        // the step itself, then the loop's own rule
+        now += stepMs;
+        slowest = stepMs;
+        if (now >= NO_NEW_STEP_AFTER_MS) {
+          cutWithoutFinish = true;
+          break;
+        }
+      }
+      expect(cutWithoutFinish).toBe(false);
+      expect(wrapUp === "deadline" || wrapUp === "step_limit").toBe(true);
+    });
+
+    it("the ten-second run of the report: told to finish at the step that starts at 140 s", () => {
+      const asked = Array.from({ length: 15 }, (_, step) => wrapUpReason({ ...base, stepNumber: step, spentUsd: 0, maxStepUsd: 0, maxStepMs: step === 0 ? 0 : 10_000, now: step * 10_000 }));
+      expect(asked.slice(0, 14).every((reason) => reason === null)).toBe(true);
+      expect(asked[14]).toBe("deadline");
     });
 
     it("is when its ordinary steps are used up", () => {
@@ -235,6 +332,72 @@ describe("holds", () => {
       state = { ...state, ...next, inferenceNotifiedAt: NOW };
     }
     expect(waits).toEqual([15, 30, 60, 120, 360, 360, 360]);
+  });
+
+  describe("a hold that is nobody's fault", () => {
+    const NO_FAULT = ["halted", "paused", "flag_off", "platform_day_cap"] as const;
+
+    it("is an admin's halt, a breaker's pause, the switch being off, and the platform's day: nothing else", () => {
+      expect(REASONS.filter((reason) => holdsAgent(reason) && !countsAsStrike(reason)).sort()).toEqual([...NO_FAULT].sort());
+    });
+
+    it("adds no strike, however many times it is looked at", () => {
+      for (const reason of NO_FAULT) {
+        let state: HoldState = { ...none, inferenceStrikes: 1 };
+        let at = NOW;
+        for (let look = 0; look < 8; look += 1) {
+          const next = nextHold(state, reason, at);
+          expect(next.inferenceStrikes).toBe(1);
+          state = { ...state, ...next, inferenceNotifiedAt: NOW };
+          at = new Date(next.inferenceHoldUntil.getTime() + 1_000);
+        }
+      }
+    });
+
+    /** The report's case: a two-hour halt, eight looks, then one ordinary hiccup. */
+    it("leaves the first ordinary failure after it fifteen minutes from its next try, not six hours", () => {
+      let state: HoldState = none;
+      let at = NOW;
+      for (let look = 0; look < 8; look += 1) {
+        const next = nextHold(state, "halted", at);
+        state = { ...state, ...next, inferenceNotifiedAt: NOW };
+        at = new Date(next.inferenceHoldUntil.getTime() + 1_000);
+      }
+      // The halt is cleared and the re-check lifts the hold; the strikes are kept, as ever.
+      const lifted: HoldState = { ...state, inferenceHold: null, inferenceHoldSince: null, inferenceHoldUntil: null };
+      const hiccup = nextHold(lifted, "quote_failed", at);
+      expect(hiccup.inferenceStrikes).toBe(1);
+      expect(minutesFrom(at, hiccup.inferenceHoldUntil)).toBe(15);
+    });
+
+    it("still counts the strikes an agent earned before it, and after", () => {
+      const struck: HoldState = { ...none, inferenceHold: "quote_failed", inferenceHoldSince: NOW, inferenceStrikes: 2, inferenceNotifiedAt: NOW };
+      const paused = nextHold(struck, "paused", NOW);
+      expect(paused.inferenceStrikes).toBe(2);
+      const after = nextHold({ ...struck, ...paused }, "quote_failed", NOW);
+      expect(after.inferenceStrikes).toBe(3);
+      expect(minutesFrom(NOW, after.inferenceHoldUntil)).toBe(60);
+    });
+
+    it("still looks less and less often at an account the switch is off for: 15, 30, 60, 120, then 360 minutes", () => {
+      let state: HoldState = none;
+      let at = NOW;
+      const waits: number[] = [];
+      for (let look = 0; look < 7; look += 1) {
+        const next = nextHold(state, "flag_off", at);
+        waits.push(minutesFrom(at, next.inferenceHoldUntil));
+        expect(next.inferenceStrikes).toBe(0);
+        state = { ...state, ...next, inferenceNotifiedAt: NOW };
+        // The next look comes when this hold's time has, as the re-check pass makes it.
+        at = next.inferenceHoldUntil;
+      }
+      expect(waits).toEqual([15, 30, 60, 120, 360, 360, 360]);
+    });
+
+    it("starts that count again for a hold that was lifted and came back", () => {
+      const lifted: HoldState = { ...none, inferenceHoldSince: new Date(NOW.getTime() - 5 * 3_600_000), inferenceNotifiedAt: NOW };
+      expect(minutesFrom(NOW, nextHold(lifted, "flag_off", NOW).inferenceHoldUntil)).toBe(15);
+    });
   });
 
   it("waits for the next UTC day on a day limit, and fifteen minutes on a pause, whatever the strikes", () => {

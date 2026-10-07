@@ -153,11 +153,11 @@ function EndPause() {
   );
 }
 
+/** A wallet the test may sign with: one of the viewing admin's own agents', never anyone else's. */
 export interface ProbeWallet {
   walletId: string;
   address: string;
   agentName: string;
-  ownerHandle: string;
   payPerUse: boolean;
 }
 
@@ -181,11 +181,13 @@ function SignatureTest({ wallets }: { wallets: ProbeWallet[] }) {
         Asks BlockRun for a real quote on a fixed one-line prompt, checks it against the pins, has this wallet sign the
         payment under its own Privy policy, and checks the signed bytes. The signed payment is then thrown away: it
         is never sent, never recorded and expires within about a minute. Each press is one request to the gateway and
-        one signature. It works with pay-per-use switched off.
+        one signature. It works with pay-per-use switched off. Only the wallets of your own agents are offered, and
+        the server refuses any other: being an admin is no reason to have someone else&rsquo;s wallet sign a payment.
       </p>
       {wallets.length === 0 ? (
         <p className="text-xs text-muted-foreground">
-          No real Solana agent wallet exists yet. Build an agent with Solana among its chains, with Privy configured.
+          None of your own agents has a real Solana wallet yet. Build an agent of your own with Solana among its
+          chains, with Privy configured.
         </p>
       ) : (
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -202,7 +204,7 @@ function SignatureTest({ wallets }: { wallets: ProbeWallet[] }) {
           >
             {wallets.map((wallet) => (
               <option key={wallet.walletId} value={wallet.walletId} className="bg-card">
-                {wallet.agentName} · @{wallet.ownerHandle} · {shortAddress(wallet.address)}
+                {wallet.agentName} · {shortAddress(wallet.address)}
                 {wallet.payPerUse ? " · pays per use" : ""}
               </option>
             ))}

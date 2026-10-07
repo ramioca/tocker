@@ -23,12 +23,14 @@ import {
   chatRequest,
   completionResponse,
   FakeLedger,
+  Keypair,
   memoGateway402,
   mintRpcAnswer,
   payContext,
   quoteResponse,
   TEST_RPC_URL,
   TOKEN_2022_PROGRAM,
+  transactionIdOf,
 } from "./inference-test-support";
 import {
   estimateStepUsd,
@@ -93,12 +95,15 @@ interface Harness {
 }
 
 let wallet: KeyPairSigner;
+/** A fee payer whose key this process holds, so a test can settle a payment the way the gateway would. */
+let feePayer: Keypair;
 let warn: ReturnType<typeof vi.spyOn>;
 let error: ReturnType<typeof vi.spyOn>;
 let rpc: Harness["rpc"];
 
 beforeEach(async () => {
   wallet = await generateKeyPairSigner();
+  feePayer = Keypair.generate();
   rpc = { calls: 0 };
   // The only thing allowed through the runtime's own fetch is the scheme's one question
   // to the RPC. Any other network call fails the test that made it.
@@ -171,7 +176,15 @@ function harness(
     env: { INFERENCE_USDC: "on", SOLANA_RPC_URL: TEST_RPC_URL, ...(options.env ?? {}) },
     // Generous, so a busy machine does not turn a passing step into a timeout. The
     // tests about clocks shorten the one they are about.
-    clocks: { quoteTimeoutMs: 5_000, quoteRetries: QUOTE_RETRIES, retryDelayMs: 1, signTimeoutMs: 5_000, paidTimeoutMs: 5_000, ...(options.clocks ?? {}) },
+    clocks: {
+      quoteTimeoutMs: 5_000,
+      quoteRetries: QUOTE_RETRIES,
+      retryDelayMs: 1,
+      signTimeoutMs: 5_000,
+      markSignedTimeoutMs: 5_000,
+      paidTimeoutMs: 5_000,
+      ...(options.clocks ?? {}),
+    },
     ...(options.mockAnswer ? { mockAnswer: options.mockAnswer } : {}),
   };
 
@@ -208,15 +221,41 @@ function paidHeaderOf(sent: Sent): { transaction: string; accepted: unknown; x40
   return { transaction: (decoded.payload as { transaction: string }).transaction, accepted: decoded.accepted, x402Version: decoded.x402Version };
 }
 
+/** A receipt that names a transaction id nobody made: shaped like one, and not this payment's. */
 function receiptHeader(success: boolean): { header: string; txHash: string } {
   const txHash = base58.encode(randomBytes(64));
   return { txHash, header: encodePaymentResponseHeader({ success, transaction: txHash, network: SOLANA.network, payer: wallet.address }) };
 }
 
+/** The recorded 402 with its fee payer replaced by the one this test holds the key of. Nothing else differs. */
+function settleable402(): PaymentRequired {
+  const paymentRequired = blockrunSolana402();
+  const exact = paymentRequired.accepts[0];
+  exact.extra = { ...exact.extra, feePayer: feePayer.publicKey.toBase58() };
+  return paymentRequired;
+}
+
+/**
+ * What a real settlement hands back for the payment in `sent`: the id that payment has
+ * on chain, which is the fee payer's signature over the bytes the agent signed.
+ */
+function receiptFor(sent: Sent, success = true): { header: string; txHash: string } {
+  const txHash = transactionIdOf(paidHeaderOf(sent).transaction, feePayer);
+  return { txHash, header: encodePaymentResponseHeader({ success, transaction: txHash, network: SOLANA.network, payer: wallet.address }) };
+}
+
 describe("createInferenceFetch: one paid step", () => {
   it("quotes, reserves, signs, verifies, pays once and settles, in that order", async () => {
-    const receipt = receiptHeader(true);
-    const h = harness([quote(), answer({ headers: { "payment-response": receipt.header, "x-blockrun-gateway-request-id": "req-paid-9" } })]);
+    const offered = settleable402();
+    let txHash = "";
+    const h = harness([
+      quote(offered),
+      (sent) => {
+        const receipt = receiptFor(sent);
+        txHash = receipt.txHash;
+        return completionResponse({ headers: { "payment-response": receipt.header, "x-blockrun-gateway-request-id": "req-paid-9" } });
+      },
+    ]);
 
     const response = await h.fetch(...chatRequest());
 
@@ -247,22 +286,24 @@ describe("createInferenceFetch: one paid step", () => {
     // What left is the pinned offer and a transaction that is exactly the priced payment.
     const paid = paidHeaderOf(h.sent[1]);
     expect(paid.x402Version).toBe(2);
-    expect(paid.accepted).toEqual(blockrunSolana402().accepts[0]);
+    expect(paid.accepted).toEqual(offered.accepts[0]);
     const check = verifySignedPayment({
       transaction: paid.transaction,
       payer: wallet.address,
-      pinned: { asset: SOLANA.asset, payTo: SOLANA.payTo[0], feePayer: "93syNmtT1tTd5ZtPwHqzGf6CM7fKhMmArpv4AM4FtyNX", amount: "11961" },
+      pinned: { asset: SOLANA.asset, payTo: SOLANA.payTo[0], feePayer: feePayer.publicKey.toBase58(), amount: "11961" },
     });
     if (!check.ok) throw new Error(check.reason);
 
-    // The ledger holds what the reconciler needs, read from the signed bytes.
+    // The ledger holds what the reconciler needs, read from the signed bytes, and the
+    // id of this very payment, because the gateway's receipt named it and said it settled.
     const row = h.ledger.only;
+    expect(txHash).not.toBe(check.payerSignature);
     expect(row).toMatchObject({
       status: "settled",
       memo: check.memo,
       blockhash: check.blockhash,
       payerSignature: check.payerSignature,
-      txHash: receipt.txHash,
+      txHash,
       settledUsd: QUOTED_USD,
       httpStatus: 200,
       gatewayRequestId: "req-paid-9",
@@ -335,8 +376,11 @@ describe("createInferenceFetch: one paid step", () => {
       signTimeoutMs: SIGN_TIMEOUT_MS,
       paidTimeoutMs: PAID_TIMEOUT_MS,
     });
-    // A signature and a paid request fit inside the time a step must have left.
+    // A signature, the ledger write that records it and a paid request fit inside the
+    // time a step must have left, so a wallet that takes its whole clock is still paid for.
     expect(SIGN_TIMEOUT_MS + PAID_TIMEOUT_MS).toBeLessThan(SIGN_MIN_REMAINING_MS);
+    expect(INFERENCE_CLOCKS.markSignedTimeoutMs).toBeGreaterThan(0);
+    expect(INFERENCE_CLOCKS.signTimeoutMs + INFERENCE_CLOCKS.markSignedTimeoutMs + INFERENCE_CLOCKS.paidTimeoutMs).toBeLessThan(SIGN_MIN_REMAINING_MS);
   });
 });
 
@@ -857,6 +901,141 @@ describe("createInferenceFetch: the signature", () => {
     expect(h.ledger.only.status).toBe("released");
   });
 
+  it("gives the ledger a short clock to record the signature, and sends nothing when it does not answer", async () => {
+    const h = harness([quote()], { clocks: { markSignedTimeoutMs: 30 } });
+    // A ledger that has stopped answering: the write neither lands nor fails.
+    h.ledger.duringMarkSigned = () => new Promise(() => {});
+    const stop = await h.stops(h.fetch(...chatRequest()));
+    expect(stop.reason).toBe("signature_failed");
+    expect(stop.detail).toContain("did not record the signature within 30 ms");
+    expect(h.sent.filter((sent) => sent.paid)).toHaveLength(0);
+    // No second write is queued behind the one that is stuck, and the run is not held by it.
+    expect(h.timeline).toEqual(["send:unpaid", "reserve", "sign", "markSigned"]);
+    expect(h.ctx).toMatchObject({ spentUsd: 0, requests: 0, maxStepUsd: 0, inFlight: null });
+    // Still `reserved`: the reconciler releases a reservation nobody signed for.
+    expect(h.ledger.only.status).toBe("reserved");
+  });
+
+  it("sends nothing when the signature is recorded only after the step gave up waiting", async () => {
+    let land: () => void = () => {};
+    const h = harness([quote()], { clocks: { markSignedTimeoutMs: 30 } });
+    h.ledger.duringMarkSigned = () =>
+      new Promise<void>((resolve) => {
+        land = resolve;
+      });
+    const stop = await h.stops(h.fetch(...chatRequest()));
+    expect(stop.reason).toBe("signature_failed");
+    expect(h.ledger.only.status).toBe("reserved");
+
+    // The write lands after all. The row is `signed` with no payment behind it, which
+    // the reconciler returns; the signature that was made is never sent.
+    land();
+    await vi.waitFor(() => expect(h.ledger.only.status).toBe("signed"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(h.sent).toHaveLength(1);
+    expect(h.timeline).toEqual(["send:unpaid", "reserve", "sign", "markSigned"]);
+    expect(h.ctx).toMatchObject({ spentUsd: 0, requests: 0 });
+    expect(String(warn.mock.calls.flat().join(" "))).toContain("recorded as signed after the step had given up");
+    // And the run stays stopped: a retry does not pick the payment up again.
+    expect((await h.stops(h.fetch(...chatRequest()))).reason).toBe("signature_failed");
+    expect(h.sent).toHaveLength(1);
+  });
+
+  it("gives the reservation back when the late write turns out to have failed", async () => {
+    let fail: () => void = () => {};
+    const h = harness([quote()], { clocks: { markSignedTimeoutMs: 30 } });
+    h.ledger.duringMarkSigned = () =>
+      new Promise<void>((_, reject) => {
+        fail = () => reject(new Error("Failed query: update ... params: secret-param"));
+      });
+    const stop = await h.stops(h.fetch(...chatRequest()));
+    expect(stop.reason).toBe("signature_failed");
+    expect(h.ledger.only.status).toBe("reserved");
+
+    fail();
+    await vi.waitFor(() => expect(h.ledger.only.status).toBe("released"));
+    expect(h.timeline).toEqual(["send:unpaid", "reserve", "sign", "markSigned", "release"]);
+    expect(h.sent).toHaveLength(1);
+    expect(h.ledger.only.detail).not.toContain("secret-param");
+  });
+
+  it("reads the run's clock again once the signature is recorded, and sends nothing when the paid request no longer fits", async () => {
+    // 100 s left: enough when the wallet has signed. Then the ledger write returns, in
+    // time by its own timer, with 70 s of the run's clock gone (an instance that was
+    // frozen, a clock that jumped). 30 s is not a paid request's 60.
+    const h = harness([quote()], { ctx: { deadlineAt: Date.now() + 100_000 }, clocks: { paidTimeoutMs: PAID_TIMEOUT_MS } });
+    h.ledger.duringMarkSigned = () => {
+      h.clock.offsetMs += 70_000;
+    };
+    const stop = await h.stops(h.fetch(...chatRequest()));
+    expect(stop.reason).toBe("deadline");
+    expect(stop.detail).toContain("nothing was sent");
+    expect(h.sent.filter((sent) => sent.paid)).toHaveLength(0);
+    // The row is `signed`, which no call here can undo: it is left for the reconciler,
+    // not released (a signature is on record) and not marked as a payment that failed.
+    expect(h.timeline).toEqual(["send:unpaid", "reserve", "sign", "markSigned"]);
+    expect(h.ledger.only.status).toBe("signed");
+    // Nothing left the process, so the step is not counted as charged by the run.
+    expect(h.ctx).toMatchObject({ spentUsd: 0, requests: 0, maxStepUsd: 0, inFlight: null });
+    expect(String(warn.mock.calls.flat().join(" "))).toContain("signed and was not sent");
+    // Stopped for good: nothing a caller does next sends that signature.
+    expect((await h.stops(h.fetch(...chatRequest()))).reason).toBe("deadline");
+    expect(h.sent).toHaveLength(1);
+  });
+
+  it("still pays for the tightest step allowed: a wallet and a ledger that each use their whole clock", async () => {
+    // On production's clocks and a clock this test moves by hand. The step starts with
+    // exactly the least it may, the wallet takes all of its time and the ledger all of
+    // its own. The first look asks for the write's clock on top of the paid request's,
+    // so a write that answers in time cannot fail the second look.
+    let now = 1_700_000_000_000;
+    const h = harness([quote(), answer()], {
+      ctx: { deadlineAt: now + SIGN_MIN_REMAINING_MS },
+      clocks: { signTimeoutMs: SIGN_TIMEOUT_MS, markSignedTimeoutMs: INFERENCE_CLOCKS.markSignedTimeoutMs, paidTimeoutMs: PAID_TIMEOUT_MS },
+      sign: async (transactions, real) => {
+        now += SIGN_TIMEOUT_MS;
+        return real.signTransactions(transactions);
+      },
+    });
+    h.deps.now = () => now;
+    h.ledger.duringMarkSigned = () => {
+      now += INFERENCE_CLOCKS.markSignedTimeoutMs;
+    };
+    const response = await h.fetch(...chatRequest());
+    expect(response.status).toBe(200);
+    expect(h.ledger.only.status).toBe("settled");
+
+    // One millisecond more in the ledger and the paid request no longer fits.
+    now = 1_700_000_000_000;
+    const late = harness([quote()], {
+      ctx: { deadlineAt: now + SIGN_MIN_REMAINING_MS },
+      clocks: { signTimeoutMs: SIGN_TIMEOUT_MS, markSignedTimeoutMs: INFERENCE_CLOCKS.markSignedTimeoutMs, paidTimeoutMs: PAID_TIMEOUT_MS },
+      sign: async (transactions, real) => {
+        now += SIGN_TIMEOUT_MS;
+        return real.signTransactions(transactions);
+      },
+    });
+    late.deps.now = () => now;
+    late.ledger.duringMarkSigned = () => {
+      now += INFERENCE_CLOCKS.markSignedTimeoutMs + 1;
+    };
+    expect((await late.stops(late.fetch(...chatRequest()))).reason).toBe("deadline");
+    expect(late.sent.filter((sent) => sent.paid)).toHaveLength(0);
+    expect(late.ledger.only.status).toBe("signed");
+  });
+
+  it("honours the caller's abort while the signature is being recorded", async () => {
+    const controller = new AbortController();
+    const h = harness([quote()]);
+    h.ledger.duringMarkSigned = () => controller.abort();
+    const stop = await h.stops(h.fetch(...chatRequest({ signal: controller.signal })));
+    expect(stop.reason).toBe("deadline");
+    expect(h.sent.filter((sent) => sent.paid)).toHaveLength(0);
+    expect(h.timeline).toEqual(["send:unpaid", "reserve", "sign", "markSigned"]);
+    expect(h.ledger.only.status).toBe("signed");
+    expect(h.ctx).toMatchObject({ spentUsd: 0, requests: 0 });
+  });
+
   it("fails closed when the wallet's signer cannot be built", async () => {
     const h = harness([quote()]);
     h.deps.signerFor = async () => {
@@ -1013,20 +1192,40 @@ describe("createInferenceFetch: the paid request", () => {
   });
 
   it("records a step the gateway says it charged for and did not answer", async () => {
-    const receipt = receiptHeader(true);
-    const h = harness([quote(), () => new Response("upstream failed", { status: 500, headers: { "x-payment-response": receipt.header } })]);
+    let txHash = "";
+    const h = harness([
+      quote(settleable402()),
+      (sent) => {
+        const receipt = receiptFor(sent);
+        txHash = receipt.txHash;
+        return new Response("upstream failed", { status: 500, headers: { "x-payment-response": receipt.header } });
+      },
+    ]);
     const stop = await h.stops(h.fetch(...chatRequest()));
     expect(stop.reason).toBe("paid_no_answer");
     expect(h.timeline.at(-1)).toBe("markPaidNoAnswer");
-    expect(h.ledger.only).toMatchObject({ status: "paid_no_answer", txHash: receipt.txHash, httpStatus: 500 });
+    expect(h.ledger.only).toMatchObject({ status: "paid_no_answer", txHash, httpStatus: 500 });
+    expect(txHash).toMatch(/^[1-9A-HJ-NP-Za-km-z]{64,88}$/);
   });
 
   it("leaves it to the chain when the gateway says nothing, or says it did not charge", async () => {
     const notSettled = receiptHeader(false);
+    const stranger = receiptHeader(true);
+    const noId = encodePaymentResponseHeader({ success: true, transaction: "", network: SOLANA.network, payer: wallet.address });
     const outcomes: Array<[string, Handler, number | null]> = [
       ["a 500", () => new Response("no", { status: 500 }), 500],
       ["a 402 after payment", () => Response.json({ error: { code: "PAYMENT_BLOCKHASH_STALE", message: "blockhash expired" } }, { status: 402 }), 402],
       ["a 500 with a receipt saying no settlement ran", () => new Response("no", { status: 500, headers: { "payment-response": notSettled.header } }), 500],
+      // `paid_no_answer` is final, so a receipt that is not proof does not write it.
+      ["a 500 with this payment's id and a receipt saying it did not settle", (sent) => new Response("no", { status: 500, headers: { "payment-response": receiptFor(sent, false).header } }), 500],
+      ["a 500 with a receipt that says settled and names no transaction", () => new Response("no", { status: 500, headers: { "payment-response": noId } }), 500],
+      ["a 500 with a receipt that says settled and names some other transaction", () => new Response("no", { status: 500, headers: { "payment-response": stranger.header } }), 500],
+      ["a 500 with a bare id that is not this payment's", () => new Response("no", { status: 500, headers: { "x-payment-receipt": stranger.txHash } }), 500],
+      [
+        "a 500 with this payment's id and a flag saying it did not settle",
+        (sent) => new Response("no", { status: 500, headers: { "x-payment-receipt": receiptFor(sent).txHash, "x-payment-settled": "false" } }),
+        500,
+      ],
       ["a redirect", () => new Response(null, { status: 307, headers: { location: "https://other.example/" } }), 307],
       ["a 200 that is not a chat completion", () => new Response("<html>", { status: 200 }), 200],
       ["a 200 with an error body", () => Response.json({ error: { message: "model overloaded" } }, { status: 200 }), 200],
@@ -1040,11 +1239,11 @@ describe("createInferenceFetch: the paid request", () => {
       ],
     ];
     for (const [name, handler, status] of outcomes) {
-      const h = harness([quote(), handler]);
+      const h = harness([quote(settleable402()), handler]);
       const stop = await h.stops(h.fetch(...chatRequest()));
       expect(stop.reason, name).toBe("paid_no_answer");
       expect(h.timeline.at(-1), name).toBe("markUnconfirmed");
-      expect(h.ledger.only, name).toMatchObject({ status: "unconfirmed", httpStatus: status });
+      expect(h.ledger.only, name).toMatchObject({ status: "unconfirmed", httpStatus: status, txHash: null });
       expect(h.sent.filter((sent) => sent.paid), name).toHaveLength(1);
       expect(h.ctx.spentUsd, name).toBe(QUOTED_USD);
     }
@@ -1109,9 +1308,102 @@ describe("createInferenceFetch: the paid request", () => {
   });
 
   it("treats a skipped settlement as a substitution even with no other header", async () => {
-    const h = harness([quote(), answer({ headers: { "x-settlement-skipped": "free-fallback" } })]);
-    expect((await h.stops(h.fetch(...chatRequest()))).reason).toBe("rerouted");
-    expect(h.ledger.only.status).toBe("unconfirmed");
+    // `free-fallback` is the one value seen. Anything else that is not a plain no is
+    // read the same way: an answer from a model nobody chose is the worse mistake.
+    for (const value of ["free-fallback", "FREE-FALLBACK", "true", "1", "yes", "upstream-free"]) {
+      const h = harness([quote(), answer({ headers: { "x-settlement-skipped": value } })]);
+      const stop = await h.stops(h.fetch(...chatRequest()));
+      expect(stop.reason, value).toBe("rerouted");
+      expect(h.ledger.only.status, value).toBe("unconfirmed");
+      // What the header said is kept, so the values a real gateway sends can be read back.
+      expect(h.ledger.only.detail, value).toContain(`x-settlement-skipped: ${value}`);
+    }
+  });
+
+  it("reads the skipped-settlement header by what it says, not by being there", async () => {
+    // A gateway that sends the header on every ordinary paid answer to say "no" must not
+    // turn every step into a paid-for answer thrown away.
+    for (const value of ["false", "False", " false ", "0", "no", ""]) {
+      const h = harness([quote(), answer({ headers: { "x-settlement-skipped": value } })]);
+      const response = await h.fetch(...chatRequest());
+      expect(response.status, JSON.stringify(value)).toBe(200);
+      expect(await response.json(), JSON.stringify(value)).toMatchObject({ choices: [{ message: { content: "ok" } }] });
+      expect(h.timeline.at(-1), JSON.stringify(value)).toBe("settle");
+      expect(h.ledger.only.status, JSON.stringify(value)).toBe("settled");
+      expect(h.ctx.stop, JSON.stringify(value)).toBeNull();
+    }
+
+    // The same reading on the unpaid leg: a free answer is handed on, not refused as a substitution.
+    const free = harness([answer({ headers: { "x-settlement-skipped": "false" } })]);
+    expect((await free.fetch(...chatRequest())).status).toBe(200);
+    expect(free.ctx.stop).toBeNull();
+    const freeFallback = harness([answer({ headers: { "x-settlement-skipped": "free-fallback" } })]);
+    expect((await freeFallback.stops(freeFallback.fetch(...chatRequest()))).reason).toBe("rerouted");
+
+    // The other reroute headers still decide on their own.
+    const rerouted = harness([quote(), answer({ headers: { "x-settlement-skipped": "false", "x-fallback-used": "true", "x-fallback-model": "anthropic/claude-haiku-4" } })]);
+    expect((await rerouted.stops(rerouted.fetch(...chatRequest()))).reason).toBe("rerouted");
+    expect(rerouted.ledger.only.status).toBe("settled");
+  });
+
+  it("writes down what a paid response really said while only the owner is switched on", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const said = () => String(info.mock.calls.flat().join("\n"));
+    const headers = { "x-payment-settled": "true", "x-settlement-skipped": "false", "x-fallback-used": "false", "x-served-model": `m ${KEY_SHAPED}` };
+
+    let txId = "";
+    const owner = harness(
+      [
+        quote(settleable402()),
+        (sent) => {
+          const receipt = receiptFor(sent);
+          txId = receipt.txHash;
+          return completionResponse({ headers: { ...headers, "payment-response": receipt.header, "x-payment-receipt": receipt.txHash } });
+        },
+      ],
+      { env: { INFERENCE_USDC: "owner" } },
+    );
+    await owner.fetch(...chatRequest());
+    expect(info).toHaveBeenCalledTimes(1);
+    // The values the rules read, as they arrived, and how they were read.
+    expect(said()).toContain('x-settlement-skipped="false"');
+    expect(said()).toContain('x-payment-settled="true"');
+    expect(said()).toContain(`x-payment-receipt="${txId}"`);
+    expect(said()).toContain(`payment-response={success: true, transaction: "${txId}"}`);
+    expect(said()).toContain("read as this payment's transaction id, settled");
+    expect(said()).not.toContain(KEY_SHAPED);
+
+    // A response that says nothing is worth knowing about too, and so is one that failed.
+    info.mockClear();
+    const silent = harness([quote(), answer()], { env: { INFERENCE_USDC: "owner" } });
+    await silent.fetch(...chatRequest());
+    expect(said()).toContain("paid response 200 said nothing about the payment or the model; read as no proof of settlement");
+
+    info.mockClear();
+    const refused = harness([quote(), () => new Response("no", { status: 402, headers: { "payment-response": "not-a-receipt", "x-payment-settled": "false" } })], {
+      env: { INFERENCE_USDC: "owner" },
+    });
+    await refused.stops(refused.fetch(...chatRequest()));
+    expect(said()).toContain("paid response 402 said payment-response=(unreadable, 13 chars)");
+    expect(said()).toContain("read as not settled");
+
+    // Once everyone is switched on, nothing is written per step.
+    info.mockClear();
+    const everyone = harness([quote(), answer({ headers })], { env: { INFERENCE_USDC: "on" } });
+    await everyone.fetch(...chatRequest());
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it("keeps a secret out of what it records of the skipped-settlement header", async () => {
+    const h = harness([quote(), answer({ headers: { "x-settlement-skipped": `because ${KEY_SHAPED} ${"z".repeat(300)}` } })]);
+    const stop = await h.stops(h.fetch(...chatRequest()));
+    expect(stop.reason).toBe("rerouted");
+    for (const text of [stop.detail, h.ledger.only.detail ?? "", String(warn.mock.calls.flat().join(" "))]) {
+      expect(text).not.toContain(KEY_SHAPED);
+      expect(text.toLowerCase()).not.toContain(KEY_SHAPED.toLowerCase());
+    }
+    expect(stop.detail.length).toBeLessThanOrEqual(300);
+    expect(stop.detail).not.toContain("zzzzzzzzzz".repeat(8));
   });
 
   it("returns a paid-for answer even when the ledger cannot settle the row", async () => {
@@ -1165,11 +1457,117 @@ describe("createInferenceFetch: the paid request", () => {
     const h = harness([quote(), answer({ headers: { "x-payment-receipt": "<script>alert(1)</script>" } })]);
     await h.fetch(...chatRequest());
     expect(h.ledger.only.txHash).toBeNull();
+  });
+});
 
-    const txHash = base58.encode(randomBytes(64));
-    const bare = harness([quote(), answer({ headers: { "x-payment-receipt": txHash } })]);
-    await bare.fetch(...chatRequest());
-    expect(bare.ledger.only.txHash).toBe(txHash);
+describe("createInferenceFetch: what the gateway's receipt decides", () => {
+  /** Headers for the paid answer, made once the payment in `sent` is known. */
+  type ReceiptShape = (sent: Sent) => Record<string, string>;
+
+  /** One answered step whose paid response carries `shape`. The answer must come back whatever the receipt says. */
+  async function answered(shape: ReceiptShape): Promise<{ h: Harness; txId: string; payerSignature: string | null }> {
+    let txId = "";
+    const h = harness([
+      quote(settleable402()),
+      (sent) => {
+        txId = receiptFor(sent).txHash;
+        return completionResponse({ headers: shape(sent) });
+      },
+    ]);
+    const response = await h.fetch(...chatRequest());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ choices: [{ message: { content: "ok" } }] });
+    // Always the same ledger call and the same charge. Only the proof differs.
+    expect(h.timeline).toEqual(["send:unpaid", "reserve", "sign", "markSigned", "send:paid", "settle"]);
+    expect(h.ledger.only).toMatchObject({ status: "settled", settledUsd: QUOTED_USD, httpStatus: 200 });
+    expect(h.ctx).toMatchObject({ stop: null, spentUsd: QUOTED_USD, requests: 1 });
+    return { h, txId, payerSignature: h.ledger.only.payerSignature };
+  }
+
+  const settledReceipt = (transaction: string) => encodePaymentResponseHeader({ success: true, transaction, network: SOLANA.network, payer: wallet.address });
+
+  it("books the transaction id when a receipt names this payment's id and says it settled", async () => {
+    const shapes: Array<[string, ReceiptShape]> = [
+      ["the x402 receipt", (sent) => ({ "payment-response": receiptFor(sent).header })],
+      ["the x402 receipt under its older name", (sent) => ({ "x-payment-response": receiptFor(sent).header })],
+      ["a bare transaction id", (sent) => ({ "x-payment-receipt": receiptFor(sent).txHash })],
+      ["a bare id with the settled flag", (sent) => ({ "x-payment-receipt": receiptFor(sent).txHash, "x-payment-settled": "true" })],
+      ["a receipt and a bare id that agree", (sent) => ({ "payment-response": receiptFor(sent).header, "x-payment-receipt": receiptFor(sent).txHash })],
+      ["a receipt whose own id is missing, with the id in the bare header", (sent) => ({ "payment-response": settledReceipt(""), "x-payment-receipt": receiptFor(sent).txHash })],
+    ];
+    for (const [name, shape] of shapes) {
+      const { h, txId } = await answered(shape);
+      expect(txId, name).toMatch(/^[1-9A-HJ-NP-Za-km-z]{64,88}$/);
+      expect(h.ledger.only.txHash, name).toBe(txId);
+    }
+  });
+
+  it("books no transaction id in every other answered case, and still returns the answer", async () => {
+    const stranger = receiptHeader(true);
+    const shapes: Array<[string, ReceiptShape]> = [
+      ["no receipt at all", () => ({})],
+      // The reviewer's case: a readable answer and a gateway saying it did not settle.
+      ["a flag saying it did not settle", () => ({ "x-payment-settled": "false" })],
+      ["the same flag, spelled another way", () => ({ "x-payment-settled": " NO " })],
+      ["a receipt saying it did not settle", () => ({ "payment-response": receiptHeader(false).header })],
+      ["a receipt saying it did not settle that names this payment's id", (sent) => ({ "payment-response": receiptFor(sent, false).header })],
+      ["this payment's id beside a flag saying it did not settle", (sent) => ({ "x-payment-receipt": receiptFor(sent).txHash, "x-payment-settled": "false" })],
+      ["a settled receipt beside a flag saying it did not settle", (sent) => ({ "payment-response": receiptFor(sent).header, "x-payment-settled": "false" })],
+      ["a settled receipt under one name and an unsettled one under the other", (sent) => ({ "payment-response": receiptFor(sent).header, "x-payment-response": receiptFor(sent, false).header })],
+      ["a receipt that says settled and names no transaction", () => ({ "payment-response": settledReceipt("") })],
+      ["a flag saying settled, and no transaction", () => ({ "x-payment-settled": "true" })],
+      ["a receipt that says settled and names something that is not an id", () => ({ "payment-response": settledReceipt("<script>alert(1)</script>") })],
+      ["a receipt that says settled and names some other transaction", () => ({ "payment-response": stranger.header })],
+      ["a bare id that is some other transaction's", () => ({ "x-payment-receipt": stranger.txHash })],
+      ["this payment's id beside a different one", (sent) => ({ "payment-response": receiptFor(sent).header, "x-payment-receipt": stranger.txHash })],
+      ["a receipt that cannot be read", () => ({ "payment-response": "not-a-receipt" })],
+    ];
+    for (const [name, shape] of shapes) {
+      const { h } = await answered(shape);
+      expect(h.ledger.only.txHash, name).toBeNull();
+    }
+  });
+
+  it("does not take the agent's own signature for the transaction's id", async () => {
+    // It is a real signature over the same bytes, and it is not what the chain files the
+    // payment under: the id is the fee payer's.
+    let own = "";
+    const { h, payerSignature } = await answered((sent) => {
+      const check = verifySignedPayment({
+        transaction: paidHeaderOf(sent).transaction,
+        payer: wallet.address,
+        pinned: { asset: SOLANA.asset, payTo: SOLANA.payTo[0], feePayer: feePayer.publicKey.toBase58(), amount: "11961" },
+      });
+      if (!check.ok || !check.payerSignature) throw new Error("the payment did not verify");
+      own = check.payerSignature;
+      return { "payment-response": settledReceipt(own) };
+    });
+    expect(own).toBe(payerSignature);
+    expect(h.ledger.only.txHash).toBeNull();
+  });
+
+  it("applies the same rule to an answer another model gave", async () => {
+    const reroute = { "x-fallback-used": "true", "x-fallback-model": "anthropic/claude-haiku-4" };
+    let txId = "";
+    const proven = harness([
+      quote(settleable402()),
+      (sent) => {
+        const receipt = receiptFor(sent);
+        txId = receipt.txHash;
+        return completionResponse({ headers: { ...reroute, "payment-response": receipt.header } });
+      },
+    ]);
+    expect((await proven.stops(proven.fetch(...chatRequest()))).reason).toBe("rerouted");
+    expect(proven.ledger.only).toMatchObject({ status: "settled", txHash: txId });
+
+    const unproven = harness([quote(settleable402()), answer({ headers: { ...reroute, "payment-response": receiptHeader(true).header } })]);
+    expect((await unproven.stops(unproven.fetch(...chatRequest()))).reason).toBe("rerouted");
+    expect(unproven.ledger.only).toMatchObject({ status: "settled", txHash: null });
+
+    // Rerouted, and told the settlement did not happen: the chain decides, as before.
+    const denied = harness([quote(settleable402()), (sent) => completionResponse({ headers: { ...reroute, "payment-response": receiptFor(sent, false).header } })]);
+    expect((await denied.stops(denied.fetch(...chatRequest()))).reason).toBe("rerouted");
+    expect(denied.ledger.only).toMatchObject({ status: "unconfirmed", txHash: null });
   });
 });
 

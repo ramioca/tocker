@@ -17,6 +17,10 @@
  *     agent's token account to the pay-to's, one memo, compute-budget settings, and
  *     nothing else.
  *
+ * A fourth is answered after the payment has left, when a receipt comes back
+ * ({@link isPaymentTransactionId}): is the transaction id the gateway names the id of
+ * this payment, or of something else? That too is settled from the signed bytes.
+ *
  * Every function returns a verdict instead of throwing, and its `reason` is for a log or
  * a ledger row. A reason can quote a few characters of what the gateway sent, so the
  * caller passes it through `redactSecrets` like any other outside text.
@@ -448,6 +452,34 @@ export function verifySignedPayment(input: SignedPaymentInput): SignedPaymentChe
   if (requireSignature && payerSignature === null) return { ok: false, reason: "the transaction is not signed by the agent", signature: true };
 
   return { ok: true, memo, blockhash: message.recentBlockhash, payerSignature, feePayer: keys[0] };
+}
+
+/**
+ * Pure: is `txId` the id this payment has on chain, if it is there at all?
+ *
+ * A Solana transaction's id is its first signature, and a payment's first signer is the
+ * gateway's fee payer. So an id a gateway names can be checked without asking anyone: it
+ * must be the fee payer's signature over the very message the agent signed. The agent's
+ * own signature covers that message too, so the gateway cannot have settled a different
+ * one. A string that fails this is the id of some other transaction, or of none.
+ *
+ * `transaction` is the payment as it was sent (base64, already through
+ * {@link verifySignedPayment}); the fee payer is read from it, never from the receipt.
+ * A `true` here says whose transaction the id belongs to. It does not say the
+ * transaction landed: only the chain can.
+ */
+export function isPaymentTransactionId(input: { transaction: string; txId: string }): boolean {
+  try {
+    if (typeof input.txId !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(input.txId)) return false;
+    const signature = Buffer.from(base58.decode(input.txId));
+    if (signature.length !== 64) return false;
+    const tx = VersionedTransaction.deserialize(Uint8Array.from(Buffer.from(input.transaction, "base64")));
+    const feePayer = tx.message.staticAccountKeys[0];
+    if (!feePayer) return false;
+    return verify(null, Buffer.from(tx.message.serialize()), ed25519Key(feePayer.toBase58()), signature);
+  } catch {
+    return false;
+  }
 }
 
 /** Pure: the associated token account that holds `owner`'s balance of `mint` on the SPL Token program. */

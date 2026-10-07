@@ -12,7 +12,7 @@
  * is server only.
  */
 import type { AgentConfig } from "@/db/schema";
-import { holdUntil } from "@/lib/x402/inference-budget";
+import { HOLD_BACKOFF_MINUTES, holdUntil } from "@/lib/x402/inference-budget";
 import {
   DEFAULT_PAY_PER_USE_MODEL,
   INFERENCE_STOPS,
@@ -93,15 +93,43 @@ export function usdcChoiceProblem(config: Pick<AgentConfig, "llm" | "chains">): 
 }
 
 /**
- * What a live pay-per-use agent keeps out of its trades: one run's worth of thinking and
+ * The owner's limit for one run as a run is held to it (`capsFor` reads it the same way):
+ * inside the range the product offers, and zero when it is missing or is not a number.
+ */
+function runLimitUsd(config: LlmConfig): number {
+  const perRun = config?.llm?.usdc?.maxUsdPerRun;
+  return typeof perRun === "number" && Number.isFinite(perRun) && perRun > 0 ? Math.min(perRun, USDC_RUN_CAP.max) : 0;
+}
+
+/**
+ * What the agent's Solana wallet must hold, beyond the trading fees it owes, before a
+ * run is started: the limit for one run, and the wallet floor. This is the figure the
+ * check before a run asks for (`preflightInference`). Zero for a key agent.
+ */
+export function runFundsNeededUsd(config: LlmConfig): number {
+  if (thinkSource(config) !== "usdc") return 0;
+  return roundUsd(runLimitUsd(config) + WALLET_FLOOR_USD);
+}
+
+/** How many runs' worth of thinking a live pay-per-use agent keeps out of its trades. */
+export const RESERVED_RUNS = 2;
+
+/**
+ * What a live pay-per-use agent keeps out of its trades: TWO runs' worth of thinking and
  * the wallet floor. Zero for a key agent. A limit that is missing or is not a number
  * holds back the floor alone.
+ *
+ * Two, not one, because a buy is placed in the middle of a run. One limit is what the
+ * run in hand may still spend after the buy (the steps that follow it, `finish` among
+ * them); the other, with the floor, is what the check before the next run asks for
+ * ({@link runFundsNeededUsd}). Holding back that second figure alone meant a buy that
+ * used every spendable dollar left the wallet at exactly what the next run needs, the
+ * rest of the run then paid for a step out of it, and the agent's own trade put it on a
+ * `needs_funds` hold. Every place that says what a buy may spend reads this one function.
  */
 export function thinkingReserveUsd(config: LlmConfig): number {
   if (thinkSource(config) !== "usdc") return 0;
-  const perRun = config?.llm.usdc?.maxUsdPerRun;
-  const cap = typeof perRun === "number" && Number.isFinite(perRun) && perRun > 0 ? Math.min(perRun, USDC_RUN_CAP.max) : 0;
-  return roundUsd(cap + WALLET_FLOOR_USD);
+  return roundUsd(RESERVED_RUNS * runLimitUsd(config) + WALLET_FLOOR_USD);
 }
 
 // ---------- one run's clocks and steps ----------
@@ -143,7 +171,21 @@ export interface WrapUpInput {
   maxStepUsd: number;
   maxStepMs: number;
   deadlineAt: number;
+  /**
+   * Epoch ms after which the run starts no new step (its model call's start plus
+   * `NO_NEW_STEP_AFTER_MS`). The run is ended there whether or not it was wrapped up.
+   */
+  noNewStepAt: number;
   now: number;
+}
+
+/**
+ * The last moment a step can still start and be paid for: the run starts none after
+ * `noNewStepAt`, and the paying fetch signs nothing with less than
+ * `SIGN_MIN_REMAINING_MS` left before the deadline. Whichever comes first.
+ */
+export function lastStepStartAt(input: Pick<WrapUpInput, "deadlineAt" | "noNewStepAt">): number {
+  return Math.min(input.noNewStepAt, input.deadlineAt - SIGN_MIN_REMAINING_MS);
 }
 
 /**
@@ -151,12 +193,20 @@ export interface WrapUpInput {
  *
  * A run that simply hits a limit stops mid-thought with nothing written down. So a step
  * or two before that, the model is told to call `finish`: when the budget left would not
- * cover two and a half of the dearest step so far, when the time left would not cover a
- * signature and two of the slowest step so far, or when its ordinary steps are used up.
+ * cover two and a half of the dearest step so far, when the time left before the last
+ * moment a step can start ({@link lastStepStartAt}) would not cover two of the slowest
+ * step so far, or when its ordinary steps are used up.
+ *
+ * The time rule is measured to that last moment, not to the deadline. Measured to the
+ * deadline alone it could not fire before the run's own "no new step" rule for any run
+ * whose steps took under about eleven seconds, which is most of them: such a run paid
+ * for fifteen steps and was then cut with no `finish`. Measured this way it fires at a
+ * step that starts before that moment, as long as no step takes twice as long as the
+ * slowest before it (and the first one does not use up the run on its own).
  */
 export function wrapUpReason(input: WrapUpInput): Extract<InferenceStopReason, "run_cap" | "deadline" | "step_limit"> | null {
   if (input.maxStepUsd > 0 && input.runCapUsd - input.spentUsd < 2.5 * input.maxStepUsd) return "run_cap";
-  if (input.deadlineAt - input.now < SIGN_MIN_REMAINING_MS + 2 * Math.max(0, input.maxStepMs)) return "deadline";
+  if (lastStepStartAt(input) - input.now < 2 * Math.max(0, input.maxStepMs)) return "deadline";
   if (input.stepNumber >= input.stepLimit) return "step_limit";
   return null;
 }
@@ -202,12 +252,52 @@ export function holdsAgent(reason: InferenceStopReason): boolean {
 }
 
 /**
+ * Holds that say nothing about the agent: an admin's halt, a breaker's pause, the switch
+ * being off for the account, and the platform's own day being used up. The agent, its
+ * wallet and its owner did nothing, and no run of its own stopped.
+ */
+const NO_FAULT_HOLDS: ReadonlySet<InferenceStopReason> = new Set<InferenceStopReason>(["halted", "paused", "flag_off", "platform_day_cap"]);
+
+/**
+ * Whether a hold for `reason` counts against the agent. A hold that is nobody's fault
+ * does not: an agent that sat through a two-hour halt was looked at eight times, and
+ * counting each look left it six hours from its next try after one ordinary hiccup.
+ */
+export function countsAsStrike(reason: InferenceStopReason): boolean {
+  return !NO_FAULT_HOLDS.has(reason);
+}
+
+/**
+ * Which look at a hold this is, told from how long the agent has been held for the same
+ * reason: the first while the hold is new, the second once it has lasted the first wait
+ * in the back-off table, the third once it has lasted the first two, and so on.
+ *
+ * This is how a hold that adds no strikes still backs off. Only `flag_off` uses it (a
+ * halt, a pause and a day limit have waits of their own): an account the switch is off
+ * for is looked at less and less often, as before, without the looks being held against
+ * the agent when the switch comes back.
+ */
+function looksAtSameHold(current: HoldState, reason: InferenceStopReason, now: Date): number {
+  if (current.inferenceHold !== reason || !current.inferenceHoldSince) return 1;
+  const heldMinutes = (now.getTime() - current.inferenceHoldSince.getTime()) / 60_000;
+  let looks = 1;
+  let waited = 0;
+  for (const wait of HOLD_BACKOFF_MINUTES) {
+    waited += wait;
+    if (heldMinutes < waited) break;
+    looks += 1;
+  }
+  return looks;
+}
+
+/**
  * The hold an agent goes on (or stays on) after `reason`, and whether its owner is told.
  *
  * Strikes count the holds since the agent last finished a run, this one included, and
  * set how long until the next look. They are not reset when a hold is lifted by a
  * re-check, only by a run that works: otherwise an agent whose runs keep stopping would
- * be tried again every fifteen minutes for ever.
+ * be tried again every fifteen minutes for ever. A hold that is nobody's fault
+ * ({@link countsAsStrike}) adds none, and leaves the count as it found it.
  *
  * The owner is told once: when nothing has been said since the last run that worked.
  * They are told again only when the reason changes to one they can fix themselves,
@@ -218,12 +308,14 @@ export function nextHold(
   reason: InferenceStopReason,
   now: Date,
 ): { inferenceHold: InferenceStopReason; inferenceHoldSince: Date; inferenceHoldUntil: Date; inferenceStrikes: number; notify: boolean } {
-  const strikes = Math.max(0, Math.floor(current.inferenceStrikes) || 0) + 1;
+  const before = Math.max(0, Math.floor(current.inferenceStrikes) || 0);
+  const counted = countsAsStrike(reason);
+  const strikes = counted ? before + 1 : before;
   const told = current.inferenceNotifiedAt !== null;
   return {
     inferenceHold: reason,
     inferenceHoldSince: current.inferenceHold && current.inferenceHoldSince ? current.inferenceHoldSince : now,
-    inferenceHoldUntil: holdUntil(reason, strikes, now),
+    inferenceHoldUntil: holdUntil(reason, counted ? strikes : looksAtSameHold(current, reason, now), now),
     inferenceStrikes: strikes,
     notify: !told || (INFERENCE_STOPS[reason] === "owner" && current.inferenceHold !== reason),
   };

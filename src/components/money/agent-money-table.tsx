@@ -12,8 +12,9 @@ import type { MoneyAgentRow, MoneyTotals } from "@/server/queries/money";
  * only way to see that is to have both numbers on the same line.
  *
  * A fourth, "Thinking", is drawn only when an agent in the table has paid for its own
- * thinking (pay-per-use). It is the exact amount from the ledger, real USDC from that
- * agent's wallet in a paper table too. A table of agents that all think on their
+ * thinking (pay-per-use). It is the amount proven to have left that agent's wallet, real
+ * USDC in a paper table too; what is still being checked, or could not be, is in the
+ * cell's tooltip and never in the figure. A table of agents that all think on their
  * owner's key is exactly the table it was.
  *
  * The shell owns the horizontal overflow (rule: the page body never scrolls sideways),
@@ -96,6 +97,7 @@ function thinkingTitle(row: MoneyAgentRow): string | undefined {
   }
   if (row.thinkingUnansweredUsd > 0) parts.push(`${formatUsd(row.thinkingUnansweredUsd)} of it got no answer`);
   if (row.thinkingCheckingUsd > 0) parts.push(`${formatUsd(row.thinkingCheckingUsd)} more is being checked`);
+  if (row.thinkingUncheckedUsd > 0) parts.push(`${formatUsd(row.thinkingUncheckedUsd)} more could not be checked`);
   if (row.thinkingSimulatedUsd > 0) parts.push(`${formatUsd(row.thinkingSimulatedUsd)} simulated, no money moved`);
   return parts.length > 0 ? parts.join("\n") : undefined;
 }
@@ -119,10 +121,12 @@ export function AgentMoneyTable({
   label: string;
 }) {
   const captionId = useId();
-  // Anything on the ledger for these agents, simulated and still-being-checked included,
-  // or the column would be missing exactly when a row has something to say in it.
+  // Anything on the ledger for these agents, simulated, still-being-checked and
+  // never-checked included, or the column would be missing exactly when a row has
+  // something to say in it.
   const showThinking = rows.some(
-    (row) => row.thinkingUsd > 0 || row.thinkingCheckingUsd > 0 || row.thinkingSimulatedUsd > 0,
+    (row) =>
+      row.thinkingUsd > 0 || row.thinkingCheckingUsd > 0 || row.thinkingUncheckedUsd > 0 || row.thinkingSimulatedUsd > 0,
   );
   return (
     <div className="glass-card overflow-hidden rounded-2xl">

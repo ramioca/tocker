@@ -12,6 +12,9 @@
  *   ledger_not_charged_but_on_chain   a row's amount was given back; the chain shows it paid
  *   amount_differs                    a row and its transfer disagree on the amount
  *   open                              a row still `signed` or `unconfirmed` (the cron settles these)
+ *   unproven                          a row answered and `settled` with no transaction id: the
+ *                                     ledger counts it on the gateway's answer alone, so the chain
+ *                                     is what says whether it was paid (the cron checks these too)
  *
  * READ-ONLY. It runs SELECTs and RPC reads, signs nothing, sends nothing and changes no
  * row; an admin decides what to do with what it prints. Exit code 0 when the ledger
@@ -131,7 +134,9 @@ async function main(): Promise<number> {
     .where(and(eq(inferencePayments.payerAddress, wallet.address), eq(inferencePayments.chain, "solana"), gte(inferencePayments.createdAt, edge)))
     .orderBy(asc(inferencePayments.createdAt));
 
-  const chain = await readGatewayPayments(createSolanaChainReader(rpcUrl), wallet.address, edge);
+  // A row's own memo finds its payment whatever time the chain put on it.
+  const memos = rows.flatMap((row) => (row.memo ? [row.memo] : []));
+  const chain = await readGatewayPayments(createSolanaChainReader(rpcUrl), wallet.address, edge, { memos });
   const sinceSec = Math.floor(since.getTime() / 1000);
   const payments = chain.payments.filter(
     (payment) =>
@@ -166,8 +171,8 @@ async function main(): Promise<number> {
   }
 
   if (!chain.complete) {
-    console.log("\n! The wallet's history could not be read completely for this window (too long, or a transaction the node would not return).");
-    console.log("  What is listed above is real, but absence of a difference is not proven. Try a shorter --hours.");
+    console.log("\n! The wallet's history could not be read completely for this window (the node returned none, it was too long, or the node would not return a transaction).");
+    console.log("  What is listed above is real, but absence of a difference is not proven. Try a shorter --hours, or another endpoint if it returned nothing.");
     return 2;
   }
   return result.differences.length === 0 ? 0 : 1;

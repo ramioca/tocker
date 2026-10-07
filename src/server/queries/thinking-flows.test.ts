@@ -13,8 +13,10 @@
  *
  *  - an agent on its owner's key is exactly as it was, and so is an owner who has never
  *    paid for a step;
- *  - only payments known to have left the wallet are netted (`settled`,
- *    `paid_no_answer`): one still being checked is not, and a simulated one never is;
+ *  - only payments PROVEN to have left the wallet are netted (`paid_no_answer`, and
+ *    `settled` once it carries a transaction id): one still being checked is not, one
+ *    the reconciler found was never charged never is, and a simulated one never is;
+ *  - a run that was paying when a mark was taken is cut at that mark, step by step;
  *  - a paper agent is untouched: its equity is a notional, not its wallet;
  *  - the amount is counted once, and never also as an estimated token bill.
  *
@@ -53,10 +55,11 @@ vi.mock("@/lib/agent/portfolio", async (importOriginal) => ({
   },
 }));
 
-const { THINKING_PAID_STATUSES, loadAgentAggregates, loadMoneyFlows, toAgentCard } = await import("./_shared");
+const { loadAgentAggregates, loadMoneyFlows, toAgentCard } = await import("./_shared");
+const { getAgentWindowPnl } = await import("./agents");
 const { getLeaderboard } = await import("./discover");
 const { getHomeOverview } = await import("./home");
-const { getMoney } = await import("./money");
+const { EMPTY_MONEY, THINKING_CHECKED_FOR_MS, getMoney } = await import("./money");
 
 let db: Db;
 
@@ -69,8 +72,14 @@ beforeEach(() => {
 });
 
 const DAY = 86_400_000;
+const HOUR = 3_600_000;
 const MINUTE = 60_000;
 const ago = (days: number) => new Date(Date.now() - days * DAY);
+/** Recent enough that the reconciler is still looking, and before the last mark the tests take. */
+const anHourAgo = () => new Date(Date.now() - HOUR);
+
+/** A transaction id as the chain prints one. Put together here, so no file holds a real one. */
+const TX = "3".repeat(88);
 
 type Seeded = { agentId: string; userId: string; slug: string };
 
@@ -111,7 +120,11 @@ async function mark(agentId: string, at: Date, equityUsd: number, mode: "paper" 
   });
 }
 
-/** One ledger row, written the way the ledger leaves it in that status. */
+/**
+ * One ledger row, written the way the ledger leaves it in that status. A `settled` row
+ * carries its transaction id, as it does once the gateway's receipt or the reconciler has
+ * named it; `{ txHash: null }` is the answered step whose payment is still being checked.
+ */
 async function payment(
   agent: Seeded,
   at: Date,
@@ -138,6 +151,7 @@ async function payment(
     asset: INFERENCE_GATEWAY.solana.asset,
     quotedUsd: toNumeric(usd, 6),
     settledUsd: status === "settled" ? toNumeric(usd, 6) : null,
+    txHash: status === "settled" ? TX : null,
     status,
     answered: status === "settled" ? true : status === "simulated" ? true : signed ? false : null,
     budgetDay: utcDay(at),
@@ -306,22 +320,22 @@ describe("a live agent that pays for its own thinking", () => {
     expect(agg.capitalUsd).toBeCloseTo(25, 9);
   });
 
-  it("nets only payments known to have left the wallet", async () => {
+  it("nets only payments proven to have left the wallet", async () => {
     const agent = await payPerUse("live");
     await mark(agent.agentId, ago(3), 25);
-    // Left the wallet: answered, and paid with no answer.
+    // Proven: answered and named on chain, and paid with no answer.
     await payment(agent, ago(2), 0.3, "settled");
     await payment(agent, ago(2), 0.2, "paid_no_answer");
-    // Did not, or is not yet known to have.
+    // Did not leave the wallet, or is not yet proven to have.
     await payment(agent, ago(2), 5, "reserved");
     await payment(agent, ago(2), 5, "released");
-    await payment(agent, ago(2), 5, "signed");
-    await payment(agent, ago(2), 5, "unconfirmed");
+    await payment(agent, anHourAgo(), 5, "signed");
+    await payment(agent, anHourAgo(), 5, "unconfirmed");
+    await payment(agent, anHourAgo(), 0.7, "settled", { txHash: null });
     await payment(agent, ago(2), 5, "not_charged");
     await payment(agent, ago(2), 5, "simulated");
     await mark(agent.agentId, ago(0.01), 24.5);
 
-    expect([...THINKING_PAID_STATUSES]).toEqual(["settled", "paid_no_answer"]);
     const flows = (await loadMoneyFlows(db, [agent.agentId])).get(agent.agentId) ?? [];
     expect(flows.map((f) => f.kind)).toEqual(["thinking", "thinking"]);
     expect(flows.reduce((sum, f) => sum + f.amountUsd, 0)).toBeCloseTo(-0.5, 9);
@@ -329,12 +343,91 @@ describe("a live agent that pays for its own thinking", () => {
 
     const money = await getMoney(agent.userId);
     expect(money.live[0].thinkingUsd).toBeCloseTo(0.5, 9);
+    expect(money.live[0].thinkingSteps).toBe(2);
     expect(money.live[0].thinkingUnansweredUsd).toBeCloseTo(0.2, 9);
-    // The signed one is days old, so it is one the reconciler is working out.
-    expect(money.live[0].thinkingCheckingUsd).toBeCloseTo(10, 9);
+    // Signed an hour ago, unconfirmed, and answered without a transaction id: all three
+    // are counted as charged and being checked, and none is in the total.
+    expect(money.live[0].thinkingCheckingUsd).toBeCloseTo(10.7, 9);
+    expect(money.live[0].thinkingUncheckedUsd).toBe(0);
     expect(money.live[0].thinkingSimulatedUsd).toBeCloseTo(5, 9);
     expect(money.totals.thinkingUsd).toBeCloseTo(0.5, 9);
     expect(money.totals.costsUsd).toBeCloseTo(0.5, 9);
+    expect(money.thinking).toMatchObject({ steps: 2, checkingSteps: 3, checkingAnsweredSteps: 1, uncheckedSteps: 0 });
+  });
+
+  it("does not take an answered step out of P&L until the chain names its payment", async () => {
+    const agent = await payPerUse("live");
+    await mark(agent.agentId, ago(3), 25);
+    // Answered, and the gateway gave no transaction for it. The ledger counts it as
+    // charged; whether the transfer landed is what the reconciler is still finding out.
+    const id = await payment(agent, anHourAgo(), 1, "settled", { txHash: null });
+    // It did not land: the wallet still holds the money.
+    await mark(agent.agentId, ago(0.01), 25);
+
+    // Netted on the ledger's word alone, every one of these read +1.00 (+4%), a gain
+    // nobody made, on the public leaderboard, for good.
+    const before = await everySurface(agent);
+    expect(before.card).toEqual({ pnlUsd: 0, pnlPct: 0 });
+    expect(before.leaderboard).toEqual({ pnlUsd: 0, pnlPct: 0 });
+    expect(before.home.pnlUsd).toBeCloseTo(0, 9);
+    expect(before.money.pnlUsd).toBeCloseTo(0, 9);
+    expect((await loadMoneyFlows(db, [agent.agentId])).get(agent.agentId)).toBeUndefined();
+
+    // On /money it is charged-but-being-checked, exactly like a signed or unconfirmed row:
+    // beside the total, never in it.
+    let money = await getMoney(agent.userId);
+    expect(money.totals.thinkingUsd).toBe(0);
+    expect(money.totals.costsUsd).toBe(0);
+    expect(money.live[0]).toMatchObject({ thinkingUsd: 0, thinkingSteps: 0 });
+    expect(money.live[0].thinkingCheckingUsd).toBeCloseTo(1, 9);
+    expect(money.thinking).toMatchObject({ paidUsd: 0, steps: 0, checkingSteps: 1, checkingAnsweredSteps: 1 });
+    expect(money.thinking!.checkingUsd).toBeCloseTo(1, 9);
+    // It was answered, so it is not in the list of steps that got no answer.
+    expect(money.thinking!.unanswered).toEqual([]);
+
+    // The reconciler finds the transfer after all and writes its transaction id: now it
+    // is proven, the wallet did fall by it, and it is a cost and not a loss.
+    await db.update(schema.inferencePayments).set({ txHash: TX }).where(eq(schema.inferencePayments.id, id));
+    await mark(agent.agentId, new Date(), 24);
+    const after = await everySurface(agent);
+    expect(after.card.pnlUsd).toBeCloseTo(0, 9);
+    expect(after.leaderboard.pnlUsd).toBeCloseTo(0, 9);
+    money = await getMoney(agent.userId);
+    expect(money.totals.thinkingUsd).toBeCloseTo(1, 9);
+    expect(money.thinking).toMatchObject({ steps: 1, checkingSteps: 0, checkingAnsweredSteps: 0 });
+    expect(money.thinking!.checkingUsd).toBe(0);
+  });
+
+  it("reads an answered step still being checked as a loss when the wallet did fall, never as a gain", async () => {
+    const agent = await payPerUse("live");
+    await mark(agent.agentId, ago(3), 25);
+    await payment(agent, anHourAgo(), 0.4, "settled", { txHash: null });
+    await mark(agent.agentId, ago(0.01), 24.6);
+
+    const seen = await everySurface(agent);
+    expect(seen.card.pnlUsd).toBeCloseTo(-0.4, 9);
+    expect(seen.leaderboard.pnlUsd).toBeCloseTo(-0.4, 9);
+    // Net is right either way: the amount is in the P&L and not in the costs.
+    const money = await getMoney(agent.userId);
+    expect(money.totals.pnlUsd).toBeCloseTo(-0.4, 9);
+    expect(money.totals.costsUsd).toBe(0);
+    expect(money.totals.netUsd).toBeCloseTo(-0.4, 9);
+  });
+
+  it("never nets, and never shows as paid, a step the reconciler found was not charged", async () => {
+    const agent = await payPerUse("live");
+    await mark(agent.agentId, ago(3), 25);
+    // Signed, the request failed, and the chain was asked: the payment never landed.
+    await payment(agent, anHourAgo(), 0.5, "not_charged", { httpStatus: 504 });
+    await mark(agent.agentId, ago(0.01), 25);
+
+    expect((await loadMoneyFlows(db, [agent.agentId])).get(agent.agentId)).toBeUndefined();
+    expect((await everySurface(agent)).card).toEqual({ pnlUsd: 0, pnlPct: 0 });
+    const money = await getMoney(agent.userId);
+    // Nothing was paid, nothing is being checked: the owner has no pay-per-use figure.
+    expect(money.thinking).toBeNull();
+    expect(money.live[0]).toMatchObject({ thinkingUsd: 0, thinkingSteps: 0, thinkingCheckingUsd: 0, thinkingUncheckedUsd: 0 });
+    expect(money.totals.costsUsd).toBe(0);
   });
 
   it("reads a payment still being checked as a few cents of loss, never as a gain", async () => {
@@ -366,7 +459,7 @@ describe("a live agent that pays for its own thinking", () => {
     expect((await getMoney(agent.userId)).live[0].thinkingUsd).toBeCloseTo(0.5, 9);
   });
 
-  it("is one flow per run, at the run's last payment", async () => {
+  it("is one flow per run between two marks, at the run's last payment", async () => {
     const agent = await payPerUse("live");
     const first = ago(2);
     const last = new Date(first.getTime() + 3 * MINUTE);
@@ -426,6 +519,60 @@ describe("a live agent that pays for its own thinking", () => {
     expect(seen.card.pnlUsd).toBeCloseTo(0, 9);
     expect(seen.leaderboard.pnlUsd).toBeCloseTo(0, 9);
     expect(seen.money.pnlUsd).toBeCloseTo(0, 9);
+  });
+
+  it("cuts a run that was paying when a window's baseline mark was taken, at that mark", async () => {
+    const agent = await payPerUse("live");
+    // The mark the 7-day window is measured from: the last one before the window opens.
+    const baseline = new Date(Date.now() - 7 * DAY - 10 * MINUTE);
+    const step = (minutes: number, usd: number, seq: number) =>
+      payment(agent, new Date(baseline.getTime() + minutes * MINUTE), usd, "settled", { runId: "run_over_baseline", seq });
+    await mark(agent.agentId, ago(10), 100);
+    // One run, no trade. Half of what it paid had left the wallet when the baseline mark
+    // was taken, and half left after it.
+    await step(-2, 0.25, 0);
+    await step(-1, 0.25, 1);
+    await mark(agent.agentId, baseline, 99.5);
+    await step(1, 0.25, 2);
+    await step(2, 0.25, 3);
+    await mark(agent.agentId, ago(0.01), 99);
+
+    // Two flows for the one run, one on each side of the mark it was paying across.
+    const flows = ((await loadMoneyFlows(db, [agent.agentId])).get(agent.agentId) ?? [])
+      .map((f) => ({ at: Number(f.at), amountUsd: f.amountUsd }))
+      .sort((a, b) => a.at - b.at);
+    expect(flows.map((f) => f.amountUsd)).toEqual([-0.5, -0.5]);
+    expect(flows[0].at).toBeLessThan(baseline.getTime());
+    expect(flows[1].at).toBeGreaterThan(baseline.getTime());
+
+    // The whole run dated at its last payment netted $1.00 against a baseline that
+    // already lacked half of it: 99 − (99.50 − 1.00) = +$0.50, a gain nobody made.
+    const week = (await getLeaderboard("7d", 1_000)).find((r) => r.agent.id === agent.agentId)!;
+    expect(week.pnlUsd).toBeCloseTo(0, 9);
+    expect(week.pnlPct).toBeCloseTo(0, 9);
+    const windowed = await getAgentWindowPnl(agent.agentId, "7d");
+    expect(windowed!.startEquityUsd).toBeCloseTo(99.5, 9);
+    expect(windowed!.pnlUsd).toBeCloseTo(0, 9);
+    expect(windowed!.flowUsd).toBeCloseTo(-0.5, 9);
+    // All time is measured from the first mark, with the whole dollar after it.
+    expect((await everySurface(agent)).card.pnlUsd).toBeCloseTo(0, 9);
+    expect((await getAgentWindowPnl(agent.agentId, "all"))!.pnlUsd).toBeCloseTo(0, 9);
+  });
+
+  it("puts a payment made at the very instant of a mark inside that mark", async () => {
+    const agent = await payPerUse("live");
+    const at = ago(2);
+    await mark(agent.agentId, ago(3), 25);
+    await payment(agent, at, 0.3);
+    // Marked at the same instant, with the payment already gone from the wallet.
+    await mark(agent.agentId, at, 24.7);
+    await mark(agent.agentId, ago(0.01), 24.7);
+
+    const flows = (await loadMoneyFlows(db, [agent.agentId])).get(agent.agentId) ?? [];
+    expect(flows).toHaveLength(1);
+    // Not after it: measured from that mark, nothing moved.
+    expect(Number(flows[0].at)).toBe(at.getTime());
+    expect((await everySurface(agent)).card.pnlUsd).toBeCloseTo(0, 9);
   });
 
   it("has no thinking flow for a live agent that has never been marked", async () => {
@@ -638,12 +785,15 @@ describe("the Thinking line on /money", () => {
       txHash,
       detail: "upstream said: contact @someone on Telegram for a refund",
     });
-    await payment(agent, ago(1), 0.012, "unconfirmed", { httpStatus: null, detail: "timed out" });
+    await payment(agent, anHourAgo(), 0.012, "unconfirmed", { httpStatus: null, detail: "timed out" });
     // A request in flight right now is not a step that went unanswered.
     await payment(agent, new Date(), 0.013, "signed");
     // A transaction id that does not read as one is never turned into a link.
     await payment(agent, ago(4), 0.014, "paid_no_answer", { txHash: "javascript:alert(1)" });
     await payment(agent, ago(0.5), 0.2, "settled");
+    // Answered, with its payment still being confirmed: counted, and not a step that
+    // got no answer.
+    await payment(agent, anHourAgo(), 0.09, "settled", { txHash: null });
 
     const thinking = (await getMoney(agent.userId)).thinking!;
     expect(thinking.unanswered.map((step) => ({ usd: step.usd, state: step.state, httpStatus: step.httpStatus, txHash: step.txHash }))).toEqual([
@@ -656,11 +806,84 @@ describe("the Thinking line on /money", () => {
     expect(JSON.stringify(thinking.unanswered)).not.toContain("Telegram");
     expect(thinking.unansweredSteps).toBe(2);
     expect(thinking.unansweredUsd).toBeCloseTo(0.025, 9);
-    expect(thinking.checkingSteps).toBe(1);
-    expect(thinking.checkingUsd).toBeCloseTo(0.012, 9);
-    // Paid: the two unanswered and the answered one. Not the two still open.
+    expect(thinking.checkingSteps).toBe(2);
+    expect(thinking.checkingAnsweredSteps).toBe(1);
+    expect(thinking.checkingUsd).toBeCloseTo(0.102, 9);
+    expect(thinking.uncheckedSteps).toBe(0);
+    // Paid: the two unanswered and the answered one that is proven. Not the three open.
     expect(thinking.paidUsd).toBeCloseTo(0.225, 9);
     expect(thinking.steps).toBe(3);
+  });
+
+  it("stops saying a payment is being checked once the reconciler has stopped looking", async () => {
+    const agent = await payPerUse("live");
+    await mark(agent.agentId, ago(3), 25);
+    const justInside = new Date(Date.now() - THINKING_CHECKED_FOR_MS + 5 * MINUTE);
+    const justPast = new Date(Date.now() - THINKING_CHECKED_FOR_MS - 5 * MINUTE);
+    // Signed, the request failed, and nothing could settle it in time (the node was
+    // down, or the cron was not running). The reconciler looks no further back.
+    await payment(agent, justPast, 0.2, "unconfirmed", { httpStatus: 503 });
+    await payment(agent, ago(2), 0.05, "signed");
+    await payment(agent, ago(2), 0.3, "settled", { txHash: null });
+    // Still inside the time the reconciler looks.
+    await payment(agent, justInside, 0.07, "unconfirmed");
+    // The wallet fell by the first one: it did land, and nobody will ever know.
+    await mark(agent.agentId, ago(0.01), 24.8);
+
+    const money = await getMoney(agent.userId);
+    const thinking = money.thinking!;
+    // "Being checked" is only what something is still checking.
+    expect(thinking.checkingSteps).toBe(1);
+    expect(thinking.checkingUsd).toBeCloseTo(0.07, 9);
+    expect(thinking.uncheckedSteps).toBe(3);
+    expect(thinking.uncheckedAnsweredSteps).toBe(1);
+    expect(thinking.uncheckedUsd).toBeCloseTo(0.55, 9);
+    expect(money.live[0].thinkingCheckingUsd).toBeCloseTo(0.07, 9);
+    expect(money.live[0].thinkingUncheckedUsd).toBeCloseTo(0.55, 9);
+    // In the list the old ones say so, and the answered one is not a step with no answer.
+    expect(thinking.unanswered.map((step) => ({ usd: step.usd, state: step.state }))).toEqual([
+      { usd: 0.07, state: "checking" },
+      { usd: 0.2, state: "unchecked" },
+      { usd: 0.05, state: "unchecked" },
+    ]);
+    // None of it is proven, so none of it is in the total or taken out of the P&L: the
+    // one that did land stays a loss of that amount, and the page has to say so.
+    expect(thinking.paidUsd).toBe(0);
+    expect(money.totals.thinkingUsd).toBe(0);
+    expect((await loadMoneyFlows(db, [agent.agentId])).get(agent.agentId)).toBeUndefined();
+    expect((await everySurface(agent)).card.pnlUsd).toBeCloseTo(-0.2, 9);
+  });
+
+  it("still shows an owner with no agent left what the deleted ones paid", async () => {
+    const agent = await payPerUse("live");
+    await payment(agent, ago(2), 0.45);
+    await payment(agent, ago(2), 0.15, "paid_no_answer", { httpStatus: 502, txHash: TX });
+    await payment(agent, anHourAgo(), 0.02, "unconfirmed");
+    // The owner deletes their only agent. The ledger has no foreign keys and keeps its rows.
+    await db.delete(schema.agents).where(eq(schema.agents.id, agent.agentId));
+
+    const money = await getMoney(agent.userId);
+    expect(money.live).toEqual([]);
+    expect(money.paper).toEqual([]);
+    expect(money.totals).toEqual(EMPTY_MONEY.totals);
+    const thinking = money.thinking!;
+    expect(thinking.paidUsd).toBeCloseTo(0.6, 9);
+    expect(thinking.formerAgentsUsd).toBeCloseTo(0.6, 9);
+    expect(thinking).toMatchObject({ liveUsd: 0, paperUsd: 0, steps: 2, unansweredSteps: 1, checkingSteps: 1 });
+    expect(thinking.unansweredUsd).toBeCloseTo(0.15, 9);
+    expect(thinking.unanswered.map((step) => ({ state: step.state, agentName: step.agentName, txHash: step.txHash }))).toEqual([
+      { state: "checking", agentName: null, txHash: null },
+      { state: "unanswered", agentName: null, txHash: TX },
+    ]);
+  });
+
+  it("gives an owner with no agent and no payment the very same empty summary as before", async () => {
+    const agent = await seedAgent(db);
+    await db.delete(schema.agents).where(eq(schema.agents.id, agent.agentId));
+    // The same object, so nothing about it can have changed.
+    expect(await getMoney(agent.userId)).toBe(EMPTY_MONEY);
+    expect(await getMoney(`did:privy:nobody-${nanoid(6)}`)).toBe(EMPTY_MONEY);
+    expect(EMPTY_MONEY.thinking).toBeNull();
   });
 
   it("sets what the same tokens cost at list price on a key beside what they cost paid per use", async () => {
@@ -676,6 +899,9 @@ describe("the Thinking line on /money", () => {
     await payment(agent, ago(2), 0.1, "paid_no_answer", { inputTokens: 7_000_000, outputTokens: 7_000_000 });
     // A model nobody lists.
     await payment(agent, ago(2), 0.05, "settled", { model: "some-model/nobody-lists", inputTokens: 10, outputTokens: 10 });
+    // Answered, but its payment is not yet proven: "what the same steps cost paid per
+    // use" is money known to have been paid, so it waits for the chain like the total.
+    await payment(agent, anHourAgo(), 0.9, "settled", { txHash: null, inputTokens: 9_000_000, outputTokens: 90_000 });
 
     const compare = (await getMoney(agent.userId)).thinking!.ownKey!;
     expect(compare).toMatchObject({ steps: 2, inputTokens: 1_500_000, outputTokens: 12_000, unpricedSteps: 1 });

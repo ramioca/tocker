@@ -73,18 +73,25 @@ function verdict(data: AdminInference): { text: string; refused: boolean } {
   if (!data.switches.rpcConfigured) return { text: "Refused: SOLANA_RPC_URL is not set, so no payment can be checked.", refused: true };
   if (!(data.switches.platformDayUsd > 0)) return { text: "Refused: the platform's daily limit is zero.", refused: true };
   if (data.today.platformUsd >= data.switches.platformDayUsd) return { text: "Refused: the platform's daily limit is reached.", refused: true };
+  // Not a refusal: the pay path asks only that SOLANA_RPC_URL is set, so with the public
+  // endpoint a payment IS signed. It is said here because that is the one setting under
+  // which money moves while the checks behind it (the balance read, the reconciler) rest
+  // on a rate-limited node.
+  const caution = data.switches.rpcPublic
+    ? " But SOLANA_RPC_URL is the public Solana endpoint: set your own provider's URL before any payment is made."
+    : "";
   return {
     text:
-      data.switches.stage === "owner"
+      (data.switches.stage === "owner"
         ? "Allowed for admins and invited accounts, within every cap."
-        : "Allowed for every account, within every cap.",
+        : "Allowed for every account, within every cap.") + caution,
     refused: false,
   };
 }
 
 export function InferenceCard({ data }: { data: AdminInference }) {
   const { switches, today, control, openCounts } = data;
-  const openTotal = openCounts.reserved + openCounts.signed + openCounts.unconfirmed;
+  const openTotal = openCounts.reserved + openCounts.signed + openCounts.unconfirmed + openCounts.answered_unproven;
   const now = verdict(data);
 
   return (
@@ -123,8 +130,16 @@ export function InferenceCard({ data }: { data: AdminInference }) {
         <Fact
           label="Still open"
           value={formatCount(openTotal)}
-          sub={`${formatCount(openCounts.reserved)} reserved · ${formatCount(openCounts.signed)} signed · ${formatCount(openCounts.unconfirmed)} unconfirmed`}
-          tone={openCounts.unconfirmed > 0 ? "alert" : undefined}
+          // The fourth kind and the late count are named only when there are any, so the
+          // line reads as it did while there are none.
+          sub={[
+            `${formatCount(openCounts.reserved)} reserved`,
+            `${formatCount(openCounts.signed)} signed`,
+            `${formatCount(openCounts.unconfirmed)} unconfirmed`,
+            ...(openCounts.answered_unproven > 0 ? [`${formatCount(openCounts.answered_unproven)} answered, unproven`] : []),
+            ...(data.noVerdictInTime > 0 ? [`${formatCount(data.noVerdictInTime)} with no verdict in time`] : []),
+          ].join(" · ")}
+          tone={openCounts.unconfirmed > 0 || data.noVerdictInTime > 0 ? "alert" : undefined}
         />
       </div>
 
@@ -136,6 +151,9 @@ export function InferenceCard({ data }: { data: AdminInference }) {
             {formatUsd(switches.platformDayUsd)} all agents a day · {formatCount(switches.agentDayRequests)} requests an
             agent a day. Each owner&rsquo;s own run and day limits sit under these.
             {switches.rpcConfigured ? "" : " SOLANA_RPC_URL is not set: nothing can be paid until it is."}
+            {switches.rpcPublic
+              ? " SOLANA_RPC_URL is the public Solana endpoint (api.mainnet-beta.solana.com). It is rate limited: a payment would still be signed, and the wallet read before a run and the reconciler after it would depend on it. Use your own provider's URL."
+              : ""}
           </dd>
         </div>
         <div className="min-w-0">
@@ -201,9 +219,10 @@ export function InferenceCard({ data }: { data: AdminInference }) {
               <span className="min-w-0">{BREAKER_LABEL[breaker.rule]}</span>
               <span className={cn("font-mono text-xs", breaker.tripped ? "text-destructive" : "text-muted-foreground")}>
                 {formatCount(breaker.count)}
-                {breaker.agents === null ? "" : ` from ${formatCount(breaker.agents)} agent${breaker.agents === 1 ? "" : "s"}`} in{" "}
+                {breaker.accounts === null ? "" : ` from ${formatCount(breaker.accounts)} account${breaker.accounts === 1 ? "" : "s"}`} in{" "}
                 {breaker.windowMinutes} min · pauses at {breaker.threshold}
-                {breaker.rule === "unanswered" ? " from 2 agents" : ""}
+                {/* Accounts, not agents: two agents of one owner are one, as the ledger counts. */}
+                {breaker.accountsThreshold === null ? "" : ` from ${formatCount(breaker.accountsThreshold)} accounts`}
                 {breaker.tripped ? " · tripped" : ""}
               </span>
             </li>
@@ -237,7 +256,13 @@ export function InferenceCard({ data }: { data: AdminInference }) {
           <p className="border-b border-[var(--glass-hairline)] bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
             Reserved: counted against the caps, nothing signed. Signed: the paid request is in flight, or its process died.
             Unconfirmed: signed, the request failed, and the chain has not been asked yet; counted as charged until it has.
-            The reconciler settles the last two from the chain every five minutes.
+            Answered, unproven: the step was answered and the gateway named no transaction for its payment; counted as
+            charged, and kept out of the owner&rsquo;s Money total and out of every P&amp;L until its transaction is
+            on the row. The reconciler asks the chain about these every five minutes, for{" "}
+            {formatCount(data.checkedForHours)} hours from when a row was written. A row marked &ldquo;no verdict in
+            time&rdquo; is older than that: it stays counted as charged and is looked at again only now and then,
+            until {formatCount(data.lateLookDays)} days old, and after that not at all. Audit that wallet with{" "}
+            <span className="font-mono">scripts/inference-audit.ts</span>.
           </p>
         }
       >
@@ -262,7 +287,10 @@ export function InferenceCard({ data }: { data: AdminInference }) {
                   <Td sticky muted className="text-xs">
                     <RowTime iso={row.createdAt} />
                   </Td>
-                  <Td className={cn("text-xs", row.status === "unconfirmed" && "text-destructive")}>{row.status}</Td>
+                  <Td className={cn("text-xs", (row.status === "unconfirmed" || row.noVerdictInTime) && "text-destructive")}>
+                    {row.status === "answered_unproven" ? "answered, unproven" : row.status}
+                    {row.noVerdictInTime ? <span className="block text-[11px]">no verdict in time</span> : null}
+                  </Td>
                   <Td>
                     <span className="flex max-w-[12rem] flex-col">
                       {row.agentSlug && row.agentName ? (
@@ -305,7 +333,6 @@ export function InferenceCard({ data }: { data: AdminInference }) {
           walletId: wallet.walletId,
           address: wallet.address,
           agentName: wallet.agentName,
-          ownerHandle: wallet.ownerHandle,
           payPerUse: wallet.payPerUse,
         }))}
       />

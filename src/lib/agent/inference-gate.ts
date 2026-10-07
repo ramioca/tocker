@@ -9,7 +9,8 @@ import "server-only";
  *    in the database (the scheduler, and the kill switch's count).
  *  - {@link preflightInference}: every reason a pay-per-use run must not start, checked
  *    before a run row exists. It reads the agent's USDC from the chain, never from an
- *    index, because the run that follows is allowed to spend it.
+ *    index, because the run that follows is allowed to spend it. A balance the chain
+ *    could not give is not held against the agent at once: see {@link unreadableBalance}.
  *  - {@link applyInferenceHold}, {@link releaseInferenceHold}, {@link clearInferenceHold}:
  *    an agent that may not run is put on hold with a time to look again, and its owner
  *    is told once. It is not failing: no run row is written while it waits.
@@ -211,9 +212,25 @@ export interface InferencePlan {
   simulated: boolean;
 }
 
+/** A refusal with a name. */
+export interface PreflightStop {
+  ok: false;
+  kind: "stop";
+  reason: InferenceStopReason;
+  title: string;
+  detail: string;
+  note: string;
+  /**
+   * Set on the one refusal that is not yet a fact: the wallet's balance could not be
+   * read from the chain, asked twice. The node may answer the next time it is asked, so
+   * the callers that hold agents do not hold on this at once ({@link unreadableBalance}).
+   */
+  unreadable?: true;
+}
+
 export type PreflightResult =
   | ({ ok: true } & InferencePlan)
-  | { ok: false; kind: "stop"; reason: InferenceStopReason; title: string; detail: string; note: string }
+  | PreflightStop
   /** Nothing is wrong: the run would not fit in what is left of this invocation. It stays due. */
   | { ok: false; kind: "later" };
 
@@ -245,7 +262,7 @@ export async function preflightInference(input: PreflightInput, deps: PreflightD
   const model = thinkingModel(config);
   const flags = inferenceFlags(env);
   const caps = capsFor(config, flags);
-  const stop = (reason: InferenceStopReason, note: string): PreflightResult => ({
+  const stop = (reason: InferenceStopReason, note: string): PreflightStop => ({
     ok: false,
     kind: "stop",
     reason,
@@ -298,9 +315,17 @@ export async function preflightInference(input: PreflightInput, deps: PreflightD
 
     // 7. Enough USDC for a whole run, after what it already owes and the floor it keeps.
     const read = deps.readUsdc ?? ((address: string) => readSolanaUsdc(address, rpcUrl));
-    const usdc = await read(payer.address);
-    if (usdc === null || !Number.isFinite(usdc) || usdc < 0) return stop("no_rpc", "the wallet's USDC could not be read from the chain");
+    const readable = (value: number | null): value is number => value !== null && Number.isFinite(value) && value >= 0;
+    // One bad answer from a node is not a fact about the wallet or about the node, so it
+    // is asked once more before anything is said. Still nothing: the refusal is marked,
+    // and whoever holds agents decides whether this has gone on long enough to hold one.
+    let usdc = await read(payer.address);
+    if (!readable(usdc)) usdc = await read(payer.address);
+    if (!readable(usdc)) return { ...stop("no_rpc", "the wallet's USDC could not be read from the chain"), unreadable: true };
     const owed = (await accruedFees(agent.id)).filter((fee) => fee.chain === "solana").reduce((sum, fee) => sum + Math.max(0, fee.amountUsd), 0);
+    // The run limit and the floor (`runFundsNeededUsd` is this same sum, for the screens
+    // that quote it). A live agent's trades are sized to leave this and one more run
+    // behind: see `thinkingReserveUsd`.
     const free = roundUsd(usdc - owed - WALLET_FLOOR_USD);
     if (free + 1e-9 < caps.runUsd) {
       return stop("needs_funds", `$${usdc.toFixed(2)} in the wallet, $${owed.toFixed(2)} owed in fees, $${caps.runUsd.toFixed(2)} needed above the floor`);
@@ -444,9 +469,87 @@ export async function clearInferenceHold(agentId: string): Promise<void> {
     .where(
       and(
         eq(agents.id, agentId),
-        or(isNotNull(agents.inferenceHold), isNotNull(agents.inferenceNotifiedAt), sql`${agents.inferenceStrikes} <> 0`),
+        or(
+          isNotNull(agents.inferenceHold),
+          isNotNull(agents.inferenceNotifiedAt),
+          sql`${agents.inferenceStrikes} <> 0`,
+          // The note of a balance that could not be read (`unreadableBalance`).
+          isNotNull(agents.inferenceHoldSince),
+        ),
       ),
     );
+}
+
+// ---------- a balance the chain could not give ----------
+
+/** An unreadable balance is held against an agent only when it is still unreadable this long after it first was. */
+export const UNREADABLE_GRACE_MS = 10 * 60_000;
+/** A first failure older than this is forgotten: nobody was looking at the agent in between, so it says nothing about now. */
+export const UNREADABLE_FORGET_MS = 60 * 60_000;
+/** A hold whose re-check could not read the chain is looked at again this soon. */
+export const UNREADABLE_LOOK_AGAIN_MS = 5 * 60_000;
+
+/**
+ * What becomes of an agent whose wallet balance the chain could not give (asked twice in
+ * one check): `defer` its run and look again soon, or `hold` it.
+ *
+ * One bad answer from a node is a blip, not a fact about the agent. Held on the spot, a
+ * healthy agent lost its run and at least fifteen minutes, and its owner was told that
+ * pay-per-use "is not set up"; an agent held for an empty wallet was flipped to this
+ * reason and back, and its owner told to add USDC again each time. So:
+ *
+ *  - Held for `no_rpc` already: it has lasted. `hold`, and the wait grows as for any hold.
+ *  - Held for something else: that hold stays exactly as it is, reason and strikes and
+ *    all, and is looked at again in five minutes (never sooner than it already would be).
+ *    Nothing is said, and nothing new will be when the node answers again. `defer`.
+ *  - Not held: the moment is noted and the run is put off. The agent stays due, so the
+ *    next pass looks again. Only when a later look still cannot read the balance, ten
+ *    minutes or more after the first, is it a `hold`, with its notice.
+ *
+ * The note is `inference_hold_since` on a row with no `inference_hold`. Every reader of a
+ * hold asks for the reason first, so that pair shows nowhere and holds nothing; a balance
+ * that is read, a real hold and a run that works each wipe it.
+ */
+async function unreadableBalance(agent: { id: string } & HoldState, now: Date): Promise<"defer" | "hold"> {
+  if (agent.inferenceHold === "no_rpc") return "hold";
+  const db = await getDb();
+
+  if (agent.inferenceHold) {
+    const soon = new Date(now.getTime() + UNREADABLE_LOOK_AGAIN_MS);
+    if (!agent.inferenceHoldUntil || agent.inferenceHoldUntil.getTime() < soon.getTime()) {
+      // Only if the hold is still the one that was read: a hold changed in between is left alone.
+      await db
+        .update(agents)
+        .set({ inferenceHoldUntil: soon })
+        .where(and(eq(agents.id, agent.id), eq(agents.inferenceHold, agent.inferenceHold)));
+    }
+    return "defer";
+  }
+
+  const firstAt = agent.inferenceHoldSince?.getTime() ?? null;
+  const lasted = firstAt === null ? null : now.getTime() - firstAt;
+  if (lasted !== null && lasted >= UNREADABLE_GRACE_MS && lasted <= UNREADABLE_FORGET_MS) return "hold";
+  if (lasted === null || lasted < 0 || lasted > UNREADABLE_FORGET_MS) {
+    await db
+      .update(agents)
+      .set({ inferenceHoldSince: now })
+      .where(and(eq(agents.id, agent.id), isNull(agents.inferenceHold)));
+  }
+  return "defer";
+}
+
+/**
+ * The check got past the balance (or never needed it): whatever was noted about not being
+ * able to read it is over. Writes nothing for a row with no such note, which is every row
+ * but the few a node has just failed.
+ */
+async function forgetUnreadableBalance(agent: { id: string } & Pick<HoldState, "inferenceHold" | "inferenceHoldSince">): Promise<void> {
+  if (agent.inferenceHold || !agent.inferenceHoldSince) return;
+  const db = await getDb();
+  await db
+    .update(agents)
+    .set({ inferenceHoldSince: null })
+    .where(and(eq(agents.id, agent.id), isNull(agents.inferenceHold)));
 }
 
 // ---------- looking again ----------
@@ -525,6 +628,9 @@ export async function recheckInferenceHolds(limit: number = RECHECK_DEFAULT_LIMI
       if (checked.ok || checked.kind === "later") {
         await releaseInferenceHold(agent.id);
         counts.cleared += 1;
+      } else if (checked.unreadable && (await unreadableBalance(agent, now)) === "defer") {
+        // The chain could not say. The hold it has stays as it is, for a few minutes more.
+        counts.extended += 1;
       } else {
         await applyInferenceHold(agent.id, checked.reason, now);
         counts.extended += 1;
@@ -566,6 +672,9 @@ export type AdmissionAgent = PreflightAgent & HoldState;
  *  - Otherwise the check is run now. A run started by hand always gets it, whatever the
  *    hold says. A refusal puts the agent on hold; a pass lifts the hold it had, and, for
  *    a run started by hand, counts it against the owner's day.
+ *  - One refusal is not acted on at once: a wallet balance the chain could not give. The
+ *    run is put off like one that would not fit its invocation, and the agent is held
+ *    only if the balance is still unreadable ten minutes on (`unreadableBalance`).
  */
 export async function admitInferenceRun(
   agent: AdmissionAgent,
@@ -593,6 +702,13 @@ export async function admitInferenceRun(
     deps,
   );
   if (!checked.ok) {
+    if (checked.kind === "stop" && checked.unreadable) {
+      // The chain could not give the wallet's balance. Not a hold yet, and nothing is
+      // said: the run is put off and the agent stays due. See `unreadableBalance`.
+      if ((await unreadableBalance(agent, now)) === "defer") return { ok: false, kind: "later" };
+    } else {
+      await forgetUnreadableBalance(agent);
+    }
     if (checked.kind === "later") return checked;
     if (holdsAgent(checked.reason)) await applyInferenceHold(agent.id, checked.reason, now);
     return { ok: false, kind: "stop", reason: checked.reason, title: checked.title, detail: checked.detail };
@@ -600,8 +716,12 @@ export async function admitInferenceRun(
 
   // Counted only now, when the run will really start. The count is the limit: two Run
   // now presses at the last allowed run cannot both get through.
-  if (input.trigger === "manual" && !(await noteManualRun(agent.ownerId, now))) return refuse("manual_limit");
+  if (input.trigger === "manual" && !(await noteManualRun(agent.ownerId, now))) {
+    await forgetUnreadableBalance(agent);
+    return refuse("manual_limit");
+  }
 
   if (agent.inferenceHold) await releaseInferenceHold(agent.id);
+  else await forgetUnreadableBalance(agent);
   return { ok: true, pay: { model: checked.model, caps: checked.caps, payer: checked.payer, simulated: checked.simulated } };
 }

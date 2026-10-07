@@ -29,8 +29,12 @@ import {
   type InferenceStopReason,
 } from "@/lib/x402/inference-types";
 import { DEFAULT_AGENT_CONFIG } from "./config";
+import { thinkingReserveUsd } from "./inference";
 import {
   INFERENCE_HOLD_NOTICE,
+  UNREADABLE_FORGET_MS,
+  UNREADABLE_GRACE_MS,
+  UNREADABLE_LOOK_AGAIN_MS,
   admitInferenceRun,
   applyInferenceHold,
   clearInferenceHold,
@@ -265,11 +269,43 @@ describe("preflightInference: one test per refusal", () => {
     }
   });
 
-  it("no_rpc: the wallet's balance could not be read from the chain", async () => {
+  it("no_rpc: the wallet's balance could not be read from the chain, asked twice, and the refusal says it may pass", async () => {
     const agent = await payingAgent();
     for (const unreadable of [null, Number.NaN, -1]) {
-      expect(reasonOf((await check(agent.agentId, { usdc: unreadable })).result)).toBe("no_rpc");
+      const { result, reads } = await check(agent.agentId, { usdc: unreadable });
+      expect(reasonOf(result)).toBe("no_rpc");
+      // Marked, so that whoever holds agents does not hold one over a single bad answer.
+      expect(result).toMatchObject({ ok: false, kind: "stop", unreadable: true });
+      expect(reads).toEqual([agent.address, agent.address]);
     }
+  });
+
+  it("no refusal but that one is marked as passing: a node that is not named, a wallet that is short", async () => {
+    const agent = await payingAgent();
+    const unnamed = (await check(agent.agentId, { env: { INFERENCE_USDC: "on" } })).result;
+    expect(reasonOf(unnamed)).toBe("no_rpc");
+    expect("unreadable" in unnamed).toBe(false);
+    const short = (await check(agent.agentId, { usdc: 0 })).result;
+    expect(reasonOf(short)).toBe("needs_funds");
+    expect("unreadable" in short).toBe(false);
+  });
+
+  it("asks the chain once more before it says the balance could not be read, and takes the second answer", async () => {
+    const agent = await payingAgent();
+    const answers: Array<number | null> = [null, 10];
+    const reads: string[] = [];
+    const result = await preflightInference(
+      { agent: await rowOf(agent.agentId), trigger: "schedule", now: NOW },
+      {
+        env: LIVE_ENV,
+        readUsdc: async (address) => {
+          reads.push(address);
+          return answers.shift() ?? null;
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    expect(reads).toEqual([agent.address, agent.address]);
   });
 
   it("model_unavailable: the model is not one of the offered ones", async () => {
@@ -332,6 +368,26 @@ describe("preflightInference: one test per refusal", () => {
     // A fee owed on Base is paid from the Base wallet, and does not count against this one.
     await oweFee(agent, "base", 5);
     expect((await check(agent.agentId, { usdc: needed + 0.1 })).result.ok).toBe(true);
+  });
+
+  /**
+   * What a live agent holds back from its buys, against what this check asks for. The
+   * agent buys mid-run with every dollar a buy may spend, so its wallet is left at
+   * exactly the reserve; the same run then goes on thinking, by as much as its whole
+   * limit; and its next run must still be let in. With one run held back the reserve
+   * equalled what this check asks for, any step paid after the buy took the wallet under
+   * it, and the agent's own trade put it on a `needs_funds` hold.
+   */
+  it("needs_funds: not after a buy that used all the spendable cash and a whole run's thinking on top", async () => {
+    for (const maxUsdPerRun of [0.05, 0.3, 2]) {
+      const agent = await payingAgent({ usdc: { maxUsdPerRun, maxUsdPerDay: 50 }, mode: "live" });
+      const config = (await rowOf(agent.agentId)).config;
+      const leftAfterTheBuy = thinkingReserveUsd(config);
+      const leftAfterTheRun = leftAfterTheBuy - maxUsdPerRun;
+      expect((await check(agent.agentId, { usdc: leftAfterTheRun })).result.ok).toBe(true);
+      // With one run held back, the same buy and the same run leave the floor alone, which this check refuses.
+      expect(reasonOf((await check(agent.agentId, { usdc: leftAfterTheRun - maxUsdPerRun })).result)).toBe("needs_funds");
+    }
   });
 
   it("platform_day_cap: every agent together has reached today's limit", async () => {
@@ -704,6 +760,35 @@ describe("recheckInferenceHolds", () => {
     expect((await rowOf(third.agentId)).inferenceHold).toBe("needs_funds");
   });
 
+  /**
+   * A two-hour halt used to cost every held agent eight strikes, one per look, so the
+   * first ordinary failure after it waited six hours. A halt is nobody's fault.
+   */
+  it("counts nothing against an agent for a halt it sat through: the first hiccup after it waits fifteen minutes", async () => {
+    const agent = await payingAgent();
+    await setInferenceHalt({ halted: true, reason: "checking a payment", by: "admin" });
+    expect(await admitInferenceRun(await rowOf(agent.agentId), { trigger: "schedule", now: NOW }, deps(10))).toMatchObject({ ok: false, reason: "halted" });
+
+    let at = NOW;
+    for (let look = 0; look < 8; look += 1) {
+      at = new Date(at.getTime() + 16 * 60_000);
+      expect(await recheckInferenceHolds(25, at, deps(10))).toEqual({ checked: 1, cleared: 0, extended: 1, failed: 0 });
+    }
+    const halted = await rowOf(agent.agentId);
+    expect(halted).toMatchObject({ inferenceHold: "halted", inferenceStrikes: 0 });
+    expect(minutesAfter(at, halted.inferenceHoldUntil)).toBe(15);
+    expect(await noticesFor(agent.userId)).toHaveLength(1);
+
+    await setInferenceHalt({ halted: false, reason: null, by: "admin" });
+    at = new Date(at.getTime() + 16 * 60_000);
+    expect(await recheckInferenceHolds(25, at, deps(10))).toEqual({ checked: 1, cleared: 1, extended: 0, failed: 0 });
+
+    // Its next run stops on the provider, once.
+    const hiccup = await applyInferenceHold(agent.agentId, "quote_failed", at);
+    expect(minutesAfter(at, hiccup.until)).toBe(15);
+    expect((await rowOf(agent.agentId)).inferenceStrikes).toBe(1);
+  });
+
   it("works with no arguments, and finds nothing to do when nobody is held", async () => {
     expect(await recheckInferenceHolds()).toEqual({ checked: 0, cleared: 0, extended: 0, failed: 0 });
   });
@@ -837,6 +922,161 @@ describe("admitInferenceRun", () => {
     const notices = await noticesFor(agent.userId);
     expect(notices).toHaveLength(1);
     expect(notices[0]?.body).toContain("your own API key");
+  });
+});
+
+/**
+ * One bad answer from a node used to hold a healthy agent for fifteen minutes and tell
+ * its owner pay-per-use "is not set up", and to flip an agent held for an empty wallet to
+ * `no_rpc` and back, telling its owner to add USDC again each time.
+ */
+describe("a balance the chain could not give", () => {
+  const minutes = (n: number) => new Date(NOW.getTime() + n * 60_000);
+  /** The chain's answers, in the order it is asked. Past the end it goes on giving the last. */
+  const chain = (...answers: Array<number | null>): PreflightDeps & { asked: () => number } => {
+    let asked = 0;
+    return {
+      env: LIVE_ENV,
+      readUsdc: async () => {
+        const answer = answers[Math.min(asked, answers.length - 1)] ?? null;
+        asked += 1;
+        return answer;
+      },
+      asked: () => asked,
+    };
+  };
+  const admit = async (agentId: string, at: Date, deps: PreflightDeps, trigger: "schedule" | "manual" = "schedule") =>
+    admitInferenceRun(await rowOf(agentId), { trigger, now: at }, deps);
+
+  beforeEach(async () => {
+    // The re-check pass looks at every held agent in the table.
+    await db.update(schema.agents).set({ inferenceHold: null, inferenceHoldSince: null, inferenceHoldUntil: null, inferenceStrikes: 0, inferenceNotifiedAt: null });
+  });
+
+  it("runs a healthy agent whose first read failed and whose second did not: no hold, nothing said, nothing noted", async () => {
+    const agent = await payingAgent();
+    const node = chain(null, 10);
+    expect((await admit(agent.agentId, NOW, node)).ok).toBe(true);
+    expect(node.asked()).toBe(2);
+    expect(await rowOf(agent.agentId)).toMatchObject({ inferenceHold: null, inferenceHoldSince: null, inferenceHoldUntil: null, inferenceStrikes: 0, inferenceNotifiedAt: null });
+    expect(await noticesFor(agent.userId)).toHaveLength(0);
+  });
+
+  it("puts the run off when neither read answered: no hold, no strike, no notice, and the agent stays due", async () => {
+    const agent = await payingAgent();
+    expect(await admit(agent.agentId, NOW, chain(null))).toEqual({ ok: false, kind: "later" });
+
+    const row = await rowOf(agent.agentId);
+    expect(row).toMatchObject({ inferenceHold: null, inferenceHoldUntil: null, inferenceStrikes: 0, inferenceNotifiedAt: null });
+    expect(await noticesFor(agent.userId)).toHaveLength(0);
+    // Not a hold on any screen, and not one to the re-check pass either.
+    expect(await recheckInferenceHolds(25, minutes(1), chain(10))).toEqual({ checked: 0, cleared: 0, extended: 0, failed: 0 });
+
+    // The next pass, five minutes on, reads it and runs it. Nothing is left behind.
+    expect((await admit(agent.agentId, minutes(5), chain(10))).ok).toBe(true);
+    expect(await rowOf(agent.agentId)).toMatchObject({ inferenceHold: null, inferenceHoldSince: null, inferenceStrikes: 0, inferenceNotifiedAt: null });
+    expect(await noticesFor(agent.userId)).toHaveLength(0);
+  });
+
+  it("holds the agent, and tells its owner once, only when the balance is still unreadable ten minutes on", async () => {
+    const agent = await payingAgent();
+    expect(await admit(agent.agentId, NOW, chain(null))).toEqual({ ok: false, kind: "later" });
+    // The next pass: still put off, still nothing said.
+    expect(await admit(agent.agentId, minutes(5), chain(null))).toEqual({ ok: false, kind: "later" });
+    expect((await rowOf(agent.agentId)).inferenceHold).toBeNull();
+    expect(await noticesFor(agent.userId)).toHaveLength(0);
+
+    // The pass after that: it has lasted.
+    const at = new Date(NOW.getTime() + UNREADABLE_GRACE_MS);
+    expect(await admit(agent.agentId, at, chain(null))).toMatchObject({ ok: false, kind: "stop", reason: "no_rpc" });
+    const row = await rowOf(agent.agentId);
+    expect(row).toMatchObject({ inferenceHold: "no_rpc", inferenceStrikes: 1 });
+    expect(minutesAfter(at, row.inferenceHoldUntil)).toBe(15);
+    const notices = await noticesFor(agent.userId);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.title).toBe(`Test Agent: ${describeInferenceStop("no_rpc").title}`);
+
+    // From here it is a hold like any other: looked at later each time, and nothing more said.
+    const again = new Date((row.inferenceHoldUntil as Date).getTime() + 1_000);
+    expect(await recheckInferenceHolds(25, again, chain(null))).toEqual({ checked: 1, cleared: 0, extended: 1, failed: 0 });
+    const held = await rowOf(agent.agentId);
+    expect(held).toMatchObject({ inferenceHold: "no_rpc", inferenceStrikes: 2 });
+    expect(minutesAfter(again, held.inferenceHoldUntil)).toBe(30);
+    expect(await noticesFor(agent.userId)).toHaveLength(1);
+  });
+
+  it("does not count two failures with a good read between them as one that lasted", async () => {
+    const agent = await payingAgent();
+    expect(await admit(agent.agentId, NOW, chain(null))).toEqual({ ok: false, kind: "later" });
+    expect((await admit(agent.agentId, minutes(5), chain(10))).ok).toBe(true);
+    expect(await admit(agent.agentId, minutes(11), chain(null))).toEqual({ ok: false, kind: "later" });
+    expect((await rowOf(agent.agentId)).inferenceHold).toBeNull();
+    expect(await noticesFor(agent.userId)).toHaveLength(0);
+  });
+
+  it("forgets a first failure nobody followed up within the hour: the next one starts the count again", async () => {
+    const agent = await payingAgent();
+    expect(await admit(agent.agentId, NOW, chain(null))).toEqual({ ok: false, kind: "later" });
+    const muchLater = new Date(NOW.getTime() + UNREADABLE_FORGET_MS + 60_000);
+    expect(await admit(agent.agentId, muchLater, chain(null))).toEqual({ ok: false, kind: "later" });
+    expect((await rowOf(agent.agentId)).inferenceHold).toBeNull();
+    // Ten minutes after THAT one, it has lasted.
+    expect(await admit(agent.agentId, new Date(muchLater.getTime() + UNREADABLE_GRACE_MS), chain(null))).toMatchObject({ ok: false, kind: "stop", reason: "no_rpc" });
+    expect(await noticesFor(agent.userId)).toHaveLength(1);
+  });
+
+  it("tells a run started by hand to try again, without holding the agent", async () => {
+    const agent = await payingAgent();
+    expect(await admit(agent.agentId, NOW, chain(null), "manual")).toEqual({ ok: false, kind: "later" });
+    expect(await admit(agent.agentId, minutes(1), chain(null), "manual")).toEqual({ ok: false, kind: "later" });
+    expect((await rowOf(agent.agentId)).inferenceHold).toBeNull();
+    // Not counted against the owner's day either: no run started.
+    expect(await db.select().from(schema.inferenceBudgetDays)).toHaveLength(0);
+  });
+
+  it("leaves an agent held for an empty wallet exactly as it is, and does not tell its owner to add USDC twice", async () => {
+    const agent = await payingAgent();
+    await applyInferenceHold(agent.agentId, "needs_funds", NOW);
+    const before = await rowOf(agent.agentId);
+    expect(await noticesFor(agent.userId)).toHaveLength(1);
+
+    // Its time comes and the node does not answer: same reason, same strikes, a look in five minutes.
+    const due = minutes(16);
+    expect(await recheckInferenceHolds(25, due, chain(null))).toEqual({ checked: 1, cleared: 0, extended: 1, failed: 0 });
+    const blip = await rowOf(agent.agentId);
+    expect(blip).toMatchObject({ inferenceHold: "needs_funds", inferenceStrikes: 1, inferenceHoldSince: before.inferenceHoldSince, inferenceNotifiedAt: before.inferenceNotifiedAt });
+    expect((blip.inferenceHoldUntil as Date).getTime() - due.getTime()).toBe(UNREADABLE_LOOK_AGAIN_MS);
+
+    // The node is back and the wallet is still empty: the same hold goes on. It was a
+    // change of reason, to `no_rpc` and back, that used to send "Add USDC" again here.
+    const next = new Date(due.getTime() + UNREADABLE_LOOK_AGAIN_MS + 1_000);
+    expect(await recheckInferenceHolds(25, next, chain(0))).toEqual({ checked: 1, cleared: 0, extended: 1, failed: 0 });
+    expect(await rowOf(agent.agentId)).toMatchObject({ inferenceHold: "needs_funds", inferenceStrikes: 2 });
+    expect(await noticesFor(agent.userId)).toHaveLength(1);
+
+    // And however long the node stays down, that hold is never turned into this one.
+    let at = minutes(120);
+    for (let look = 0; look < 6; look += 1) {
+      await recheckInferenceHolds(25, at, chain(null));
+      at = new Date(at.getTime() + UNREADABLE_LOOK_AGAIN_MS + 1_000);
+    }
+    expect(await rowOf(agent.agentId)).toMatchObject({ inferenceHold: "needs_funds", inferenceStrikes: 2 });
+    expect(await noticesFor(agent.userId)).toHaveLength(1);
+  });
+
+  it("does not bring a long hold's next look forward when Run now meets a node that does not answer", async () => {
+    const agent = await payingAgent();
+    // A fifth hold in a row: six hours to its next look.
+    let at = NOW;
+    for (let i = 0; i < 5; i += 1) {
+      const applied = await applyInferenceHold(agent.agentId, "quote_failed", at);
+      if (i < 4) at = new Date((applied.until as Date).getTime() + 1_000);
+    }
+    const before = await rowOf(agent.agentId);
+    expect(minutesAfter(at, before.inferenceHoldUntil)).toBe(360);
+
+    expect(await admit(agent.agentId, new Date(at.getTime() + 60_000), chain(null), "manual")).toEqual({ ok: false, kind: "later" });
+    expect(await rowOf(agent.agentId)).toEqual(before);
   });
 });
 

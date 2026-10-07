@@ -4,10 +4,22 @@
  * Paper cash is recomputed from the trade ledger (see `trading/paper.ts`); live cash
  * is the agent's USDC balance across its Privy server wallets.
  *
- * A live agent that pays for its own thinking (`llm.source: "usdc"`) keeps one run's
+ * A live agent that pays for its own thinking (`llm.source: "usdc"`) keeps two runs'
  * worth of it, and the wallet floor, out of its trades: `thinkingReserveUsd`. That money
  * is still the agent's and still counts in its cash and equity; it is only left out of
  * what a buy may spend, the same way fees owed are.
+ *
+ * A known gap, for an agent that trades Solana AND Base: the book has one cash figure
+ * for both chains, and the risk guard compares a buy with that one figure. So what is
+ * held back comes off the total, not off the Solana wallet that actually pays for the
+ * thinking: with $2 on Solana, $10 on Base and $0.85 held back, an $11 buy "fits", and a
+ * $2 buy on Solana empties the wallet the reserve was meant to protect. The agent is
+ * then held on `needs_funds` at its next run although it holds USDC on Base. Nothing is
+ * lost and the owner is told to add USDC on Solana; closing the gap needs cash per chain
+ * in the guard (`toRiskPortfolio` would have to know the order's chain, and every caller
+ * to pass it), which is a change to every buy path and not one to make here. An agent
+ * that trades Solana alone does not have it, and the first-trade preset leaves a
+ * pay-per-use agent trading Solana alone.
  */
 import { isDustPosition } from "@/lib/trading/positions";
 import { nanoid } from "nanoid";
@@ -45,9 +57,10 @@ export interface Portfolio {
    */
   cashReadFailed: boolean;
   /**
-   * USDC a live pay-per-use agent holds back from buys so it can pay for its next run:
-   * its limit for one run plus the wallet floor, and never more than its Solana wallet
-   * has. Part of `cashUsd`, not on top of it. Absent or zero for every other agent.
+   * USDC a live pay-per-use agent holds back from buys so it can go on paying for its
+   * thinking: twice its limit for one run (what is left of this run, and the next one)
+   * plus the wallet floor, and never more than its Solana wallet has. Part of `cashUsd`,
+   * not on top of it. Absent or zero for every other agent.
    */
   thinkingReserveUsd?: number;
 }
@@ -215,10 +228,12 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
     const live = await getLiveCash(await getAgentWallets(agentId));
     cashReadFailed = !live.complete;
     cashUsd = netLiveCashUsd(live.usd, await accruedFeesUsd(agentId));
-    // A live agent that pays for its own thinking keeps the next run's worth of it out
-    // of its trades, or its first buy could leave it unable to think again. Held back
-    // here, beside the fees, and from the Solana wallet's USDC only: that is the wallet
-    // that pays, and USDC on another chain cannot stand in for it. Zero for a key agent.
+    // A live agent that pays for its own thinking keeps two runs' worth of it out of its
+    // trades: what the run in hand may still spend after a buy, and what the check before
+    // the next run asks for. With one, its first cash-bound buy left it unable to think
+    // again (`thinkingReserveUsd` has the arithmetic). Held back here, beside the fees,
+    // and never more than the Solana wallet's USDC: that is the wallet that pays, and
+    // USDC on another chain cannot stand in for it. Zero for a key agent.
     heldForThinking = Math.max(0, Math.min(thinkingReserveUsd(agent.config), live.solanaUsd, cashUsd));
   }
 
@@ -378,8 +393,11 @@ export function describePortfolio(portfolio: Portfolio, config: AgentConfig): st
   ];
   if ((portfolio.thinkingReserveUsd ?? 0) > 0) {
     // Said plainly, or a model that sees $5.00 of cash and a $4.20 ceiling goes looking for the rest.
+    // And said to be private: the figure is worked out from a limit only the owner may
+    // read, and a rationale, a post and a summary are public.
     lines.push(
-      `Of that cash, $${(portfolio.thinkingReserveUsd ?? 0).toFixed(2)} is held back to pay for your own thinking and cannot be spent on a buy: $${spendableCashUsd(portfolio).toFixed(2)} is available to trade.`,
+      `Of that cash, $${(portfolio.thinkingReserveUsd ?? 0).toFixed(2)} is held back to pay for your own thinking and cannot be spent on a buy: $${spendableCashUsd(portfolio).toFixed(2)} is available to trade.` +
+        " The amount held back follows a limit your owner set: like your other thresholds, never state it in a rationale, a post or your summary.",
     );
   }
   if (portfolio.cashReadFailed) {

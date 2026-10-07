@@ -4,16 +4,21 @@
  * right day exactly once.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { Keypair } from "@solana/web3.js";
 import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Db } from "@/db";
 import { agentRuns, inferenceBudgetDays, inferenceControl, inferencePayments } from "@/db/schema";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import {
+  CLOSED_UNCHECKED_DETAIL,
   INFERENCE_MOVES,
   InferenceLedgerError,
+  MAX_HALT_REASON,
   applyInferenceBreakers,
   clearInferencePause,
+  closeUncheckedPayments,
+  confirmSettled,
   createInferenceLedger,
   dayUsage,
   haltInferenceOnce,
@@ -423,12 +428,110 @@ describe("the lifecycle", () => {
       signed: ["settled", "paid_no_answer", "unconfirmed", "not_charged"],
       unconfirmed: ["paid_no_answer", "not_charged"],
       released: [],
-      settled: [],
+      // Only a settled row with no transaction id, and only by the reconciler's proof: see below.
+      settled: ["not_charged"],
       paid_no_answer: [],
       not_charged: [],
       simulated: [],
     });
     expect(Object.keys(INFERENCE_MOVES).sort()).toEqual([...INFERENCE_PAYMENT_STATUSES].sort());
+  });
+
+  describe("an answered row whose settlement is not yet proven (settled, no transaction id)", () => {
+    /** Answered by the gateway with no receipt: settled, and no transaction id. */
+    async function answeredUnproven(overrides: Partial<InferenceReserveInput> = {}): Promise<string> {
+      const id = await rowIn("signed", overrides);
+      await ledger.settle(id, { ...SETTLED, txHash: null });
+      return id;
+    }
+
+    it("is settled, counted as charged, and carries no transaction id", async () => {
+      const id = await answeredUnproven();
+      expect(await rowOf(id)).toMatchObject({ status: "settled", answered: true, txHash: null });
+      expect(await held()).toEqual([0.01, 0.01, 0.01]);
+      expect(await runInferenceSpend((await rowOf(id)).runId!)).toEqual({ usd: 0.01, requests: 1 });
+    });
+
+    it("confirmSettled writes the transaction id once, and the row stays settled and counted", async () => {
+      const id = await answeredUnproven();
+      const before = await rowOf(id);
+      expect(await confirmSettled(id, "FoundOnChain111")).toBe(true);
+      expect(await rowOf(id)).toEqual({ ...before, txHash: "FoundOnChain111" });
+      expect(await held()).toEqual([0.01, 0.01, 0.01]);
+      // A second finding, or a different one, changes nothing: the first proof stands.
+      expect(await confirmSettled(id, "SomethingElse222")).toBe(false);
+      expect((await rowOf(id)).txHash).toBe("FoundOnChain111");
+    });
+
+    it("confirmSettled touches no row but a settled one with no transaction id", async () => {
+      for (const status of INFERENCE_PAYMENT_STATUSES) {
+        const id = await rowIn(status);
+        const before = await rowOf(id);
+        expect(await confirmSettled(id, "FoundOnChain111"), status).toBe(false);
+        expect(await rowOf(id), status).toEqual(before);
+      }
+      expect(await confirmSettled("no-such-row", "FoundOnChain111")).toBe(false);
+      await expect(confirmSettled(await answeredUnproven(), "")).rejects.toBeInstanceOf(InferenceLedgerError);
+    });
+
+    it("a not-charged verdict returns its amount to its day exactly once: the answer was free", async () => {
+      const kept = await rowIn("settled", { quotedUsd: 0.05 });
+      const id = await answeredUnproven({ quotedUsd: 0.02 });
+      expect(await held()).toEqual([0.07, 0.07, 0.07]);
+      const verdicts = await Promise.all(Array.from({ length: 6 }, () => resolveInferencePayment(id, { charged: false, detail: "never paid for" }, NOON)));
+      expect(verdicts.filter(Boolean)).toHaveLength(1);
+      // The answer did arrive, so the row still says so; only the money is corrected.
+      expect(await rowOf(id)).toMatchObject({ status: "not_charged", answered: true, txHash: null, detail: "never paid for" });
+      expect(await held()).toEqual([0.05, 0.05, 0.05]);
+      expect((await counter("agent", "agent-1"))?.requests).toBe(1);
+      expect(await resolveInferencePayment(id, { charged: false, detail: "again" }, NOON)).toBe(false);
+      expect(await held()).toEqual([0.05, 0.05, 0.05]);
+      expect((await rowOf(kept)).status).toBe("settled");
+    });
+
+    it("returns it to the day it was reserved on when the verdict comes the next day", async () => {
+      const id = await answeredUnproven({ quotedUsd: 0.02 });
+      expect(await resolveInferencePayment(id, { charged: false, detail: "never paid for" }, new Date("2031-03-11T00:20:00.000Z"))).toBe(true);
+      expect(await held()).toEqual([0, 0, 0]);
+      expect(await db.select().from(inferenceBudgetDays).where(eq(inferenceBudgetDays.day, "2031-03-11"))).toHaveLength(0);
+    });
+
+    it("a settled row WITH a transaction id never leaves settled, whatever the verdict", async () => {
+      const id = await rowIn("settled", { quotedUsd: 0.02 });
+      const before = await rowOf(id);
+      expect(before.txHash).toBe(SETTLED.txHash);
+      expect(await resolveInferencePayment(id, { charged: false, detail: "no" }, NOON)).toBe(false);
+      expect(await resolveInferencePayment(id, { charged: true, txHash: "Other", detail: "no" }, NOON)).toBe(false);
+      expect(await rowOf(id)).toEqual(before);
+      expect(await held()).toEqual([0.02, 0.02, 0.02]);
+    });
+
+    it("once proven, the row can no longer be called not charged", async () => {
+      const id = await answeredUnproven({ quotedUsd: 0.02 });
+      expect(await confirmSettled(id, "FoundOnChain111")).toBe(true);
+      expect(await resolveInferencePayment(id, { charged: false, detail: "too late" }, NOON)).toBe(false);
+      expect(await rowOf(id)).toMatchObject({ status: "settled", txHash: "FoundOnChain111" });
+      expect(await held()).toEqual([0.02, 0.02, 0.02]);
+    });
+
+    it("a charged verdict does not turn an answered row into an unanswered one", async () => {
+      const id = await answeredUnproven();
+      expect(await resolveInferencePayment(id, { charged: true, txHash: "FoundOnChain111", detail: "found" }, NOON)).toBe(false);
+      expect(await rowOf(id)).toMatchObject({ status: "settled", answered: true, txHash: null });
+    });
+
+    it("the proof and the opposite verdict at once apply exactly one", async () => {
+      for (let round = 0; round < 5; round += 1) {
+        await db.delete(inferencePayments);
+        await db.delete(inferenceBudgetDays);
+        const id = await answeredUnproven({ quotedUsd: 0.02 });
+        const [confirmed, released] = await Promise.all([confirmSettled(id, "FoundOnChain111"), resolveInferencePayment(id, { charged: false, detail: "not found" }, NOON)]);
+        expect(Number(confirmed) + Number(released)).toBe(1);
+        const row = await rowOf(id);
+        expect(row.status).toBe(confirmed ? "settled" : "not_charged");
+        expect(await held()).toEqual(confirmed ? [0.02, 0.02, 0.02] : [0, 0, 0]);
+      }
+    });
   });
 
   describe("the moves that are allowed", () => {
@@ -630,7 +733,9 @@ describe("the lifecycle", () => {
       markUnconfirmed: (id) => ledger.markUnconfirmed(id, { httpStatus: null, detail: "x" }),
       "reconciler: charged": (id) => resolveInferencePayment(id, { charged: true, txHash: "Tx", detail: "x" }, NOON),
       "reconciler: not charged": (id) => resolveInferencePayment(id, { charged: false, detail: "x" }, NOON),
+      "reconciler: settlement proven": (id) => confirmSettled(id, "Tx"),
       "reconciler: stale sweep": () => releaseStaleReserved(new Date(NOON.getTime() + 60 * MINUTE), 50, NOON),
+      "reconciler: closed unchecked": () => closeUncheckedPayments(new Date(NOON.getTime() + 60 * MINUTE), 50, NOON),
     };
 
     it("leaves the row where it was or moves it along the lifecycle, and the counters always equal what the rows hold", async () => {
@@ -650,6 +755,9 @@ describe("the lifecycle", () => {
 
           const after = (await rowOf(id)).status as InferencePaymentStatus;
           expect(reachable(status).has(after), `${name} on ${status} left the row ${after}`).toBe(true);
+          // The table lets `settled` reach `not_charged`, but only for a row with no
+          // transaction id. This one has one, so nothing may move it.
+          if (status === "settled") expect(after, `${name} on a proven settled row`).toBe("settled");
 
           const rows = await db.select().from(inferencePayments);
           const heldRows = rows.filter((row) => COUNTED.includes(row.status));
@@ -832,6 +940,64 @@ describe("releaseStaleReserved", () => {
   });
 });
 
+describe("closeUncheckedPayments", () => {
+  const cutOff = new Date(NOON.getTime() + 60 * MINUTE);
+  const later = new Date(NOON.getTime() + 90 * MINUTE);
+
+  it("closes open rows from before the cut-off: unconfirmed, marked resolved, saying why, and still counted", async () => {
+    const left = await rowIn("signed", { quotedUsd: 0.02 });
+    const failed = await rowIn("unconfirmed", { quotedUsd: 0.03 });
+    const recent = await rowIn("unconfirmed", { quotedUsd: 0.04, now: new Date(cutOff.getTime() + MINUTE) });
+    expect(await closeUncheckedPayments(cutOff, 50, later)).toBe(2);
+
+    for (const id of [left, failed]) {
+      const row = await rowOf(id);
+      expect(row).toMatchObject({ status: "unconfirmed", answered: false, txHash: null });
+      expect(row.resolvedAt?.toISOString()).toBe(later.toISOString());
+      expect(row.detail?.startsWith(CLOSED_UNCHECKED_DETAIL)).toBe(true);
+    }
+    // What the row said before is kept behind the new sentence.
+    expect((await rowOf(failed)).detail).toContain("timed out");
+    expect(await rowOf(recent)).toMatchObject({ status: "unconfirmed", resolvedAt: null, detail: "timed out" });
+
+    // Nothing was given back: no cap is released on a guess.
+    expect(await held()).toEqual([0.09, 0.09, 0.09]);
+    expect((await dayUsage({ ownerId: "owner-1", agentId: "agent-1", day: "2031-03-10" })).agent.requests).toBe(3);
+    expect(await runInferenceSpend((await rowOf(left)).runId!)).toEqual({ usd: 0.02, requests: 1 });
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(`payment ${left} closed unchecked`);
+  });
+
+  it("closes a row once, and touches no row in any other status", async () => {
+    const ids: Record<string, string> = {};
+    for (const status of INFERENCE_PAYMENT_STATUSES) ids[status] = await rowIn(status);
+    const before = Object.fromEntries(await Promise.all(Object.entries(ids).map(async ([status, id]) => [status, await rowOf(id)] as const)));
+    expect(await closeUncheckedPayments(cutOff, 50, later)).toBe(2);
+    expect(await closeUncheckedPayments(cutOff, 50, new Date(later.getTime() + MINUTE))).toBe(0);
+    for (const status of INFERENCE_PAYMENT_STATUSES) {
+      if (status === "signed" || status === "unconfirmed") continue;
+      expect(await rowOf(ids[status]), status).toEqual(before[status]);
+    }
+    expect((await rowOf(ids.signed)).resolvedAt?.toISOString()).toBe(later.toISOString());
+  });
+
+  it("leaves a closed row open to both verdicts, so the fact can still replace the guess", async () => {
+    const landed = await rowIn("unconfirmed", { quotedUsd: 0.02 });
+    const never = await rowIn("signed", { quotedUsd: 0.03 });
+    await closeUncheckedPayments(cutOff, 50, later);
+    expect(await resolveInferencePayment(landed, { charged: true, txHash: "FoundLater", detail: "found on chain" }, later)).toBe(true);
+    expect(await resolveInferencePayment(never, { charged: false, detail: "proven absent" }, later)).toBe(true);
+    expect(await rowOf(landed)).toMatchObject({ status: "paid_no_answer", txHash: "FoundLater" });
+    expect((await rowOf(never)).status).toBe("not_charged");
+    expect(await held()).toEqual([0.02, 0.02, 0.02]);
+  });
+
+  it("does a bounded amount of work per call", async () => {
+    for (let n = 0; n < 4; n += 1) await rowIn("signed");
+    expect(await closeUncheckedPayments(cutOff, 3, later)).toBe(3);
+    expect(await closeUncheckedPayments(cutOff, 3, later)).toBe(1);
+  });
+});
+
 describe("runInferenceSpend", () => {
   it("sums what counts as spent, plus simulated rows, and counts the requests", async () => {
     const runId = "run-sum";
@@ -916,6 +1082,7 @@ describe("the switches", () => {
       halted: false,
       haltReason: null,
       haltClearedAt: null,
+      haltAcknowledged: [],
       pausedUntil: null,
       pauseReason: null,
       updatedBy: null,
@@ -947,14 +1114,110 @@ describe("the switches", () => {
     expect((await readInferenceControl()).pausedUntil?.getTime()).toBe(until.getTime());
   });
 
-  it("an automatic halt keeps the first reason, and never overrides one already on", async () => {
+  it("an automatic halt keeps the first reason at the head, and never overrides who threw it", async () => {
     expect(await haltInferenceOnce("first evidence", "reconciler")).toBe(true);
-    expect(await haltInferenceOnce("second evidence", "reconciler")).toBe(false);
-    expect(await readInferenceControl()).toMatchObject({ halted: true, haltReason: "first evidence", updatedBy: "reconciler" });
+    expect(await haltInferenceOnce("second evidence", "ledger")).toBe(false);
+    const control = await readInferenceControl();
+    expect(control).toMatchObject({ halted: true, updatedBy: "reconciler" });
+    expect(control.haltReason).toMatch(/^\[2 findings\] first evidence/);
     // Once an admin clears it, new evidence halts again.
     await setInferenceHalt({ halted: false, reason: null, by: "admin-1" });
     expect(await haltInferenceOnce("third evidence", "reconciler")).toBe(true);
     expect((await readInferenceControl()).haltReason).toBe("third evidence");
+  });
+
+  describe("evidence found while a halt is already on", () => {
+    it("is logged and added to the stored reason, so the admin reads everything a clear will acknowledge", async () => {
+      await setInferenceHalt({ halted: true, reason: "checking one wallet by hand", by: "admin-1" });
+      expect(await haltInferenceOnce("USDC went from an agent wallet to the gateway with no ledger row. Transaction SigSecond.", "reconciler")).toBe(false);
+      expect(await haltInferenceOnce("Ledger row abc was quoted 10000 base units; transaction SigThird took 250000.", "reconciler")).toBe(false);
+
+      const control = await readInferenceControl();
+      // The admin's own reason first and its author kept; both findings behind it, counted at the head.
+      expect(control.updatedBy).toBe("admin-1");
+      expect(control.haltReason).toBe(
+        "[3 findings] checking one wallet by hand" +
+          " | also (reconciler): USDC went from an agent wallet to the gateway with no ledger row. Transaction SigSecond." +
+          " | also (reconciler): Ledger row abc was quoted 10000 base units; transaction SigThird took 250000.",
+      );
+      const logged = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(logged).toContain("found while already halted (reconciler): USDC went from an agent wallet");
+      expect(logged).toContain("SigThird");
+    });
+
+    it("records each finding once, however many passes find it again, and says it once", async () => {
+      await haltInferenceOnce("first evidence", "reconciler");
+      for (let pass = 0; pass < 4; pass += 1) await haltInferenceOnce("second evidence", "reconciler");
+      // The reason that threw the halt is not a new finding either.
+      await haltInferenceOnce("first evidence", "reconciler");
+      expect((await readInferenceControl()).haltReason).toBe("[2 findings] first evidence | also (reconciler): second evidence");
+      const said = vi.mocked(console.error).mock.calls.flat().filter((line) => String(line).includes("found while already halted"));
+      expect(said).toHaveLength(1);
+    });
+
+    it("keeps the stored reason bounded, and says where the rest is", async () => {
+      await haltInferenceOnce("first evidence", "reconciler");
+      for (let n = 0; n < 40; n += 1) await haltInferenceOnce(`finding ${n} ${"x".repeat(300)}`, "reconciler");
+      const reason = (await readInferenceControl()).haltReason ?? "";
+      expect(reason.length).toBeLessThanOrEqual(MAX_HALT_REASON);
+      expect(reason).toMatch(/^\[\d+ findings\] first evidence \| also \(reconciler\): finding 0 /);
+      expect(reason.endsWith("see the server log")).toBe(true);
+      // What did not fit is still said, every time: the log is then the only record of it.
+      const logged = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(logged).toContain("finding 39");
+      expect(logged).toContain("not added to the stored reason");
+    });
+
+    it("stores and logs it redacted", async () => {
+      // Built at run time: the shape of a provider key in a URL, not a real one.
+      const key = ["k", "e", "y"].join("") + "1234567890abcdef";
+      await haltInferenceOnce("first evidence", "reconciler");
+      await haltInferenceOnce(`the node at https://rpc.example/?api-key=${key} said otherwise`, "reconciler");
+      expect((await readInferenceControl()).haltReason).not.toContain(key);
+      expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain(key);
+    });
+
+    it("logs the finding, and only a redacted database error, when it cannot be stored", async () => {
+      await haltInferenceOnce("first evidence", "reconciler");
+      const failing = vi.spyOn(db, "transaction").mockRejectedValueOnce(new Error("Failed query: update inference_control set halt_reason = $1 params: secret-parameter"));
+      try {
+        expect(await haltInferenceOnce("second evidence", "reconciler")).toBe(false);
+        expect(failing).toHaveBeenCalledTimes(1);
+      } finally {
+        failing.mockRestore();
+      }
+      const logged = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(logged).toContain("found while already halted (reconciler): second evidence");
+      expect(logged).toContain("could not be added to the stored halt reason");
+      expect(logged).not.toContain("secret-parameter");
+      expect((await readInferenceControl()).haltReason).toBe("first evidence");
+    });
+
+    it("clearing keeps the transaction ids the reason named, and forgets them when a new halt is cleared", async () => {
+      const id = (n: number) => Keypair.generate().publicKey.toBase58() + Keypair.generate().publicKey.toBase58() + String(n);
+      const [first, second, third] = [id(1), id(2), id(3)];
+      const wallet = Keypair.generate().publicKey.toBase58();
+      await haltInferenceOnce(`USDC went from an agent wallet to the gateway with no ledger row. Transaction ${first}, wallet ${wallet}.`, "reconciler");
+      await haltInferenceOnce(`A payment landed on chain for ledger row abc. Transaction ${second}, wallet ${wallet}.`, "reconciler");
+      expect((await readInferenceControl()).haltAcknowledged).toEqual([]);
+
+      await setInferenceHalt({ halted: false, reason: "looked at both", by: "admin-1" });
+      const cleared = await readInferenceControl();
+      expect(cleared).toMatchObject({ halted: false, haltReason: null });
+      expect(cleared.haltClearedAt).not.toBeNull();
+      // The two transactions, and not the wallet's address, which is not a transaction.
+      expect(cleared.haltAcknowledged).toEqual([first, second]);
+
+      // Clearing again with no halt on keeps what was acknowledged.
+      await setInferenceHalt({ halted: false, reason: null, by: "admin-1" });
+      expect((await readInferenceControl()).haltAcknowledged).toEqual([first, second]);
+
+      // A new halt and its clear acknowledge what that halt named.
+      await haltInferenceOnce(`Transaction ${third} is new.`, "reconciler");
+      expect((await readInferenceControl()).haltAcknowledged).toEqual([]);
+      await setInferenceHalt({ halted: false, reason: null, by: "admin-1" });
+      expect((await readInferenceControl()).haltAcknowledged).toEqual([third]);
+    });
   });
 
   it("only ever lengthens a pause, and keeps the reason of the one in force", async () => {
@@ -986,8 +1249,8 @@ describe("the switches", () => {
 
 describe("applyInferenceBreakers", () => {
   /** A signed row whose signature time is `minutesAgo` before `now`, left unconfirmed. */
-  async function unanswered(agentId: string, at: Date, status: "unconfirmed" | "paid_no_answer" = "unconfirmed"): Promise<string> {
-    const id = await reserved({ agentId, now: at });
+  async function unanswered(agentId: string, at: Date, status: "unconfirmed" | "paid_no_answer" = "unconfirmed", ownerId = "owner-1"): Promise<string> {
+    const id = await reserved({ agentId, ownerId, now: at });
     // Written directly: the ledger's own calls would evaluate the breakers on the way.
     await db.update(inferencePayments).set({ status, signedAt: at, memo: nanoid() }).where(eq(inferencePayments.id, id));
     return id;
@@ -1006,11 +1269,11 @@ describe("applyInferenceBreakers", () => {
     expect(await db.select().from(inferenceControl)).toHaveLength(0);
   });
 
-  it("pauses 30 minutes from the last of 3 unanswered steps across 2 agents", async () => {
+  it("pauses 30 minutes from the last of 3 unanswered steps across 2 accounts", async () => {
     await unanswered("agent-1", ago(12));
     await unanswered("agent-1", ago(6), "paid_no_answer");
     expect((await applyInferenceBreakers(now)).tripped).toBeNull();
-    await unanswered("agent-2", ago(3));
+    await unanswered("agent-2", ago(3), "unconfirmed", "owner-2");
     const result = await applyInferenceBreakers(now);
     expect(result.tripped).toBe("unanswered");
     expect(result.pausedUntil?.getTime()).toBe(ago(3).getTime() + 30 * MINUTE);
@@ -1025,10 +1288,23 @@ describe("applyInferenceBreakers", () => {
     expect((await applyInferenceBreakers(now)).tripped).toBeNull();
   });
 
+  it("does not pause everyone for one account's unanswered steps, however many agents it has", async () => {
+    // The rule guards against one account's bad luck (or doing). Two agents are still one account.
+    await unanswered("agent-1", ago(9));
+    await unanswered("agent-2", ago(6));
+    await unanswered("agent-3", ago(3), "paid_no_answer");
+    await unanswered("agent-2", ago(2));
+    expect(await applyInferenceBreakers(now)).toEqual({ tripped: null, pausedUntil: null });
+    expect(await db.select().from(inferenceControl)).toHaveLength(0);
+    // The same steps from a second account are what the rule is for.
+    await unanswered("agent-9", ago(1), "unconfirmed", "owner-2");
+    expect((await applyInferenceBreakers(now)).tripped).toBe("unanswered");
+  });
+
   it("stops counting a step the reconciler proved was never charged", async () => {
     const first = await unanswered("agent-1", ago(9));
     await unanswered("agent-1", ago(6));
-    await unanswered("agent-2", ago(3));
+    await unanswered("agent-2", ago(3), "unconfirmed", "owner-2");
     await resolveInferencePayment(first, { charged: false, detail: "never landed" }, now);
     expect((await applyInferenceBreakers(now)).tripped).toBeNull();
   });
@@ -1036,8 +1312,12 @@ describe("applyInferenceBreakers", () => {
   it("is evaluated by the ledger itself when a paid step ends without an answer", async () => {
     // Real clock here: the ledger stamps the signature time itself.
     const real = new Date();
-    for (const agentId of ["agent-1", "agent-1", "agent-2"]) {
-      const id = await rowIn("signed", { agentId, now: real });
+    for (const [agentId, ownerId] of [
+      ["agent-1", "owner-1"],
+      ["agent-1", "owner-1"],
+      ["agent-2", "owner-2"],
+    ]) {
+      const id = await rowIn("signed", { agentId, ownerId, now: real });
       await ledger.markUnconfirmed(id, { httpStatus: null, detail: "timed out" });
     }
     const control = await readInferenceControl();

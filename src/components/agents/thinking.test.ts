@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
-import { paidStepLimit, thinkSource, thinkingReserveUsd, usdcChoiceProblem } from "@/lib/agent/inference";
+import { paidStepLimit, runFundsNeededUsd, thinkSource, usdcChoiceProblem } from "@/lib/agent/inference";
 import {
   DEFAULT_PAY_PER_USE_MODEL,
   INFERENCE_STOPS,
@@ -48,6 +48,10 @@ import {
   usdcEstimate,
   walletNeedUsd,
   type UsdcSettings,
+  NO_ANSWER_RUN_WORDS,
+  RUN_SPEND_NOTE,
+  RUN_SPEND_NOT_FINAL_NOTE,
+  runThinkingShown,
 } from "./thinking";
 
 const KEY_INTERVAL = DEFAULT_AGENT_CONFIG.schedule.intervalMinutes;
@@ -209,10 +213,15 @@ describe("the limits a form starts with", () => {
     expect(walletNeedUsd({ maxUsdPerRun: 2 })).toBe(2 + WALLET_FLOOR_USD);
   });
 
-  /** The form quotes this figure; the run holds the same one back. They must be one number. */
-  it("quotes the same wallet figure the run keeps out of trading", () => {
+  /**
+   * The form quotes this figure; the check before a run asks for the same one
+   * (`runFundsNeededUsd`: the run limit plus the floor). They must be one number. What a
+   * live agent keeps out of its trades is a different, larger figure (two runs' worth),
+   * and is not what the wallet has to hold for a run to start.
+   */
+  it("quotes the same wallet figure the check before a run asks for", () => {
     for (const maxUsdPerRun of [USDC_RUN_CAP.min, 0.15, 0.45, 1, USDC_RUN_CAP.max]) {
-      expect(walletNeedUsd({ maxUsdPerRun })).toBe(thinkingReserveUsd(usdcConfig({ maxUsdPerRun })));
+      expect(walletNeedUsd({ maxUsdPerRun })).toBe(runFundsNeededUsd(usdcConfig({ maxUsdPerRun })));
     }
   });
 
@@ -517,5 +526,69 @@ describe("what a run spent on thinking", () => {
     expect(payPerUseModelLabel("google/gemini-2.5-flash")).toBe("Gemini 2.5 Flash");
     expect(payPerUseModelLabel("vendor/unknown")).toBe("vendor/unknown");
     expect(payPerUseModelLabel(null)).toBe("");
+  });
+});
+
+describe("a run's thinking line, as the run list words it", () => {
+  const row = { llmSource: "usdc", model: "google/gemini-2.5-flash", inferenceSpendUsd: "0.073400", stopReason: null };
+  /** Anything that says the money was certainly taken. */
+  const CLAIMS_PAID = /\bpaid\b|the charge is listed/i;
+
+  it("calls the amount counted, never paid, and says where the confirmed figure is", () => {
+    const shown = runThinkingShown(runThinking(row)!);
+    expect(shown).toEqual({ amount: "$0.073", amountNote: RUN_SPEND_NOTE, notFinal: false, stop: null, sentence: null });
+    // The figure is written once at run end and never rewritten, so the row does not
+    // claim more for it than that.
+    expect(RUN_SPEND_NOTE).not.toMatch(/\bpaid\b/i);
+    expect(RUN_SPEND_NOTE).toContain("counted at when it ended");
+    expect(RUN_SPEND_NOTE).toContain("Money has what the chain confirmed");
+  });
+
+  it("does not call a step paid when the run stopped because it got no answer", () => {
+    // Signed, the request failed, the run stopped with paid_no_answer and its amount was
+    // written including that step. The reconciler may since have proved the payment never
+    // landed (not_charged): nothing rewrites the run row, so its words must hold either way.
+    const thinking = runThinking({ ...row, inferenceSpendUsd: "0.012000", stopReason: "paid_no_answer" })!;
+
+    const shown = runThinkingShown(thinking);
+    expect(shown.notFinal).toBe(true);
+    expect(shown.amount).toBe("up to $0.012");
+    expect(shown.amountNote).toBe(RUN_SPEND_NOT_FINAL_NOTE);
+    expect(shown.stop).toEqual({ kind: "platform", ...NO_ANSWER_RUN_WORDS });
+    expect(shown.sentence).toBe(NO_ANSWER_RUN_WORDS.detail);
+    // Nothing the row prints asserts the payment. Each says what happens either way.
+    for (const text of [shown.amountNote, shown.stop!.title, shown.stop!.detail, shown.sentence!]) {
+      expect(text, text).not.toMatch(CLAIMS_PAID);
+    }
+    expect(shown.stop!.detail).toContain("signed a payment for one step");
+    expect(shown.stop!.detail).toContain("if the chain shows it never did, nothing was charged");
+    expect(shown.amountNote).toContain("it was not charged and the real figure is lower");
+  });
+
+  it("marks the amount as not final after a rerouted step too, and keeps that stop's own words", () => {
+    const thinking = runThinking({ ...row, stopReason: "rerouted" })!;
+    const shown = runThinkingShown(thinking);
+    expect(shown.amount).toBe("up to $0.073");
+    expect(shown.amountNote).toBe(RUN_SPEND_NOT_FINAL_NOTE);
+    // The contract's sentence for it is already conditional, and is not replaced.
+    expect(shown.stop).toEqual({ kind: thinking.stop!.kind, title: thinking.stop!.title, detail: thinking.stop!.detail });
+    expect(shown.sentence).toBeNull();
+  });
+
+  it("has nothing in question when the run was charged nothing", () => {
+    const shown = runThinkingShown(runThinking({ ...row, inferenceSpendUsd: "0", stopReason: "paid_no_answer" })!);
+    expect(shown.amount).toBe("$0.00");
+    expect(shown.notFinal).toBe(false);
+  });
+
+  it("words every other stop exactly as the banner and the notification do", () => {
+    for (const reason of REASONS) {
+      if (reason === "paid_no_answer") continue;
+      const thinking = runThinking({ ...row, stopReason: reason })!;
+      const shown = runThinkingShown(thinking);
+      expect(shown.stop, reason).toEqual({ kind: INFERENCE_STOPS[reason], ...describeInferenceStop(reason, { model: "Gemini 2.5 Flash" }) });
+      expect(shown.sentence, reason).toBeNull();
+      expect(shown.notFinal, reason).toBe(reason === "rerouted");
+    }
   });
 });
