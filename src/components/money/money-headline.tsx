@@ -3,7 +3,7 @@ import { PnlText } from "@/components/common/pnl-text";
 import { formatSignedPct, formatSignedUsd, formatUsd } from "@/components/common/format";
 import { cn } from "@/lib/utils";
 import type { MoneySummary } from "@/server/queries/money";
-import { flowText } from "./day-tally";
+import { flowText, thinkingText } from "./day-tally";
 
 /**
  * The four numbers, headed by the one the page exists for.
@@ -50,11 +50,16 @@ function Well({
 
 export function MoneyHeadline({ summary }: { summary: MoneySummary }) {
   const { totals, today, stale } = summary;
+  // Only for an owner whose live agents have paid for their own thinking. Everyone else
+  // reads the same three costs, in the same words, as before.
+  const paysPerUse = totals.thinkingUsd > 0;
   const costParts = [
     `${formatUsd(totals.feesUsd)} Tocker fees`,
     `${formatUsd(totals.dataSpendUsd)} market data`,
     `${formatUsd(totals.modelSpendUsd)} model tokens (estimate)`,
+    ...(paysPerUse ? [`${formatUsd(totals.thinkingUsd)} thinking, paid per use`] : []),
   ];
+  const todayThinking = thinkingText(today.thinkingUsd);
 
   return (
     <section
@@ -79,8 +84,9 @@ export function MoneyHeadline({ summary }: { summary: MoneySummary }) {
         </p>
         <p className="mt-1 max-w-xl text-xs text-muted-foreground">
           All-time P&amp;L across {totals.agentCount} live agent{totals.agentCount === 1 ? "" : "s"}, minus every
-          Tocker fee, market-data payment and estimated model token. Paper agents are listed below but counted in nothing
-          here.
+          Tocker fee, market-data payment and estimated model token
+          {paysPerUse ? ", and what your agents paid for their own thinking" : ""}. Paper agents are listed below but
+          counted in nothing here.
         </p>
         {stale ? (
           <p className="mt-2 text-[11px] text-muted-foreground">
@@ -112,6 +118,12 @@ export function MoneyHeadline({ summary }: { summary: MoneySummary }) {
             ) : today.flowUsd !== 0 ? (
               <>
                 <span className="whitespace-nowrap">{flowText(today.flowUsd)}</span> ·{" "}
+                <span className="whitespace-nowrap">since 00:00 UTC</span>
+              </>
+            ) : todayThinking ? (
+              // Today's number leaves out what was paid for thinking; it is in Costs.
+              <>
+                <span className="whitespace-nowrap">{todayThinking}</span> ·{" "}
                 <span className="whitespace-nowrap">since 00:00 UTC</span>
               </>
             ) : today.pnlPct === null ? (
@@ -152,6 +164,7 @@ export function MoneyHeadline({ summary }: { summary: MoneySummary }) {
             <>
               {formatUsd(totals.feesUsd)} fees · {formatUsd(totals.dataSpendUsd)} data ·{" "}
               {formatUsd(totals.modelSpendUsd)} model
+              {paysPerUse ? <> · {formatUsd(totals.thinkingUsd)} thinking</> : null}
             </>
           }
         >

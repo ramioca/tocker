@@ -15,7 +15,8 @@ import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { USDC_MINT } from "@/lib/wallets/funding";
-import { USDC_TOKEN_NOT_A_WALLET } from "@/lib/wallet-address";
+import { THINKING_PROVIDER_NOT_A_WALLET, USDC_TOKEN_NOT_A_WALLET } from "@/lib/wallet-address";
+import { INFERENCE_GATEWAY } from "@/lib/x402/inference-types";
 import type { Session } from "@/server/types";
 
 const BONK = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
@@ -400,6 +401,43 @@ describe("secureWithdrawAction on Base", () => {
     // All ten of the owner's are still there.
     asOwner(agent.userId);
     for (let i = 0; i < 10; i += 1) expect((await withdraw(agent.agentId)).ok).toBe(true);
+  });
+});
+
+/**
+ * A transfer from an agent's wallet to the address pay-per-use thinking is paid to, with
+ * no row in the thinking ledger behind it, is treated as a fault: that agent is put on
+ * hold, and pay-per-use can be stopped for every agent until an admin has looked. These
+ * two actions are the only way an owner moves an agent's money
+ * (`withdraw-surface.test.ts`), so neither may send one there, or offer to.
+ */
+describe("the address pay-per-use thinking is paid to", () => {
+  const PAY_TO = INFERENCE_GATEWAY.solana.payTo[0];
+  const refused = { ok: false, error: THINKING_PROVIDER_NOT_A_WALLET };
+
+  it("is refused as a withdrawal's destination, for either asset and on either chain, before anything is signed", async () => {
+    const agent = await seedReadyAgent("live");
+    for (const chain of ["solana", "base"] as const) {
+      for (const asset of ["usdc", "native"] as const) {
+        expect(await secureWithdrawAction({ agentId: agent.agentId, chain, asset, amount: 1, toAddress: PAY_TO })).toEqual(refused);
+        expect(await secureWithdrawAction({ agentId: agent.agentId, chain, asset, amount: 1, toAddress: `  ${PAY_TO} ` })).toEqual(refused);
+      }
+    }
+    expect(sendWithdrawal).not.toHaveBeenCalled();
+    expect(planWithdrawal).not.toHaveBeenCalled();
+    expect(await auditSummaries(agent.agentId, "withdraw")).toHaveLength(0);
+    // And it cost none of the owner's withdrawals.
+    for (let i = 0; i < 10; i += 1) {
+      expect((await secureWithdrawAction({ agentId: agent.agentId, chain: "base", asset: "usdc", amount: 1, toAddress: BASE_DESTINATION })).ok).toBe(true);
+    }
+  });
+
+  it("is refused by the preview in the same sentence, without a look at the chain", async () => {
+    const agent = await seedReadyAgent("live");
+    for (const asset of ["usdc", "native"] as const) {
+      expect(await previewAgentWithdrawalAction({ agentId: agent.agentId, asset, amount: 1, toAddress: PAY_TO })).toEqual(refused);
+    }
+    expect(planWithdrawal).not.toHaveBeenCalled();
   });
 });
 

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AGENT_CONFIG as C } from "@/lib/agent/config";
 import { DEFAULT_PLATFORM_FEE_USD } from "@/lib/platform/fee";
-import { DEFAULT_ROWS, LANDING_DEFAULTS, MODE_WORDS, feeSentence } from "./defaults";
+import { inferenceFlags } from "@/lib/x402/inference-types";
+import { DEFAULT_ROWS, LANDING_DEFAULTS, MODE_WORDS, feeSentence, thinkingAnswers } from "./defaults";
 
 /** The Guardrails card quotes a new agent's defaults; the agent config is the truth. */
 describe("the landing's defaults card", () => {
@@ -56,5 +57,45 @@ describe("the landing's fee sentence", () => {
 
   it("says nothing about a fee when there is none", () => {
     expect(feeSentence(0)).toBe("");
+  });
+});
+
+/**
+ * Whether an agent needs an API key depends on a switch that ships off. While it is
+ * anything but fully on, the page says what it has always said, to the letter.
+ */
+describe("the landing's answers about where an agent thinks", () => {
+  const KEY_MODEL =
+    "The one you choose, on your own key: Anthropic, OpenAI or OpenRouter. Keys are encrypted at rest and decrypted only on our servers, to run your agent and to list the models your key can use. Your provider bills you for the model directly.";
+  const KEY_START =
+    "An email address and an API key for the model your agent runs on (Anthropic, OpenAI or OpenRouter). Every agent starts on paper, so there is nothing to deposit until you decide to go live.";
+
+  it("are unchanged while pay-per-use is not open to everyone", () => {
+    expect(thinkingAnswers(false)).toEqual({ model: KEY_MODEL, start: KEY_START });
+    const said = JSON.stringify(thinkingAnswers(false));
+    expect(said).not.toMatch(/pay per use|BlockRun|USDC/i);
+  });
+
+  it("stay unchanged with the switch unset, off, mistyped, or open to invited accounts only", () => {
+    for (const value of [undefined, "", "off", "owner", "ON ", "yes", "1"]) {
+      const open = inferenceFlags({ INFERENCE_USDC: value }).stage === "on";
+      // "ON " is trimmed and lower-cased by the switch itself, and is the one that opens.
+      expect(open).toBe(value === "ON ");
+      if (!open) expect(thinkingAnswers(open)).toEqual({ model: KEY_MODEL, start: KEY_START });
+    }
+  });
+
+  it("once it is open to everyone, keep the key first and say what pay per use sends out", () => {
+    const { model, start } = thinkingAnswers(true);
+    // Everything the key answer said is still said, first.
+    expect(model.startsWith(KEY_MODEL)).toBe(true);
+    expect(model).toContain("pay per use");
+    expect(model).toContain("strategy and transcript are sent to BlockRun and the model provider it uses");
+    // A key is no longer needed to start, so the old sentence would be false.
+    expect(start).not.toBe(KEY_START);
+    expect(start).toContain("which is what we recommend");
+    expect(start).toContain("pay per use");
+    // And a deposit is: the old "nothing to deposit" is narrowed to trading.
+    expect(start).toContain("nothing to deposit for trading");
   });
 });

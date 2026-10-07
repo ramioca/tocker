@@ -5,6 +5,7 @@ import type { LlmKeyRow, NotificationRow, Page, UserProfile } from "@/server/typ
 import { buildAgentCards, decodeCursor, encodeCursor, isFollowing, pageSize } from "./_shared";
 import { redactSecrets } from "@/lib/security/redact";
 import { visibleRationale } from "./visibility";
+import { missingKeySql } from "@/lib/agent/inference-gate";
 import { isLlmMock } from "@/lib/agent/mock-model";
 import { mutedKinds, sanitizePrefs, type NotificationPrefs } from "@/lib/notifications/prefs";
 
@@ -135,7 +136,8 @@ export async function countKeylessAgents(userId: string): Promise<number> {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(agents)
-    .where(and(eq(agents.ownerId, userId), isNull(agents.llmKeyId)));
+    // A key agent with no key. An agent that pays per use has none and needs none.
+    .where(and(eq(agents.ownerId, userId), missingKeySql()));
   return Number(row?.n ?? 0);
 }
 

@@ -5,6 +5,7 @@ import { OnboardingGate } from "@/components/onboarding/onboarding-gate";
 import { commandIndex, myAgents, unreadNotifications, viewerSession } from "@/components/common/data-access";
 import { withMock } from "@/lib/data";
 import { getKillSwitch, type KillSwitchState } from "@/lib/security/kill-switch";
+import { payPerUseAllowedFor } from "@/server/queries/agents";
 
 const TRADING_RUNS: KillSwitchState = { paused: false, pausedAt: null };
 
@@ -40,7 +41,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   // is lit. The route's error boundary cannot catch this layout's own errors, so a throw
   // here would replace every page, top bar and tab bar included, with the root error
   // screen. Each read degrades to its empty answer instead, as the kill switch does.
-  const [unreadCount, index, mine, killSwitch] = await Promise.all([
+  const [unreadCount, index, mine, killSwitch, payPerUseAllowed] = await Promise.all([
     unreadNotifications(userId).catch((error: unknown) => {
       console.error("[app-layout] unread count failed", error);
       return 0;
@@ -56,6 +57,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       return [];
     }),
     killSwitchFor(userId),
+    // For onboarding's wording only. It never throws, and answers "no" when in doubt.
+    payPerUseAllowedFor(session),
   ]);
 
   // The client providers (auth, the query cache, run status, tooltips) come from the
@@ -73,7 +76,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       >
         {children}
         {/* First-run only, so the modal's code loads behind a gate rather than on every page. */}
-        <OnboardingGate ownedAgentCount={mine.length} />
+        <OnboardingGate ownedAgentCount={mine.length} payPerUseAllowed={payPerUseAllowed} />
       </AppShell>
     </>
   );

@@ -7,6 +7,13 @@ import "server-only";
  * cost. So everything here is arranged around one arithmetic:
  *
  *     net = (realised + unrealised PnL) − platform fees − x402 data − model tokens
+ *           − thinking paid per use
+ *
+ * The last term is only ever non-zero for an owner whose agents pay for their own
+ * thinking (`config.llm.source === "usdc"`). It is exact, read from the ledger, and it
+ * is subtracted here once and nowhere else: a live book's P&L already has those payments
+ * taken out as a money flow (`loadMoneyFlows`), the way a withdrawal is, so they are not
+ * also a trading loss. See {@link ThinkingSummary}.
  *
  * Three rules shape the file:
  *
@@ -19,12 +26,14 @@ import "server-only";
  *   agent — which degrades to the last equity snapshot rather than throwing (see
  *   `liveBook`). A money page that 500s because Privy is having an afternoon is worse
  *   than a money page that is five minutes stale and says so.
- * - **Model spend is an estimate and is labelled one.** See {@link MODEL_PRICES}.
+ * - **Model spend is an estimate and is labelled one.** See {@link MODEL_PRICES}. It
+ *   covers the runs that thought on the owner's own key. A run that paid per use is not
+ *   estimated: what it paid is on the ledger to the micro-dollar.
  *
- * The pure parts — {@link pnlByDay}, {@link combineEquity}, {@link estimateModelSpendUsd}
- * — take plain values and are tested in `money.test.ts`.
+ * The pure parts — {@link pnlByDay}, {@link combineEquity}, {@link estimateModelSpendUsd},
+ * {@link ownKeyComparison} — take plain values and are tested in `money.test.ts`.
  */
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import {
   agentFundingIntents,
   agentRuns,
@@ -32,17 +41,31 @@ import {
   auditEvents,
   equitySnapshots,
   getDb,
+  inferencePayments,
   platformFees,
   positions,
   trades,
   x402Payments,
 } from "@/db";
+import { thinkSource, thinkingModel } from "@/lib/agent/inference";
 import { DEFAULT_MODELS, knownModel } from "@/lib/agent/models";
 import { getPortfolio } from "@/lib/agent/portfolio";
 import { splitPnl, toNum } from "@/lib/money";
 import { winRate } from "@/lib/pnl";
+import { GIVE_UP_AFTER_MS, LATE_LOOK_MS } from "@/lib/x402/inference-reconcile";
+import { payPerUseModel, type ThinkSource } from "@/lib/x402/inference-types";
 import type { AgentMode, AgentStatus, EquityPoint } from "@/server/types";
-import { fillFeeUsd, loadBookMarks, snapshotInCurrentMode, withdrawnUsdc } from "./_shared";
+import {
+  fillFeeUsd,
+  loadBookMarks,
+  loadMoneyFlows,
+  snapshotInCurrentMode,
+  thinkingAnsweredUnprovenSql,
+  thinkingPaidAtSql,
+  thinkingPaidUsdSql,
+  thinkingProvenSql,
+  withdrawnUsdc,
+} from "./_shared";
 
 export { withdrawnUsdc };
 
@@ -110,6 +133,179 @@ export function estimateModelSpendUsd(
   return input * price.inputPerMTok + output * price.outputPerMTok;
 }
 
+// ---------------------------------------------------------------- pay-per-use thinking
+
+/**
+ * The list price a model's tokens are billed at on an owner's own key.
+ *
+ * The catalogue above first. A pay-per-use model the catalogue does not list (the
+ * builder offers no direct Google key, so the Gemini rows are not in it) is priced at
+ * the per-token list rate the pay-per-use table carries for it, which is the model
+ * maker's own published price and what an OpenRouter key is billed. Anything else is
+ * unknown, and `null`.
+ */
+export function ownKeyPrice(model: string | null | undefined): ModelPrice | null {
+  const listed = resolveModelPrice(model);
+  if (listed) return listed;
+  const offered = payPerUseModel(model);
+  return offered ? { label: offered.label, inputPerMTok: offered.inputPerMTok, outputPerMTok: offered.outputPerMTok } : null;
+}
+
+/** The answered pay-per-use steps on one model whose token counts the gateway reported. */
+export interface ThinkingTokens {
+  model: string;
+  steps: number;
+  /** What those steps cost, paid per use. USD. */
+  paidUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * What the tokens of the answered pay-per-use steps would have cost at list price on the
+ * owner's own key, next to what those same steps cost paid per use.
+ *
+ * Both figures cover the same steps: only steps whose token counts were reported, on a
+ * model that has a list price. A step that was paid for and never answered has no tokens
+ * to price, and is in neither. `unpricedSteps` says how many answered steps were left
+ * out for want of a price, so the comparison never quietly covers less than it seems to.
+ */
+export interface OwnKeyComparison {
+  /** Tokens × list price, USD. An estimate: a key is billed on real usage, cached input for less. */
+  ownKeyUsd: number;
+  /** What the same steps cost paid per use. Exact. */
+  paidUsd: number;
+  steps: number;
+  inputTokens: number;
+  outputTokens: number;
+  unpricedSteps: number;
+}
+
+/** Null when there is nothing to compare: no answered step reported its tokens on a priced model. */
+export function ownKeyComparison(groups: readonly ThinkingTokens[]): OwnKeyComparison | null {
+  const out: OwnKeyComparison = { ownKeyUsd: 0, paidUsd: 0, steps: 0, inputTokens: 0, outputTokens: 0, unpricedSteps: 0 };
+  for (const group of groups) {
+    const steps = Math.max(0, Math.floor(group.steps));
+    if (steps === 0) continue;
+    const price = ownKeyPrice(group.model);
+    if (!price) {
+      out.unpricedSteps += steps;
+      continue;
+    }
+    const inputTokens = Math.max(0, group.inputTokens);
+    const outputTokens = Math.max(0, group.outputTokens);
+    out.ownKeyUsd += (inputTokens / 1_000_000) * price.inputPerMTok + (outputTokens / 1_000_000) * price.outputPerMTok;
+    out.paidUsd += Math.max(0, group.paidUsd);
+    out.steps += steps;
+    out.inputTokens += inputTokens;
+    out.outputTokens += outputTokens;
+  }
+  return out.steps === 0 ? null : out;
+}
+
+/** One step that came back with no answer: paid for, or signed for and not yet (or never) checked. */
+export interface ThinkingStepRow {
+  id: string;
+  /** Null when the agent has since been deleted: the ledger outlives it. */
+  agentName: string | null;
+  agentSlug: string | null;
+  model: string;
+  usd: number;
+  /**
+   * `unanswered`: paid, confirmed, and no answer came. `checking`: signed, the request
+   * failed, and the chain has not yet said whether the money moved. `unchecked`: the
+   * same, and older than the reconciler checks on every pass: no verdict was reached in
+   * time, nobody knows whether it moved, and nothing on the page may say that it did or
+   * that it is being checked.
+   */
+  state: "unanswered" | "checking" | "unchecked";
+  /** When the payment was signed, ISO. */
+  at: string;
+  /** The provider's HTTP status, when it answered at all. Never its text. */
+  httpStatus: number | null;
+  /** The payment on chain, when the gateway or the reconciler named it. */
+  txHash: string | null;
+}
+
+/**
+ * What an owner's agents have paid for their own thinking, from the ledger
+ * (`inference_payments`). Present on a {@link MoneySummary} only when this account has
+ * any such row, so an owner who never used pay-per-use sees nothing about it.
+ *
+ * `paidUsd` is the whole account: live agents, paper agents (a paper agent trades a
+ * notional and still pays for thinking in real USDC from its real wallet) and agents
+ * since deleted. Only the live part is in the page's totals, like every other total on
+ * it.
+ */
+export interface ThinkingSummary {
+  /** Proven to have left the wallet (`thinkingProvenSql`), at the settled amount. USD. */
+  paidUsd: number;
+  steps: number;
+  /** `paidUsd` by who paid it. The three add up to it. */
+  liveUsd: number;
+  paperUsd: number;
+  formerAgentsUsd: number;
+  /** The part of `paidUsd` that bought no answer, and how many steps that was. */
+  unansweredUsd: number;
+  unansweredSteps: number;
+  /**
+   * Counted as charged, and being checked against the chain. Not in `paidUsd`, and not
+   * taken out of any P&L, until the chain shows it. Two kinds of step are in it: one
+   * whose request failed after it was signed, and one that was answered and whose
+   * payment the gateway gave no transaction for (`checkingAnswered…`, a part of the
+   * other two figures).
+   */
+  checkingUsd: number;
+  checkingSteps: number;
+  checkingAnsweredUsd: number;
+  checkingAnsweredSteps: number;
+  /**
+   * The same two kinds, older than the reconciler checks on every pass
+   * (`GIVE_UP_AFTER_MS`): no verdict could be reached in time. Such a row is looked at
+   * again only now and then, for {@link THINKING_LATE_LOOK_DAYS} days, and then not at
+   * all. Still counted as charged against the limits, in no total, and out of no P&L.
+   * Not in `checkingUsd`.
+   */
+  uncheckedUsd: number;
+  uncheckedSteps: number;
+  uncheckedAnsweredUsd: number;
+  uncheckedAnsweredSteps: number;
+  /** Mock mode: priced, and no money moved. Not in `paidUsd`. */
+  simulatedUsd: number;
+  /**
+   * The steps that got no answer (paid, being checked, or never checked), newest first,
+   * at most {@link THINKING_STEPS_SHOWN}. An answered step is never in this list.
+   */
+  unanswered: ThinkingStepRow[];
+  /** Null when no answered step reported its tokens on a model with a list price. */
+  ownKey: OwnKeyComparison | null;
+}
+
+/** How many unanswered steps the page lists. The totals beside the list count all of them. */
+export const THINKING_STEPS_SHOWN = 25;
+
+/**
+ * A `signed` row younger than this still has its paid request in flight (that request
+ * has a 60-second clock of its own). Past it, the step is one the reconciler is working
+ * out, and the page says so rather than showing nothing.
+ */
+const THINKING_IN_FLIGHT_MS = 2 * 60_000;
+
+/**
+ * How long a payment stays "being checked". The reconciler asks the chain about a row on
+ * every pass for this long after it was written. Past it the row is closed, still counted
+ * as charged, and only looked at again now and then, so the page must not go on saying it
+ * is being checked. The reconciler's own figure, read from where it is defined, so the two
+ * cannot drift.
+ */
+export const THINKING_CHECKED_FOR_MS = GIVE_UP_AFTER_MS;
+
+/**
+ * For how many days after it was written the reconciler still looks at such a row now
+ * and then. After that nothing does. Also the reconciler's own figure.
+ */
+export const THINKING_LATE_LOOK_DAYS = Math.round(LATE_LOOK_MS / 86_400_000);
+
 // ---------------------------------------------------------------- pure aggregation
 
 const DAY_MS = 86_400_000;
@@ -133,6 +329,8 @@ export interface FlowPoint {
   agentId: string;
   at: number | Date | string;
   amountUsd: number;
+  /** What an agent paid for its own thinking. Taken out of the day like any flow, and named apart. */
+  kind?: "thinking";
 }
 
 export interface PnlDay {
@@ -152,6 +350,12 @@ export interface PnlDay {
    * the day's equity step was partly not trading.
    */
   flowUsd: number;
+  /**
+   * What the agents paid for their own thinking that day (pay-per-use only), as a
+   * positive amount. Already taken out of `pnlUsd`, and kept apart from `flowUsd`: it
+   * is a running cost, small and frequent, not the owner moving money.
+   */
+  thinkingUsd: number;
   /** How many agents had a book that day. Explains a step in the curve. */
   agents: number;
 }
@@ -191,6 +395,9 @@ function startOfUtcDayMs(ms: number): number {
  *    summed close less the day's net flow, and its percentage is measured against the
  *    prior close plus what came in. `flowUsd` on the row says a step was partly money
  *    moving, so the UI can say so instead of colouring it.
+ *  - **Thinking is a cost, not a loss.** A flow of kind `thinking` is what an agent paid
+ *    for its own model steps. It left the wallet, so it is taken out of the day's P&L
+ *    like a withdrawal, but it is reported as `thinkingUsd`, not in `flowUsd`.
  *
  * A flow at or before an agent's first point (within `resolutionMs` of it, since a point
  * may stand for a bucket of marks) is already inside that opening book and is not counted
@@ -229,13 +436,18 @@ export function pnlByDay(
 
   if (byAgent.size === 0) return [];
 
-  // dayKey → { net, inflow }. The opening book counts on the day an agent first appears.
-  const flowByDay = new Map<string, { net: number; inflow: number }>();
+  // dayKey → { net, inflow, thinking }. The opening book counts on the day an agent first
+  // appears. `thinking` is what was paid for thinking, positive, and is not in `net`.
+  const flowByDay = new Map<string, { net: number; inflow: number; thinking: number }>();
+  const dayOf = (key: string) => {
+    const day = flowByDay.get(key) ?? { net: 0, inflow: 0, thinking: 0 };
+    flowByDay.set(key, day);
+    return day;
+  };
   const addFlow = (key: string, amountUsd: number) => {
-    const day = flowByDay.get(key) ?? { net: 0, inflow: 0 };
+    const day = dayOf(key);
     day.net += amountUsd;
     if (amountUsd > 0) day.inflow += amountUsd;
-    flowByDay.set(key, day);
   };
   for (const open of opening.values()) addFlow(utcDayKey(open.at), open.equityUsd);
   for (const flow of opts.flows ?? []) {
@@ -243,6 +455,11 @@ export function pnlByDay(
     const open = opening.get(flow.agentId);
     if (!open || !Number.isFinite(ms) || !Number.isFinite(flow.amountUsd) || flow.amountUsd === 0) continue;
     if (ms < open.at + resolutionMs) continue; // inside the opening book already
+    if (flow.kind === "thinking") {
+      // Only ever money out. A positive "payment" is not one, and is not netted.
+      if (flow.amountUsd < 0) dayOf(utcDayKey(ms)).thinking += -flow.amountUsd;
+      continue;
+    }
     addFlow(utcDayKey(ms), flow.amountUsd);
   }
 
@@ -267,8 +484,10 @@ export function pnlByDay(
       total += value;
       contributing += 1;
     }
-    const flow = flowByDay.get(key) ?? { net: 0, inflow: 0 };
-    const pnlUsd = previous === null ? null : total - previous - flow.net;
+    const flow = flowByDay.get(key) ?? { net: 0, inflow: 0, thinking: 0 };
+    // What was paid for thinking left the wallet without being lost on a trade, so it is
+    // added back: the close fell by it, and the day's trading did not.
+    const pnlUsd = previous === null ? null : total - previous - flow.net + flow.thinking;
     const base = previous === null ? 0 : previous + flow.inflow;
     rows.push({
       day: key,
@@ -276,6 +495,7 @@ export function pnlByDay(
       pnlUsd,
       pnlPct: pnlUsd === null || base === 0 ? null : (pnlUsd / Math.abs(base)) * 100,
       flowUsd: previous === null ? 0 : flow.net,
+      thinkingUsd: previous === null ? 0 : flow.thinking,
       agents: contributing,
     });
     previous = total;
@@ -356,10 +576,35 @@ export interface MoneyAgentRow {
   dataSpendUsd: number;
   /** The part of `dataSpendUsd` that was mock-mode and moved no money. */
   dataSpendSimulatedUsd: number;
-  /** Estimate — see {@link MODEL_PRICES}. Null when the model has no published price. */
+  /**
+   * Estimate — see {@link MODEL_PRICES}. Null when the model has no published price.
+   * The runs that thought on the owner's own key only: a run that paid per use is in
+   * `thinkingUsd`, exactly, and is never also estimated here.
+   */
   modelSpendUsd: number | null;
+  /** Tokens of the runs behind `modelSpendUsd`. */
   inputTokens: number;
   outputTokens: number;
+  /** Where this agent's thinking comes from today. */
+  thinkSource: ThinkSource;
+  /** The model a pay-per-use agent thinks on. Null for an agent on its owner's key. */
+  thinkingModel: string | null;
+  /**
+   * What this agent has paid for its own thinking: proven on chain (`thinkingProvenSql`),
+   * at the settled amount. Real USDC from its own wallet, whatever its mode. Zero for an
+   * agent that never paid per use.
+   */
+  thinkingUsd: number;
+  /** Paid steps behind `thinkingUsd`. */
+  thinkingSteps: number;
+  /** The part of `thinkingUsd` that bought no answer. */
+  thinkingUnansweredUsd: number;
+  /** Counted as charged and being checked against the chain. Not in `thinkingUsd`. */
+  thinkingCheckingUsd: number;
+  /** Open longer than the reconciler looks: could not be checked. Not in `thinkingUsd`. */
+  thinkingUncheckedUsd: number;
+  /** Mock mode: priced, and no money moved. Not in `thinkingUsd`. */
+  thinkingSimulatedUsd: number;
   runCount: number;
   tradeCount: number;
   /** Closed sells that made money, over closed sells. Null until something closes. */
@@ -380,6 +625,8 @@ export interface MoneyTotals {
   dataSpendUsd: number;
   /** Sum of the agents that have a price. `pricedAgents` says how many that was. */
   modelSpendUsd: number;
+  /** What the live agents paid for their own thinking. Exact. Zero without pay-per-use. */
+  thinkingUsd: number;
   costsUsd: number;
   /** pnl − costs. The number the page exists for. */
   netUsd: number;
@@ -406,9 +653,11 @@ export interface MoneySummary {
    * withdrawals; `flowUsd` is what moved that day, so the headline can say a step was
    * partly money in or out.
    */
-  today: { pnlUsd: number | null; pnlPct: number | null; flowUsd: number };
+  today: { pnlUsd: number | null; pnlPct: number | null; flowUsd: number; thinkingUsd: number };
   /** True when any live agent's wallet read failed — the page has to say so. */
   stale: boolean;
+  /** Pay-per-use thinking, for the whole account. Null when it has never paid for a step. */
+  thinking: ThinkingSummary | null;
 }
 
 const EMPTY_TOTALS: MoneyTotals = {
@@ -421,6 +670,7 @@ const EMPTY_TOTALS: MoneyTotals = {
   feesUsd: 0,
   dataSpendUsd: 0,
   modelSpendUsd: 0,
+  thinkingUsd: 0,
   costsUsd: 0,
   netUsd: 0,
   tradeCount: 0,
@@ -437,8 +687,9 @@ export const EMPTY_MONEY: MoneySummary = {
   equity: [],
   basisUsd: 0,
   days: [],
-  today: { pnlUsd: null, pnlPct: null, flowUsd: 0 },
+  today: { pnlUsd: null, pnlPct: null, flowUsd: 0, thinkingUsd: 0 },
   stale: false,
+  thinking: null,
 };
 
 // ---------------------------------------------------------------- the read
@@ -504,6 +755,124 @@ async function liveBook(
   }
 }
 
+/** A Solana transaction id as an explorer expects it. Anything else is not linked. */
+const SOLANA_SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
+
+type MoneyDb = Awaited<ReturnType<typeof getDb>>;
+
+/**
+ * The owner's side of the pay-per-use ledger, in three grouped reads: what each agent
+ * paid, the tokens the answered steps used per model, and the steps that got no answer.
+ *
+ * Scoped by `owner_id`, the column the ledger writes from the run's own owner, and never
+ * by anything the request carries. The ledger keeps no prompt and no answer (only a hash
+ * of the request), so nothing here can show one. The provider's own words for a failure
+ * (`detail`) are not selected either: an owner is told the status and shown the
+ * transaction, never a sentence a third party wrote.
+ */
+async function loadThinking(db: MoneyDb, userId: string, now: Date) {
+  const amount = thinkingPaidUsdSql();
+  const signedAt = thinkingPaidAtSql();
+  // The one condition both the Thinking total and the P&L flow are made from.
+  const proven = thinkingProvenSql();
+  const answeredUnproven = thinkingAnsweredUnprovenSql();
+  const staleBefore = new Date(now.getTime() - THINKING_IN_FLIGHT_MS).toISOString();
+  const gaveUpBefore = new Date(now.getTime() - THINKING_CHECKED_FOR_MS).toISOString();
+  // Signed for a request that then failed: `unconfirmed`, or `signed` for longer than a
+  // request can still be in flight. Whether the money moved is not known.
+  const failedUnproven = sql`(${inferencePayments.status} = 'unconfirmed' or (${inferencePayments.status} = 'signed' and ${signedAt} < ${staleBefore}::timestamptz))`;
+  // Counted as charged and not proven: the failed ones, and the answered ones the
+  // gateway gave no transaction for.
+  const unproven = sql`(${failedUnproven} or ${answeredUnproven})`;
+  // The reconciler asks the chain about a row on every pass for a fixed time after it
+  // was written, measured the way it measures (`created_at`). Inside that time the row is
+  // being checked; past it no verdict was reached in time, and the page says that instead.
+  const gaveUp = sql`(${inferencePayments.createdAt} < ${gaveUpBefore}::timestamptz)`;
+  const checking = sql`(${unproven} and not ${gaveUp})`;
+  const unchecked = sql`(${unproven} and ${gaveUp})`;
+
+  const [byAgent, tokens, unanswered] = await Promise.all([
+    db
+      .select({
+        agentId: inferencePayments.agentId,
+        paidUsd: sql<string>`coalesce(sum(${amount}) filter (where ${proven}), 0)`,
+        paidSteps: sql<number>`(count(*) filter (where ${proven}))::int`,
+        unansweredUsd: sql<string>`coalesce(sum(${amount}) filter (where ${inferencePayments.status} = 'paid_no_answer'), 0)`,
+        unansweredSteps: sql<number>`(count(*) filter (where ${inferencePayments.status} = 'paid_no_answer'))::int`,
+        checkingUsd: sql<string>`coalesce(sum(${amount}) filter (where ${checking}), 0)`,
+        checkingSteps: sql<number>`(count(*) filter (where ${checking}))::int`,
+        checkingAnsweredUsd: sql<string>`coalesce(sum(${amount}) filter (where ${checking} and ${answeredUnproven}), 0)`,
+        checkingAnsweredSteps: sql<number>`(count(*) filter (where ${checking} and ${answeredUnproven}))::int`,
+        uncheckedUsd: sql<string>`coalesce(sum(${amount}) filter (where ${unchecked}), 0)`,
+        uncheckedSteps: sql<number>`(count(*) filter (where ${unchecked}))::int`,
+        uncheckedAnsweredUsd: sql<string>`coalesce(sum(${amount}) filter (where ${unchecked} and ${answeredUnproven}), 0)`,
+        uncheckedAnsweredSteps: sql<number>`(count(*) filter (where ${unchecked} and ${answeredUnproven}))::int`,
+        simulatedUsd: sql<string>`coalesce(sum(${amount}) filter (where ${inferencePayments.status} = 'simulated'), 0)`,
+        simulatedSteps: sql<number>`(count(*) filter (where ${inferencePayments.status} = 'simulated'))::int`,
+      })
+      .from(inferencePayments)
+      .where(
+        and(
+          eq(inferencePayments.ownerId, userId),
+          // Reserved, released and not-charged rows moved no money and are nobody's cost:
+          // a step the reconciler proved was never charged is in no figure on this page.
+          inArray(inferencePayments.status, ["settled", "paid_no_answer", "signed", "unconfirmed", "simulated"]),
+        ),
+      )
+      .groupBy(inferencePayments.agentId),
+
+    // Only answered steps that reported their tokens: those are the ones a key would
+    // have been billed for, and the only ones there is anything to price. And only the
+    // proven ones, so "what the same steps cost paid per use" is money known to have
+    // been paid, like every other paid figure here.
+    db
+      .select({
+        model: inferencePayments.model,
+        steps: sql<number>`count(*)::int`,
+        paidUsd: sql<string>`coalesce(sum(${amount}), 0)`,
+        inputTokens: sql<string>`coalesce(sum(${inferencePayments.inputTokens}), 0)`,
+        outputTokens: sql<string>`coalesce(sum(${inferencePayments.outputTokens}), 0)`,
+      })
+      .from(inferencePayments)
+      .where(
+        and(
+          eq(inferencePayments.ownerId, userId),
+          eq(inferencePayments.status, "settled"),
+          proven,
+          sql`${inferencePayments.inputTokens} is not null`,
+          sql`${inferencePayments.outputTokens} is not null`,
+        ),
+      )
+      .groupBy(inferencePayments.model),
+
+    db
+      .select({
+        id: inferencePayments.id,
+        status: inferencePayments.status,
+        gaveUp: sql<boolean>`${gaveUp}`,
+        model: inferencePayments.model,
+        usd: sql<string>`${amount}`,
+        // Epoch seconds, for the reason given at the funding read below.
+        at: sql<number | string>`extract(epoch from ${signedAt})::float8`,
+        httpStatus: inferencePayments.httpStatus,
+        txHash: inferencePayments.txHash,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+      })
+      .from(inferencePayments)
+      // Onto the viewer's own agents only. A deleted agent's rows keep their place in the
+      // list and simply lose the name.
+      .leftJoin(agents, and(eq(agents.id, inferencePayments.agentId), eq(agents.ownerId, userId)))
+      // The steps that got no answer. An answered step whose payment is still being
+      // confirmed is counted above and is not one of these.
+      .where(and(eq(inferencePayments.ownerId, userId), sql`(${inferencePayments.status} = 'paid_no_answer' or ${failedUnproven})`))
+      .orderBy(desc(signedAt), desc(inferencePayments.id))
+      .limit(THINKING_STEPS_SHOWN),
+  ]);
+
+  return { byAgent, tokens, unanswered };
+}
+
 /**
  * Everything `/money` renders, in one call.
  *
@@ -515,7 +884,14 @@ async function liveBook(
 export async function getMoney(userId: string): Promise<MoneySummary> {
   const db = await getDb();
   const rows = await db.select().from(agents).where(eq(agents.ownerId, userId));
-  if (rows.length === 0) return EMPTY_MONEY;
+  if (rows.length === 0) {
+    // No agent is not the same as no record. The ledger outlives an agent, so an owner
+    // who deleted their only one is still shown what it paid, and the steps it paid for
+    // and got no answer to. An owner who never paid for a step gets the very same empty
+    // summary as before.
+    const thinking = summarizeThinking(await loadThinking(db, userId, new Date()), { live: new Set(), paper: new Set() });
+    return thinking ? { ...EMPTY_MONEY, thinking } : EMPTY_MONEY;
+  }
 
   const ids = rows.map((r) => r.id);
   const since = new Date(startOfUtcDayMs(Date.now()) - (SNAPSHOT_WINDOW_DAYS - 1) * DAY_MS);
@@ -524,6 +900,12 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
   // bound use becomes its own `$n`, so Postgres would see two different expressions and
   // refuse the query. `bucketSeconds` is a server constant, never user input.
   const bucketExpr = sql<string>`floor(extract(epoch from ${equitySnapshots.at}) / ${sql.raw(String(bucketSeconds))})`;
+
+  // Every live agent's deposits, withdrawals and thinking payments, read once: the
+  // all-time basis below and the daily table both take what was paid for thinking from
+  // this one list, so the two can never disagree about it.
+  const liveAgentIds = rows.filter((r) => r.mode === "live").map((r) => r.id);
+  const flowsLoading = loadMoneyFlows(db, liveAgentIds);
 
   const [
     snapshotRows,
@@ -536,6 +918,8 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     depositRows,
     withdrawRows,
     bookMarks,
+    liveFlows,
+    thinking,
   ] = await Promise.all([
     // One row per agent per 15 minutes: the last snapshot in the bucket. The bucket
     // index alone carries the timestamp (900s divides a day exactly, so a bucket never
@@ -586,8 +970,11 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
       .select({
         agentId: agentRuns.agentId,
         runs: sql<number>`count(*)::int`,
-        inputTokens: sql<string>`coalesce(sum(${agentRuns.inputTokens}), 0)`,
-        outputTokens: sql<string>`coalesce(sum(${agentRuns.outputTokens}), 0)`,
+        // The runs that thought on the owner's own key: every run but a pay-per-use one.
+        // Rows from before the column existed have no source and were all key runs. A
+        // pay-per-use run is not estimated at all: what it paid is on the ledger.
+        inputTokens: sql<string>`coalesce(sum(${agentRuns.inputTokens}) filter (where ${agentRuns.llmSource} is distinct from 'usdc'), 0)`,
+        outputTokens: sql<string>`coalesce(sum(${agentRuns.outputTokens}) filter (where ${agentRuns.llmSource} is distinct from 'usdc'), 0)`,
       })
       .from(agentRuns)
       .where(inArray(agentRuns.agentId, ids))
@@ -657,10 +1044,9 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     // A live book's basis is its first live mark plus what was deposited since, less what
     // was withdrawn: the one the agent card and agent page measure all-time P&L against.
     // Outside the window on purpose.
-    loadBookMarks(
-      db,
-      rows.filter((r) => r.mode === "live").map((r) => r.id),
-    ),
+    loadBookMarks(db, liveAgentIds, flowsLoading),
+    flowsLoading,
+    loadThinking(db, userId, new Date()),
   ]);
 
   // ---- snapshots -----------------------------------------------------------
@@ -726,6 +1112,21 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
   );
   const funding = new Map(
     fundingRows.map((r) => [r.agentId, { firstAt: r.firstAt, usdc: toNum(r.usdc) }]),
+  );
+
+  const thinkingByAgent = new Map(
+    thinking.byAgent.map((r) => [
+      r.agentId ?? "",
+      {
+        paidUsd: toNum(r.paidUsd),
+        paidSteps: Number(r.paidSteps ?? 0),
+        unansweredUsd: toNum(r.unansweredUsd),
+        unansweredSteps: Number(r.unansweredSteps ?? 0),
+        checkingUsd: toNum(r.checkingUsd),
+        uncheckedUsd: toNum(r.uncheckedUsd),
+        simulatedUsd: toNum(r.simulatedUsd),
+      },
+    ]),
   );
 
   const tradesByAgent = new Map<string, typeof tradeRows>();
@@ -798,6 +1199,11 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     const fund = funding.get(row.id);
     const fundedAtMs = fund && fund.firstAt !== null ? Number(fund.firstAt) * 1000 : Number.NaN;
     const model = row.config?.llm?.model ?? "";
+    const source = thinkSource(row.config);
+    const paidForThinking = thinkingByAgent.get(row.id);
+    // A pay-per-use agent that never ran on a key has no tokens to estimate: that is a
+    // zero, not "no price", whatever key model its config still names.
+    const nothingOnAKey = source === "usdc" && run.inputTokens === 0 && run.outputTokens === 0;
     const agentTrades = tradesByAgent.get(row.id) ?? [];
     const wr = winRate(
       agentTrades.map((t) => ({
@@ -829,9 +1235,17 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
       feesAccruedUsd: fee.accrued,
       dataSpendUsd: spend.total,
       dataSpendSimulatedUsd: spend.simulated,
-      modelSpendUsd: estimateModelSpendUsd(model, run),
+      modelSpendUsd: nothingOnAKey ? 0 : estimateModelSpendUsd(model, run),
       inputTokens: run.inputTokens,
       outputTokens: run.outputTokens,
+      thinkSource: source,
+      thinkingModel: source === "usdc" && row.config?.llm ? thinkingModel({ llm: row.config.llm }) : null,
+      thinkingUsd: paidForThinking?.paidUsd ?? 0,
+      thinkingSteps: paidForThinking?.paidSteps ?? 0,
+      thinkingUnansweredUsd: paidForThinking?.unansweredUsd ?? 0,
+      thinkingCheckingUsd: paidForThinking?.checkingUsd ?? 0,
+      thinkingUncheckedUsd: paidForThinking?.uncheckedUsd ?? 0,
+      thinkingSimulatedUsd: paidForThinking?.simulatedUsd ?? 0,
       runCount: run.runs,
       tradeCount: agentTrades.length,
       winRate: wr.rate,
@@ -855,6 +1269,7 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     totals.unrealizedPnlUsd += agent.unrealizedPnlUsd;
     totals.feesUsd += agent.feesUsd;
     totals.dataSpendUsd += agent.dataSpendUsd;
+    totals.thinkingUsd += agent.thinkingUsd;
     totals.tradeCount += agent.tradeCount;
     if (agent.modelSpendUsd === null) totals.unpricedAgents += 1;
     else {
@@ -864,7 +1279,10 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     totals.fundedUsd += funding.get(agent.id)?.usdc ?? 0;
   }
   totals.pnlUsd = totals.realizedPnlUsd + totals.unrealizedPnlUsd;
-  totals.costsUsd = totals.feesUsd + totals.dataSpendUsd + totals.modelSpendUsd;
+  // Thinking paid per use is subtracted here and only here. `pnlUsd` above does not hold
+  // it: a live book's basis already moved down by every such payment, as it does for a
+  // withdrawal, so the wallet falling by it is not also a trading loss.
+  totals.costsUsd = totals.feesUsd + totals.dataSpendUsd + totals.modelSpendUsd + totals.thinkingUsd;
   totals.netUsd = totals.pnlUsd - totals.costsUsd;
 
   // ---- the series: live only, so it agrees with the tiles above it ---------
@@ -877,6 +1295,11 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
       const usdc = withdrawnUsdc(r.metadata);
       return r.agentId && usdc > 0 ? [{ agentId: r.agentId, at: r.at, amountUsd: -usdc }] : [];
     }),
+    // What the live agents paid for their own thinking, from the same list the all-time
+    // basis was made from. Deposits and withdrawals in that list are the two reads above.
+    ...[...liveFlows].flatMap(([agentId, list]) =>
+      list.flatMap((flow) => (flow.kind === "thinking" ? [{ agentId, at: flow.at, amountUsd: flow.amountUsd, kind: flow.kind }] : [])),
+    ),
   ].filter((f) => liveIds.has(f.agentId));
   const days = pnlByDay(livePoints, { days: 30, flows, resolutionMs: EQUITY_BUCKET_MS });
   const today = days.at(-1);
@@ -888,7 +1311,100 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     equity,
     basisUsd: totals.fundedUsd > 0 ? totals.fundedUsd : (equity[0]?.equityUsd ?? 0),
     days,
-    today: { pnlUsd: today?.pnlUsd ?? null, pnlPct: today?.pnlPct ?? null, flowUsd: today?.flowUsd ?? 0 },
+    today: {
+      pnlUsd: today?.pnlUsd ?? null,
+      pnlPct: today?.pnlPct ?? null,
+      flowUsd: today?.flowUsd ?? 0,
+      thinkingUsd: today?.thinkingUsd ?? 0,
+    },
     stale: live.some((a) => a.stale),
+    thinking: summarizeThinking(thinking, { live: new Set(live.map((a) => a.id)), paper: new Set(paper.map((a) => a.id)) }),
   };
+}
+
+/**
+ * The account's pay-per-use picture from the three ledger reads, or null when there is
+ * none to show: no step was ever paid for, is being or could not be checked, or was
+ * simulated.
+ */
+function summarizeThinking(
+  ledger: Awaited<ReturnType<typeof loadThinking>>,
+  agentIds: { live: ReadonlySet<string>; paper: ReadonlySet<string> },
+): ThinkingSummary | null {
+  const out: ThinkingSummary = {
+    paidUsd: 0,
+    steps: 0,
+    liveUsd: 0,
+    paperUsd: 0,
+    formerAgentsUsd: 0,
+    unansweredUsd: 0,
+    unansweredSteps: 0,
+    checkingUsd: 0,
+    checkingSteps: 0,
+    checkingAnsweredUsd: 0,
+    checkingAnsweredSteps: 0,
+    uncheckedUsd: 0,
+    uncheckedSteps: 0,
+    uncheckedAnsweredUsd: 0,
+    uncheckedAnsweredSteps: 0,
+    simulatedUsd: 0,
+    unanswered: [],
+    ownKey: null,
+  };
+  let rowsSeen = 0;
+  for (const row of ledger.byAgent) {
+    const paidUsd = toNum(row.paidUsd);
+    out.paidUsd += paidUsd;
+    out.steps += Number(row.paidSteps ?? 0);
+    out.unansweredUsd += toNum(row.unansweredUsd);
+    out.unansweredSteps += Number(row.unansweredSteps ?? 0);
+    out.checkingUsd += toNum(row.checkingUsd);
+    out.checkingSteps += Number(row.checkingSteps ?? 0);
+    out.checkingAnsweredUsd += toNum(row.checkingAnsweredUsd);
+    out.checkingAnsweredSteps += Number(row.checkingAnsweredSteps ?? 0);
+    out.uncheckedUsd += toNum(row.uncheckedUsd);
+    out.uncheckedSteps += Number(row.uncheckedSteps ?? 0);
+    out.uncheckedAnsweredUsd += toNum(row.uncheckedAnsweredUsd);
+    out.uncheckedAnsweredSteps += Number(row.uncheckedAnsweredSteps ?? 0);
+    out.simulatedUsd += toNum(row.simulatedUsd);
+    rowsSeen +=
+      Number(row.paidSteps ?? 0) + Number(row.checkingSteps ?? 0) + Number(row.uncheckedSteps ?? 0) + Number(row.simulatedSteps ?? 0);
+    // The ledger outlives an agent, so a row can name one this account no longer has.
+    if (row.agentId && agentIds.live.has(row.agentId)) out.liveUsd += paidUsd;
+    else if (row.agentId && agentIds.paper.has(row.agentId)) out.paperUsd += paidUsd;
+    else out.formerAgentsUsd += paidUsd;
+  }
+  // A payment still in flight (signed moments ago) is in none of the four counts, and
+  // is not yet anything to show.
+  if (rowsSeen === 0) return null;
+
+  out.unanswered = ledger.unanswered.flatMap((row): ThinkingStepRow[] => {
+    const seconds = typeof row.at === "number" ? row.at : Number(row.at);
+    if (!Number.isFinite(seconds)) return [];
+    return [
+      {
+        id: row.id,
+        agentName: row.agentName ?? null,
+        agentSlug: row.agentSlug ?? null,
+        model: row.model,
+        usd: toNum(row.usd),
+        state: row.status === "paid_no_answer" ? "unanswered" : row.gaveUp === true ? "unchecked" : "checking",
+        at: new Date(seconds * 1000).toISOString(),
+        httpStatus: row.httpStatus ?? null,
+        // Linked only when it reads as a Solana transaction id: the value came from the
+        // gateway's receipt, and a link is built from it.
+        txHash: row.txHash && SOLANA_SIGNATURE.test(row.txHash) ? row.txHash : null,
+      },
+    ];
+  });
+  out.ownKey = ownKeyComparison(
+    ledger.tokens.map((row) => ({
+      model: row.model,
+      steps: Number(row.steps ?? 0),
+      paidUsd: toNum(row.paidUsd),
+      inputTokens: toNum(row.inputTokens),
+      outputTokens: toNum(row.outputTokens),
+    })),
+  );
+  return out;
 }

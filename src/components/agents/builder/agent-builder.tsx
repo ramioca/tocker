@@ -4,7 +4,6 @@ import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, RotateCcw, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
-import { agentConfigSchema } from "@/lib/agent/config";
 import { LiquidMetal } from "@/components/common/liquid-metal";
 import { MorphButton } from "@/components/spectrumui/morph-button";
 import { MORPH_FOCUS } from "@/components/common/focus";
@@ -25,6 +24,8 @@ import {
 import { universeSummary } from "./universe-controls";
 import { PAID_LAUNCH_RADAR_USD_PER_CHAIN, launchRadarUsdPerRun } from "./types";
 import { useDraft } from "./use-draft";
+import { validateDraft } from "./validate";
+import { shownSource, stripPayPerUse, usdcEstimate, walletNeedUsd } from "@/components/agents/thinking";
 import { useFundingPlan } from "@/components/wallets/use-funding-plan";
 import { isTransferStatusUnknown } from "@/components/wallets/funding-attempt";
 import { useRefreshCash } from "@/components/wallets/use-cash";
@@ -60,31 +61,9 @@ import { stickyActionbarRef } from "@/hooks/root-flag";
  * risk, schedule) is a summary card whose defaults you can read in a sentence
  * and open only if you want to tune them. Simplicity here is disclosure, not
  * removal: every control of the old wizard is still one tap away.
+ *
+ * What a draft needs before it can be created is decided in `./validate.ts`.
  */
-
-function validate(draft: ReturnType<typeof useDraft>["draft"], keys: LlmKeyRow[]): Record<string, string> {
-  const errors: Record<string, string> = {};
-
-  if (draft.name.trim().length < 2) errors.name = "Give it a name — at least two characters.";
-  if (!draft.llmKeyId) errors.llmKeyId = "Pick or add an API key. The agent cannot think without one.";
-  // A restored draft can name a key that has since been removed, and a key for another
-  // provider would be kept but could never be used: both fail every run, so neither passes.
-  else if (!keys.some((key) => key.id === draft.llmKeyId && key.provider === draft.config.llm.provider)) {
-    errors.llmKeyId = `Pick one of your ${PROVIDER_LABELS[draft.config.llm.provider]} keys, or add one.`;
-  }
-
-  const parsed = agentConfigSchema.safeParse(draft.config);
-  if (!parsed.success) {
-    for (const issue of parsed.error.issues) {
-      const key = issue.path[0];
-      if (key === "strategyPrompt") errors.strategyPrompt = issue.message;
-      else if (key === "chains") errors.chains = issue.message;
-      else if (typeof key === "string") errors[key] = issue.message;
-    }
-  }
-
-  return errors;
-}
 
 type RuleId = "universe" | "data" | "risk" | "funding" | "schedule";
 
@@ -97,6 +76,8 @@ const FIELD_TARGETS: Array<{ key: string; ids: string[] }> = [
   { key: "name", ids: ["agent-name"] },
   // The key select when there is a key to choose; otherwise the way to add one.
   { key: "llmKeyId", ids: ["llm-key", "llm-key-add"] },
+  // A pay-per-use draft has no key field; what can be wrong is its model or its limits.
+  { key: "thinking", ids: ["builder-usdc-model"] },
   { key: "strategyPrompt", ids: ["strategy-prompt"] },
 ];
 
@@ -278,6 +259,7 @@ export function AgentBuilder({
   sources,
   initialKeys,
   feeUsd,
+  payPerUseAllowed = false,
 }: {
   userId: string;
   sources: DataSourceInfo[];
@@ -287,11 +269,17 @@ export function AgentBuilder({
    * off. The page reads it because the env it comes from never reaches the browser.
    */
   feeUsd: number;
+  /**
+   * Whether this viewer may build an agent that pays for its own thinking, decided on the
+   * server (`payPerUseAllowedFor`). False, the default, and this page is the one it was
+   * before pay-per-use existed: no choice is shown and only a key agent can be made.
+   */
+  payPerUseAllowed?: boolean;
 }) {
   const router = useRouter();
   const [keys, setKeys] = useState(initialKeys);
   // The draft starts on a key the account already has, so it needs to know them.
-  const { draft, update, updateConfig, clear, restore, restored } = useDraft(userId, keys);
+  const { draft, update, updateConfig, clear, restore, restored } = useDraft(userId, keys, payPerUseAllowed);
   const [attempted, setAttempted] = useState(false);
   /** An agent that exists whose funding did not go through: offered the signature again, here. */
   const [fundingRetry, setFundingRetry] = useState<FundingRetry | null>(null);
@@ -303,7 +291,10 @@ export function AgentBuilder({
   const [metalHovered, setMetalHovered] = useState(false);
   const [metalFocused, setMetalFocused] = useState(false);
 
-  const errors = useMemo(() => validate(draft, keys), [draft, keys]);
+  const errors = useMemo(
+    () => validateDraft(draft, keys, { payPerUseAllowed }),
+    [draft, keys, payPerUseAllowed],
+  );
   const visibleErrors = attempted ? errors : {};
 
   const toggle = (id: RuleId) =>
@@ -324,6 +315,11 @@ export function AgentBuilder({
   const risk = draft.config.risk;
   const execution = draft.config.execution;
   const providerLabel = PROVIDER_LABELS[draft.config.llm.provider];
+  // Pay per use: the run count and the cost are the panel's own estimate, so the commit
+  // bar and the Brain section never quote two different numbers for the same schedule.
+  const payPerUse = shownSource(draft.config, payPerUseAllowed) === "usdc";
+  const thinking = payPerUse ? usdcEstimate(draft.config.llm.usdc?.model, interval) : null;
+  const thinkingNeedUsd = payPerUse && draft.config.llm.usdc ? walletNeedUsd(draft.config.llm.usdc) : null;
   // "Ask me first" is the default, and an agent in it never fills until you approve; with
   // the Schedule card collapsed, nothing else on the page said so.
   const executionLabel =
@@ -367,7 +363,7 @@ export function AgentBuilder({
   };
 
   const submit = async () => {
-    const allErrors = validate(draft, keys);
+    const allErrors = validateDraft(draft, keys, { payPerUseAllowed });
     if (Object.keys(allErrors).length > 0) {
       setAttempted(true);
       const badRules = (Object.keys(RULE_ERROR_KEYS) as RuleId[]).filter((id) =>
@@ -411,14 +407,17 @@ export function AgentBuilder({
       tagline: draft.tagline.trim() || undefined,
       avatarSeed: draft.avatarSeed,
       isPublic: draft.isPublic,
-      llmKeyId: draft.llmKeyId,
+      // A pay-per-use agent is created with no key attached, whatever key the draft had
+      // chosen before the mode was switched.
+      llmKeyId: payPerUse ? null : draft.llmKeyId,
       // A funded agent has no paper book worth pretending about: its paper balance is
       // the money it is actually given, and when it is headed for the live checklist its
       // schedule stays parked until the switch — no paper ticks in between.
       paperStartingUsd: draft.funding.mode === "fund" ? draft.funding.amountUsd : draft.paperStartingUsd,
       activate: draft.activate,
       holdSchedule: draft.funding.mode === "fund" && draft.goLive,
-      config: draft.config,
+      // A viewer who may not use pay-per-use never sends a config that asks for it.
+      config: payPerUseAllowed ? draft.config : stripPayPerUse(draft.config),
     });
 
     if (!result.ok) {
@@ -555,8 +554,10 @@ export function AgentBuilder({
         ) : null}
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
-        Three things are required: a name, a key, a strategy. Everything else ships with
-        defaults you can read below — and open if you disagree.
+        {payPerUseAllowed
+          ? "Three things are required: a name, a way to think (your own key, or pay per use), a strategy. "
+          : "Three things are required: a name, a key, a strategy. "}
+        Everything else ships with defaults you can read below — and open if you disagree.
       </p>
 
       <div className="mt-8 space-y-8">
@@ -575,6 +576,7 @@ export function AgentBuilder({
             llmKeys={keys}
             onKeyAdded={(key) => setKeys((current) => [key, ...current])}
             feeUsd={feeUsd}
+            payPerUseAllowed={payPerUseAllowed}
             hideHeading
           />
         </section>
@@ -638,7 +640,10 @@ export function AgentBuilder({
             title="Funding"
             summary={
               draft.funding.mode === "paper"
-                ? "Paper only — its wallets are created empty, fund it whenever you like"
+                ? thinkingNeedUsd !== null
+                  ? // Paper trades need no money; pay-per-use thinking does, from the first run.
+                    `Paper only. Its wallets are created empty, and it cannot think until its Solana wallet holds ${formatUsd(thinkingNeedUsd)} of USDC`
+                  : "Paper only — its wallets are created empty, fund it whenever you like"
                 : `${formatUsd(draft.funding.amountUsd)} USDC, signed by you on create`
             }
             open={open.has("funding")}
@@ -667,7 +672,14 @@ export function AgentBuilder({
             onToggle={() => toggle("schedule")}
             hasError={attempted && RULE_ERROR_KEYS.schedule.some((key) => errors[key])}
           >
-            <ScheduleStep draft={draft} update={update} updateConfig={updateConfig} errors={visibleErrors} hideHeading />
+            <ScheduleStep
+              draft={draft}
+              update={update}
+              updateConfig={updateConfig}
+              errors={visibleErrors}
+              payPerUseAllowed={payPerUseAllowed}
+              hideHeading
+            />
           </RuleCard>
         </section>
       </div>
@@ -693,9 +705,13 @@ export function AgentBuilder({
               ? `Signs ${formatUsd(draft.funding.amountUsd)} USDC · ${runsPerDay === 0 ? "manual runs" : `~${runsPerDay}/day`}`
               : runsPerDay === 0
                 ? "Manual runs only"
-                : // Whose bill the runs are, in the room one line has. The data estimate
-                  // that used to sit here is the part Tocker pays.
-                  `~${runsPerDay} runs/day on your key`}
+                : thinking
+                  ? thinking.model
+                    ? `~${thinking.runsPerDay} runs/day · ≈${formatUsd(thinking.dayUsd)} thinking`
+                    : "Pick a model to see the cost"
+                  : // Whose bill the runs are, in the room one line has. The data estimate
+                    // that used to sit here is the part Tocker pays.
+                    `~${runsPerDay} runs/day on your key`}
           </span>
           <span className="hidden sm:inline">
             {draft.funding.mode === "fund" ? (
@@ -706,6 +722,24 @@ export function AgentBuilder({
             ) : null}
             {runsPerDay === 0 ? (
               <>Manual runs only — nothing is spent until you press Run now.</>
+            ) : thinking && !thinking.model ? (
+              // No listed model, no price: saying "$0.00 a day" would be a number nobody stands behind.
+              <>Pick a model for pay-per-use thinking to see what a day of runs is expected to cost.</>
+            ) : thinking ? (
+              // Pay per use: the thinking is the agent's own bill, in USDC, on every run.
+              <>
+                {heldForLive ? "No ticks until you switch it live on the checklist. Then ~" : "~"}
+                <span className="tnum font-mono">{thinking.runsPerDay}</span> runs/day. Each run pays for its own
+                thinking in USDC from the agent&rsquo;s wallet (≈
+                <span className="tnum font-mono">{formatUsd(thinking.runUsd)}</span>, about{" "}
+                <span className="tnum font-mono">{formatUsd(thinking.dayUsd)}</span> a day); its data (≈
+                <span className="tnum font-mono">{formatUsd(costPerRun)}</span>) is paid by Tocker.
+                {heldForLive
+                  ? null
+                  : execution.mode === "approve"
+                    ? " Proposes paper trades for you to approve."
+                    : " Paper trades until you go live."}
+              </>
             ) : heldForLive ? (
               // The Mode card promises it never trades paper, so this line cannot count
               // paper runs: nothing ticks until the hold-to-confirm on the checklist.

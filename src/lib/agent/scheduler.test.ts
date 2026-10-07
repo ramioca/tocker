@@ -266,6 +266,107 @@ describe("findDueAgents — who gets a slot in the tick", () => {
     // The cron log reports what the switch held back: the one agent that would have run.
     expect(await countPausedDueAgents()).toBe(1);
   });
+
+  /**
+   * An agent that pays for its own thinking (`llm.source: "usdc"`) has no key on purpose.
+   * The gate is the config's word, not the key column, and such an agent waits out a hold.
+   */
+  describe("an agent that pays per use", () => {
+    /** Due `minutesAgo`, with no key, its config saying it pays per use. */
+    async function payingAgent(minutesAgo: number, hold: { reason: string; untilMinutes: number | null } | null = null) {
+      const seeded = await dueAgent(minutesAgo, { key: false });
+      const [row] = await db.select().from(schema.agents).where(eq(schema.agents.id, seeded.agentId));
+      const config = row?.config as schema.AgentConfig;
+      await db
+        .update(schema.agents)
+        .set({
+          config: { ...config, llm: { ...config.llm, source: "usdc", usdc: { model: "google/gemini-2.5-flash", maxUsdPerRun: 0.3, maxUsdPerDay: 3 } } },
+          ...(hold
+            ? {
+                inferenceHold: hold.reason,
+                inferenceHoldSince: new Date(),
+                inferenceHoldUntil: hold.untilMinutes === null ? null : new Date(Date.now() + hold.untilMinutes * 60_000),
+                inferenceStrikes: 1,
+              }
+            : {}),
+        })
+        .where(eq(schema.agents.id, seeded.agentId));
+      return seeded;
+    }
+
+    it("gets a slot without a key, outside the scripted model too", async () => {
+      vi.stubEnv("LLM_MOCK", "");
+      const paying = await payingAgent(10);
+      const keyless = await dueAgent(20, { key: false });
+      const keyed = await dueAgent(5);
+
+      const due = await findDueAgents(5);
+      expect(due).toEqual([paying.agentId, keyed.agentId]);
+      expect(due).not.toContain(keyless.agentId);
+    });
+
+    it("is told by its config, not by a key left on its row or a block of limits without the word", async () => {
+      vi.stubEnv("LLM_MOCK", "");
+      // Pays per use, with a key id still on the row from before: due either way.
+      const switched = await payingAgent(10);
+      await attachLlmKey(db, { userId: switched.userId, agentId: switched.agentId });
+      // A key agent whose config carries old pay-per-use limits but says `source: "key"`,
+      // and has no key: it cannot think, and the limits do not make it pay per use.
+      const back = await payingAgent(8);
+      const [row] = await db.select().from(schema.agents).where(eq(schema.agents.id, back.agentId));
+      const config = row?.config as schema.AgentConfig;
+      await db.update(schema.agents).set({ config: { ...config, llm: { ...config.llm, source: "key" } } }).where(eq(schema.agents.id, back.agentId));
+
+      expect(await findDueAgents(5)).toEqual([switched.agentId]);
+    });
+
+    it("gets no slot while its hold has time to run, and one again when that time has come", async () => {
+      vi.stubEnv("LLM_MOCK", "");
+      const waiting = await payingAgent(30, { reason: "needs_funds", untilMinutes: 10 });
+      const free = await payingAgent(5);
+
+      expect(await findDueAgents(5)).toEqual([free.agentId]);
+      // Eleven minutes on, its time has come: the check before its run decides, not the scheduler.
+      const later = new Date(Date.now() + 11 * 60_000);
+      expect(await findDueAgents(5, later)).toEqual([waiting.agentId, free.agentId]);
+    });
+
+    it("is not left out for ever by a hold that has no time on it", async () => {
+      vi.stubEnv("LLM_MOCK", "");
+      const odd = await payingAgent(5, { reason: "needs_funds", untilMinutes: null });
+      expect(await findDueAgents(5)).toEqual([odd.agentId]);
+    });
+
+    it("waits out its hold under the scripted model as well", async () => {
+      vi.stubEnv("LLM_MOCK", "1");
+      const waiting = await payingAgent(30, { reason: "paused", untilMinutes: 10 });
+      const keyless = await dueAgent(20, { key: false });
+      expect(await findDueAgents(5)).toEqual([keyless.agentId]);
+      expect(await findDueAgents(5, new Date(Date.now() + 11 * 60_000))).toEqual([waiting.agentId, keyless.agentId]);
+    });
+
+    it("ignores hold columns left on a key agent: they are not its concern", async () => {
+      vi.stubEnv("LLM_MOCK", "");
+      const keyed = await dueAgent(5);
+      await db
+        .update(schema.agents)
+        .set({ inferenceHold: "needs_funds", inferenceHoldUntil: new Date(Date.now() + 3_600_000), inferenceStrikes: 3 })
+        .where(eq(schema.agents.id, keyed.agentId));
+      expect(await findDueAgents(5)).toEqual([keyed.agentId]);
+    });
+
+    it("is counted by the kill switch as it would have run: due and free yes, held no", async () => {
+      vi.stubEnv("LLM_MOCK", "");
+      const free = await payingAgent(5);
+      const waiting = await payingAgent(5, { reason: "needs_funds", untilMinutes: 10 });
+      for (const userId of [free.userId, waiting.userId]) {
+        await db.insert(schema.userSecurity).values({ userId, tradingPaused: true, tradingPausedAt: new Date() });
+      }
+      expect(await findDueAgents(5)).toEqual([]);
+      expect(await countPausedDueAgents()).toBe(1);
+      expect(await countPausedDueAgents(new Date(Date.now() + 11 * 60_000))).toBe(2);
+    });
+  });
 });
 
 describe("spreadAcrossOwners", () => {

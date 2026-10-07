@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Pause, Play } from "lucide-react";
@@ -21,6 +21,20 @@ import { AddKeyInline, PROVIDER_LABELS } from "@/components/agents/builder/steps
 import { SimpleSelect } from "@/components/agents/builder/simple-select";
 import { DEFAULT_MODEL_ID, agentConfigSchema } from "@/lib/agent/config";
 import { ModelPicker } from "@/components/agents/model-picker";
+import { PayPerUsePanel, ThinkSourceChoice } from "@/components/agents/think-source";
+import {
+  checkUsdc,
+  chooseSource,
+  dayOverLimit,
+  defaultUsdc,
+  firstUsdcError,
+  stepsAllowed,
+  thinkChoice,
+  usdcEstimate,
+  type UsdcSettings,
+} from "@/components/agents/thinking";
+import { thinkSource } from "@/lib/agent/inference";
+import { MAX_PAID_STEPS, USDC_DEFAULT_INTERVAL_MINUTES, type ThinkSource } from "@/lib/x402/inference-types";
 import { DataSourcePicker } from "@/components/agents/data-source-picker";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
 import { ExitRulesFields } from "@/components/agents/exit-rules";
@@ -65,6 +79,7 @@ export function AgentSettingsForm({
   llmKeys = [],
   accountPaused = false,
   isAdmin = false,
+  payPerUseAllowed = false,
 }: {
   agent: AgentDetail;
   config?: AgentConfig | null;
@@ -76,6 +91,12 @@ export function AgentSettingsForm({
   accountPaused?: boolean;
   /** Shows operator-only notes, such as which platform wallet pays for a source. */
   isAdmin?: boolean;
+  /**
+   * Whether this viewer may put an agent on pay-per-use thinking, decided on the server
+   * (`payPerUseAllowedFor`). False, the default, and a key agent's Brain section is the
+   * one it was before pay-per-use existed.
+   */
+  payPerUseAllowed?: boolean;
 }) {
   const resolved = config ?? agent.config;
   if (!resolved) {
@@ -94,6 +115,7 @@ export function AgentSettingsForm({
       llmKeys={llmKeys}
       accountPaused={accountPaused}
       isAdmin={isAdmin}
+      payPerUseAllowed={payPerUseAllowed}
     />
   );
 }
@@ -105,6 +127,7 @@ function SettingsForm({
   llmKeys,
   accountPaused,
   isAdmin,
+  payPerUseAllowed,
 }: {
   agent: AgentDetail;
   initialConfig: AgentConfig;
@@ -112,6 +135,7 @@ function SettingsForm({
   llmKeys: LlmKeyRow[];
   accountPaused: boolean;
   isAdmin: boolean;
+  payPerUseAllowed: boolean;
 }) {
   const router = useRouter();
   const [name, setName] = useState(agent.name);
@@ -124,12 +148,59 @@ function SettingsForm({
   const [keys, setKeys] = useState<LlmKeyRow[]>(llmKeys);
   const keysForProvider = keys.filter((key) => key.provider === config.llm.provider);
 
+  // How it thinks. The saved mode is what the next tick runs on; the working one is what
+  // this form will save. The choice between them is offered when the server allows this
+  // viewer pay-per-use, and also on an agent that is already on it, so that agent can
+  // always be moved to a key. Otherwise this is a key agent and nothing here changes.
+  const savedSource = thinkSource(initialConfig);
+  const { offered: showThinkChoice, source } = thinkChoice({
+    allowed: payPerUseAllowed,
+    saved: initialConfig,
+    working: config,
+  });
+  const usdc =
+    source === "usdc" ? (config.llm.usdc ?? defaultUsdc(config.schedule.intervalMinutes)) : null;
+  const usdcCheck = usdc
+    ? checkUsdc({ usdc, intervalMinutes: config.schedule.intervalMinutes, chains: config.chains })
+    : null;
+  // What a save sends. The same object as `config`, except for a pay-per-use agent saved
+  // without its model and limits: the panel shows the defaults for it, so those are what
+  // is saved, and the form says it has something to save.
+  const configToSave: AgentConfig =
+    usdc && !config.llm.usdc ? { ...config, llm: { ...config.llm, source: "usdc", usdc } } : config;
+  /** The interval a switch to pay-per-use moved the schedule from, so switching back can undo it. */
+  const [scheduleMovedFrom, setScheduleMovedFrom] = useState<number | null>(null);
+  // Forgotten the moment the schedule is anywhere else: from then on it is the owner's
+  // own choice, and neither the note in the panel nor a switch back may undo it.
+  if (scheduleMovedFrom !== null && config.schedule.intervalMinutes !== USDC_DEFAULT_INTERVAL_MINUTES) {
+    setScheduleMovedFrom(null);
+  }
+  /** Set when a save is refused for want of a key on an agent that is leaving pay-per-use. */
+  const [keyNeeded, setKeyNeeded] = useState(false);
+  /** The limits last set in this form, put back if the owner returns to pay-per-use. */
+  const rememberedUsdc = useRef<UsdcSettings | null>(initialConfig.llm.usdc ?? null);
+  const switchSource = (next: ThinkSource) => {
+    if (next === source) return;
+    if (source === "usdc") rememberedUsdc.current = config.llm.usdc ?? null;
+    const change = chooseSource(config, next, {
+      remembered: rememberedUsdc.current,
+      restoreInterval: scheduleMovedFrom,
+      // An agent whose saved config names its mode has it named again on the way back,
+      // so the switch to a key is written down, not left to be read from a missing field.
+      explicitKey: initialConfig.llm.source !== undefined,
+    });
+    setConfig(change.config);
+    setScheduleMovedFrom(change.scheduleMovedFrom);
+    setKeyNeeded(false);
+  };
+
   const dirty =
     name !== agent.name ||
     tagline !== (agent.tagline ?? "") ||
     isPublic !== agent.isPublic ||
-    llmKeyId !== agent.llmKeyId ||
-    !sameConfig(config, initialConfig);
+    // A pay-per-use agent is saved with no key, so the key field cannot make it dirty.
+    (source === "usdc" ? savedSource !== "usdc" : llmKeyId !== agent.llmKeyId) ||
+    !sameConfig(configToSave, initialConfig);
 
   // Unsaved edits live only in this component, so leaving drops them. Ask first: on
   // reload or close, and on in-app links — the money strip's Go live, the back link,
@@ -192,12 +263,32 @@ function SettingsForm({
       });
       throw new Error("invalid");
     }
+    // Pay per use: the same checks the builder makes, before anything is sent. The panel
+    // already shows what is wrong; this takes the owner to it.
+    const thinkingProblem = usdcCheck ? firstUsdcError(usdcCheck) : null;
+    if (thinkingProblem) {
+      requestAnimationFrame(() => {
+        document.getElementById("thinking")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      toast.error("Not saved", { description: thinkingProblem });
+      throw new Error("invalid");
+    }
+    // Leaving pay-per-use with no key chosen would turn an agent that runs into one that
+    // fails every tick. A key agent with no key still saves, as it always has.
+    if (savedSource === "usdc" && source === "key" && llmKeyId === null) {
+      setKeyNeeded(true);
+      requestAnimationFrame(() => {
+        document.getElementById("brain")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      throw new Error("invalid");
+    }
     const result = await updateAgentAction(agent.id, {
       name: name.trim(),
       tagline: tagline.trim() || undefined,
       isPublic,
-      llmKeyId,
-      config,
+      // No key is attached to an agent that pays for its own thinking.
+      llmKeyId: source === "usdc" ? null : llmKeyId,
+      config: configToSave,
     });
     if (!result.ok) {
       toast.error("Not saved", { description: result.error });
@@ -209,7 +300,7 @@ function SettingsForm({
     void noteBudgetChangeAction({
       agentId: agent.id,
       before: capsOf(initialConfig),
-      after: capsOf(config),
+      after: capsOf(configToSave),
     });
     toast.success("Saved");
     router.refresh();
@@ -277,7 +368,7 @@ function SettingsForm({
                 </Link>{" "}
                 in Security to let it run again.
               </>
-            ) : agent.llmKeyId === null ? (
+            ) : agent.llmKeyId === null && savedSource === "key" ? (
               // The saved key, not the draft: this is what the next tick will run with. A
               // green Active over "Next tick is scheduled" read as healthy while every run
               // failed, and the only warning sat 1,000px down in Brain.
@@ -378,10 +469,31 @@ function SettingsForm({
         <div>
           <h2 className="text-sm font-medium">Brain</h2>
           <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-            The key it thinks with and the model it runs. Changing the key here is how a run that failed on its
-            key gets a working one — adding a key under Settings does not switch an existing agent by itself.
+            {source === "usdc"
+              ? "This agent pays for its own thinking, step by step. Its model and its two limits are set here; your own API key is the other way to run it, and usually the cheaper one."
+              : "The key it thinks with and the model it runs. Changing the key here is how a run that failed on its key gets a working one — adding a key under Settings does not switch an existing agent by itself."}
           </p>
         </div>
+        {/* Only when the server allows this viewer pay-per-use, or the agent is already
+            on it. Without it the section below is the key fields and nothing else. */}
+        {showThinkChoice ? <ThinkSourceChoice idPrefix="settings" value={source} onChange={switchSource} /> : null}
+        {usdc ? (
+          // The id is where the status banner's "Raise the limit" and "Pick a model" land.
+          <div id="thinking" className="scroll-mt-20">
+            <PayPerUsePanel
+              idPrefix="settings"
+              usdc={usdc}
+              intervalMinutes={config.schedule.intervalMinutes}
+              maxSteps={config.llm.maxSteps}
+              chains={config.chains}
+              allowed={payPerUseAllowed}
+              onChange={(next) =>
+                setConfig((current) => ({ ...current, llm: { ...current.llm, source: "usdc", usdc: next } }))
+              }
+              scheduleMovedFrom={scheduleMovedFrom}
+            />
+          </div>
+        ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor="settings-llm-provider" className="mb-1 block text-xs text-muted-foreground">
@@ -418,17 +530,23 @@ function SettingsForm({
             />
           </div>
         </div>
+        )}
         <RiskSlider
           id="settings-llm-steps"
           label="Steps per run"
           value={config.llm.maxSteps}
           {...LLM_BOUNDS.maxSteps}
           format={(value) => String(Math.round(value))}
-          meaning={`Up to ${Math.round(config.llm.maxSteps)} tool calls a run. A shortlist of three proposals needs about 12; deeper research needs more, and every step costs model tokens.`}
+          meaning={
+            source === "usdc"
+              ? `Up to ${stepsAllowed(Math.round(config.llm.maxSteps), "usdc")} steps a run: a pay-per-use run stops at ${MAX_PAID_STEPS} whatever this says. A shortlist of three proposals needs about 12, and every step is paid for.`
+              : `Up to ${Math.round(config.llm.maxSteps)} tool calls a run. A shortlist of three proposals needs about 12; deeper research needs more, and every step costs model tokens.`
+          }
           onChange={(maxSteps) =>
             setConfig((current) => ({ ...current, llm: { ...current.llm, maxSteps: Math.round(maxSteps) } }))
           }
         />
+        {source === "usdc" ? null : (
         <div className="space-y-2">
           {/* A real label when there is a select to name; with no key yet, the add button
               names itself and a label would rename it "API key". */}
@@ -451,7 +569,10 @@ function SettingsForm({
                 label: key.label ?? `${PROVIDER_LABELS[key.provider]} key`,
                 hint: `••••${key.last4}`,
               }))}
-              onChange={(next) => setLlmKeyId(next)}
+              onChange={(next) => {
+                setLlmKeyId(next);
+                setKeyNeeded(false);
+              }}
             />
           ) : (
             <p className="text-xs text-muted-foreground">No {PROVIDER_LABELS[config.llm.provider]} key on file yet.</p>
@@ -462,14 +583,18 @@ function SettingsForm({
             onAdded={(key) => {
               setKeys((current) => [key, ...current]);
               setLlmKeyId(key.id);
+              setKeyNeeded(false);
             }}
           />
           {llmKeyId === null ? (
-            <p id="settings-llm-key-error" className="text-xs text-destructive">
-              No key attached: every run will fail until one is chosen.
+            <p id="settings-llm-key-error" role={keyNeeded ? "alert" : undefined} className="text-xs text-destructive">
+              {keyNeeded
+                ? "Choose or add a key before saving, or stay on pay per use. Without one every run would fail."
+                : "No key attached: every run will fail until one is chosen."}
             </p>
           ) : null}
         </div>
+        )}
       </section>
 
       <section id="universe" className="scroll-mt-20 space-y-4 rounded-xl border border-border/70 bg-card/30 p-4">
@@ -556,6 +681,8 @@ function SettingsForm({
             );
           })}
         </div>
+        {/* Pay per use only: what this schedule is expected to cost, where it is chosen. */}
+        {usdc ? <ScheduleCost usdc={usdc} intervalMinutes={config.schedule.intervalMinutes} /> : null}
       </section>
 
       {/* `scroll-mt-20` clears the sticky top bar; without it an anchored jump lands
@@ -691,5 +818,34 @@ function SettingsForm({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Under the schedule buttons of a pay-per-use agent: what the chosen interval is expected
+ * to cost in a day, from the same estimate as the Brain section's panel. When that is
+ * more than the daily limit the save is refused, and this says where to fix it.
+ */
+function ScheduleCost({ usdc, intervalMinutes }: { usdc: UsdcSettings; intervalMinutes: number }) {
+  const estimate = usdcEstimate(usdc.model, intervalMinutes);
+  if (!estimate.model) return null;
+  // The same comparison `checkUsdc` refuses the save on, so the two never disagree.
+  const over = dayOverLimit(estimate, usdc);
+  return (
+    <p className={cn("tnum text-xs leading-relaxed", over ? "text-destructive" : "text-muted-foreground")}>
+      {intervalMinutes > 0
+        ? `About ${estimate.runsPerDay} run${estimate.runsPerDay === 1 ? "" : "s"} a day, about ${formatUsd(estimate.dayUsd)} of thinking paid by the agent.`
+        : "Manual runs only: nothing is spent on thinking until you press Run now."}
+      {over ? (
+        <>
+          {" "}
+          That is over its {formatUsd(usdc.maxUsdPerDay)} daily limit.{" "}
+          <a href="#thinking" className="rounded underline underline-offset-2 hover:text-foreground focus-ring">
+            Raise the limit
+          </a>{" "}
+          or run it less often.
+        </>
+      ) : null}
+    </p>
   );
 }

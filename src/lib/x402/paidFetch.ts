@@ -1,5 +1,17 @@
 /**
- * The one and only place the app pays for data over x402.
+ * The one and only place the app pays over x402. Two entries, and no other:
+ *
+ *  - `paidFetch`: data, bought by the **platform** wallet. Everything below this
+ *    paragraph describes it, and none of it changed when the second entry was added.
+ *  - `createInferenceFetch`: pay-per-use thinking, bought by an **agent's own** Solana
+ *    wallet from the pinned inference gateway. It shares nothing with the data path but
+ *    this file's name: its own URL rule (`checkInferenceUrl`, not `PAID_HOSTS`), its own
+ *    ledger (`inference_payments`, not `x402_payments`), its own caps, and a client that
+ *    can pay one scheme on one network to one address. The body is in
+ *    `./inference-fetch.ts` and `./inference-pins.ts`; it is exported from here so that
+ *    "x402 only through paidFetch.ts" stays a rule one grep can check.
+ *
+ * ## Data
  *
  * Flow for a real (non-mock) call:
  *   1. plain `fetch` — if the resource answers 200 it was free, we are done;
@@ -719,3 +731,19 @@ export async function paidFetch(ctx: X402Context, req: PaidRequest): Promise<Pai
     }
   });
 }
+
+// ---------- pay-per-use thinking ----------
+
+/**
+ * The inference entry. See `./inference-fetch.ts` for the order of one paid step, and
+ * `./inference-pins.ts` for what is checked before a wallet signs and before anything is
+ * sent.
+ */
+export {
+  createInferenceFetch,
+  probeInferenceSignature,
+  simulateInferenceStep,
+  type InferenceFetchOptions,
+} from "./inference-fetch";
+export { pinInferenceRequirement, verifySignedPayment } from "./inference-pins";
+export { checkInferenceUrl } from "./url-policy";

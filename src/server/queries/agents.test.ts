@@ -19,7 +19,9 @@ import { nanoid } from "nanoid";
 import { eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
-import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
+import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { attachLlmKey, seedAgent, setupTestDb } from "@/lib/agent/test-support";
+import { describeInferenceStop } from "@/lib/x402/inference-types";
 import { toNumeric } from "@/lib/money";
 import { seedKnownTokens, tokenId } from "@/lib/trading/tokens";
 import {
@@ -30,6 +32,9 @@ import {
   getEquitySeries,
   getRun,
   listMyAgents,
+  payPerUseAllowed,
+  payPerUseAllowedFor,
+  type OwnerRunSummary,
 } from "./agents";
 import { getAgentAnalytics } from "./analytics";
 import { getLeaderboard, getTopDataSources, MIN_AGGREGATE_AGENTS } from "./discover";
@@ -478,5 +483,159 @@ describe("the public data-source leaderboard", () => {
     await db.update(schema.agents).set({ isPublic: false }).where(eq(schema.agents.id, priv.agentId));
     await pay(priv.agentId, source, 12);
     expect((await getTopDataSources(50)).find((r) => r.id === source)).toBeUndefined();
+  });
+});
+
+// ------------------------------------------------------------- pay per use
+
+/**
+ * Whether a form may offer pay-per-use at all. The feature ships with `INFERENCE_USDC`
+ * unset, and unset must mean off for everybody, the deployment's own admins included.
+ */
+describe("who is offered pay-per-use thinking", () => {
+  const admin = { userId: "did:privy:the-owner", isAdmin: true };
+  const user = { userId: "did:privy:a-user", isAdmin: false };
+
+  it("is nobody while the switch is unset, empty or misspelled", () => {
+    for (const env of [{}, { INFERENCE_USDC: "" }, { INFERENCE_USDC: "off" }, { INFERENCE_USDC: "yes" }, { INFERENCE_USDC: "1" }]) {
+      expect(payPerUseAllowed(admin, env)).toBe(false);
+      expect(payPerUseAllowed(user, env)).toBe(false);
+    }
+  });
+
+  it("is not widened by the named-users list while the switch is off", () => {
+    expect(payPerUseAllowed(user, { INFERENCE_USDC_USER_IDS: user.userId })).toBe(false);
+  });
+
+  it("is the admins and the named users at the owner stage, and everyone when it is on", () => {
+    const owner = { INFERENCE_USDC: "owner" };
+    expect(payPerUseAllowed(admin, owner)).toBe(true);
+    expect(payPerUseAllowed(user, owner)).toBe(false);
+    expect(payPerUseAllowed(user, { ...owner, INFERENCE_USDC_USER_IDS: `someone, ${user.userId}` })).toBe(true);
+    expect(payPerUseAllowed(user, { INFERENCE_USDC: "on" })).toBe(true);
+  });
+
+  it("is never a signed-out viewer", () => {
+    expect(payPerUseAllowed(null, { INFERENCE_USDC: "on" })).toBe(false);
+    expect(payPerUseAllowed({ userId: "", isAdmin: true }, { INFERENCE_USDC: "on" })).toBe(false);
+  });
+
+  it("answers for a session the same way, and no for anyone when the switch is off", async () => {
+    const session = { userId: user.userId, email: "someone@example.com" };
+    expect(await payPerUseAllowedFor(session, {})).toBe(false);
+    expect(await payPerUseAllowedFor(session, { INFERENCE_USDC: "on" })).toBe(true);
+    // Not an admin, not named: the owner stage does not include them.
+    expect(await payPerUseAllowedFor(session, { INFERENCE_USDC: "owner" })).toBe(false);
+    expect(await payPerUseAllowedFor(session, { INFERENCE_USDC: "owner", INFERENCE_USDC_USER_IDS: user.userId })).toBe(true);
+    expect(await payPerUseAllowedFor(null, { INFERENCE_USDC: "on" })).toBe(false);
+  });
+});
+
+describe("an agent that pays for its own thinking, as its pages read it", () => {
+  const USDC_MODEL = "google/gemini-2.5-flash";
+  const PAY_PER_USE_LLM = {
+    ...DEFAULT_AGENT_CONFIG.llm,
+    source: "usdc" as const,
+    usdc: { model: USDC_MODEL, maxUsdPerRun: 0.15, maxUsdPerDay: 3 },
+  };
+
+  async function seedRun(
+    agentId: string,
+    values: Partial<typeof schema.agentRuns.$inferInsert> = {},
+  ): Promise<string> {
+    const id = nanoid();
+    await db.insert(schema.agentRuns).values({
+      id,
+      agentId,
+      trigger: "schedule",
+      status: "succeeded",
+      summary: "Tick.",
+      startedAt: daysAgo(0),
+      finishedAt: daysAgo(0),
+      ...values,
+    });
+    return id;
+  }
+
+  it("shows the model it pays for, not the key model its config still carries", async () => {
+    const agent = await seedAgent(db, { config: { llm: PAY_PER_USE_LLM } });
+
+    const detail = await getAgentBySlug(agent.slug, agent.userId);
+    expect(detail?.model).toBe(USDC_MODEL);
+    expect(detail?.config?.llm.usdc?.model).toBe(USDC_MODEL);
+
+    const mine = await listMyAgents(agent.userId);
+    expect(mine.find((card) => card.id === agent.agentId)?.model).toBe(USDC_MODEL);
+  });
+
+  it("labels what it thinks with as pay per use, to its owner only", async () => {
+    const agent = await seedAgent(db, { config: { llm: PAY_PER_USE_LLM } });
+    expect((await getAgentBySlug(agent.slug, agent.userId))?.llmKeyLabel).toBe("Pay per use in USDC");
+    expect((await getAgentBySlug(agent.slug, STRANGER))?.llmKeyLabel).toBeNull();
+  });
+
+  /** A key left attached is not used, so it is not what the label names. */
+  it("does not name a key that is still attached to it", async () => {
+    const agent = await seedAgent(db, { config: { llm: PAY_PER_USE_LLM } });
+    await attachLlmKey(db, agent);
+    expect((await getAgentBySlug(agent.slug, agent.userId))?.llmKeyLabel).toBe("Pay per use in USDC");
+  });
+
+  it("leaves a key agent's model and key label exactly as they were", async () => {
+    const keyless = await seedAgent(db);
+    const detail = await getAgentBySlug(keyless.slug, keyless.userId);
+    expect(detail?.model).toBe(DEFAULT_AGENT_CONFIG.llm.model);
+    expect(detail?.llmKeyLabel).toBeNull();
+
+    const keyed = await seedAgent(db);
+    await attachLlmKey(db, keyed);
+    expect((await getAgentBySlug(keyed.slug, keyed.userId))?.llmKeyLabel).toBe("anthropic ····0000");
+    const mine = await listMyAgents(keyed.userId);
+    expect(mine[0].model).toBe(DEFAULT_AGENT_CONFIG.llm.model);
+  });
+
+  it("tells the owner what a run spent on thinking and why it stopped, and tells nobody else", async () => {
+    const agent = await seedAgent(db, { config: { llm: PAY_PER_USE_LLM } });
+    const runId = await seedRun(agent.agentId, {
+      llmSource: "usdc",
+      model: USDC_MODEL,
+      inferenceSpendUsd: "0.148200",
+      stopReason: "run_cap",
+    });
+
+    const mine = await getAgentRuns(agent.agentId, null, agent.userId);
+    const row = mine.items.find((run) => run.id === runId);
+    expect(row?.thinking).toEqual({
+      spendUsd: 0.1482,
+      model: USDC_MODEL,
+      stop: {
+        reason: "run_cap",
+        kind: "limit",
+        ...describeInferenceStop("run_cap", { model: "Gemini 2.5 Flash" }),
+      },
+    });
+
+    const theirs = await getAgentRuns(agent.agentId, null, STRANGER);
+    const seen: OwnerRunSummary | undefined = theirs.items.find((run) => run.id === runId);
+    expect(seen).toBeDefined();
+    expect(seen && "thinking" in seen).toBe(false);
+
+    // The run page reads the same row.
+    expect(((await getRun(runId, agent.userId)) as OwnerRunSummary | null)?.thinking?.spendUsd).toBe(0.1482);
+    const strangerRun = await getRun(runId, STRANGER);
+    expect(strangerRun && "thinking" in strangerRun).toBe(false);
+  });
+
+  it("puts nothing about thinking on a run that thought on a key, for anyone", async () => {
+    const agent = await seedAgent(db);
+    const keyRun = await seedRun(agent.agentId, { llmSource: "key", model: DEFAULT_AGENT_CONFIG.llm.model });
+    const oldRun = await seedRun(agent.agentId);
+
+    const mine = await getAgentRuns(agent.agentId, null, agent.userId);
+    for (const id of [keyRun, oldRun]) {
+      const row = mine.items.find((run) => run.id === id);
+      expect(row).toBeDefined();
+      expect(row && "thinking" in row).toBe(false);
+    }
   });
 });

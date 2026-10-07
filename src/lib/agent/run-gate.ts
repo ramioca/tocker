@@ -5,6 +5,7 @@
  * `POST /api/agents/[id]/run` (the live wizard's "Run one tick now"). The sentences
  * live here so the two cannot drift. A leaf module on purpose: no database, no model.
  */
+import type { InferenceStopReason } from "@/lib/x402/inference-types";
 
 /**
  * The owner's kill switch is on. The scheduler already skips their agents, and
@@ -13,3 +14,37 @@
  * a run; the marks loop fires them whether trading is paused or not.
  */
 export const RUN_REFUSED_WHILE_PAUSED = "All trading is paused. Resume it in Settings → Security to run this agent.";
+
+/**
+ * A key agent with no key. The page disables Run now for it, but a stale page or a direct
+ * call would otherwise start a run that can only fail. An agent that pays per use needs
+ * no key and is never told this.
+ */
+export const RUN_REFUSED_WITHOUT_KEY = "Attach an LLM key before running this agent";
+
+/** A run that was put off, not refused: nothing is wrong with the agent. */
+export const RUN_DEFERRED = "This run could not be started just now. Try again in a minute.";
+
+/**
+ * Thrown by `startRun` when a pay-per-use agent may not run: its wallet is short, a
+ * limit is reached, pay-per-use is paused. No run row exists and nothing was charged.
+ * The message is the sentence the owner reads, written in
+ * `describeInferenceStop`; `reason` is null when the run was only put off.
+ *
+ * It lives in this leaf, not beside `startRun`, so the action and the route that catch
+ * it do not have to load the run loop to name it.
+ */
+export class RunRefusedError extends Error {
+  readonly reason: InferenceStopReason | null;
+
+  constructor(message: string, reason: InferenceStopReason | null) {
+    super(message);
+    this.name = "RunRefusedError";
+    this.reason = reason;
+  }
+}
+
+/** True for a {@link RunRefusedError}, including one that crossed a module boundary and lost its class. */
+export function isRunRefused(err: unknown): err is RunRefusedError {
+  return err instanceof RunRefusedError || (err instanceof Error && err.name === "RunRefusedError");
+}

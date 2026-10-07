@@ -16,12 +16,18 @@
  *
  * UI-CORE mounts this in the app shell; the placeholder `(app)/layout.tsx` mounts it here.
  * Force it open in dev with `?onboarding=1`.
+ *
+ * `payPerUseAllowed` is the server's answer to "may this viewer build an agent that pays
+ * for its own thinking?". When it is true a key is still asked for first, because it is
+ * the cheaper way to run, but every place that used to say a key is required offers
+ * pay-per-use as the other way. When it is false, which is the default, every word here
+ * is what it was.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Dialog } from "@base-ui/react/dialog";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowRight, Bot, Compass, KeyRound, Sparkles, X } from "lucide-react";
+import { ArrowRight, Bot, Coins, Compass, KeyRound, Sparkles, X } from "lucide-react";
 import { useSession } from "@/hooks/use-session";
 import { AddLlmKeyForm } from "@/components/settings/add-llm-key-form";
 import { cn } from "@/lib/utils";
@@ -32,7 +38,13 @@ const STEPS = ["welcome", "key", "agent"] as const;
 type Step = (typeof STEPS)[number];
 const KEY_ONLY: readonly Step[] = ["key"];
 
-export function OnboardingModal({ ownedAgentCount = 0 }: { ownedAgentCount?: number }) {
+export function OnboardingModal({
+  ownedAgentCount = 0,
+  payPerUseAllowed = false,
+}: {
+  ownedAgentCount?: number;
+  payPerUseAllowed?: boolean;
+}) {
   const { ready, session } = useSession();
   const [open, setOpen] = useState(false);
   // In-memory dismissal so the modal never reopens mid-session even when
@@ -179,16 +191,29 @@ export function OnboardingModal({ ownedAgentCount = 0 }: { ownedAgentCount?: num
                     transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
                   >
                     {step === "welcome" ? (
-                      <WelcomeStep handle={session?.handle} onNext={() => go("key")} onSkip={dismiss} />
+                      <WelcomeStep
+                        handle={session?.handle}
+                        payPerUseAllowed={payPerUseAllowed}
+                        onNext={() => go("key")}
+                        onSkip={dismiss}
+                      />
                     ) : step === "key" && steps.length === 1 ? (
                       <KeyStep
-                        title="Your agents need an LLM key to run"
-                        body="They think on your provider account. Add a key from the provider each agent's model runs on: Anthropic, OpenAI or OpenRouter."
+                        title={
+                          payPerUseAllowed ? "Add an LLM key for your agents" : "Your agents need an LLM key to run"
+                        }
+                        body={
+                          payPerUseAllowed
+                            ? "An agent on your own key thinks on your provider account. Add a key from the provider its model runs on: Anthropic, OpenAI or OpenRouter. An agent set to pay per use needs none."
+                            : "They think on your provider account. Add a key from the provider each agent's model runs on: Anthropic, OpenAI or OpenRouter."
+                        }
+                        payPerUseAllowed={payPerUseAllowed}
                         onAdded={dismiss}
                         onSkip={dismiss}
                       />
                     ) : step === "key" ? (
                       <KeyStep
+                        payPerUseAllowed={payPerUseAllowed}
                         onAdded={() => {
                           setKeySaved(true);
                           go("agent");
@@ -197,6 +222,9 @@ export function OnboardingModal({ ownedAgentCount = 0 }: { ownedAgentCount?: num
                       />
                     ) : keySaved ? (
                       <AgentStep onDone={dismiss} />
+                    ) : payPerUseAllowed ? (
+                      // No key, and none needed: the builder offers pay-per-use to this viewer.
+                      <PayPerUseStep onDone={dismiss} />
                     ) : (
                       <LookAroundStep onDone={dismiss} />
                     )}
@@ -232,11 +260,13 @@ const inlineLink =
 
 function WelcomeStep({
   handle,
+  payPerUseAllowed,
   onNext,
   onSkip,
 }: {
   /** The signed-in account's public name. Absent only when the modal was forced open signed out. */
   handle?: string;
+  payPerUseAllowed: boolean;
   onNext: () => void;
   onSkip: () => void;
 }) {
@@ -249,7 +279,9 @@ function WelcomeStep({
       />
       <ul className="mt-5 space-y-2.5 text-sm">
         {[
-          "Add an LLM key — your agent thinks on your provider account.",
+          payPerUseAllowed
+            ? "Add an LLM key so your agent thinks on your provider account, or let it pay for its own thinking in USDC."
+            : "Add an LLM key — your agent thinks on your provider account.",
           "We create its Solana and Base wallets automatically.",
           "It starts in paper mode. Live trading is a separate, deliberate choice.",
         ].map((line) => (
@@ -287,11 +319,14 @@ function KeyStep({
   // Not "any agent can use any key you own": the builder refuses a key from a provider
   // other than the one the agent's model runs on, and a run made with one fails there.
   body = "Anthropic, OpenAI or OpenRouter. You can add more later; an agent uses a key from the provider its model runs on.",
+  payPerUseAllowed = false,
   onAdded,
   onSkip,
 }: {
   title?: string;
   body?: string;
+  /** Adds the line that says a key is not the only way, for a viewer who may pay per use. */
+  payPerUseAllowed?: boolean;
   onAdded: () => void;
   onSkip: () => void;
 }) {
@@ -318,6 +353,12 @@ function KeyStep({
         </a>{" "}
         keys work too.
       </p>
+      {payPerUseAllowed ? (
+        <p className="mt-2 text-xs leading-5 text-muted-foreground">
+          No key at all? An agent can pay per use instead: it buys each step of thinking in USDC from its own
+          Solana wallet. You choose that when you build it, or in its settings. Your own key is usually cheaper.
+        </p>
+      ) : null}
       <div className="mt-6 flex justify-end">
         <button type="button" onClick={onSkip} className={ghostButton}>
           I&rsquo;ll do this later
@@ -334,6 +375,31 @@ function AgentStep({ onDone }: { onDone: () => void }) {
         icon={<Bot className="size-5" aria-hidden />}
         title="Now build something"
         body="Describe a strategy in a sentence, pick the chains and the risk envelope, and let it run. It stays yours — the fills go on the feed, the strategy never leaves your account."
+      />
+      <div className="mt-7 flex flex-wrap items-center justify-end gap-2">
+        <Link href="/discover" onClick={onDone} className={ghostButton}>
+          Explore first
+        </Link>
+        <Link href="/agents/new" onClick={onDone} className={primaryButton}>
+          Create your first agent
+          <ArrowRight className="size-4" aria-hidden />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The last step for someone who skipped the key and may pay per use: they can build now,
+ * so this says how, and what it costs them that a key would not.
+ */
+function PayPerUseStep({ onDone }: { onDone: () => void }) {
+  return (
+    <div>
+      <StepHeader
+        icon={<Coins className="size-5" aria-hidden />}
+        title="Build one without a key"
+        body="In the builder, choose Pay per use in USDC. The agent then buys each step of thinking itself, from its own Solana wallet, inside limits you set. It needs USDC in that wallet before its first run, on paper too. Your own key is usually the cheaper way, and you can switch to it at any time."
       />
       <div className="mt-7 flex flex-wrap items-center justify-end gap-2">
         <Link href="/discover" onClick={onDone} className={ghostButton}>

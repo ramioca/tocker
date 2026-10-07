@@ -9,7 +9,7 @@ import { eq } from "drizzle-orm";
 import { agents, getDb } from "@/db";
 import { requireSession } from "@/lib/auth";
 import { startRun } from "@/lib/agent/run";
-import { RUN_REFUSED_WHILE_PAUSED } from "@/lib/agent/run-gate";
+import { RUN_REFUSED_WHILE_PAUSED, isRunRefused } from "@/lib/agent/run-gate";
 import { isTradingPaused } from "@/lib/security/kill-switch";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +22,9 @@ export async function POST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  // When this invocation began: a pay-per-use run stops paying before the 300 s limit
+  // above, and that is counted from here.
+  const invocationStartedAt = Date.now();
   const { id } = await params;
 
   let userId: string;
@@ -47,9 +50,13 @@ export async function POST(
   }
 
   try {
-    const { runId } = await startRun({ agentId: id, trigger: "manual" });
+    const { runId } = await startRun({ agentId: id, trigger: "manual", invocationStartedAt });
     return NextResponse.json({ ok: true, runId });
   } catch (err) {
+    // An agent that pays for its own thinking and may not run just now (its wallet is
+    // short, a limit is reached, pay-per-use is paused). No run row was written. A 409,
+    // like the kill switch above, so the wizard shows the sentence as written.
+    if (isRunRefused(err)) return NextResponse.json({ error: err.message }, { status: 409 });
     // A database or runtime throw: the detail is for the log, not the response body.
     console.error("[api/agents/run] could not start run", err);
     return NextResponse.json(

@@ -3,12 +3,29 @@
  *
  * Paper cash is recomputed from the trade ledger (see `trading/paper.ts`); live cash
  * is the agent's USDC balance across its Privy server wallets.
+ *
+ * A live agent that pays for its own thinking (`llm.source: "usdc"`) keeps two runs'
+ * worth of it, and the wallet floor, out of its trades: `thinkingReserveUsd`. That money
+ * is still the agent's and still counts in its cash and equity; it is only left out of
+ * what a buy may spend, the same way fees owed are.
+ *
+ * A known gap, for an agent that trades Solana AND Base: the book has one cash figure
+ * for both chains, and the risk guard compares a buy with that one figure. So what is
+ * held back comes off the total, not off the Solana wallet that actually pays for the
+ * thinking: with $2 on Solana, $10 on Base and $0.85 held back, an $11 buy "fits", and a
+ * $2 buy on Solana empties the wallet the reserve was meant to protect. The agent is
+ * then held on `needs_funds` at its next run although it holds USDC on Base. Nothing is
+ * lost and the owner is told to add USDC on Solana; closing the gap needs cash per chain
+ * in the guard (`toRiskPortfolio` would have to know the order's chain, and every caller
+ * to pass it), which is a change to every buy path and not one to make here. An agent
+ * that trades Solana alone does not have it, and the first-trade preset leaves a
+ * pay-per-use agent trading Solana alone.
  */
 import { isDustPosition } from "@/lib/trading/positions";
 import { nanoid } from "nanoid";
 import { exitDistances } from "@/lib/pnl";
-import { and, eq, gte } from "drizzle-orm";
-import { agents, equitySnapshots, getDb, positions, tokens, trades, wallets } from "@/db";
+import { and, eq, gt, gte, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { agents, equitySnapshots, getDb, inferencePayments, positions, tokens, trades, wallets } from "@/db";
 import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { Position, TokenRef } from "@/server/types";
 import type { AgentWalletRef } from "@/lib/x402/types";
@@ -20,6 +37,8 @@ import { loadCachedScores } from "@/lib/trading/score-cache";
 import { toTokenRef } from "@/lib/trading/tokens";
 import { sizeCeiling, type RiskPortfolio } from "@/lib/trading/risk";
 import { readSizing } from "@/lib/trading/sizing";
+import { dbErrorForLog } from "@/lib/security/redact";
+import { PAYMENT_IN_FLIGHT_MS, thinkSource, thinkingReserveUsd } from "./inference";
 
 export interface Portfolio {
   agentId: string;
@@ -38,6 +57,29 @@ export interface Portfolio {
    * this is true.
    */
   cashReadFailed: boolean;
+  /**
+   * USDC a live pay-per-use agent holds back from buys so it can go on paying for its
+   * thinking: twice its limit for one run (what is left of this run, and the next one)
+   * plus the wallet floor, and never more than its Solana wallet has. Part of `cashUsd`,
+   * not on top of it. Absent or zero for every other agent.
+   */
+  thinkingReserveUsd?: number;
+  /**
+   * Set only for a live agent that pays for its own thinking: the moment just before its
+   * wallets were read for this book. `snapshotEquity` uses it to tell whether one of the
+   * agent's paid steps was in flight at that read. Absent for every other agent.
+   */
+  cashReadAt?: Date;
+}
+
+/**
+ * What a buy may spend: cash, less what is held back for thinking. For an agent that
+ * holds nothing back (every key agent, every paper agent) this is its cash.
+ */
+export function spendableCashUsd(portfolio: Pick<Portfolio, "cashUsd" | "thinkingReserveUsd">): number {
+  const held = portfolio.thinkingReserveUsd ?? 0;
+  if (!(held > 0)) return portfolio.cashUsd;
+  return Math.max(0, Math.round((portfolio.cashUsd - held) * 1e6) / 1e6);
 }
 
 export function startOfUtcDay(now: Date = new Date()): Date {
@@ -75,18 +117,21 @@ async function solanaUsdcOnChain(address: string): Promise<number | null> {
   }
 }
 
-async function getLiveCash(walletRefs: AgentWalletRef[]): Promise<{ usd: number; complete: boolean }> {
+async function getLiveCash(walletRefs: AgentWalletRef[]): Promise<{ usd: number; complete: boolean; solanaUsd: number }> {
   const usable = walletRefs.filter((w) => !w.walletId.startsWith("paper_"));
-  if (usable.length === 0) return { usd: 0, complete: true };
+  if (usable.length === 0) return { usd: 0, complete: true, solanaUsd: 0 };
   const { privy } = await import("@/lib/privy");
   const client = privy();
   let total = 0;
+  // The Solana part on its own: pay-per-use thinking is paid from that wallet only.
+  let solanaUsd = 0;
   let complete = true;
   for (const w of usable) {
     if (w.chain === "solana" && w.address) {
       const onChain = await solanaUsdcOnChain(w.address);
       if (onChain !== null) {
         total += onChain;
+        solanaUsd += onChain;
         continue;
       }
     }
@@ -96,13 +141,15 @@ async function getLiveCash(walletRefs: AgentWalletRef[]): Promise<{ usd: number;
         .balance.get(w.walletId, { asset: "usdc", chain: w.chain === "solana" ? "solana" : "base" });
       for (const b of res.balances) {
         const raw = Number(b.raw_value);
-        if (Number.isFinite(raw)) total += raw / 10 ** b.raw_value_decimals;
+        if (!Number.isFinite(raw)) continue;
+        total += raw / 10 ** b.raw_value_decimals;
+        if (w.chain === "solana") solanaUsd += raw / 10 ** b.raw_value_decimals;
       }
     } catch {
       complete = false;
     }
   }
-  return { usd: total, complete };
+  return { usd: total, complete, solanaUsd };
 }
 
 export async function getAgentWallets(agentId: string): Promise<AgentWalletRef[]> {
@@ -181,12 +228,25 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
   // `computePaperCash`.
   let cashReadFailed = false;
   let cashUsd: number;
+  let heldForThinking = 0;
+  let cashReadAt: Date | null = null;
   if (agent.mode === "paper") {
     cashUsd = await getPaperCash(agentId);
   } else {
-    const live = await getLiveCash(await getAgentWallets(agentId));
+    const walletRefs = await getAgentWallets(agentId);
+    // Noted before the first wallet is asked, and only for an agent that pays for its own
+    // thinking: a payment that had not landed by now is not in the balances below.
+    if (thinkSource(agent.config) === "usdc") cashReadAt = new Date();
+    const live = await getLiveCash(walletRefs);
     cashReadFailed = !live.complete;
     cashUsd = netLiveCashUsd(live.usd, await accruedFeesUsd(agentId));
+    // A live agent that pays for its own thinking keeps two runs' worth of it out of its
+    // trades: what the run in hand may still spend after a buy, and what the check before
+    // the next run asks for. With one, its first cash-bound buy left it unable to think
+    // again (`thinkingReserveUsd` has the arithmetic). Held back here, beside the fees,
+    // and never more than the Solana wallet's USDC: that is the wallet that pays, and
+    // USDC on another chain cannot stand in for it. Zero for a key agent.
+    heldForThinking = Math.max(0, Math.min(thinkingReserveUsd(agent.config), live.solanaUsd, cashUsd));
   }
 
   // Buys only. The daily limit caps how much *new* exposure an agent may take on; a
@@ -217,13 +277,65 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
     tradesToday: todayRows.length,
     startingUsd: Number(agent.paperStartingUsd),
     cashReadFailed,
+    ...(heldForThinking > 0 ? { thinkingReserveUsd: heldForThinking } : {}),
+    ...(cashReadAt ? { cashReadAt } : {}),
   };
 }
 
-/** Shape the risk guard consumes. */
+/**
+ * Whether one of the agent's paid steps was in flight when its wallet was read at
+ * `readAt`: signed within `PAYMENT_IN_FLIGHT_MS` of that moment, and either not resolved
+ * yet or resolved only afterwards.
+ *
+ * Such a payment's transfer may or may not be in the balance that was read, and nothing
+ * here can tell which. A row resolved BEFORE the read is not in flight: the receipt that
+ * resolved it says its transfer had settled, so the balance holds it. (That is taken on
+ * the gateway's word, and for an answered step with no receipt on no word at all:
+ * `thinkingFlowAtSql` says what follows if it is wrong.) Nor is a row signed longer ago
+ * than a transfer can take to land, whatever its status: if it landed at all, it landed
+ * before the read.
+ *
+ * Never throws. If the ledger cannot be read the answer is "no", and the mark is written
+ * as it always was: a mark that may sit on the wrong side of one step's price is better
+ * than a book with no marks.
+ */
+async function paidStepInFlight(agentId: string, readAt: Date): Promise<boolean> {
+  try {
+    const db = await getDb();
+    const from = new Date(readAt.getTime() - PAYMENT_IN_FLIGHT_MS);
+    const until = new Date(readAt.getTime() + PAYMENT_IN_FLIGHT_MS);
+    const rows = await db
+      .select({ id: inferencePayments.id })
+      .from(inferencePayments)
+      .where(
+        and(
+          eq(inferencePayments.agentId, agentId),
+          // The ledger's index is on (agent, created). A row is written, then signed, so
+          // one signed in the window was created no earlier than a little before it.
+          gte(inferencePayments.createdAt, new Date(from.getTime() - PAYMENT_IN_FLIGHT_MS)),
+          isNotNull(inferencePayments.signedAt),
+          gt(inferencePayments.signedAt, from),
+          // A signature dated far ahead of this clock is a broken clock, not a payment in flight.
+          lte(inferencePayments.signedAt, until),
+          or(isNull(inferencePayments.resolvedAt), gte(inferencePayments.resolvedAt, readAt)),
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  } catch (err) {
+    console.warn(`[portfolio] ${agentId}: could not tell whether a paid step was in flight: ${dbErrorForLog(err)}`);
+    return false;
+  }
+}
+
+/**
+ * Shape the risk guard consumes. Every buy is checked against this, so this is where
+ * what is held back for thinking stops being spendable: the guard sees the cash a buy may
+ * use, and the full equity for its concentration cap.
+ */
 export function toRiskPortfolio(portfolio: Portfolio): RiskPortfolio {
   return {
-    cashUsd: portfolio.cashUsd,
+    cashUsd: spendableCashUsd(portfolio),
     equityUsd: portfolio.equityUsd,
     tradesToday: portfolio.tradesToday,
     positions: portfolio.positions.map((p) => ({
@@ -252,10 +364,27 @@ export function toRiskPortfolio(portfolio: Portfolio): RiskPortfolio {
  *    read, `cashUsd` understates the book by however much is in it — and a point drawn
  *    on that says the agent lost everything at 14:05 and got it back at 14:10. Missing
  *    the point is the honest outcome; the next pass is five minutes away.
+ *
+ * And one rule for a live agent that pays for its own thinking, on the same principle:
+ *
+ *  - **A paid step in flight is a gap too.** Each step's price leaves the wallet some
+ *    seconds after it is signed for, and is taken back out of the P&L as a flow dated
+ *    when the step was resolved (`thinkingFlowAtSql`, src/server/queries/_shared.ts). A
+ *    mark read between the two holds, or does not hold, a payment whose flow falls on
+ *    one side of it or the other, and the two need not agree: the step's price then
+ *    reads as a gain nobody made, at once or when that mark is later a window's
+ *    baseline. So while one of the agent's steps is in flight (`paidStepInFlight`) no
+ *    mark is written. A step is in flight for seconds, a run's last mark is taken after
+ *    its last step has resolved, and the marks pass comes round again in five minutes.
+ *    Every other agent's mark is written exactly as before: nothing is read for it.
  */
 export async function snapshotEquity(portfolio: Portfolio): Promise<boolean> {
   if (portfolio.cashReadFailed) {
     console.warn(`[portfolio] ${portfolio.agentId}: skipping equity snapshot — a live balance read failed`);
+    return false;
+  }
+  if (portfolio.mode === "live" && portfolio.cashReadAt && (await paidStepInFlight(portfolio.agentId, portfolio.cashReadAt))) {
+    console.warn(`[portfolio] ${portfolio.agentId}: skipping equity snapshot: a paid step was in flight when the wallet was read`);
     return false;
   }
   const db = await getDb();
@@ -281,12 +410,23 @@ export async function snapshotEquity(portfolio: Portfolio): Promise<boolean> {
  * why, rather than being made to discover it by being refused.
  */
 export function effectiveTicketUsd(
-  portfolio: Pick<Portfolio, "cashUsd" | "equityUsd">,
+  portfolio: Pick<Portfolio, "cashUsd" | "equityUsd" | "thinkingReserveUsd">,
   config: AgentConfig,
 ): { amountUsd: number; reason: string } {
   const ceiling = sizeCeiling(config, portfolio, {});
   const feeUsd = platformFeeUsd();
   const equity = portfolio.equityUsd > 0 ? portfolio.equityUsd : portfolio.cashUsd;
+  // What the risk guard will compare a buy with (`toRiskPortfolio`), so the number the
+  // model is told is the number it has.
+  const spendable = spendableCashUsd(portfolio);
+  // How MUCH is kept back for thinking is never put into words. It is worked out from a
+  // limit only the owner may read (twice the limit for one run, plus a fixed floor), and
+  // this sentence goes to a model whose rationale, posts and summary are public. The
+  // model is told that part of its cash is kept back, and what it may trade with.
+  const cashWords =
+    (portfolio.thinkingReserveUsd ?? 0) > 0
+      ? `the $${spendable.toFixed(2)} of your cash that is available to trade (part of your cash is kept back to pay for your thinking)`
+      : `cash $${portfolio.cashUsd.toFixed(2)}`;
 
   const limits: Array<{ amountUsd: number; reason: string }> = [
     {
@@ -294,11 +434,8 @@ export function effectiveTicketUsd(
       reason: `${ceiling.effectiveMode.replace(/_/g, " ")} sizing — ${ceiling.explanation}`,
     },
     {
-      amountUsd: Math.max(0, portfolio.cashUsd - feeUsd),
-      reason:
-        feeUsd > 0
-          ? `cash $${portfolio.cashUsd.toFixed(2)} minus the $${feeUsd.toFixed(2)} Tocker fee charged on the fill`
-          : `cash $${portfolio.cashUsd.toFixed(2)}`,
+      amountUsd: Math.max(0, spendable - feeUsd),
+      reason: feeUsd > 0 ? `${cashWords} minus the $${feeUsd.toFixed(2)} Tocker fee charged on the fill` : cashWords,
     },
   ];
   if (equity > 0) {
@@ -332,6 +469,17 @@ export function describePortfolio(portfolio: Portfolio, config: AgentConfig): st
         ? " Adding to a token you already hold has less room than this: the position you hold counts towards the same concentration cap."
         : ""),
   ];
+  if ((portfolio.thinkingReserveUsd ?? 0) > 0) {
+    // Said plainly, or a model that sees $5.00 of cash and a $4.20 ceiling goes looking
+    // for the rest. But the amount kept back is NOT said: it is worked out from a limit
+    // only the owner may read, and what this model writes (a rationale, a post, its
+    // summary) is public. It is given the one figure it sizes with, and asked to keep
+    // that out of public text too, because cash less that figure is the amount itself.
+    lines.push(
+      `Part of that cash is kept back to pay for your own thinking and cannot be spent on a buy: $${spendableCashUsd(portfolio).toFixed(2)} is available to trade.` +
+        " How much is kept back follows a limit your owner set: like your other thresholds, never mention it, or the amount available to trade, in a rationale, a post or your summary.",
+    );
+  }
   if (portfolio.cashReadFailed) {
     lines.push(
       "WARNING: at least one wallet balance could not be read this tick, so the cash figure above is too low. Do not open a new position on it.",

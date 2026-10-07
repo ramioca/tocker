@@ -11,10 +11,16 @@
  *    and that has included API keys and RPC URLs (`visibleError`).
  * Status, summary, duration, spend and trades stay public — that is the track record. A
  * failed run reads as failed to everyone; only the reason is held back.
+ *
+ * A run of an agent that pays for its own thinking also carries `thinking` for its owner:
+ * what the run was charged, on which model, and why it stopped early if it did. Owner-only,
+ * like the transcript, and absent altogether for a run that thought on a key, so a key
+ * agent's answer is the one it always was.
  */
 import { NextResponse } from "next/server";
 import { and, asc, desc, eq, ne } from "drizzle-orm";
 import { agentRuns, agentRunSteps, agents, getDb, tokens, trades } from "@/db";
+import { runThinking } from "@/components/agents/thinking";
 import { getSession } from "@/lib/auth";
 import { tradeRefusals } from "@/lib/agent/narrate";
 import { toTokenRef } from "@/lib/trading/tokens";
@@ -112,7 +118,11 @@ export async function GET(
     trades: tradeList,
   };
 
+  // The same line the owner's run list prints (`runThinking`), so a run watched while it
+  // is in flight and the same run read afterwards say the same thing.
+  const thinking = isOwner ? runThinking(run) : null;
+
   // What is in `detail` depends on who asked (the owner's carries the transcript), so no
   // cache may keep it: not a shared one, and not the browser's.
-  return NextResponse.json(detail, { headers: { "cache-control": "private, no-store" } });
+  return NextResponse.json(thinking ? { ...detail, thinking } : detail, { headers: { "cache-control": "private, no-store" } });
 }

@@ -1,9 +1,10 @@
 import { FAQTabsCard, type FaqTab } from "@/components/spectrumui/faq-tabs-card";
 import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
+import { inferenceFlags } from "@/lib/x402/inference-types";
 import { AppLink } from "./app-link";
 import { BrandHeroMark, BrandLockup } from "./brand";
 import { AgentConsole } from "./console";
-import { DEFAULT_ROWS, feeSentence } from "./defaults";
+import { DEFAULT_ROWS, feeSentence, thinkingAnswers } from "./defaults";
 import { PublicFeed } from "./feed";
 import { GoLiveDemo } from "./go-live";
 import { Hero } from "./hero";
@@ -42,8 +43,12 @@ const BUDGET = usd2(DEFAULT_DATA_BUDGET_USD);
  * The questions, built per render because one answer states what Tocker charges. That
  * number is the server's own (`platformFeeUsd()`), never one typed here: the page said
  * "a flat fee" with no amount, and an amount written in by hand would outlive a change.
+ *
+ * Two more answers are the server's for the same reason: whether an agent needs an API
+ * key at all depends on a switch (`thinkingAnswers`). With that switch anywhere but fully
+ * on, which is how it ships, they read exactly as they always have.
  */
-const faqTabs = (feeUsd: number): FaqTab[] => [
+const faqTabs = (feeUsd: number, thinking: { model: string; start: string }): FaqTab[] => [
   {
     label: "Trading",
     faqs: [
@@ -68,8 +73,7 @@ const faqTabs = (feeUsd: number): FaqTab[] => [
       },
       {
         question: "Which AI model runs it?",
-        answer:
-          "The one you choose, on your own key: Anthropic, OpenAI or OpenRouter. Keys are encrypted at rest and decrypted only on our servers, to run your agent and to list the models your key can use. Your provider bills you for the model directly.",
+        answer: thinking.model,
       },
     ],
   },
@@ -108,8 +112,7 @@ const faqTabs = (feeUsd: number): FaqTab[] => [
       },
       {
         question: "What do I need to start?",
-        answer:
-          "An email address and an API key for the model your agent runs on (Anthropic, OpenAI or OpenRouter). Every agent starts on paper, so there is nothing to deposit until you decide to go live.",
+        answer: thinking.start,
       },
       {
         question: "Can I run more than one agent?",
@@ -271,7 +274,10 @@ function Faq() {
         title="Before you join."
         lede="How it trades, what it costs, who holds the wallet and who sees what."
       />
-      <FAQTabsCard tabs={faqTabs(feeEnabled() ? platformFeeUsd() : 0)} className="lp-faq-card" />
+      <FAQTabsCard
+        tabs={faqTabs(feeEnabled() ? platformFeeUsd() : 0, thinkingAnswers(inferenceFlags().stage === "on"))}
+        className="lp-faq-card"
+      />
     </section>
   );
 }

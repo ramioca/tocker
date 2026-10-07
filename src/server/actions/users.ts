@@ -1,10 +1,12 @@
 "use server";
 import { discoverAnthropicWorkspace, needsWorkspaceHeader } from "@/lib/agent/anthropic-workspace";
+import { thinkSource } from "@/lib/agent/inference";
+import { countAgentsMissingKey, missingKeySql, paysPerUseSql } from "@/lib/agent/inference-gate";
 import { listModelsForKey } from "@/lib/agent/key-models";
 import { probeLlmKey } from "@/lib/agent/key-probe";
 import { providerLabel, type ModelOption } from "@/lib/agent/models";
 import { revalidatePath } from "next/cache";
-import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, not, sql } from "drizzle-orm";
 import { agents, getDb, llmKeys, notifications, users } from "@/db";
 import { getSession } from "@/lib/auth";
 import { isAdminEmail } from "@/lib/admin";
@@ -13,7 +15,6 @@ import { decryptSecret, encryptSecret, last4 } from "@/lib/crypto";
 import { recordAudit } from "@/lib/security/audit";
 import { SECRET_IN_PUBLIC_TEXT, dbErrorForLog, looksLikeSecret } from "@/lib/security/redact";
 import { newId } from "@/server/queries/_shared";
-import { countKeylessAgents } from "@/server/queries/users";
 import { mismatchedProvider, wrongProviderOnAdd, wrongProviderOnRotate } from "@/lib/agent/key-prefix";
 import { sanitizePrefs, type NotificationPrefs } from "@/lib/notifications/prefs";
 import type { ActionResult } from "@/server/types";
@@ -187,8 +188,9 @@ export async function addLlmKey(input: {
   revalidatePath("/settings");
   revalidatePath("/settings/security");
   // A key removed and re-added (rather than rotated) leaves every agent it served with
-  // none. Saying how many lets the form offer to attach this one in the same breath.
-  const keylessAgents = await countKeylessAgents(session.userId);
+  // none. Saying how many lets the form offer to attach this one in the same breath. An
+  // agent that pays for its own thinking has no key on purpose and is not counted.
+  const keylessAgents = await countAgentsMissingKey(session.userId);
   return {
     ok: true,
     data: { id, last4: last4(key), keylessAgents, ...(probe === "unreachable" ? { unverified: true } : {}) },
@@ -202,6 +204,10 @@ export async function addLlmKey(input: {
  * adding a new one attached nothing, so an operator who swapped keys by remove-then-add
  * ended with a working key and every agent stopped — fixable only agent by agent. Only
  * agents with no key at all are touched; one already pointed at another key keeps it.
+ *
+ * An agent that pays for its own thinking (`llm.source: "usdc"`) is never touched. It has
+ * no key because it needs none, and a key put on it here would sit unused: the only way
+ * to move one back to a key is its own settings, which change the mode explicitly.
  */
 /** How often one account may ask a provider for a model list. The picker caches it too. */
 const KEY_MODELS_LIMIT = { limit: 20, windowMs: 60_000 } as const;
@@ -284,7 +290,7 @@ export async function attachKeyToKeylessAgents(keyId: string): Promise<ActionRes
   const attached = await db
     .update(agents)
     .set({ llmKeyId: key.id, updatedAt: new Date() })
-    .where(and(eq(agents.ownerId, session.userId), isNull(agents.llmKeyId)))
+    .where(and(eq(agents.ownerId, session.userId), missingKeySql()))
     .returning({ id: agents.id, name: agents.name, slug: agents.slug });
 
   // One row per agent, so each agent's own history says when it got its brain back.
@@ -319,11 +325,15 @@ export async function removeLlmKey(id: string): Promise<ActionResult<{ detachedA
   if (!key) return fail("Key not found");
 
   // agents keep running without a key only in paper mode — detach first
-  const detached = await db
+  const cleared = await db
     .update(agents)
     .set({ llmKeyId: null })
     .where(eq(agents.llmKeyId, id))
-    .returning({ id: agents.id });
+    .returning({ id: agents.id, config: agents.config });
+  // An agent that pays for its own thinking may still carry a key id from before it
+  // switched. It was not using the key and loses nothing with it, so it is not counted
+  // among the agents this stops.
+  const detached = cleared.filter((agent) => thinkSource(agent.config) !== "usdc");
   await db.delete(llmKeys).where(eq(llmKeys.id, id));
 
   await recordAudit({
@@ -384,7 +394,8 @@ export async function rotateLlmKey(input: {
   const [{ n: agentCount }] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(agents)
-    .where(eq(agents.llmKeyId, input.id));
+    // Agents that think on this key. One that pays per use does not, whatever its row holds.
+    .where(and(eq(agents.llmKeyId, input.id), not(paysPerUseSql())));
 
   try {
     await db

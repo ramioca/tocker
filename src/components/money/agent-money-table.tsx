@@ -11,6 +11,12 @@ import type { MoneyAgentRow, MoneyTotals } from "@/server/queries/money";
  * footnote — an agent that is up $6 and has spent $9 on data is a losing agent, and the
  * only way to see that is to have both numbers on the same line.
  *
+ * A fourth, "Thinking", is drawn only when an agent in the table has paid for its own
+ * thinking (pay-per-use). It is the amount proven to have left that agent's wallet, real
+ * USDC in a paper table too; what is still being checked, or could not be, is in the
+ * cell's tooltip and never in the figure. A table of agents that all think on their
+ * owner's key is exactly the table it was.
+ *
  * The shell owns the horizontal overflow (rule: the page body never scrolls sideways),
  * `.glass-card` rather than `.glass-panel` because a table of rows is a repeating
  * surface, and every number is `tabular-nums` so a column of them does not jitter.
@@ -78,6 +84,24 @@ function Td({
   );
 }
 
+/**
+ * The tooltip on a Thinking cell: what the figure is made of, and what it leaves out.
+ * The cell itself is only ever the confirmed amount.
+ */
+function thinkingTitle(row: MoneyAgentRow): string | undefined {
+  const parts: string[] = [];
+  if (row.thinkingSteps > 0) {
+    parts.push(
+      `${row.thinkingSteps.toLocaleString("en-US")} paid step${row.thinkingSteps === 1 ? "" : "s"}${row.thinkingModel ? ` · ${row.thinkingModel}` : ""}`,
+    );
+  }
+  if (row.thinkingUnansweredUsd > 0) parts.push(`${formatUsd(row.thinkingUnansweredUsd)} of it got no answer`);
+  if (row.thinkingCheckingUsd > 0) parts.push(`${formatUsd(row.thinkingCheckingUsd)} more is being checked`);
+  if (row.thinkingUncheckedUsd > 0) parts.push(`${formatUsd(row.thinkingUncheckedUsd)} more could not be checked`);
+  if (row.thinkingSimulatedUsd > 0) parts.push(`${formatUsd(row.thinkingSimulatedUsd)} simulated, no money moved`);
+  return parts.length > 0 ? parts.join("\n") : undefined;
+}
+
 function pnlTone(value: number): string {
   if (value > 0) return "text-positive";
   if (value < 0) return "text-negative";
@@ -97,6 +121,13 @@ export function AgentMoneyTable({
   label: string;
 }) {
   const captionId = useId();
+  // Anything on the ledger for these agents, simulated, still-being-checked and
+  // never-checked included, or the column would be missing exactly when a row has
+  // something to say in it.
+  const showThinking = rows.some(
+    (row) =>
+      row.thinkingUsd > 0 || row.thinkingCheckingUsd > 0 || row.thinkingUncheckedUsd > 0 || row.thinkingSimulatedUsd > 0,
+  );
   return (
     <div className="glass-card overflow-hidden rounded-2xl">
       {/* Outside the scroller: as a <caption> it took the table's full width and was
@@ -126,6 +157,7 @@ export function AgentMoneyTable({
               <Th numeric>Tocker fee</Th>
               <Th numeric>Data</Th>
               <Th numeric>Model est.</Th>
+              {showThinking ? <Th numeric>Thinking</Th> : null}
               <Th numeric>Trades</Th>
               <Th numeric>Win rate</Th>
             </tr>
@@ -174,6 +206,11 @@ export function AgentMoneyTable({
                     {row.modelSpendUsd === null ? "no price" : formatUsd(row.modelSpendUsd)}
                   </span>
                 </Td>
+                {showThinking ? (
+                  <Td numeric muted>
+                    <span title={thinkingTitle(row)}>{formatUsd(row.thinkingUsd)}</span>
+                  </Td>
+                ) : null}
                 <Td numeric muted>
                   {row.tradeCount}
                 </Td>
@@ -201,6 +238,11 @@ export function AgentMoneyTable({
                 <Td numeric muted>
                   {formatUsd(totals.modelSpendUsd)}
                 </Td>
+                {showThinking ? (
+                  <Td numeric muted>
+                    {formatUsd(totals.thinkingUsd)}
+                  </Td>
+                ) : null}
                 <Td numeric muted>
                   {totals.tradeCount}
                 </Td>

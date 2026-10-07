@@ -17,6 +17,9 @@ import {
   x402Payments,
 } from "@/db";
 import { readStoredConfig } from "@/lib/agent/config";
+import { thinkSource } from "@/lib/agent/inference";
+import { THINK_SOURCE_LABELS, runThinking, type RunThinking } from "@/components/agents/thinking";
+import { inferenceAllowedFor, inferenceFlags } from "@/lib/x402/inference-types";
 import { DATA_SOURCES, toDataSourceInfo } from "@/lib/data-sources/registry";
 import { splitPnl, toNum } from "@/lib/money";
 import { computeEquity, exitDistances, pnlOverWindow, unrealized, winRate, WINDOW_DAYS } from "@/lib/pnl";
@@ -63,6 +66,50 @@ import {
   visibleRationale,
   visibleSteps,
 } from "./visibility";
+
+/**
+ * Pure: whether an account may choose pay-per-use thinking under these environment
+ * switches. `INFERENCE_USDC` unset, or anything but `owner` or `on`, is off for everyone,
+ * admins included, and the forms then look exactly as they did before the feature existed.
+ */
+export function payPerUseAllowed(
+  viewer: { userId: string; isAdmin: boolean } | null | undefined,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (!viewer?.userId) return false;
+  return inferenceAllowedFor({ id: viewer.userId, isAdmin: viewer.isAdmin }, inferenceFlags(env));
+}
+
+/**
+ * Whether this signed-in viewer may choose pay-per-use thinking. Read here, on the
+ * server, and handed to the builder, the settings form and onboarding as a boolean: the
+ * switch is not a `NEXT_PUBLIC_` variable and no client component reads it.
+ *
+ * It decides what a form offers. It is not the gate: the run's own preflight asks the
+ * same question again before anything is paid. Anything that goes wrong answers "no".
+ */
+export async function payPerUseAllowedFor(
+  viewer: { userId: string; email?: string | null } | null | undefined,
+  env: Record<string, string | undefined> = process.env,
+): Promise<boolean> {
+  if (!viewer?.userId) return false;
+  try {
+    // Off is decided without looking anything else up, so a deployment that has not
+    // switched the feature on loads nothing new to answer this.
+    if (inferenceFlags(env).stage === "off") return false;
+    const { isAdminEmail } = await import("@/lib/admin");
+    return payPerUseAllowed({ userId: viewer.userId, isAdmin: isAdminEmail(viewer.email) }, env);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A run as its owner's list prints it: the public summary, plus what a pay-per-use run
+ * spent on thinking. `thinking` is absent for a key run and for every viewer who is not
+ * the owner.
+ */
+export type OwnerRunSummary = RunSummary & { thinking?: RunThinking | null };
 
 /**
  * A live agent's book as it stands now — wallet cash and positions at live marks — or
@@ -288,6 +335,7 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
   // What a save would store, so a row written before a schema rewrite reads the same
   // to the settings form as the row its next save produces.
   const storedConfig = readStoredConfig(agent.config);
+  const payPerUse = thinkSource(agent.config) === "usdc";
 
   return {
     ...card,
@@ -309,7 +357,16 @@ async function detailFor(agent: AgentRow | undefined, viewerId?: string | null):
     // Privy wallet id, which no other viewer has a use for.
     wallets: isOwner ? walletRows.map((w) => ({ chain: w.chain as Chain, address: w.address, walletId: w.id })) : [],
     nextRunAt: iso(agent.nextRunAt),
-    llmKeyLabel: isOwner && key ? (key.label ?? `${key.provider} ····${key.last4}`) : null,
+    // What it thinks with, in the owner's words. A pay-per-use agent uses no key even when
+    // one is still attached, so its label is the mode: "no key attached" under an agent
+    // that is thinking and paying would read as broken.
+    llmKeyLabel: !isOwner
+      ? null
+      : payPerUse
+        ? THINK_SOURCE_LABELS.usdc
+        : key
+          ? (key.label ?? `${key.provider} ····${key.last4}`)
+          : null,
     llmKeyId: isOwner ? agent.llmKeyId : null,
     stats: {
       winRate: wr.rate,
@@ -445,7 +502,7 @@ export async function getAgentRuns(
   agentId: string,
   cursor?: string | null,
   viewerId?: string | null,
-): Promise<Page<RunSummary>> {
+): Promise<Page<OwnerRunSummary>> {
   const db = await getDb();
   const [agent] = await db
     .select({ ownerId: agents.ownerId, isPublic: agents.isPublic })
@@ -486,9 +543,14 @@ const DEFAULT_RUN_PAGE = 20;
  * The row the runs list and the run header print. `tradeCount` is fills only: a proposal
  * that expired or was declined wrote a `trades` row with this run's id, and counting it
  * printed "1 trade" for a tick that traded nothing. Refusals are counted from the
- * transcript for the owner alone.
+ * transcript for the owner alone, and so is what a pay-per-use run spent on thinking:
+ * the amount and the reason it stopped say which model the owner pays for and where
+ * they set its limits.
  */
-async function summarizeRuns(rows: Array<typeof agentRuns.$inferSelect>, isOwner: boolean): Promise<RunSummary[]> {
+async function summarizeRuns(
+  rows: Array<typeof agentRuns.$inferSelect>,
+  isOwner: boolean,
+): Promise<OwnerRunSummary[]> {
   if (rows.length === 0) return [];
   const db = await getDb();
   const ids = rows.map((r) => r.id);
@@ -558,7 +620,16 @@ async function summarizeRuns(rows: Array<typeof agentRuns.$inferSelect>, isOwner
       : null,
     stepCount: stepByRun.get(r.id) ?? 0,
     createdAt: r.createdAt.toISOString(),
+    // The key is left off, not set to null, for a key run and for a visitor, so those
+    // rows are the same objects they were before pay-per-use existed.
+    ...(isOwner ? thinkingOf(r) : {}),
   }));
+}
+
+/** `{ thinking }` for a pay-per-use run, and nothing at all for a run that thought on a key. */
+function thinkingOf(run: typeof agentRuns.$inferSelect): { thinking?: RunThinking } {
+  const thinking = runThinking(run);
+  return thinking ? { thinking } : {};
 }
 
 export async function getRun(runId: string, viewerId?: string | null): Promise<RunDetail | null> {

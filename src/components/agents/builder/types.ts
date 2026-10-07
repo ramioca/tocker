@@ -1,5 +1,7 @@
 import { DEFAULT_AGENT_CONFIG, DEFAULT_MODEL_ID } from "@/lib/agent/config";
 import { DEFAULT_FUND_USD } from "@/lib/wallets/funding";
+import { chooseSource, stripPayPerUse, usdcEstimate } from "@/components/agents/thinking";
+import { thinkSource } from "@/lib/agent/inference";
 import type { AgentConfigInput } from "@/lib/agent/config";
 import type { AgentConfig } from "@/db/schema";
 import type { LlmKeyRow } from "@/server/types";
@@ -110,11 +112,25 @@ export function emptyDraft(): BuilderDraft {
  *
  * For a fresh, restored or cleared draft only. A provider the user picks in the form is
  * left alone: switching to a provider is how its first key gets added.
+ *
+ * A draft set to pay per use is left exactly as it is: it has no key on purpose, and
+ * moving it onto one would undo a choice somebody made. That holds only while the viewer
+ * may use pay-per-use. A draft saved when they could, restored when they cannot, goes
+ * back to being a key draft, because the form no longer shows the other mode at all.
  */
 export function withDefaultKey(
   draft: BuilderDraft,
   keys: ReadonlyArray<Pick<LlmKeyRow, "id" | "provider">>,
+  options: { payPerUseAllowed?: boolean } = {},
 ): BuilderDraft {
+  if (thinkSource(draft.config) === "usdc") {
+    if (options.payPerUseAllowed === true) {
+      // A saved draft that names the mode without its model and limits gets the defaults,
+      // so the form never holds a pay-per-use draft it would refuse to create.
+      return draft.config.llm.usdc ? draft : { ...draft, config: chooseSource(draft.config, "usdc").config };
+    }
+    draft = { ...draft, config: stripPayPerUse(draft.config) };
+  }
   const provider = draft.config.llm.provider;
   if (keys.some((key) => key.id === draft.llmKeyId && key.provider === provider)) return draft;
 
@@ -379,6 +395,22 @@ export const INTERVAL_PRESETS = [
   { minutes: 240, label: "4 hours", hint: "6 runs a day. Swing pace." },
   { minutes: 1_440, label: "Daily", hint: "One run a day." },
 ] as const;
+
+/**
+ * The line under a schedule choice. On the owner's key it is the fixed hint above. On pay
+ * per use the cost is a number, so the hint is that number: runs a day, and what they are
+ * expected to cost on the chosen model (`usdcEstimate`, the same figures as the panel).
+ */
+export function intervalHint(preset: { minutes: number; hint: string }, payPerUseModel?: string | null): string {
+  if (!payPerUseModel) return preset.hint;
+  if (preset.minutes === 0) return "Only runs when you press Run now. Nothing is spent until then.";
+  const estimate = usdcEstimate(payPerUseModel, preset.minutes);
+  // A model that is no longer offered has no price to quote, and the key wording
+  // ("on your key") would be untrue for it.
+  if (!estimate.model) return "Every run pays for its own thinking.";
+  const runs = `About ${estimate.runsPerDay} run${estimate.runsPerDay === 1 ? "" : "s"} a day`;
+  return `${runs}, about $${estimate.dayUsd.toFixed(2)} of thinking.`;
+}
 
 export const PAPER_BALANCES = [1_000, 10_000, 100_000] as const;
 

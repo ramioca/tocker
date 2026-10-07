@@ -50,7 +50,7 @@ import {
   toTradeScore,
 } from "@/lib/tokens";
 import type { TokenScore } from "@/server/types";
-import { describePortfolio, getPortfolio, toRiskPortfolio } from "./portfolio";
+import { describePortfolio, getPortfolio, spendableCashUsd, toRiskPortfolio } from "./portfolio";
 import type { RunLogger } from "./logger";
 import { buildPositionTools } from "./tools-positions";
 
@@ -741,10 +741,22 @@ export function buildTools(ctx: RunContext): ToolSet {
           if (parsed.side === "buy") {
             const committedUsd = await openProposalsUsd(agent.id);
             const feeUsd = flatFeeUsd();
-            const affordable = portfolio.cashUsd - committedUsd - feeUsd;
+            // The purse is the cash a buy may spend, the figure the risk guard above and
+            // the guard at fill time both use. For an agent that pays for its own thinking
+            // that is less than its cash: counting the held-back part here let a set of
+            // proposals add up to money the last approval would then be refused for.
+            // For every other agent it is its cash, and this sentence is what it was.
+            const purseUsd = spendableCashUsd(portfolio);
+            // How much is kept back is not said to the model, here or in its book: the
+            // figure follows a limit only the owner may read (see `describePortfolio`).
+            const purseWords =
+              (portfolio.thinkingReserveUsd ?? 0) > 0
+                ? `cash available to trade $${purseUsd.toFixed(2)} (part of your cash is kept back to pay for your thinking)`
+                : `cash $${purseUsd.toFixed(2)}`;
+            const affordable = purseUsd - committedUsd - feeUsd;
             if (parsed.amountUsd > affordable + 1e-9) {
               return fail(
-                `Not affordable alongside what is already proposed: cash $${portfolio.cashUsd.toFixed(2)}, $${committedUsd.toFixed(2)} already awaiting your owner's decision, $${feeUsd.toFixed(2)} fee per fill — at most $${Math.max(0, affordable).toFixed(2)} is left for this one. Shrink it to fit or skip it; the set has to add up to the cash you hold.`,
+                `Not affordable alongside what is already proposed: ${purseWords}, $${committedUsd.toFixed(2)} already awaiting your owner's decision, $${feeUsd.toFixed(2)} fee per fill — at most $${Math.max(0, affordable).toFixed(2)} is left for this one. Shrink it to fit or skip it; the set has to add up to the cash you hold.`,
                 { unaffordable: true, affordableUsd: Math.max(0, affordable) },
               );
             }

@@ -182,12 +182,19 @@ export interface WindowPnl {
 export const WINDOW_DAYS: Record<LeaderboardWindow, number | null> = { "7d": 7, "30d": 30, all: null };
 
 /**
- * Money that moved into (+) or out of (−) a book without being a trade: a deposit or a
- * withdrawal. Equity moves by exactly this much, and none of it is profit or loss.
+ * Money that moved into (+) or out of (−) a book without being a trade: a deposit, a
+ * withdrawal, or what a pay-per-use agent paid for its own thinking. Equity moves by
+ * exactly this much, and none of it is trading profit or loss.
  */
 export interface MoneyFlow {
   at: Date | string | number;
   amountUsd: number;
+  /**
+   * Set on what an agent paid for its thinking, so a reader that words a flow ("excl. a
+   * $40 withdrawal") does not call a running cost a withdrawal. The arithmetic never
+   * reads it: every flow is netted the same way.
+   */
+  kind?: "thinking";
 }
 
 export interface FlowTotal {
@@ -238,7 +245,8 @@ export interface BookPnl {
 /**
  * P&L between two marks with the money that moved in between taken out. Money moved is
  * not money made: $25 at the first mark, $25 deposited and $50 at the last is no gain,
- * and $25 with $20 withdrawn and $5 left is no loss.
+ * and $25 with $20 withdrawn and $5 left is no loss. The same holds for $25 of which $1
+ * went on the agent's own thinking: the book is $24 and nothing was lost trading.
  */
 export function pnlNetOfFlows(startEquityUsd: number, endEquityUsd: number, flow?: FlowTotal | null): BookPnl {
   const start = safe(startEquityUsd);

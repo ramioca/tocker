@@ -67,3 +67,32 @@ export function feeSentence(feeUsd: number): string {
   const amount = Math.round(feeUsd * 100) / 100 === feeUsd ? feeUsd.toFixed(2) : String(feeUsd);
   return ` What Tocker charges is a flat $${amount} per filled trade, buy or sell, never a percentage of its size.`;
 }
+
+/** The two FAQ answers that say where an agent's thinking comes from, as they have always read. */
+const KEY_MODEL_ANSWER =
+  "The one you choose, on your own key: Anthropic, OpenAI or OpenRouter. Keys are encrypted at rest and decrypted only on our servers, to run your agent and to list the models your key can use. Your provider bills you for the model directly.";
+const KEY_START_ANSWER =
+  "An email address and an API key for the model your agent runs on (Anthropic, OpenAI or OpenRouter). Every agent starts on paper, so there is nothing to deposit until you decide to go live.";
+
+/**
+ * "Which AI model runs it?" and "What do I need to start?".
+ *
+ * `payPerUseOpen` is the server's own switch, handed in: true only when pay-per-use
+ * thinking is switched on for **everyone** (`INFERENCE_USDC=on`). Until then, which is
+ * how the feature ships and every stage at which only invited accounts may use it, both
+ * answers are word for word what they were: the page must not offer a visitor something
+ * they cannot have. Once it is open, a visitor no longer needs a key to start, and the
+ * old second answer would be false.
+ *
+ * The open wording keeps the order the product does: your own key first and recommended,
+ * pay per use for someone without one. It says what leaves Tocker in that mode, because
+ * that is a thing to know before choosing it, not after.
+ */
+export function thinkingAnswers(payPerUseOpen: boolean): { model: string; start: string } {
+  if (!payPerUseOpen) return { model: KEY_MODEL_ANSWER, start: KEY_START_ANSWER };
+  return {
+    model: `${KEY_MODEL_ANSWER} An agent with no key can pay per use instead: each model step is bought in USDC from the agent’s own Solana wallet, from a short list of models. In that mode the agent’s strategy and transcript are sent to BlockRun and the model provider it uses.`,
+    start:
+      "An email address, and a way for your agent to think: your own API key (Anthropic, OpenAI or OpenRouter), which is what we recommend, or a few dollars of USDC in the agent’s own wallet to pay per use. Every agent starts on paper, so there is nothing to deposit for trading until you decide to go live.",
+  };
+}

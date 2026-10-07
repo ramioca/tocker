@@ -9,6 +9,7 @@ import {
   equitySnapshots,
   follows,
   getDb,
+  inferencePayments,
   platformFees,
   tokens,
   trades,
@@ -16,6 +17,7 @@ import {
   type Db,
 } from "@/db";
 import type { TradeScoreSnapshot } from "@/db/schema";
+import { PAYMENT_IN_FLIGHT_MS, thinkingModel } from "@/lib/agent/inference";
 import { closedSells, type AnalyticsFill } from "@/lib/analytics";
 import { toNum, toNumOrNull } from "@/lib/money";
 import { flowsBetween, pnlNetOfFlows, type MoneyFlow } from "@/lib/pnl";
@@ -431,21 +433,283 @@ export function withdrawnUsdc(metadata: Record<string, unknown> | null | undefin
 }
 
 /**
- * Every deposit into and withdrawal out of these agents' wallets that Tocker has a
- * record of, per agent: funding transfers that were sent (`agent_funding_intents`) and
- * the owner's audited USDC withdrawals. Live agents only. A paper book is measured from
- * its notional and holds no real money to move, so it gets no entry.
+ * A pay-per-use payment PROVEN to have left the wallet, as a condition on
+ * `inference_payments`:
  *
- * These are what every live P&L nets out, the same two sources `/money`'s daily table
- * reads. What is not here cannot be netted: USDC sent to an agent's address from outside
- * Tocker has no funding row, and still reads as a gain.
+ *  - `paid_no_answer`: no usable answer came, and the payment has its proof. The pay path
+ *    writes this status only with the same proof a transaction id needs (below), and the
+ *    reconciler only on finding the transfer on chain; without proof the row is
+ *    `unconfirmed`;
+ *  - `settled` WITH a transaction id: answered, and the row names the payment's own
+ *    transaction. The id is written in one of two ways and no other: by the pay path,
+ *    when the gateway's receipt names an id that is this payment's own (checked against
+ *    the bytes that were signed) and says it settled; or by the reconciler, when it finds
+ *    the transfer on chain. The first rests on the gateway's word that its own
+ *    transaction landed, which `scripts/inference-audit.ts` is there to check.
+ *
+ * The Money page's "Thinking" figure and the flow taken out of P&L are both made from
+ * exactly this condition, so the two cannot disagree, and the page's Net (P&L less costs)
+ * is right whichever side of it a row is on.
+ *
+ * Left out on purpose, because a public P&L is not adjusted on an assumption:
+ *
+ *  - `settled` with NO transaction id: the step was answered, and whether its payment
+ *    landed is still being checked. The ledger counts it as charged against every limit
+ *    (the safe side for a cap). It is the unsafe side for a P&L: netted and never landed,
+ *    it would read as a gain nobody made, for good. It joins when the reconciler writes
+ *    the transaction id, and never joins if the reconciler proves it was not charged
+ *    (the row is then `not_charged`, and the answer was free).
+ *  - `signed` and `unconfirmed`: signed, and whether the money moved is not yet known.
+ *  - `reserved`, `released` and `not_charged`: nothing left the wallet.
+ *  - `simulated`: mock mode, no money.
+ *
+ * Until a row is proven its amount is in no Thinking total and stays in the P&L as it
+ * fell out of the wallet: a few cents of loss, never a gain.
+ *
+ * Proven is one half of that. The other is WHEN the flow is dated, which decides the side
+ * of each mark it falls on: see {@link thinkingFlowAtSql}.
+ */
+export function thinkingProvenSql() {
+  return sql<boolean>`(${inferencePayments.status} = 'paid_no_answer' or (${inferencePayments.status} = 'settled' and ${inferencePayments.txHash} is not null))`;
+}
+
+/**
+ * Answered, and not yet proven on chain: a `settled` row the gateway gave no transaction
+ * id for. Counted as charged, shown as being checked, and netted from nothing (see
+ * {@link thinkingProvenSql}).
+ */
+export function thinkingAnsweredUnprovenSql() {
+  return sql<boolean>`(${inferencePayments.status} = 'settled' and ${inferencePayments.txHash} is null)`;
+}
+
+/** What one ledger row took from the wallet: the settled amount, or the quote when the gateway named none. */
+export function thinkingPaidUsdSql() {
+  return sql<string>`coalesce(${inferencePayments.settledUsd}, ${inferencePayments.quotedUsd})`;
+}
+
+/**
+ * When a ledger row's payment was signed, or the row's own time before there was a
+ * signature. This is what a list of payments is ordered and dated by (the Money page),
+ * and it is NOT when the money left: see {@link thinkingFlowAtSql} for that.
+ */
+export function thinkingPaidAtSql() {
+  return sql<Date>`coalesce(${inferencePayments.signedAt}, ${inferencePayments.createdAt})`;
+}
+
+/**
+ * The moment a proven payment's flow is dated: when the row was resolved, and never later
+ * than `PAYMENT_IN_FLIGHT_MS` after its signature.
+ *
+ * A payment is signed, lands on chain some seconds later, and is resolved when its answer
+ * (with the gateway's receipt) arrives, or when the reconciler reaches a verdict on it.
+ * Every reader of a flow asks which side of a mark it falls on, and the mark's equity is
+ * the wallet as it was read. Dated at the SIGNATURE the flow ran ahead of the money: a
+ * mark read between the two did not hold the fall yet, the flow was already before it,
+ * and the step's price read as a gain nobody made until the next mark. So the flow is
+ * dated at a moment by which the transfer has landed:
+ *
+ *  - `resolved_at`, for a row its own request resolved. The receipt that proves the row
+ *    says the transfer settled, so it is on chain by then;
+ *  - at most two minutes after the signature, for a row the reconciler resolved later
+ *    (minutes or hours later). A signed transfer cannot land after its blockhash has
+ *    lapsed, which takes about a minute, so by then it had landed; dating it at the
+ *    verdict would instead put it after marks that already hold the fall.
+ *
+ * The first moves a flow later than its transfer, never earlier. Later is a mark that
+ * holds the fall with the flow still ahead of it. A reader ending on that mark shows the
+ * step's price as a loss until the next one; a reader STARTING from it (a window's
+ * baseline, the book's first mark) would show it as a gain. Two rules close that, so
+ * neither can be read from a mark the app writes:
+ *
+ *  - `snapshotEquity` writes no mark while one of the agent's paid steps is in flight
+ *    (signed in the last two minutes and not resolved before the wallet was read). No
+ *    mark then stands between a payment's signature and this date, and the two dates
+ *    cannot disagree about any mark.
+ *  - a payment SIGNED at or before the book's first mark is no flow at all
+ *    (`loadThinkingFlows`), whatever this date is: that is the one baseline every
+ *    all-time figure keeps for good, and a payment in flight across it is left in the
+ *    P&L as a few cents of loss.
+ *
+ * What is still taken on trust: that a transfer the gateway's receipt calls settled is
+ * already visible to OUR node when the wallet is next read. A mark read in a gap between
+ * the two would count the step as a gain until the next mark.
+ */
+export function thinkingFlowAtSql() {
+  const signed = thinkingPaidAtSql();
+  // A server constant, never input. Written into the statement, not bound: the expression
+  // is used in more than one place of one query, and each bound use is its own parameter.
+  const inFlight = sql.raw(`interval '${Math.round(PAYMENT_IN_FLIGHT_MS / 1000)} seconds'`);
+  // Never before the signature either, whatever a row's two times say.
+  return sql<Date>`greatest(${signed}, least(coalesce(${inferencePayments.resolvedAt}, ${signed}), ${signed} + ${inFlight}))`;
+}
+
+/**
+ * What each live agent paid for its own thinking, as flows: one row per run and per
+ * stretch between two marks of the book, dated at the last payment in it. A payment's
+ * date is {@link thinkingFlowAtSql}: when it was resolved, not when it was signed.
+ *
+ * Per run and not per step because a run pays for up to twenty-one steps inside a few
+ * minutes, so its total nets the same and is a tenth of the rows. But never across a
+ * mark. Every reader of these flows measures between two marks of the agent's current
+ * book and asks which side of each a flow falls on (`flowsBetween`), and a mark taken
+ * while a run is paying already lacks the steps before it and still holds the ones
+ * after. A run's whole total at its last payment's time puts the earlier steps on the
+ * wrong side of that mark: measured from it (a 7 or 30 day window's baseline, or the
+ * book's first mark), the P&L read high by what was paid before it. So the cut is made
+ * here, step by step: each payment is keyed by the latest mark strictly before it, and
+ * only payments between the same two marks are added up. A flow dated exactly at a mark
+ * is inside that mark, as `flowsBetween` reads it, hence "strictly".
+ *
+ * A payment SIGNED at or before the book's first mark (or made by an agent never marked)
+ * is no flow at all: every reader measures from a mark at or after the first, so that
+ * money is already inside it. This one test is on the signature and not on the flow's
+ * date, on purpose. A payment signed before that mark and resolved after it was in
+ * flight across it, and which side its transfer landed on is not known. Counted as a
+ * flow, a transfer that had already landed would be netted from a mark that already
+ * lacked it: a gain nobody made, in every all-time figure, for good. Left out, the worst
+ * case is the same few cents read as a loss.
+ *
+ * Only payments proven to have left the wallet ({@link thinkingProvenSql}).
+ *
+ * The ledger has no foreign keys, so the join to `agents` is also what drops the rows of
+ * agents that no longer exist. An agent with no proven ledger row costs this nothing: it
+ * is not among the agents the query starts from.
+ *
+ * How the query is shaped matters as much as what it returns, because it runs for every
+ * card, the leaderboard and /money. Two things in it are dear, and each is done as
+ * seldom as it can be:
+ *
+ *  - The book's first mark is worked out once per paying agent, in a list of those
+ *    agents that the rest of the query reads from (the list carries a LIMIT it can never
+ *    reach, which keeps the database from folding it into the join, where the first
+ *    mark would be worked out again per payment).
+ *  - The mark before a payment is looked up only for payments after that first mark.
+ *    The others are no flow whatever the lookup would find, and they are the dear ones:
+ *    an agent that paid for its thinking through weeks on paper and then went live has
+ *    thousands of them, and for each the lookup walks back through every paper snapshot
+ *    before it (none is a mark of the live book) to find nothing. So they are dropped by
+ *    one comparison first, and nothing later filters on the lookup's own result: a
+ *    filter on it would have the database look every payment up before it had dropped
+ *    any. Measured on an agent with 2,000 payments from 4,000 paper marks and 100 since
+ *    going live: 430 ms looked up per payment, 40 ms this way.
+ */
+async function loadThinkingFlows(db: Db, ids: string[]): Promise<Array<{ agentId: string; atMs: number | string | bigint; usd: string }>> {
+  // Two moments of one payment: when its flow is dated, and when it was signed. The first
+  // places it between two marks; the second decides whether it is a flow at all.
+  const paidAt = thinkingFlowAtSql();
+  const signedAt = thinkingPaidAtSql();
+  // The live agents among `ids` that have a proven payment, each with the first snapshot
+  // of the book it is running now: the same row `loadBookMarks` measures all-time P&L
+  // from. Null for an agent never marked.
+  const payers = db.$with("thinking_payers").as(
+    db
+      .select({
+        id: sql<string>`${agents.id}`.as("thinking_payer_id"),
+        mode: sql<string>`${agents.mode}`.as("thinking_payer_mode"),
+        // The agent's columns are named in full here. In a query that reads one table
+        // the builder writes a column bare, and inside this inner query a bare `id` or
+        // `mode` would be the snapshot's own.
+        firstAt: sql<Date | null>`(
+          select min(${equitySnapshots.at}) from ${equitySnapshots}
+          where ${equitySnapshots.agentId} = ${agents}.${sql.identifier(agents.id.name)}
+            and (${equitySnapshots.mode} is null or ${equitySnapshots.mode} = ${agents}.${sql.identifier(agents.mode.name)})
+        )`.as("thinking_first_at"),
+      })
+      .from(agents)
+      .where(
+        and(
+          inArray(
+            agents.id,
+            db
+              .select({ agentId: inferencePayments.agentId })
+              .from(inferencePayments)
+              .where(and(inArray(inferencePayments.agentId, ids), thinkingProvenSql())),
+          ),
+          eq(agents.mode, "live"),
+        ),
+      )
+      // Never fewer than there are agents to return, so it cuts nothing. It is here as a
+      // fence: a list with a LIMIT is read as it stands, not folded into the join.
+      .limit(ids.length),
+  );
+  // The latest snapshot, strictly before this payment, of the book the agent is running
+  // now: the same rows `loadBookMarks` and the leaderboard's windows measure between.
+  const markBefore = sql<Date | null>`(
+    select max(${equitySnapshots.at}) from ${equitySnapshots}
+    where ${equitySnapshots.agentId} = ${payers.id}
+      and (${equitySnapshots.mode} is null or ${equitySnapshots.mode} = ${payers.mode})
+      and ${equitySnapshots.at} < ${paidAt}
+  )`;
+  const paid = db.$with("thinking_paid").as(
+    db
+      .select({
+        agentId: sql<string>`${payers.id}`.as("thinking_agent_id"),
+        runKey: sql<string>`coalesce(${inferencePayments.runId}, ${inferencePayments.id})`.as("thinking_run_key"),
+        at: sql<Date>`${paidAt}`.as("thinking_paid_at"),
+        usd: thinkingPaidUsdSql().as("thinking_usd"),
+        markBefore: markBefore.as("thinking_mark_before"),
+      })
+      .from(payers)
+      .innerJoin(inferencePayments, eq(inferencePayments.agentId, payers.id))
+      .where(
+        and(
+          thinkingProvenSql(),
+          // Signed strictly after the book's first mark: a payment at that instant is
+          // inside the mark, and one signed before it and resolved after it is left out
+          // (see above). An agent never marked has no first mark, and nothing is after
+          // nothing.
+          sql`${signedAt} > ${payers.firstAt}`,
+        ),
+      ),
+  );
+  // No filter on `markBefore`: every payment that reaches here was signed after the first
+  // mark and is dated no earlier than its signature, so there is always a mark before it
+  // (see the note above on why none is added).
+  return db
+    .with(payers, paid)
+    .select({
+      agentId: paid.agentId,
+      // Whole epoch milliseconds, not the timestamp (a raw aggregate is not column-mapped,
+      // and Postgres prints a timestamptz as "… +00", which `Date` cannot parse) and not
+      // float seconds either: a payment dated at the instant of a mark has to compare
+      // equal to that mark's own time, and a double times a thousand lands a hair off.
+      atMs: sql<number | string | bigint>`floor(extract(epoch from max(${paid.at})) * 1000)::bigint`,
+      usd: sql<string>`coalesce(sum(${paid.usd}), 0)`,
+    })
+    .from(paid)
+    .groupBy(paid.agentId, paid.runKey, paid.markBefore);
+}
+
+/**
+ * Every movement of money into or out of these agents' wallets that Tocker has a record
+ * of and that is not a trade, per agent:
+ *
+ *  - funding transfers that were sent (`agent_funding_intents`), in;
+ *  - the owner's audited USDC withdrawals, out;
+ *  - what the agent paid for its own thinking (`inference_payments`, pay-per-use only),
+ *    out. It is a running cost paid from the trading wallet, not a trading loss: an agent
+ *    on its owner's key has the same bill and it never touches its book, so the two would
+ *    not rank alike on the leaderboard if this one counted against it. The Money page
+ *    shows the amount as its own line and subtracts it there, once.
+ *
+ * Live agents only. A paper book is measured from its notional and its equity is not its
+ * wallet, so real money moving through that wallet (a deposit, or a paper agent paying
+ * for its thinking) changes nothing in it and gets no entry.
+ *
+ * Thinking arrives one flow per run and per stretch between two marks, only for payments
+ * proven on chain and made after the book's first mark (`loadThinkingFlows`), so an
+ * agent that has never been marked has none.
+ *
+ * These are what every live P&L nets out, the same sources `/money`'s daily table reads.
+ * What is not here cannot be netted: USDC sent to an agent's address from outside Tocker
+ * has no funding row, and still reads as a gain.
  */
 export async function loadMoneyFlows(db: Db, agentIds: string[]): Promise<Map<string, MoneyFlow[]>> {
   const out = new Map<string, MoneyFlow[]>();
   const ids = [...new Set(agentIds)].filter(Boolean);
   if (ids.length === 0) return out;
 
-  const [deposits, withdrawals] = await Promise.all([
+  const [deposits, withdrawals, thinking] = await Promise.all([
     db
       .select({
         agentId: agentFundingIntents.agentId,
@@ -479,6 +743,7 @@ export async function loadMoneyFlows(db: Db, agentIds: string[]): Promise<Map<st
           sql`(${auditEvents.metadata} ->> 'reason') is null`,
         ),
       ),
+    loadThinkingFlows(db, ids),
   ]);
 
   const add = (agentId: string, flow: MoneyFlow) => {
@@ -494,6 +759,11 @@ export async function loadMoneyFlows(db: Db, agentIds: string[]): Promise<Map<st
   for (const row of withdrawals) {
     const usdc = withdrawnUsdc(row.metadata);
     if (row.agentId && usdc > 0) add(row.agentId, { at: row.at, amountUsd: -usdc });
+  }
+  for (const row of thinking) {
+    const ms = Number(row.atMs);
+    const paidUsd = toNum(row.usd);
+    if (Number.isFinite(ms) && paidUsd > 0) add(row.agentId, { at: ms, amountUsd: -paidUsd, kind: "thinking" });
   }
   return out;
 }
@@ -697,8 +967,11 @@ export function toAgentCard(agent: AgentRow, owner: UserCard, agg: AgentAggregat
     isPublic: agent.isPublic,
     owner,
     // Chains and model are public (the card advertises them); the rest of `config` is not.
+    // The model is the one the agent thinks on: a pay-per-use agent's own, not the key
+    // model its config still carries from before it was switched. Read as defensively as
+    // before: a stored config with no `llm` block prints no model rather than throwing.
     chains: (agent.config?.chains ?? []) as Chain[],
-    model: agent.config?.llm?.model ?? "",
+    model: (agent.config?.llm ? thinkingModel({ llm: agent.config.llm }) : "") ?? "",
     pnlUsd: agg.pnlUsd,
     pnlPct: agg.pnlPct,
     equityUsd: agg.equityUsd ?? (agent.mode === "paper" ? toNum(agent.paperStartingUsd) : null),

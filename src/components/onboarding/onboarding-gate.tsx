@@ -33,11 +33,19 @@ const isDismissed = () => {
  * rest (does this account have a key yet?) to the modal, which still decides for
  * itself. `?onboarding=1` forces it, as it always has. `ownedAgentCount` comes from the
  * server layout so an owner is asked only for the missing key, not walked through setup.
+ * `payPerUseAllowed` comes from there too: whether this viewer may build an agent that
+ * needs no key, which changes what the modal says a key is for.
  *
  * The URL and localStorage are the browser's, so the server snapshots say "no" and
  * the first client render agrees; the real answer lands right after hydration.
  */
-export function OnboardingGate({ ownedAgentCount = 0 }: { ownedAgentCount?: number }) {
+export function OnboardingGate({
+  ownedAgentCount = 0,
+  payPerUseAllowed = false,
+}: {
+  ownedAgentCount?: number;
+  payPerUseAllowed?: boolean;
+}) {
   const { ready, session } = useSession();
   const forced = useSyncExternalStore(noSubscribe, isForced, () => false);
   const dismissed = useSyncExternalStore(noSubscribe, isDismissed, () => true);
@@ -48,5 +56,5 @@ export function OnboardingGate({ ownedAgentCount = 0 }: { ownedAgentCount?: numb
   const [mounted, setMounted] = useState(false);
   if (candidate && !mounted) setMounted(true);
 
-  return mounted ? <OnboardingModal ownedAgentCount={ownedAgentCount} /> : null;
+  return mounted ? <OnboardingModal ownedAgentCount={ownedAgentCount} payPerUseAllowed={payPerUseAllowed} /> : null;
 }

@@ -10,14 +10,14 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
-import { RUN_REFUSED_WHILE_PAUSED } from "@/lib/agent/run-gate";
+import { RUN_REFUSED_WHILE_PAUSED, RunRefusedError } from "@/lib/agent/run-gate";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { setTradingPaused } from "@/lib/security/kill-switch";
 
 let sessionUserId: string | null = null;
-const startRun = vi.fn<(input: { agentId: string; trigger: string }) => Promise<{ runId: string }>>(async () => ({
-  runId: "run_test",
-}));
+const startRun = vi.fn<(input: { agentId: string; trigger: string; invocationStartedAt?: number }) => Promise<{ runId: string }>>(
+  async () => ({ runId: "run_test" }),
+);
 
 vi.mock("@/lib/auth", () => ({
   requireSession: async () => {
@@ -26,7 +26,7 @@ vi.mock("@/lib/auth", () => ({
   },
 }));
 vi.mock("@/lib/agent/run", () => ({
-  startRun: (input: { agentId: string; trigger: string }) => startRun(input),
+  startRun: (input: { agentId: string; trigger: string; invocationStartedAt?: number }) => startRun(input),
 }));
 
 const { POST } = await import("./route");
@@ -101,5 +101,41 @@ describe("POST /api/agents/[id]/run", () => {
     const res = await run(agent.agentId);
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/draft/);
+  });
+
+  it("tells the run when this invocation began, taken before anything else", async () => {
+    const agent = await seedAgent(db);
+    sessionUserId = agent.userId;
+    const before = Date.now();
+
+    expect((await run(agent.agentId)).status).toBe(200);
+    const [input] = startRun.mock.calls[0] ?? [];
+    expect(input).toMatchObject({ agentId: agent.agentId, trigger: "manual" });
+    expect(input?.invocationStartedAt).toBeGreaterThanOrEqual(before);
+    expect(input?.invocationStartedAt).toBeLessThanOrEqual(Date.now());
+  });
+
+  /** An agent that pays for its own thinking and may not run: the sentence, as written, and no run. */
+  it("answers 409 with the sentence when the run loop will not start a pay-per-use agent", async () => {
+    const agent = await seedAgent(db);
+    sessionUserId = agent.userId;
+    const said = "This agent pays for its own thinking, and its Solana wallet does not hold enough USDC for a run.";
+    startRun.mockRejectedValueOnce(new RunRefusedError(said, "needs_funds"));
+
+    const res = await run(agent.agentId);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: said });
+  });
+
+  it("keeps anything else that goes wrong out of the body", async () => {
+    const agent = await seedAgent(db);
+    sessionUserId = agent.userId;
+    startRun.mockRejectedValueOnce(new Error("relation agent_runs does not exist"));
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const res = await run(agent.agentId);
+    quiet.mockRestore();
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(await res.json())).not.toContain("agent_runs");
   });
 });

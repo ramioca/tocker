@@ -19,16 +19,25 @@ import "server-only";
  * for an early-access slot are listed too, as the landing form stored them: an address
  * and three answers, the same kind of thing as the users' emails already shown.
  *
+ * The pay-per-use card ({@link getAdminInference}) follows the same rule. It reads the
+ * ledger of what agents paid to think: amounts, statuses, times, model ids and the
+ * wallets that paid. The ledger keeps no prompt and no answer (a hash of the request
+ * only), so there is none to show. The one free-text column on it, a provider's words
+ * for a failure, is redacted when written and again here, and cut short.
+ *
  * **Every number is a fact.** Counts and sums come from SQL; balances come from Privy.
  * There is no "growth %" on this page because nothing in the database supports one
  * honestly, and a made-up trend on an admin dashboard is how an operator talks
  * themselves into a bad decision.
  */
-import { and, desc, eq, gte, inArray, isNotNull, sql, type SQLWrapper } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, sql, type SQLWrapper } from "drizzle-orm";
 import {
+  agentRuns,
   agents,
   auditEvents,
   getDb,
+  inferenceBudgetDays,
+  inferencePayments,
   platformFees,
   tokens,
   trades,
@@ -39,11 +48,34 @@ import {
   type Db,
 } from "@/db";
 import { toNum } from "@/lib/money";
+import { thinkSource } from "@/lib/agent/inference";
 import { isLlmMock } from "@/lib/agent/mock-model";
 import { SIMULATED_SETTLEMENT_TX } from "@/lib/platform/fee";
+import { redactSecrets } from "@/lib/security/redact";
 import { isPaperWallet, readWalletBalances, type AgentWalletRow } from "@/lib/wallets";
+import {
+  BREAKER_LOOKBACK_MINUTES,
+  BREAKER_PAYMENT_STATUSES,
+  BREAKER_RULES,
+  BREAKER_STOP_REASONS,
+  breakerTrips,
+  controlStop,
+  stopAccounts,
+  type BreakerRule,
+} from "@/lib/x402/inference-budget";
+import { haltReasonAsShown, readInferenceControl } from "@/lib/x402/inference-ledger";
+import { GIVE_UP_AFTER_MS, LATE_LOOK_MS } from "@/lib/x402/inference-reconcile";
+import {
+  AGENT_DAY_REQUESTS,
+  inferenceFlags,
+  isInferenceStopReason,
+  utcDay,
+  type InferenceStage,
+  type InferenceStopReason,
+  type ThinkSource,
+} from "@/lib/x402/inference-types";
 import type { AgentCard, Chain } from "@/server/types";
-import { buildAgentCards } from "./_shared";
+import { buildAgentCards, thinkingAnsweredUnprovenSql, thinkingPaidUsdSql } from "./_shared";
 
 // ---------------------------------------------------------------- view models
 
@@ -158,6 +190,13 @@ export interface AdminAgentRow {
   fundedUsdc: number | null;
   /** Whether a run can start: an LLM key is attached, or the mock model stands in for one. */
   hasLlmKey: boolean;
+  /**
+   * Where the agent's thinking comes from. A pay-per-use agent has no key on purpose, so
+   * `hasLlmKey: false` is not a fault on it; what can stop it is a hold.
+   */
+  thinkSource: ThinkSource;
+  /** Why a pay-per-use agent is not being run, when it is held. Null otherwise. */
+  inferenceHold: InferenceStopReason | null;
 }
 
 export interface AdminTradeRow {
@@ -581,14 +620,23 @@ export async function listAdminAgents(
     usdcByAgent.set(row.agentId, (usdcByAgent.get(row.agentId) ?? 0) + row.usdc);
   }
 
-  const llmKeyById = new Map(rows.map((row) => [row.id, row.llmKeyId]));
+  const rowById = new Map(rows.map((row) => [row.id, row]));
   const mock = isLlmMock();
 
-  return cards.map((card) => ({
-    card,
-    fundedUsdc: balances === null ? null : (usdcByAgent.get(card.id) ?? 0),
-    hasLlmKey: llmKeyById.get(card.id) != null || mock,
-  }));
+  return cards.map((card) => {
+    const row = rowById.get(card.id);
+    // The mode is the config's own word (one predicate, everywhere), read here and not
+    // passed on: nothing else of `config` leaves this function.
+    const source = thinkSource(row?.config);
+    const hold = row?.inferenceHold;
+    return {
+      card,
+      fundedUsdc: balances === null ? null : (usdcByAgent.get(card.id) ?? 0),
+      hasLlmKey: row?.llmKeyId != null || mock,
+      thinkSource: source,
+      inferenceHold: source === "usdc" && isInferenceStopReason(hold) ? hold : null,
+    };
+  });
 }
 
 /** The last fills across the whole platform, with the fee each one was charged. */
@@ -841,4 +889,486 @@ export async function getAdminBalances(opts?: {
     });
   inflight = promise;
   return promise;
+}
+
+// --------------------------------------------------------- pay-per-use thinking
+
+/** How many open rows the card lists. The counts beside the list are of all of them. */
+export const ADMIN_INFERENCE_OPEN_LIMIT = 50;
+/** How many of the admin's own agent wallets the signature test offers. */
+export const ADMIN_INFERENCE_WALLET_LIMIT = 200;
+/** A provider's words for a failure are shown at most this long, after redaction. */
+const ADMIN_DETAIL_MAX = 240;
+
+/**
+ * What a ledger row that is not final is, for the card: nothing signed yet, in flight,
+ * awaiting the chain, or `answered_unproven`.
+ *
+ * The last is not a ledger status. It is a `settled` row with no transaction id: the
+ * step was answered and the gateway named no transaction for its payment. The ledger
+ * counts it as charged; the Money page and every P&L leave it out until the reconciler
+ * has written the transaction. Until then it is open, and an operator deciding whether
+ * the ledger equals the chain has to see it.
+ */
+export const INFERENCE_OPEN_STATUSES = ["reserved", "signed", "unconfirmed", "answered_unproven"] as const;
+export type InferenceOpenStatus = (typeof INFERENCE_OPEN_STATUSES)[number];
+
+export interface AdminInferenceOpenRow {
+  id: string;
+  status: InferenceOpenStatus;
+  /**
+   * Signed (or answered) longer ago than the reconciler checks on every pass: no verdict
+   * was reached in time. The cron closes such a row, still counted as charged, and only
+   * looks at it again now and then, for `lateLookDays`; after that nothing does.
+   */
+  noVerdictInTime: boolean;
+  /** Null when the agent or the account has since been deleted: the ledger outlives both. */
+  agentName: string | null;
+  agentSlug: string | null;
+  ownerHandle: string | null;
+  model: string;
+  quotedUsd: number;
+  createdAt: string;
+  signedAt: string | null;
+  httpStatus: number | null;
+  /** Why it is where it is, redacted and cut short. Null when nothing was recorded. */
+  detail: string | null;
+}
+
+/** One of the viewing admin's own agents' Solana wallets. Never another account's. */
+export interface AdminInferenceWallet {
+  walletId: string;
+  address: string;
+  agentName: string;
+  agentSlug: string;
+  /** The agent is set to pay for its own thinking. Listed first: these are the wallets that will sign. */
+  payPerUse: boolean;
+}
+
+export interface AdminInference {
+  /** The switches as this server reads its environment. A deploy changes them, nothing on this page does. */
+  switches: {
+    stage: InferenceStage;
+    /** How many user ids `INFERENCE_USDC_USER_IDS` names. Admins are admitted as well at stage `owner`. */
+    invitedUsers: number;
+    stepUsd: number;
+    ownerDayUsd: number;
+    platformDayUsd: number;
+    agentDayRequests: number;
+    /** A payment is never signed without our own RPC to verify and reconcile against. */
+    rpcConfigured: boolean;
+    /**
+     * `SOLANA_RPC_URL` is set, and to the public Solana endpoint. That value passes every
+     * check in the pay path (which only asks that it is not empty), so payments WOULD be
+     * signed, and the balance read and the reconciler would then rest on a rate-limited
+     * node nobody answers for. Only this fact leaves the server, never the URL: a
+     * provider's URL carries its key.
+     */
+    rpcPublic: boolean;
+    /** `X402_MOCK=1`: nothing is paid and every row is `simulated`. */
+    mock: boolean;
+  };
+  /** The UTC day the counters below belong to. */
+  day: string;
+  /** What the day counters hold: reserved and spent, against the caps above. */
+  today: {
+    platformUsd: number;
+    platformRequests: number;
+    /** Accounts and agents with a counter row today. */
+    owners: number;
+    agents: number;
+    /** The account that has used most of its own daily limit, as an amount. */
+    largestOwnerUsd: number;
+    manualRuns: number;
+    /** Today's ledger rows by status. `usd` is the settled amount, else the quote. */
+    byStatus: Array<{ status: string; count: number; usd: number }>;
+  };
+  /** Rows not yet final, oldest first, and how many there are of each in all. */
+  open: AdminInferenceOpenRow[];
+  openCounts: Record<InferenceOpenStatus, number>;
+  /**
+   * How many of the open rows are older than the reconciler checks on every pass, after
+   * how many hours that is, and for how many days it still looks at one now and then.
+   * Reserved rows are not among them: those are released, not looked up.
+   */
+  noVerdictInTime: number;
+  checkedForHours: number;
+  lateLookDays: number;
+  control: {
+    halted: boolean;
+    haltReason: string | null;
+    haltClearedAt: string | null;
+    pausedUntil: string | null;
+    pauseReason: string | null;
+    updatedBy: string | null;
+    updatedAt: string | null;
+    /** What the switches do to a payment asked for right now. */
+    stops: "halted" | "paused" | null;
+  };
+  /**
+   * What the breakers are looking at, per rule: how much of it there is, and what trips
+   * it. `accounts` is set for the rules that also need their evidence to come from more
+   * than one account (`accountsThreshold` of them): distinct owners, as the ledger's own
+   * rules count them, so two agents of one owner are one. That is every rule but the pin
+   * mismatch, which one is enough for.
+   */
+  breakers: Array<{
+    rule: BreakerRule;
+    count: number;
+    accounts: number | null;
+    accountsThreshold: number | null;
+    threshold: number;
+    windowMinutes: number;
+    tripped: boolean;
+  }>;
+  /** Agents not being run, by the reason they are held for. */
+  holds: Array<{ reason: string; agents: number }>;
+  /**
+   * The real Solana wallets of the viewing admin's OWN agents, for the signature test.
+   * The test has a wallet sign a real payment (which is then thrown away), and being an
+   * admin is no reason to make another person's wallet sign anything: the action refuses
+   * any other wallet (`findAgentSolanaWallet` with the admin's id), so no other is offered.
+   */
+  wallets: AdminInferenceWallet[];
+}
+
+/** The public Solana RPC host: the value `.env.example` ships. Rate limited, and nobody's to rely on for a payment. */
+const PUBLIC_SOLANA_RPC_HOSTS: ReadonlySet<string> = new Set(["api.mainnet-beta.solana.com"]);
+
+/** Whether an RPC URL is the public endpoint. An unreadable value is not called public; it is not called anything. */
+export function isPublicSolanaRpc(url: string | null | undefined): boolean {
+  const value = url?.trim();
+  if (!value) return false;
+  try {
+    return PUBLIC_SOLANA_RPC_HOSTS.has(new URL(value).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/** Outside text for an admin's eyes: redacted again on the way out, and bounded. */
+function shown(text: string | null | undefined, max = ADMIN_DETAIL_MAX): string | null {
+  if (!text) return null;
+  const clean = redactSecrets(text).trim();
+  return clean === "" ? null : clean.slice(0, max);
+}
+
+/**
+ * Everything the pay-per-use card shows, in one round of reads.
+ *
+ * Read-only. The halt and pause switches come from `readInferenceControl` (the ledger's
+ * own reader, which is also what `reserve` trusts), so the card cannot disagree with
+ * what the next payment will be told. The breaker figures are the same evidence
+ * `applyInferenceBreakers` reads, and `tripped` is the ledger's own rule
+ * (`breakerTrips`), not a second opinion written here.
+ *
+ * `adminUserId` is the admin looking at the page, from the session. It decides one thing:
+ * whose wallets the signature test offers. The wallets are chosen by owner in the query
+ * itself, so the list is that admin's own however many other accounts' wallets exist.
+ * (It used to be the 200 most recently active wallets of every account, narrowed
+ * afterwards by the page: with 200 others ahead of it, the admin's own was never offered.)
+ */
+export async function getAdminInference(adminUserId: string, now: Date = new Date()): Promise<AdminInference> {
+  const db = await getDb();
+  const flags = inferenceFlags();
+  const day = utcDay(now);
+  const lookback = new Date(now.getTime() - (BREAKER_LOOKBACK_MINUTES + 10) * 60_000);
+  const source = sql<string | null>`${agents.config} #>> '{llm,source}'`;
+  // Not final: the three open statuses, and an answered step whose payment is unproven.
+  const answeredUnproven = thinkingAnsweredUnprovenSql();
+  const open = sql`(${inferencePayments.status} in ('reserved', 'signed', 'unconfirmed') or ${answeredUnproven})`;
+  const openKind = sql<string>`case when ${answeredUnproven} then 'answered_unproven' else ${inferencePayments.status} end`;
+  // The reconciler asks the chain about a row on every pass back to this far from now,
+  // by the row's own time. An older one is only looked at now and then.
+  const gaveUpBefore = new Date(now.getTime() - GIVE_UP_AFTER_MS);
+
+  const [control, counters, byStatus, openRows, openCounts, badPayments, badStops, holds, walletRows] = await Promise.all([
+    readInferenceControl(),
+
+    db
+      .select({
+        scope: inferenceBudgetDays.scope,
+        rows: sql<number>`count(*)::int`,
+        usd: sql<string>`coalesce(sum(${inferenceBudgetDays.usd}), 0)`,
+        largestUsd: sql<string>`coalesce(max(${inferenceBudgetDays.usd}), 0)`,
+        requests: sql<number>`coalesce(sum(${inferenceBudgetDays.requests}), 0)::int`,
+        manualRuns: sql<number>`coalesce(sum(${inferenceBudgetDays.manualRuns}), 0)::int`,
+      })
+      .from(inferenceBudgetDays)
+      .where(eq(inferenceBudgetDays.day, day))
+      .groupBy(inferenceBudgetDays.scope),
+
+    db
+      .select({
+        status: inferencePayments.status,
+        count: sql<number>`count(*)::int`,
+        usd: sql<string>`coalesce(sum(${thinkingPaidUsdSql()}), 0)`,
+      })
+      .from(inferencePayments)
+      .where(eq(inferencePayments.budgetDay, day))
+      .groupBy(inferencePayments.status),
+
+    // Oldest first: the row that has been open longest is the one to look at.
+    db
+      .select({
+        id: inferencePayments.id,
+        status: openKind,
+        model: inferencePayments.model,
+        quotedUsd: inferencePayments.quotedUsd,
+        createdAt: inferencePayments.createdAt,
+        signedAt: inferencePayments.signedAt,
+        httpStatus: inferencePayments.httpStatus,
+        detail: inferencePayments.detail,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        ownerHandle: users.handle,
+      })
+      .from(inferencePayments)
+      .leftJoin(agents, eq(agents.id, inferencePayments.agentId))
+      .leftJoin(users, eq(users.id, inferencePayments.ownerId))
+      .where(open)
+      .orderBy(asc(inferencePayments.createdAt), asc(inferencePayments.id))
+      .limit(ADMIN_INFERENCE_OPEN_LIMIT),
+
+    db
+      .select({
+        status: inferencePayments.status,
+        unproven: sql<boolean>`${answeredUnproven}`,
+        count: sql<number>`count(*)::int`,
+        // A reserved row is never looked up on chain (it was never sent), so it cannot
+        // be one the chain was given up on.
+        noVerdictInTime: sql<number>`(count(*) filter (where ${inferencePayments.status} <> 'reserved' and ${inferencePayments.createdAt} < ${gaveUpBefore.toISOString()}::timestamptz))::int`,
+      })
+      .from(inferencePayments)
+      .where(open)
+      .groupBy(inferencePayments.status, sql`${answeredUnproven}`),
+
+    db
+      .select({
+        status: inferencePayments.status,
+        agentId: inferencePayments.agentId,
+        ownerId: inferencePayments.ownerId,
+        signedAt: inferencePayments.signedAt,
+        createdAt: inferencePayments.createdAt,
+      })
+      .from(inferencePayments)
+      .where(and(inArray(inferencePayments.status, [...BREAKER_PAYMENT_STATUSES]), gte(inferencePayments.createdAt, lookback)))
+      .limit(500),
+
+    // With the owner of each stopped run's agent, as `applyInferenceBreakers` reads it:
+    // the gateway and signature rules count accounts too.
+    db
+      .select({ reason: agentRuns.stopReason, ownerId: agents.ownerId, finishedAt: agentRuns.finishedAt, createdAt: agentRuns.createdAt })
+      .from(agentRuns)
+      .innerJoin(agents, eq(agents.id, agentRuns.agentId))
+      .where(and(inArray(agentRuns.stopReason, [...BREAKER_STOP_REASONS]), gte(agentRuns.createdAt, lookback)))
+      .orderBy(desc(agentRuns.createdAt))
+      .limit(500),
+
+    db
+      .select({ reason: agents.inferenceHold, n: sql<number>`count(*)::int` })
+      .from(agents)
+      .where(isNotNull(agents.inferenceHold))
+      .groupBy(agents.inferenceHold),
+
+    // The admin's own agents only, chosen here and not by whoever renders the result:
+    // a list cut to a limit across every account and narrowed afterwards can come back
+    // without the one wallet it was read for. A paper placeholder has no key behind it
+    // and can sign nothing, so it is left out before the limit too, not after it.
+    //
+    // The one word of `config` this page reads is picked out in SQL so the rest of the
+    // config (the strategy) is never selected at all.
+    db
+      .select({
+        walletId: wallets.id,
+        address: wallets.address,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        source,
+      })
+      .from(wallets)
+      .innerJoin(agents, eq(wallets.agentId, agents.id))
+      .where(
+        and(
+          eq(agents.ownerId, adminUserId),
+          eq(wallets.kind, "agent_server"),
+          eq(wallets.chain, "solana"),
+          sql`${wallets.id} not like 'paper\\_%' escape '\\'`,
+        ),
+      )
+      .orderBy(
+        sql`case when ${source} = 'usdc' then 0 else 1 end`,
+        sql`coalesce(${agents.lastRunAt}, ${agents.updatedAt}, ${agents.createdAt}) desc`,
+        desc(wallets.id),
+      )
+      .limit(ADMIN_INFERENCE_WALLET_LIMIT),
+  ]);
+
+  const counter = (scope: string) => counters.find((row) => row.scope === scope);
+  const platform = counter("platform");
+  const owner = counter("owner");
+
+  // The same two lists, shaped as the breaker rules take them.
+  const evidence = {
+    // With the owner on each row: the unanswered rule counts accounts, not agents, and
+    // without it this card would call a pause the ledger itself would not set.
+    payments: badPayments.map((row) => ({ status: row.status, agentId: row.agentId, ownerId: row.ownerId, at: row.signedAt ?? row.createdAt })),
+    stops: badStops.map((row) => ({ reason: row.reason, ownerId: row.ownerId, at: row.finishedAt ?? row.createdAt })),
+  };
+  const tripped = new Set(breakerTrips(evidence, now).map((trip) => trip.rule));
+  const within = (at: Date, minutes: number) => now.getTime() - at.getTime() < minutes * 60_000;
+  const stopsOf = (reasons: readonly string[], minutes: number) =>
+    evidence.stops.filter((stop) => stop.reason !== null && reasons.includes(stop.reason) && within(stop.at, minutes));
+  const gatewayStops = stopsOf(["quote_failed", "gateway_error"], BREAKER_RULES.gateway.windowMinutes);
+  const signatureStops = stopsOf(["signature_failed"], BREAKER_RULES.signature.windowMinutes);
+  const unanswered = evidence.payments.filter((payment) => within(payment.at, BREAKER_RULES.unanswered.windowMinutes));
+
+  const counts: Record<InferenceOpenStatus, number> = { reserved: 0, signed: 0, unconfirmed: 0, answered_unproven: 0 };
+  let noVerdictInTime = 0;
+  for (const row of openCounts) {
+    const kind = row.unproven === true ? "answered_unproven" : row.status;
+    if (!(INFERENCE_OPEN_STATUSES as readonly string[]).includes(kind)) continue;
+    counts[kind as InferenceOpenStatus] += Number(row.count ?? 0);
+    noVerdictInTime += Number(row.noVerdictInTime ?? 0);
+  }
+
+  return {
+    switches: {
+      stage: flags.stage,
+      invitedUsers: flags.userIds.length,
+      stepUsd: flags.hardStepUsd,
+      ownerDayUsd: flags.ownerDayUsd,
+      platformDayUsd: flags.platformDayUsd,
+      agentDayRequests: AGENT_DAY_REQUESTS,
+      rpcConfigured: Boolean(process.env.SOLANA_RPC_URL?.trim()),
+      rpcPublic: isPublicSolanaRpc(process.env.SOLANA_RPC_URL),
+      mock: process.env.X402_MOCK === "1",
+    },
+    day,
+    today: {
+      // The ledger keeps one platform row a day. Summed all the same, so a stray second
+      // row could only make the figure larger, never hide spend.
+      platformUsd: toNum(platform?.usd),
+      platformRequests: Number(platform?.requests ?? 0),
+      owners: Number(owner?.rows ?? 0),
+      agents: Number(counter("agent")?.rows ?? 0),
+      largestOwnerUsd: toNum(owner?.largestUsd),
+      manualRuns: Number(owner?.manualRuns ?? 0),
+      byStatus: byStatus
+        .map((row) => ({ status: row.status, count: Number(row.count ?? 0), usd: toNum(row.usd) }))
+        .sort((a, b) => a.status.localeCompare(b.status)),
+    },
+    open: openRows.map((row) => ({
+      id: row.id,
+      status: row.status as InferenceOpenStatus,
+      noVerdictInTime: row.status !== "reserved" && row.createdAt.getTime() < gaveUpBefore.getTime(),
+      agentName: row.agentName ?? null,
+      agentSlug: row.agentSlug ?? null,
+      ownerHandle: row.ownerHandle ?? null,
+      model: shown(row.model, 100) ?? "",
+      quotedUsd: toNum(row.quotedUsd),
+      createdAt: row.createdAt.toISOString(),
+      signedAt: row.signedAt ? row.signedAt.toISOString() : null,
+      httpStatus: row.httpStatus ?? null,
+      detail: shown(row.detail),
+    })),
+    openCounts: counts,
+    noVerdictInTime,
+    checkedForHours: GIVE_UP_AFTER_MS / 3_600_000,
+    lateLookDays: Math.round(LATE_LOOK_MS / 86_400_000),
+    control: {
+      halted: control.halted,
+      // In full: clearing a halt acknowledges every transaction its reason names, so the
+      // admin must be able to read all of it, not the first lines. By the ledger's own
+      // function: a clear is accepted only when it sends back exactly this text.
+      haltReason: haltReasonAsShown(control.haltReason),
+      haltClearedAt: control.haltClearedAt ? control.haltClearedAt.toISOString() : null,
+      pausedUntil: control.pausedUntil ? control.pausedUntil.toISOString() : null,
+      pauseReason: shown(control.pauseReason),
+      updatedBy: shown(control.updatedBy, 80),
+      updatedAt: control.updatedAt ? control.updatedAt.toISOString() : null,
+      stops: controlStop(control, now),
+    },
+    breakers: [
+      {
+        rule: "unanswered",
+        count: unanswered.length,
+        accounts: new Set(unanswered.map((payment) => payment.ownerId)).size,
+        accountsThreshold: BREAKER_RULES.unanswered.owners,
+        threshold: BREAKER_RULES.unanswered.rows,
+        windowMinutes: BREAKER_RULES.unanswered.windowMinutes,
+        tripped: tripped.has("unanswered"),
+      },
+      {
+        rule: "gateway",
+        count: gatewayStops.length,
+        accounts: stopAccounts(gatewayStops),
+        accountsThreshold: BREAKER_RULES.gateway.owners,
+        threshold: BREAKER_RULES.gateway.failures,
+        windowMinutes: BREAKER_RULES.gateway.windowMinutes,
+        tripped: tripped.has("gateway"),
+      },
+      {
+        rule: "signature",
+        count: signatureStops.length,
+        accounts: stopAccounts(signatureStops),
+        accountsThreshold: BREAKER_RULES.signature.owners,
+        threshold: BREAKER_RULES.signature.failures,
+        windowMinutes: BREAKER_RULES.signature.windowMinutes,
+        tripped: tripped.has("signature"),
+      },
+      {
+        rule: "pin_mismatch",
+        count: stopsOf(["pin_mismatch"], BREAKER_RULES.pin_mismatch.windowMinutes).length,
+        accounts: null,
+        accountsThreshold: null,
+        threshold: BREAKER_RULES.pin_mismatch.failures,
+        windowMinutes: BREAKER_RULES.pin_mismatch.windowMinutes,
+        tripped: tripped.has("pin_mismatch"),
+      },
+    ],
+    holds: holds
+      .map((row) => ({ reason: shown(row.reason, 40) ?? "", agents: Number(row.n ?? 0) }))
+      .filter((row) => row.reason !== "")
+      .sort((a, b) => b.agents - a.agents || a.reason.localeCompare(b.reason)),
+    // Paper placeholders were left out in the query; this is the same rule once more,
+    // by the function the rest of the app asks, in case the two ever differ.
+    wallets: walletRows
+      .filter((row) => !isPaperWallet(row.walletId))
+      .map((row) => ({
+        walletId: row.walletId,
+        address: row.address,
+        agentName: row.agentName,
+        agentSlug: row.agentSlug,
+        payPerUse: row.source === "usdc",
+      })),
+  };
+}
+
+/**
+ * The one real Solana agent wallet with this id, or null. What the signature test signs
+ * with is decided here, from the database: the action passes an id and never an address,
+ * so a caller cannot point the test at a wallet that is not an agent's.
+ */
+export async function findAgentSolanaWallet(
+  walletId: string,
+  /** When given, only a wallet of one of this account's own agents is found. */
+  ownerId?: string,
+): Promise<{ walletId: string; address: string; agentName: string } | null> {
+  if (typeof walletId !== "string" || walletId === "" || walletId.length > 200 || isPaperWallet(walletId)) return null;
+  const db = await getDb();
+  const [row] = await db
+    .select({ walletId: wallets.id, address: wallets.address, agentName: agents.name })
+    .from(wallets)
+    .innerJoin(agents, eq(wallets.agentId, agents.id))
+    .where(
+      and(
+        eq(wallets.id, walletId),
+        eq(wallets.kind, "agent_server"),
+        eq(wallets.chain, "solana"),
+        ...(ownerId === undefined ? [] : [eq(agents.ownerId, ownerId)]),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
 }

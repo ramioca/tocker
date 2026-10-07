@@ -188,6 +188,22 @@ export type AgentConfig = {
     model: string; // e.g. "claude-sonnet-5"
     temperature: number;
     maxSteps: number;
+    /**
+     * Where the thinking comes from. Absent or `"key"`: the owner's own LLM key, with
+     * `provider` and `model` above. `"usdc"`: no key; each model step is bought over x402
+     * and paid by the agent's own wallet (see src/lib/x402/inference-types.ts), with the
+     * model and limits in `usdc`. The mode is always this field, never inferred from a
+     * missing key.
+     */
+    source?: "key" | "usdc";
+    usdc?: {
+      /** The gateway's model id, one of `PAY_PER_USE_MODELS`. */
+      model: string;
+      /** The most one run may spend on thinking, USD. */
+      maxUsdPerRun: number;
+      /** The most this agent may spend on thinking in a UTC day, USD. */
+      maxUsdPerDay: number;
+    };
   };
 };
 
@@ -211,6 +227,19 @@ export const agents = pgTable(
     walletBudget: jsonb("wallet_budget").$type<WalletBudget | null>(),
     nextRunAt: timestamp("next_run_at", { withTimezone: true }),
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    /**
+     * Pay-per-use thinking only. Why this agent is not being run (an
+     * `InferenceStopReason`), since when, and when to look again. A held agent is not
+     * failing: no run row is written and its owner is told once, not on every tick.
+     */
+    inferenceHold: text("inference_hold"),
+    /** Also set while `inference_hold` is null, as the note of a first unreadable balance: only a second one in a row becomes a hold. */
+    inferenceHoldSince: timestamp("inference_hold_since", { withTimezone: true }),
+    inferenceHoldUntil: timestamp("inference_hold_until", { withTimezone: true }),
+    /** Consecutive holds that were the agent's or the gateway's doing; drives the back-off. Holds that are nobody's fault (a halt, a pause, the switch off, the platform's daily limit) do not count. */
+    inferenceStrikes: integer("inference_strikes").default(0).notNull(),
+    /** When the owner was last told about the current hold. */
+    inferenceNotifiedAt: timestamp("inference_notified_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -233,10 +262,113 @@ export const agentRuns = pgTable(
     dataSpendUsd: numeric("data_spend_usd", { precision: 18, scale: 6 }).default("0").notNull(),
     inputTokens: integer("input_tokens").default(0).notNull(),
     outputTokens: integer("output_tokens").default(0).notNull(),
+    /** `"key"` or `"usdc"`. Null on rows written before the column existed (all key runs). */
+    llmSource: text("llm_source"),
+    /** The model id the run thought on. Null on older rows. */
+    model: text("model"),
+    /** What a pay-per-use run was charged for thinking. Zero for key runs. */
+    inferenceSpendUsd: numeric("inference_spend_usd", { precision: 18, scale: 6 }).default("0").notNull(),
+    /** Why a pay-per-use run ended before the model finished (an `InferenceStopReason`). */
+    stopReason: text("stop_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("agent_runs_agent_idx").on(t.agentId, t.createdAt)],
 );
+
+// ---------- pay-per-use thinking ----------
+/**
+ * One row per model step an agent paid for itself (src/lib/x402/inference-types.ts).
+ *
+ * Written before anything is signed and never deleted: there are no foreign keys here on
+ * purpose, so the record of what a wallet paid outlives the agent, the run and the
+ * account. `x402_payments` (paid data, platform wallet) is a different ledger and is not
+ * touched by this feature.
+ */
+export const inferencePayments = pgTable(
+  "inference_payments",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    agentId: text("agent_id"),
+    runId: text("run_id"),
+    /** The request's place in its run, from 0. */
+    seq: integer("seq").notNull(),
+    /** sha256 of the request body, hex. Never the body: prompts are not stored here. */
+    requestHash: text("request_hash").notNull(),
+    chain: text("chain").notNull(),
+    network: text("network").notNull(),
+    host: text("host").notNull(),
+    model: text("model").notNull(),
+    /** The model the gateway says answered, when it says. */
+    servedModel: text("served_model"),
+    payerWalletId: text("payer_wallet_id").notNull(),
+    payerAddress: text("payer_address").notNull(),
+    payTo: text("pay_to").notNull(),
+    asset: text("asset").notNull(),
+    quotedUsd: numeric("quoted_usd", { precision: 18, scale: 6 }).notNull(),
+    settledUsd: numeric("settled_usd", { precision: 18, scale: 6 }),
+    /** An `InferencePaymentStatus`. */
+    status: text("status").notNull(),
+    answered: boolean("answered"),
+    httpStatus: integer("http_status"),
+    /** The memo the payment carried: how the reconciler finds it on chain. */
+    memo: text("memo"),
+    blockhash: text("blockhash"),
+    payerSignature: text("payer_signature"),
+    txHash: text("tx_hash"),
+    gatewayRequestId: text("gateway_request_id"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    /** The UTC day (`YYYY-MM-DD`) whose counters hold this amount, so a release returns it to the right day. */
+    budgetDay: text("budget_day").notNull(),
+    /** Why a payment ended anywhere but `settled`. Redacted text, never a prompt. */
+    detail: text("detail"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    signedAt: timestamp("signed_at", { withTimezone: true }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("inference_payments_run_seq_idx").on(t.runId, t.seq),
+    index("inference_payments_owner_idx").on(t.ownerId, t.createdAt),
+    index("inference_payments_agent_idx").on(t.agentId, t.createdAt),
+    index("inference_payments_status_idx").on(t.status, t.createdAt),
+  ],
+);
+
+/**
+ * What has been reserved or spent on pay-per-use thinking per UTC day, for the platform
+ * (`scope_id` "all"), each owner and each agent. Caps are conditional updates on these
+ * rows inside one transaction, which is what makes them exact across server instances.
+ */
+export const inferenceBudgetDays = pgTable(
+  "inference_budget_days",
+  {
+    scope: text("scope").notNull(), // "platform" | "owner" | "agent"
+    scopeId: text("scope_id").notNull(),
+    day: text("day").notNull(), // YYYY-MM-DD, UTC
+    usd: numeric("usd", { precision: 18, scale: 6 }).default("0").notNull(),
+    requests: integer("requests").default(0).notNull(),
+    /** Owner scope only: pay-per-use runs started by hand that day. */
+    manualRuns: integer("manual_runs").default(0).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.scope, t.scopeId, t.day] })],
+);
+
+/**
+ * The switches an admin can throw without a deploy. One row, id "global". `halted` stops
+ * every signature until an admin clears it; `paused_until` is set by the circuit
+ * breakers and clears itself.
+ */
+export const inferenceControl = pgTable("inference_control", {
+  id: text("id").primaryKey(),
+  halted: boolean("halted").default(false).notNull(),
+  haltReason: text("halt_reason"),
+  pausedUntil: timestamp("paused_until", { withTimezone: true }),
+  pauseReason: text("pause_reason"),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
 
 export const agentRunSteps = pgTable(
   "agent_run_steps",

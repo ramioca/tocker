@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { getAddress } from "viem";
 import { USDC_MINT } from "@/lib/wallets/funding";
+import { INFERENCE_GATEWAY } from "@/lib/x402/inference-types";
 import {
   addressHintForChain,
   addressProblemForChain,
   CHECKSUM_TYPO,
   destinationProblemForChain,
+  isThinkingProviderAddress,
   isValidAddressForChain,
   NAME_NOT_SUPPORTED,
   normalizeAddressForChain,
+  THINKING_PROVIDER_NOT_A_WALLET,
   USDC_TOKEN_NOT_A_WALLET,
 } from "./wallet-address";
 
@@ -80,6 +83,39 @@ describe("destinationProblemForChain", () => {
     expect(destinationProblemForChain("solana", USDC_MINT.base)).toBe(USDC_TOKEN_NOT_A_WALLET);
   });
 
+  /**
+   * Every transfer from an agent's wallet to the address pay-per-use thinking is paid to
+   * is expected to match a row in the thinking ledger; one that matches none puts that
+   * agent on hold, and can stop pay-per-use for every agent until an admin has looked.
+   * An owner could send one with an ordinary withdrawal. Every address the gateway is
+   * pinned to is tried.
+   */
+  it("refuses the address pay-per-use thinking is paid to, whichever chain is selected", () => {
+    const pinned = Object.values(INFERENCE_GATEWAY).flatMap((gateway) => [...gateway.payTo]);
+    expect(pinned.length).toBeGreaterThan(0);
+    for (const payTo of pinned) {
+      expect(destinationProblemForChain("solana", payTo)).toBe(THINKING_PROVIDER_NOT_A_WALLET);
+      expect(destinationProblemForChain("solana", `  ${payTo}\n`)).toBe(THINKING_PROVIDER_NOT_A_WALLET);
+      // Not "switch the chain to Solana": switching would only lead back here.
+      expect(destinationProblemForChain("base", payTo)).toBe(THINKING_PROVIDER_NOT_A_WALLET);
+      expect(isThinkingProviderAddress(payTo)).toBe(true);
+    }
+    // A plain sentence, with nothing in it an owner has to look up.
+    expect(THINKING_PROVIDER_NOT_A_WALLET).toMatch(/not a wallet of yours/);
+    expect(THINKING_PROVIDER_NOT_A_WALLET).not.toMatch(/gateway|x402|ledger|BlockRun|INFERENCE/i);
+  });
+
+  it("refuses that address and no other: an ordinary wallet, and one a character away, are still fine", () => {
+    expect(isThinkingProviderAddress(SOLANA_WALLET)).toBe(false);
+    expect(isThinkingProviderAddress(CHECKSUMMED)).toBe(false);
+    expect(isThinkingProviderAddress("")).toBe(false);
+    const payTo = INFERENCE_GATEWAY.solana.payTo[0];
+    // Base58 is case-sensitive: another capitalisation is another address.
+    const other = payTo.slice(0, -1) + (payTo.endsWith("A") ? "B" : "A");
+    expect(isThinkingProviderAddress(other)).toBe(false);
+    expect(destinationProblemForChain("solana", other)).toBeNull();
+  });
+
   it("only ever refuses more than the plain address check", () => {
     const i = CHECKSUMMED.search(/[a-f]/);
     const typo = `${CHECKSUMMED.slice(0, i)}${CHECKSUMMED[i] === "a" ? "b" : "a"}${CHECKSUMMED.slice(i + 1)}`;
@@ -106,6 +142,8 @@ describe("destinationProblemForChain", () => {
     expect(addressProblemForChain("solana", USDC_MINT.solana)).toBeNull();
     expect(addressProblemForChain("base", USDC_MINT.base)).toBeNull();
     expect(addressProblemForChain("solana", CHECKSUMMED)).toBe(addressHintForChain("solana"));
+    // Nor is the provider's address anything but an address to it: only a withdrawal is refused.
+    expect(addressProblemForChain("solana", INFERENCE_GATEWAY.solana.payTo[0])).toBeNull();
   });
 });
 

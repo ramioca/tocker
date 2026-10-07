@@ -70,7 +70,11 @@ export function PnlByDay({ days }: { days: PnlDay[] }) {
           // the bar is muted and the row says what moved, so a deposit is never read as a win.
           const previous = days[index - 1];
           const moved = movedMoney(day, previous);
-          const note = moved ? dayNote(day, previous) : null;
+          // The note also names what the agents paid for their own thinking that day.
+          // That is left out of the number too, but it is a small running cost and not
+          // money moving, so it does not mute the bar; `dayNote` is null on a day with
+          // neither.
+          const note = dayNote(day, previous);
 
           return (
             <li

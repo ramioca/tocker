@@ -21,29 +21,65 @@
  *   - a `queued`/`running` row whose clock started more than {@link STALE_RUN_MS} ago is
  *     treated as dead — {@link reapStaleRuns} marks it `failed`, and `claimRun` ignores
  *     it when deciding whether the agent is busy.
+ *
+ * Pay-per-use thinking: an agent whose config says `llm.source: "usdc"` has no key. Each
+ * model step is bought from the inference gateway and paid by the agent's own wallet
+ * (src/lib/x402/inference-types.ts). Three things differ for such a run, and only for it:
+ *   - it is checked before its row exists (`admitInferenceRun`), so an agent that cannot
+ *     pay is put on hold and told once, not failed on every tick;
+ *   - its model call takes no retries, a capped answer, a last step forced to `finish`
+ *     when its money or its time runs short, and a deadline that also counts from the
+ *     start of the serverless invocation;
+ *   - a stop named by the pay path (`InferencePayContext.stop`) ends the run as that stop
+ *     says: a limit is a normal end, anything else fails the run and holds the agent,
+ *     without the generic failure notice.
+ * A key agent's run is what it was, apart from two columns saying it thought on a key and
+ * on which model.
  */
 import { discoverAnthropicWorkspace, isWorkspaceScopeError, needsWorkspaceHeader } from "./anthropic-workspace";
 import { nanoid } from "nanoid";
 import { after } from "next/server";
-import { generateText, stepCountIs, type LanguageModel } from "ai";
+import { AISDKError, ToolChoiceViolationError, generateText, stepCountIs, type LanguageModel } from "ai";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { agentRuns, agents, getDb, llmKeys, notifications, tokens, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
 import { MIN_SCHEDULE_MINUTES, parseAgentConfig } from "@/lib/agent/config";
 import { decryptSecret } from "@/lib/crypto";
-import { redactSecrets } from "@/lib/security/redact";
+import { dbErrorForLog, redactSecrets } from "@/lib/security/redact";
 import { resolveDataSources } from "@/lib/data-sources/registry";
+import { applyInferenceBreakers, createInferenceLedger, runInferenceSpend } from "@/lib/x402/inference-ledger";
+import {
+  INFERENCE_GATEWAY,
+  INFERENCE_MAX_OUTPUT_TOKENS,
+  NO_NEW_STEP_AFTER_MS,
+  describeInferenceStop,
+  newPayCounters,
+  type InferencePayContext,
+  type InferenceStopReason,
+} from "@/lib/x402/inference-types";
+import { createInferenceFetch, simulateInferenceStep } from "@/lib/x402/paidFetch";
 import { newBudget, type X402Context } from "@/lib/x402/types";
 import { describeGuardian, runGuardian } from "@/lib/trading/guardian";
+import { paidStepLimit, payDeadlineAt, stopOutcome, thinkSource, thinkingModel, wrapUpReason } from "./inference";
+import { admitInferenceRun, applyInferenceHold, clearInferenceHold, type InferencePlan, type RunAdmission } from "./inference-gate";
 import { RunLogger } from "./logger";
 import { createMockModel, isLlmMock } from "./mock-model";
 import { getAgentWallets, getPortfolio, snapshotEquity } from "./portfolio";
 import { buildSystemPrompt, buildTickPrompt, type RecentTrade } from "./prompts";
+import { RUN_DEFERRED, RunRefusedError } from "./run-gate";
 import { buildTools, type RunAgentRecord, type RunContext } from "./tools";
 
 export interface RunAgentInput {
   agentId: string;
   trigger: "schedule" | "manual" | "webhook";
+  /**
+   * Epoch ms at which the serverless invocation doing this run began. The platform ends
+   * an invocation at its time limit whatever is in flight, so a pay-per-use run counts
+   * its deadline from here as well as from its own start, and is not started at all with
+   * too little left. Defaults to now: a caller that passes nothing has a whole
+   * invocation ahead of it (a manual run, a script).
+   */
+  invocationStartedAt?: number;
 }
 
 export interface RunAgentResult {
@@ -51,15 +87,37 @@ export interface RunAgentResult {
   status: "succeeded" | "failed" | "skipped";
   summary?: string;
   error?: string;
+  /** Pay-per-use only: the named reason the run stopped, or was not started. */
+  stopReason?: InferenceStopReason;
 }
 
-/** Builds the language model for an agent from its owner's encrypted key. */
-export async function resolveModel(agent: {
-  ownerId: string;
-  llmKeyId: string | null;
-  config: AgentConfig;
-}): Promise<LanguageModel> {
+/**
+ * Builds the language model an agent thinks on.
+ *
+ * A key agent: from its owner's encrypted key. A pay-per-use agent: an OpenAI-compatible
+ * client pointed at the pinned gateway, whose every request goes through the paying fetch
+ * for this run (`pay`). The mode is the config's word and nothing else: a pay-per-use
+ * agent never reaches the key lookup, even with a key id still on its row.
+ */
+export async function resolveModel(
+  agent: {
+    ownerId: string;
+    llmKeyId: string | null;
+    config: AgentConfig;
+  },
+  pay?: InferencePayContext | null,
+): Promise<LanguageModel> {
   if (isLlmMock()) return createMockModel();
+
+  if (thinkSource(agent.config) === "usdc") {
+    // No context means nobody checked this run or resolved its limits. Thinking on the
+    // owner's key instead would spend something they did not ask to spend.
+    if (!pay) throw new Error("This agent pays for its own thinking, and this run was started without its payment limits. Nothing was paid.");
+    const { createOpenAI } = await import("@ai-sdk/openai");
+    // `.chat`: the gateway serves chat completions, and the provider's default form posts
+    // to /responses. The key is a placeholder; the fetch drops the header it becomes.
+    return createOpenAI({ baseURL: INFERENCE_GATEWAY[pay.chain].baseUrl, apiKey: "x402", fetch: createInferenceFetch(pay) }).chat(pay.model);
+  }
 
   if (!agent.llmKeyId) {
     throw new Error("This agent has no LLM API key attached. Add one in Settings and re-select it on the agent.");
@@ -173,14 +231,39 @@ function nextRunAt(config: AgentConfig, from: Date): Date | null {
   return new Date(from.getTime() + minutes * 60_000);
 }
 
+/** What a run is started with once it has been let in: when its invocation began, and what it pays with. */
+interface RunStart {
+  invocationStartedAt: number;
+  /** Null for a key agent. */
+  plan: InferencePlan | null;
+}
+
 /**
- * Inserts a `queued` run row, or returns `null` when the agent does not exist (the
- * `agent_runs.agent_id` foreign key would reject the insert anyway).
+ * Before any run row is written: does the agent exist, and may its run start.
+ *
+ * Returns `null` when the agent does not exist (the `agent_runs.agent_id` foreign key
+ * would reject the insert anyway). A key agent is always let in, with nothing read
+ * beyond its own row. A pay-per-use agent is checked here, so one that cannot pay leaves
+ * no failed run behind it (see `admitInferenceRun`).
+ *
+ * If the check itself cannot be made (the database did not answer), the run is put off:
+ * no run, no hold, and the agent is still due on the next pass.
  */
-async function createRunRow(agentId: string, trigger: RunAgentInput["trigger"]): Promise<string | null> {
+async function admitRun(input: RunAgentInput, invocationStartedAt: number): Promise<RunAdmission | null> {
   const db = await getDb();
-  const exists = await db.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId)).limit(1);
-  if (!exists[0]) return null;
+  const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId)).limit(1);
+  if (!agent) return null;
+  try {
+    return await admitInferenceRun(agent, { trigger: input.trigger, invocationStartedAt });
+  } catch (err) {
+    console.error(`[run] ${input.agentId} could not be checked before its run: ${dbErrorForLog(err)}`);
+    return { ok: false, kind: "later" };
+  }
+}
+
+/** Inserts a `queued` run row for an agent {@link admitRun} has let in. */
+async function createRunRow(agentId: string, trigger: RunAgentInput["trigger"]): Promise<string> {
+  const db = await getDb();
   const runId = nanoid();
   await db.insert(agentRuns).values({ id: runId, agentId, trigger, status: "queued" });
   return runId;
@@ -229,7 +312,19 @@ export async function reapStaleRuns(agentId?: string, now: Date = new Date()): P
         ...(agentId === undefined ? [] : [eq(agentRuns.agentId, agentId)]),
       ),
     )
-    .returning({ id: agentRuns.id });
+    .returning({ id: agentRuns.id, llmSource: agentRuns.llmSource });
+  // A pay-per-use run that was frozen never reached the line that writes what it spent.
+  // The ledger knows, so the row is given the figure here. Best effort: the ledger stays
+  // the record either way, and a reap must never fail over a number on a dead row.
+  for (const row of reaped) {
+    if (row.llmSource !== "usdc") continue;
+    try {
+      const spent = await runInferenceSpend(row.id);
+      await db.update(agentRuns).set({ inferenceSpendUsd: spent.usd.toFixed(6) }).where(eq(agentRuns.id, row.id));
+    } catch (err) {
+      console.error(`[run] thinking spend of reaped run ${row.id} could not be written: ${dbErrorForLog(err)}`);
+    }
+  }
   return reaped.length;
 }
 
@@ -267,9 +362,18 @@ async function claimRun(runId: string, agentId: string, now: Date = new Date()):
  * `status: "skipped"` while the first is still running.
  */
 export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
+  const invocationStartedAt = input.invocationStartedAt ?? Date.now();
+  const admission = await admitRun(input, invocationStartedAt);
+  if (admission === null) return { runId: "", status: "failed", error: "Agent not found" };
+  if (!admission.ok) {
+    // A pay-per-use agent that may not run, or whose run would not fit what is left of
+    // this invocation. No row is written: the agent is waiting, not failing.
+    return admission.kind === "stop"
+      ? { runId: "", status: "skipped", error: admission.detail, stopReason: admission.reason }
+      : { runId: "", status: "skipped", error: RUN_DEFERRED };
+  }
   const runId = await createRunRow(input.agentId, input.trigger);
-  if (runId === null) return { runId: "", status: "failed", error: "Agent not found" };
-  return executeRun(runId, input);
+  return executeRun(runId, input, { invocationStartedAt, plan: admission.pay });
 }
 
 /**
@@ -281,12 +385,21 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
  * flushed, which is how a first live trade used to leave a `running` row that blocked
  * the agent forever. `after()` only exists inside a request scope, so scripts and tests
  * fall back to the detached promise — nothing freezes there.
+ *
+ * A pay-per-use agent that may not run throws {@link RunRefusedError} before any row is
+ * written; its message is the sentence to show.
  */
 export async function startRun(input: RunAgentInput): Promise<{ runId: string }> {
+  const invocationStartedAt = input.invocationStartedAt ?? Date.now();
+  const admission = await admitRun(input, invocationStartedAt);
+  if (admission === null) throw new Error("Agent not found");
+  if (!admission.ok) {
+    throw admission.kind === "stop" ? new RunRefusedError(admission.detail, admission.reason) : new RunRefusedError(RUN_DEFERRED, null);
+  }
   const runId = await createRunRow(input.agentId, input.trigger);
-  if (runId === null) throw new Error("Agent not found");
+  const start: RunStart = { invocationStartedAt, plan: admission.pay };
   const finishInBackground = () =>
-    executeRun(runId, input).catch(() => {
+    executeRun(runId, input, start).catch(() => {
       // executeRun already records failures on the run row.
     });
   try {
@@ -297,7 +410,86 @@ export async function startRun(input: RunAgentInput): Promise<{ runId: string }>
   return { runId };
 }
 
-async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgentResult> {
+/**
+ * The two writes to an agent's hold that follow a run. The run row is already written
+ * when they are made, so a failure here is logged and left: a hold that was not cleared
+ * lifts itself at the next look, and one that was not set is set by the next run to stop.
+ * Neither may turn a run that has ended into one that threw.
+ */
+async function endHoldAfterRun(agentId: string): Promise<void> {
+  try {
+    await clearInferenceHold(agentId);
+  } catch (err) {
+    console.error(`[run] hold on ${agentId} could not be cleared: ${dbErrorForLog(err)}`);
+  }
+}
+
+async function holdAfterStop(agentId: string, reason: InferenceStopReason, at: Date): Promise<void> {
+  try {
+    await applyInferenceHold(agentId, reason, at);
+  } catch (err) {
+    console.error(`[run] ${agentId} could not be put on hold (${reason}): ${dbErrorForLog(err)}`);
+  }
+}
+
+/** What a pay-per-use run has been charged so far, from the ledger; the fetch's own count if the ledger cannot be read. */
+async function thinkingSpendUsd(runId: string, pay: InferencePayContext): Promise<number> {
+  try {
+    return (await runInferenceSpend(runId)).usd;
+  } catch (err) {
+    console.error(`[run] thinking spend of run ${runId} could not be read: ${dbErrorForLog(err)}`);
+    return pay.spentUsd;
+  }
+}
+
+/** Roughly how much text a step sends, for pricing a simulated step. The scripted model has no request to measure. */
+function promptSize(system: string, messages: readonly unknown[]): { contentChars: number; messages: number } {
+  let contentChars = system.length;
+  try {
+    contentChars += JSON.stringify(messages).length;
+  } catch {
+    // Something in the transcript does not serialise. The opening prompt alone will do.
+  }
+  return { contentChars, messages: messages.length + 1 };
+}
+
+/**
+ * What a finished run is summarised as. Pure.
+ *
+ * The summary `finish` accepted, when there is one. Otherwise the model's last free text,
+ * which nothing bounded: it is stored and shown publicly, so it gets the same ceiling
+ * `finish` puts on a summary. A pay-per-use run that was cut short (`cutShort` is the
+ * sentence for the limit it reached) says that instead: its last free text is a remark
+ * made mid-thought, not an account of the run.
+ */
+export function runSummary(accepted: string | null, lastText: string, cutShort: string | null): string | null {
+  if (accepted !== null) return accepted;
+  if (cutShort) return cutShort;
+  return lastText.trim().slice(0, 1000) || null;
+}
+
+function isAbort(err: unknown): boolean {
+  const name = typeof err === "object" && err !== null ? (err as { name?: unknown }).name : undefined;
+  return name === "AbortError" || name === "TimeoutError";
+}
+
+/**
+ * The summary the model handed to `finish` in a step it was told to finish in.
+ *
+ * `finish` may send a model back once for more research or a fuller shortlist. A run
+ * that is being wrapped up has no money or time for that, so what the model wrote is
+ * taken as its summary whether or not the tool accepted it. Same ceiling as the tool's.
+ */
+function summaryOfForcedFinish(step: { toolCalls: ReadonlyArray<{ toolName: string; input?: unknown }> }): string | null {
+  for (const call of step.toolCalls) {
+    if (call.toolName !== "finish") continue;
+    const summary = (call.input as { summary?: unknown } | null | undefined)?.summary;
+    if (typeof summary === "string" && summary.trim().length >= 5) return summary.trim().slice(0, 1000);
+  }
+  return null;
+}
+
+async function executeRun(runId: string, input: RunAgentInput, start: RunStart): Promise<RunAgentResult> {
   const db = await getDb();
   const logger = new RunLogger(runId);
 
@@ -325,6 +517,36 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
     config = parseAgentConfig(agentRow.config);
   } catch {
     config = agentRow.config;
+  }
+
+  // How this run thinks, written on its row whichever way it ends.
+  const source = thinkSource(config);
+  const thinking = { llmSource: source, model: thinkingModel(config) };
+
+  // The context every paid step goes through, for a pay-per-use run that was let in. One
+  // per run: the fetch counts the run's steps and spend on this object. A pay-per-use
+  // agent that reaches here without a plan gets none, and `resolveModel` refuses it.
+  const pay: InferencePayContext | null =
+    source === "usdc" && start.plan
+      ? {
+          ownerId: agentRow.ownerId,
+          agentId: agentRow.id,
+          runId,
+          model: start.plan.model,
+          chain: "solana",
+          payer: start.plan.payer,
+          caps: start.plan.caps,
+          // Set again when the model call starts, which is the moment its own cut-off is
+          // counted from. Nothing can be paid before then: the fetch is not yet built.
+          deadlineAt: payDeadlineAt(Date.now(), start.invocationStartedAt, RUN_MODEL_TIMEOUT_MS),
+          ledger: createInferenceLedger(),
+          ...newPayCounters(),
+        }
+      : null;
+  if (pay) {
+    // Said at the start as well as the end, so a run the platform froze half-way is
+    // still known for a pay-per-use run and gets its spend from the ledger when reaped.
+    await db.update(agentRuns).set(thinking).where(eq(agentRuns.id, runId));
   }
 
   const budget = newBudget(config.risk.maxDataSpendUsdPerRun);
@@ -358,6 +580,52 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
     postIds: [],
   };
 
+  // Pay-per-use only. Why the model was told to finish early, whether the run ran out of
+  // time between steps, and the tokens counted step by step: a run that stops on a limit
+  // ends in the catch below, where there is no result to read them from.
+  let wrapUp: InferenceStopReason | null = null;
+  let outOfTime = false;
+  let modelCallStarted = false;
+  const counted = { inputTokens: 0, outputTokens: 0 };
+  let runSignal: AbortSignal | null = null;
+
+  /** Ends a pay-per-use run that stopped on one of its own limits: a normal end, as far as it got. */
+  const finishAtLimit = async (reason: InferenceStopReason, paid: InferencePayContext): Promise<RunAgentResult> => {
+    // No figures, here as in the success branch below: a run's summary is public (the run
+    // list and the run page show it to anyone who can see the agent), and the limits are
+    // the owner's own settings. Which limit it was is on the row as `stop_reason`.
+    const summary = ctx.finished.summary ?? describeInferenceStop(reason, { model: paid.model }).detail;
+    await logger.flush();
+
+    const finalPortfolio = await getPortfolio(input.agentId);
+    await snapshotEquity(finalPortfolio);
+
+    const finishedAt = new Date();
+    await db
+      .update(agentRuns)
+      .set({
+        status: "succeeded",
+        summary,
+        finishedAt,
+        dataSpendUsd: budget.spentUsd.toFixed(6),
+        inputTokens: counted.inputTokens,
+        outputTokens: counted.outputTokens,
+        ...thinking,
+        inferenceSpendUsd: (await thinkingSpendUsd(runId, paid)).toFixed(6),
+        stopReason: reason,
+      })
+      .where(eq(agentRuns.id, runId));
+
+    await db
+      .update(agents)
+      .set({ lastRunAt: finishedAt, nextRunAt: nextRunAt(config, finishedAt), updatedAt: finishedAt })
+      .where(eq(agents.id, input.agentId));
+    // It thought and it paid: whatever held it before is over.
+    await endHoldAfterRun(input.agentId);
+
+    return { runId, status: "succeeded", summary, stopReason: reason };
+  };
+
   try {
     if (agentRow.mode === "live") {
       const usable = wallets.filter((w) => !w.walletId.startsWith("paper_") && w.address);
@@ -369,7 +637,7 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
       }
     }
 
-    const model = await resolveModel({ ownerId: agentRow.ownerId, llmKeyId: agentRow.llmKeyId, config });
+    const model = await resolveModel({ ownerId: agentRow.ownerId, llmKeyId: agentRow.llmKeyId, config }, pay);
     const sources = resolveDataSources(config.dataSources);
 
     // The exit engine runs *before* the model thinks, so the book it reads is the book
@@ -416,11 +684,27 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
         .map((e) => ({ symbol: e.symbol, reason: e.reason, amountUsd: e.amountUsd, rationale: e.rationale })),
     });
 
+    const tools = buildTools(ctx);
+    const modelStartedAt = Date.now();
+    modelCallStarted = true;
+    // The steps a pay-per-use run may take before the one that wraps it up.
+    const stepLimit = pay ? paidStepLimit(config) : config.llm.maxSteps;
+    let stepStartedAt = modelStartedAt;
+    let slowestStepMs = 0;
+    if (pay) pay.deadlineAt = payDeadlineAt(modelStartedAt, start.invocationStartedAt, RUN_MODEL_TIMEOUT_MS);
+    // The route is allowed 300s. Cut the model off at 240 so the remaining minute is
+    // ours: the catch below still gets to write `failed` + the reason on the run row,
+    // which is the difference between "the model stalled" and a row stuck on `running`
+    // that bricks the agent until the reaper notices. A pay-per-use run is cut off at its
+    // payment deadline, which is that same moment or the invocation's, whichever is
+    // first; the paying fetch stops listening to this signal once a payment has left.
+    runSignal = AbortSignal.timeout(pay ? Math.max(1, pay.deadlineAt - modelStartedAt) : RUN_MODEL_TIMEOUT_MS);
+
     const result = await generateText({
       model,
       system,
       prompt,
-      tools: buildTools(ctx),
+      tools,
       temperature: config.llm.temperature,
       // Anthropic prompt caching, automatic mode: a top-level `cache_control` asks the
       // API to cache the whole prefix on every step, so a 20-step tick re-reads its
@@ -428,23 +712,81 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
       // instead of paying full price for them twenty times. A 113k-input-token run
       // measured before this was mostly that repetition. Other providers ignore the key.
       providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
-      // The route is allowed 300s. Cut the model off at 240 so the remaining minute is
-      // ours: the catch below still gets to write `failed` + the reason on the run row,
-      // which is the difference between "the model stalled" and a row stuck on `running`
-      // that bricks the agent until the reaper notices.
-      abortSignal: AbortSignal.timeout(RUN_MODEL_TIMEOUT_MS),
+      abortSignal: runSignal,
       // The run ends when `finish` *accepted* the summary, not when it was merely called:
       // in approval mode the tool sends the model back once for an unproposed shortlist.
-      stopWhen: [stepCountIs(config.llm.maxSteps), () => ctx.finished.summary !== null],
+      stopWhen: [
+        // A pay-per-use run gets one step beyond its limit: the one it is told to finish in.
+        stepCountIs(pay ? stepLimit + 1 : stepLimit),
+        () => ctx.finished.summary !== null,
+        ...(pay
+          ? [
+              () => {
+                // No new request once the run has been thinking this long. The paying
+                // fetch would refuse one a little later anyway; this ends the run cleanly.
+                if (Date.now() - modelStartedAt < NO_NEW_STEP_AFTER_MS) return false;
+                outOfTime = true;
+                return true;
+              },
+            ]
+          : []),
+      ],
+      ...(pay
+        ? {
+            // Every request is a payment. A retry would be a second one, and the answer
+            // is priced on its cap, so neither is left to a default.
+            maxRetries: 0,
+            maxOutputTokens: INFERENCE_MAX_OUTPUT_TOKENS,
+            prepareStep: async ({ stepNumber, messages }) => {
+              const now = Date.now();
+              if (stepNumber > 0) slowestStepMs = Math.max(slowestStepMs, now - stepStartedAt);
+              stepStartedAt = now;
+              // Once the run is being wrapped up it stays that way: a model sent back by
+              // `finish` is told to finish again, not given the steps it asked for.
+              wrapUp ??= wrapUpReason({
+                stepNumber,
+                stepLimit,
+                runCapUsd: pay.caps.runUsd,
+                spentUsd: pay.spentUsd,
+                maxStepUsd: pay.maxStepUsd,
+                // A step is the model's answer and the tools it then runs; the fetch only times the first.
+                maxStepMs: Math.max(pay.maxStepMs, slowestStepMs),
+                deadlineAt: pay.deadlineAt,
+                // The same moment the `stopWhen` above ends the run at. The wrap-up has to
+                // come before it, or the run is cut with nothing written down.
+                noNewStepAt: modelStartedAt + NO_NEW_STEP_AFTER_MS,
+                now,
+              });
+              // The scripted model never calls the gateway, so the step it is about to
+              // take is put through the same limits and ledger here, as a simulated row.
+              if (isLlmMock()) await simulateInferenceStep(pay, promptSize(system, messages));
+              return wrapUp ? { toolChoice: { type: "tool" as const, toolName: "finish" as const } } : {};
+            },
+          }
+        : {}),
       onStepFinish: async (step) => {
         const text = step.text?.trim();
         if (text) await logger.log({ kind: "message", payload: { text } });
+        if (!pay) return;
+        counted.inputTokens += step.usage.inputTokens ?? 0;
+        counted.outputTokens += step.usage.outputTokens ?? 0;
+        if (wrapUp && ctx.finished.summary === null) ctx.finished.summary = summaryOfForcedFinish(step);
       },
     });
 
-    // The fallback is the model's last free text, which nothing bounded: it is stored
-    // and shown publicly, so it gets the same ceiling `finish` puts on a summary.
-    const summary = ctx.finished.summary ?? (result.text.trim().slice(0, 1000) || null);
+    // Before anything is written: a paid step still resolving its ledger row is waited
+    // for, so the spend below is the whole of it.
+    if (pay) await pay.inFlight;
+    // Why a pay-per-use run ended before the model was done, if it did: the limit that
+    // had it wrapped up, or the clock between two steps.
+    const stopReason: InferenceStopReason | null = pay ? (wrapUp ?? (outOfTime && ctx.finished.summary === null ? "deadline" : null)) : null;
+
+    const summary = runSummary(
+      ctx.finished.summary,
+      result.text,
+      // No figures: a summary is public, and the limits are the owner's own settings.
+      pay && stopReason ? describeInferenceStop(stopReason, { model: pay.model }).detail : null,
+    );
     await logger.flush();
 
     const finalPortfolio = await getPortfolio(input.agentId);
@@ -460,6 +802,8 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
         dataSpendUsd: budget.spentUsd.toFixed(6),
         inputTokens: result.usage.inputTokens ?? 0,
         outputTokens: result.usage.outputTokens ?? 0,
+        ...thinking,
+        ...(pay ? { inferenceSpendUsd: (await thinkingSpendUsd(runId, pay)).toFixed(6), stopReason } : {}),
       })
       .where(eq(agentRuns.id, runId));
 
@@ -467,18 +811,83 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
       .update(agents)
       .set({ lastRunAt: finishedAt, nextRunAt: nextRunAt(config, finishedAt), updatedAt: finishedAt })
       .where(eq(agents.id, input.agentId));
+    // A pay-per-use run that worked ends whatever hold and strikes came before it.
+    if (pay) await endHoldAfterRun(input.agentId);
 
-    return { runId, status: "succeeded", summary: summary ?? undefined };
-  } catch (err) {
+    return { runId, status: "succeeded", summary: summary ?? undefined, ...(stopReason ? { stopReason } : {}) };
+  } catch (thrown) {
+    // A paid step may still be resolving its ledger row (the run stopped listening to
+    // it, or it is giving a reservation back). Nothing is decided or written before it has.
+    if (pay) await pay.inFlight;
+
+    // A pay-per-use run that stopped for a reason with a name. The pay path flattens
+    // error classes on the way out, so the reason is read from the context, not the error.
+    let err: unknown = thrown;
+    const stop = pay ? paidStop(pay, thrown, { wrapUp, modelCallStarted, aborted: runSignal?.aborted === true }) : null;
+    if (pay && stop && stopOutcome(stop.reason).status === "succeeded") {
+      try {
+        return await finishAtLimit(stop.reason, pay);
+      } catch (finishErr) {
+        // Writing the normal end failed. The ordinary failure below says what broke.
+        err = finishErr;
+      }
+    }
+
+    if (pay && stop && stopOutcome(stop.reason).hold) {
+      // Not the generic failure: the owner is told what happened and what fixes it, in
+      // the sentence written for this reason, and told once (the hold does that).
+      const said = describeInferenceStop(stop.reason, { runCapUsd: pay.caps.runUsd, dayCapUsd: pay.caps.agentDayUsd, model: pay.model });
+      await logger.log({
+        kind: "error",
+        // The detail is what the pay path recorded, already redacted there; once more
+        // here because it is about to be stored where the owner reads it.
+        payload: { error: said.detail, reason: stop.reason, ...(stop.detail ? { detail: redactSecrets(stop.detail).slice(0, 500) } : {}) },
+      });
+      await logger.flush();
+
+      const finishedAt = new Date();
+      await db
+        .update(agentRuns)
+        .set({
+          status: "failed",
+          error: said.detail,
+          finishedAt,
+          dataSpendUsd: budget.spentUsd.toFixed(6),
+          inputTokens: counted.inputTokens,
+          outputTokens: counted.outputTokens,
+          ...thinking,
+          inferenceSpendUsd: (await thinkingSpendUsd(runId, pay)).toFixed(6),
+          stopReason: stop.reason,
+        })
+        .where(eq(agentRuns.id, runId));
+
+      await db
+        .update(agents)
+        .set({ lastRunAt: finishedAt, nextRunAt: nextRunAt(config, finishedAt), updatedAt: finishedAt })
+        .where(eq(agents.id, input.agentId));
+
+      // The hold keeps the scheduler away until its time, and tells the owner once.
+      await holdAfterStop(input.agentId, stop.reason, finishedAt);
+      // Several runs stopping this way pause pay-per-use for everyone. The cron looks
+      // every five minutes; looking now makes the pause immediate. Never this run's problem.
+      try {
+        await applyInferenceBreakers(finishedAt);
+      } catch (breakerErr) {
+        console.error(`[run] breakers could not be evaluated: ${dbErrorForLog(breakerErr)}`);
+      }
+
+      return { runId, status: "failed", error: said.detail, stopReason: stop.reason };
+    }
+
     // What broke said this, and it is about to be stored, shown to the owner and sent as
     // a notification. A provider's refusal echoes the key it refused (half masked), and
     // an RPC or database client prints the address it was given, key and all.
     const raw = redactSecrets(err instanceof Error ? err.message : String(err));
     // A multi-workspace key that still failed for want of the header: find the
     // workspace now, save it on the key, and make the agent due again so the next tick
-    // simply works.
+    // simply works. Only for an agent that thinks on a key: no other run touches one.
     const recovered =
-      isWorkspaceScopeError(raw) && agentRow.llmKeyId
+      source === "key" && isWorkspaceScopeError(raw) && agentRow.llmKeyId
         ? await recoverAnthropicWorkspace(agentRow.llmKeyId, agentRow.ownerId).catch(() => null)
         : null;
     const message = recovered
@@ -495,6 +904,8 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
         error: message,
         finishedAt,
         dataSpendUsd: budget.spentUsd.toFixed(6),
+        ...thinking,
+        ...(pay ? { inferenceSpendUsd: (await thinkingSpendUsd(runId, pay)).toFixed(6) } : {}),
       })
       .where(eq(agentRuns.id, runId));
 
@@ -514,4 +925,32 @@ async function executeRun(runId: string, input: RunAgentInput): Promise<RunAgent
 
     return { runId, status: "failed", error: message };
   }
+}
+
+/**
+ * The named reason a pay-per-use run stopped, or null when what broke has no name (a
+ * bug, a database that did not answer) and the ordinary failure applies.
+ *
+ *  - The pay path wrote one on the context: that is the reason.
+ *  - The run's own clock fired between steps: its time limit.
+ *  - The model was told to finish and did not call `finish`: the limit that had it told.
+ *  - The model call failed in the SDK without the pay path naming a stop (an answer it
+ *    could not read, say): the provider's side, as far as an owner is concerned, and a
+ *    reason to back off instead of paying for the same failure on every tick.
+ *
+ * Pure, and exported for its tests: the clock running out cannot be staged in one.
+ */
+export function paidStop(
+  pay: InferencePayContext,
+  err: unknown,
+  state: { wrapUp: InferenceStopReason | null; modelCallStarted: boolean; aborted: boolean },
+): { reason: InferenceStopReason; detail?: string } | null {
+  if (pay.stop) return pay.stop;
+  if (!state.modelCallStarted) return null;
+  if (state.aborted && isAbort(err)) return { reason: "deadline", detail: "the run's clock ran out between steps" };
+  if (ToolChoiceViolationError.isInstance(err) && state.wrapUp) {
+    return { reason: state.wrapUp, detail: "the model was told to finish and did not" };
+  }
+  if (AISDKError.isInstance(err)) return { reason: "gateway_error", detail: `the model call failed: ${err.message}` };
+  return null;
 }

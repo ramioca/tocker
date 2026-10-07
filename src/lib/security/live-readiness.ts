@@ -8,6 +8,7 @@ import { LAMPORTS_PER_SOL, MIN_PLATFORM_SOL, sponsoredFundingLamports } from "@/
 import { FEES_COVERED, chainLabelFor, feeFailureKind } from "@/lib/wallets/funding";
 import { fmtUsd } from "@/lib/money";
 import { RETIRED_DATA_SOURCE_IDS } from "@/lib/agent/config";
+import { thinkSource, thinkingReserveUsd } from "@/lib/agent/inference";
 import { dataChainsFor, getDataSource } from "@/lib/data-sources/registry";
 import { isMockMode } from "@/lib/x402/paidFetch";
 import { UNAVAILABLE_TO_USERS, getMfaStatus } from "./mfa";
@@ -126,13 +127,43 @@ export function evaluateFirstTradeRisk(config: AgentConfig, capUsd: number): Ris
 }
 
 /**
+ * The one chain the first-trade preset leaves an agent on, or null for an agent with none.
+ *
+ * The first of its chains, with one exception: an agent that pays for its own thinking
+ * pays from its Solana wallet, so if it trades Solana that is the chain it keeps,
+ * wherever Solana sits in the list. A Base agent whose owner added Solana in order to
+ * use pay-per-use has it second, and keeping "the first" took its paying chain away: a
+ * config every other save refuses (`usdcChoiceProblem`), which then blocked every later
+ * save of its settings until the owner worked out why.
+ */
+export function firstTradeChain(config: Pick<AgentConfig, "chains" | "llm">): Chain | null {
+  if (thinkSource(config) === "usdc" && config.chains.includes("solana")) return "solana";
+  return (config.chains[0] as Chain | undefined) ?? null;
+}
+
+/**
+ * An agent's chains with the one the preset would keep first. For a key agent this is
+ * its chains as stored. The checklist reports them in this order, so the screen that
+ * says "Base and Solana → Base only" from the first of them names the chain the server
+ * will really keep.
+ */
+function chainsPresetFirst(config: Pick<AgentConfig, "chains" | "llm">): Chain[] {
+  const kept = firstTradeChain(config);
+  const chains = [...config.chains] as Chain[];
+  return kept === null ? chains : [kept, ...chains.filter((chain) => chain !== kept)];
+}
+
+/**
  * Apply the preset to a config without touching anything else about it.
  *
  * `maxPositionPct` is deliberately left alone — see {@link FIRST_TRADE_PRESET}. Clamping
  * it here is what made every buy fail at the funded size the wizard recommends.
+ *
+ * One chain is kept: see {@link firstTradeChain} for which.
  */
 export function withFirstTradePreset(config: AgentConfig): AgentConfig {
-  const chains: Chain[] = config.chains.length > 1 ? [config.chains[0] as Chain] : [...config.chains];
+  const kept = firstTradeChain(config);
+  const chains: Chain[] = config.chains.length > 1 && kept !== null ? [kept] : [...config.chains];
   return {
     ...config,
     chains: chains.length > 0 ? chains : ["base"],
@@ -161,6 +192,19 @@ export function withFirstTradePreset(config: AgentConfig): AgentConfig {
  * limit, cash against the platform fee, and `maxPositionPct` against equity. Those are
  * the ones the operator can fix before going live, and the ones a preset can break.
  *
+ * An agent that pays for its own thinking keeps two runs' worth of it, and the wallet
+ * floor, out of its trades (`thinkingReserveUsd`; the live book reads the same function
+ * in `getPortfolio`, so the two cannot disagree about the figure). The guard is given
+ * the cash a buy may actually use, so a wallet that covers the ticket but not the ticket
+ * and the thinking fails here, not on the first tick.
+ *
+ * One difference from the live book, on purpose. `usdc` here is the agent's USDC on all
+ * its chains and the whole figure is held back from it; the live book holds back no more
+ * than the Solana wallet has. For an agent on Solana alone those are the same sum. For
+ * one on two chains whose Solana wallet is short, this is the stricter reading, and the
+ * right one for a checklist: that agent could not pay for a run at all, so "a buy would
+ * clear" is not what its owner needs to be told before going live.
+ *
  * Returns `null` when the trade would be allowed.
  */
 export async function simulateFirstTrade(config: AgentConfig, usdc: number): Promise<string | null> {
@@ -170,10 +214,12 @@ export async function simulateFirstTrade(config: AgentConfig, usdc: number): Pro
   ]);
   const chain: Chain = (config.chains[0] as Chain) ?? "base";
   const amountUsd = config.risk.maxTradeUsd;
+  // Zero for an agent that thinks on a key.
+  const heldBack = Math.min(thinkingReserveUsd(config), Math.max(0, usdc));
 
   const verdict = riskGuard(
     { id: "readiness-simulation", mode: "live", config },
-    { cashUsd: usdc, equityUsd: usdc, positions: [], tradesToday: 0 },
+    { cashUsd: Math.max(0, usdc - heldBack), equityUsd: usdc, positions: [], tradesToday: 0 },
     {
       chain,
       side: "buy",
@@ -218,6 +264,7 @@ export async function simulateFirstTrade(config: AgentConfig, usdc: number): Pro
   const fee = platformFeeUsd();
   return (
     `A ${fmtUsd(amountUsd)} buy against the ${fmtUsd(usdc)} this agent holds` +
+    `${heldBack > 0 ? `, of which ${fmtUsd(heldBack)} is kept back to pay for its own thinking,` : ""}` +
     `${fee > 0 ? ` (plus the ${fmtUsd(fee)} Tocker fee)` : ""} would be refused by the risk guard: ${verdict.reason}`
   );
 }
@@ -291,7 +338,8 @@ export async function evaluateLiveReadiness(input: ReadinessInput): Promise<Live
     caps: {
       maxTradeUsd: input.config.risk.maxTradeUsd,
       maxDailyTrades: input.config.risk.maxDailyTrades,
-      chains: input.config.chains,
+      // The chain the preset would keep comes first. A key agent's are as stored.
+      chains: chainsPresetFirst(input.config),
     },
     checkedAt: new Date().toISOString(),
   };
@@ -836,8 +884,14 @@ function sumAsset(
  * The wallet layer is optional (product decision, 2026-09-21): an agent can only ever
  * spend the USDC in its own wallet and simply stops when that is gone, so a missing
  * policy is worth a warning, never a block.
+ *
+ * With one exception: an agent that pays for its own thinking. Its wallet signs a
+ * payment on every model step, and a run of such an agent is not started while its
+ * Solana wallet has no policy (the `no_policy` stop). Going live without one would be
+ * going live with an agent that never thinks, so for that agent a missing Solana policy
+ * fails the step.
  */
-function checkBudget(
+export function checkBudget(
   config: AgentConfig,
   walletBudget: WalletBudget | null,
   capUsd: number,
@@ -858,6 +912,15 @@ function checkBudget(
     };
   }
   const ceiling = "Whatever happens, it can only ever spend the USDC in its own wallet, and it stops when that is gone.";
+  if (thinkSource(config) === "usdc" && !walletBudget?.policyIds?.solana) {
+    return {
+      id: "budget",
+      title: "Spend caps applied",
+      state: "fail",
+      detail: `${appLayer} This agent pays for its own thinking from its Solana wallet, and it is not allowed to pay for anything until that wallet has a spending limit applied. Save the agent's risk settings to apply one.`,
+      fix: { label: "Agent settings → Wallet budget", href: `${settings}#budget` },
+    };
+  }
   if (!walletBudget) {
     return {
       id: "budget",

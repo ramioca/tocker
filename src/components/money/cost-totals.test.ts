@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MoneyAgentRow } from "@/server/queries/money";
-import { sumCosts } from "./cost-totals";
+import { costsHint, sumCosts } from "./cost-totals";
 
 function row(overrides: Partial<MoneyAgentRow>): MoneyAgentRow {
   return {
@@ -24,6 +24,14 @@ function row(overrides: Partial<MoneyAgentRow>): MoneyAgentRow {
     modelSpendUsd: 0,
     inputTokens: 0,
     outputTokens: 0,
+    thinkSource: "key",
+    thinkingModel: null,
+    thinkingUsd: 0,
+    thinkingSteps: 0,
+    thinkingUnansweredUsd: 0,
+    thinkingCheckingUsd: 0,
+    thinkingUncheckedUsd: 0,
+    thinkingSimulatedUsd: 0,
     runCount: 0,
     tradeCount: 0,
     winRate: null,
@@ -41,6 +49,7 @@ describe("sumCosts", () => {
       dataSpendSimulatedUsd: 0,
       modelSpendUsd: 0,
       unpricedAgents: 0,
+      thinkingUsd: 0,
     });
   });
 
@@ -56,9 +65,45 @@ describe("sumCosts", () => {
     expect(totals.unpricedAgents).toBe(0);
   });
 
+  it("adds what was paid per use for thinking, and only the confirmed part", () => {
+    const totals = sumCosts([
+      // Being checked, never checked and simulated are on the row for the reader, and in no total.
+      row({ thinkSource: "usdc", thinkingUsd: 0.42, thinkingCheckingUsd: 0.05, thinkingUncheckedUsd: 0.2, thinkingSimulatedUsd: 9 }),
+      row({ thinkSource: "usdc", thinkingUsd: 0.08, thinkingUnansweredUsd: 0.08 }),
+      row({}),
+    ]);
+    expect(totals.thinkingUsd).toBeCloseTo(0.5);
+  });
+
+  it("is zero for agents that think on their owner's key", () => {
+    expect(sumCosts([row({ modelSpendUsd: 1.5 }), row({ modelSpendUsd: 0.5 })]).thinkingUsd).toBe(0);
+  });
+
   it("counts an unpriced model instead of adding it", () => {
     const totals = sumCosts([row({ modelSpendUsd: null }), row({ modelSpendUsd: 0.5 })]);
     expect(totals.modelSpendUsd).toBeCloseTo(0.5);
     expect(totals.unpricedAgents).toBe(1);
+  });
+});
+
+describe("costsHint", () => {
+  it("is word for word the sentence it was for an owner who has never paid for a step", () => {
+    // The two sentences as they read before pay-per-use existed. An owner with the
+    // feature switched off, or simply never used, must not see one word of them change.
+    expect(costsHint("live", false)).toBe("Three different bills, only one of which we collect.");
+    expect(costsHint("paper", false)).toBe(
+      "What your paper agents have cost so far. The fee is simulated; the model tokens are a real bill on your own key.",
+    );
+  });
+
+  it("counts four bills only for an owner whose page draws the pay-per-use line", () => {
+    expect(costsHint("live", true)).toBe("Four different bills, only one of which we collect.");
+    // The paper sentence keeps every word and says the one thing that is new for them.
+    expect(costsHint("paper", true)).toContain("the model tokens are a real bill on your own key.");
+    expect(costsHint("paper", true)).toContain("real USDC from the agent");
+  });
+
+  it("says what is left for an account with no agent", () => {
+    expect(costsHint("former", true)).toContain("You have no agents now");
   });
 });

@@ -107,6 +107,24 @@ describe("toPublicProfile", () => {
       dataSourceCount: 0,
     });
   });
+
+  it("names the model an agent that pays per use really thinks on, not the key model its config still carries", () => {
+    const paying: AgentConfig = {
+      ...config,
+      llm: { ...config.llm, source: "usdc", usdc: { model: "google/gemini-2.5-flash", maxUsdPerRun: 0.3, maxUsdPerDay: 3 } },
+    };
+    expect(toPublicProfile(paying).model).toBe("google/gemini-2.5-flash");
+    // What it may spend on thinking is the owner's business: only the model's name is public.
+    const payload = JSON.stringify(toPublicProfile(paying));
+    expect(payload).not.toContain("maxUsdPerRun");
+    expect(payload).not.toContain("claude-sonnet-5");
+    // A key agent that says so in as many words is unchanged.
+    expect(toPublicProfile({ ...config, llm: { ...config.llm, source: "key" } }).model).toBe("claude-sonnet-5");
+  });
+
+  it("degrades to no model on a stored config with no llm block", () => {
+    expect(toPublicProfile({ ...config, llm: undefined } as unknown as AgentConfig).model).toBe("");
+  });
 });
 
 describe("visibleSteps", () => {

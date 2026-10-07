@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { AgentConfig, AgentConfigWithSizing } from "@/db/schema";
 import { DEFAULT_SIZING } from "@/lib/trading/sizing";
 import { MAX_DATA_SPEND_PER_RUN_USD } from "@/lib/x402/types";
+import { USDC_DAY_CAP, USDC_RUN_CAP } from "@/lib/x402/inference-types";
 import { DEFAULT_MODEL_ID, MAX_MODEL_ID, MODEL_ID_PATTERN } from "./models";
 
 export const chainSchema = z.enum(["solana", "base"]);
@@ -121,6 +122,16 @@ export const agentConfigSchema = z.object({
     model: z.string().min(1).max(MAX_MODEL_ID, NOT_A_MODEL_ID).regex(MODEL_ID, NOT_A_MODEL_ID),
     temperature: z.number().min(0).max(2),
     maxSteps: z.number().int().min(2).max(40),
+    // Optional, with no default written: a key agent's stored config is unchanged by
+    // this field existing, and a config without it is a key agent (`thinkSource`).
+    source: z.enum(["key", "usdc"]).optional(),
+    usdc: z
+      .object({
+        model: z.string().min(1).max(MAX_MODEL_ID, NOT_A_MODEL_ID).regex(MODEL_ID, NOT_A_MODEL_ID),
+        maxUsdPerRun: z.number().min(USDC_RUN_CAP.min).max(USDC_RUN_CAP.max),
+        maxUsdPerDay: z.number().min(USDC_DAY_CAP.min).max(USDC_DAY_CAP.max),
+      })
+      .optional(),
   }),
 }) satisfies z.ZodType<AgentConfigWithSizing>;
 

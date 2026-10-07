@@ -12,7 +12,7 @@ import { exitDistances } from "@/lib/pnl";
 import { hasAnyExitRule, priceText, toExitRules } from "@/lib/trading/exits";
 import { platformFeeUsd } from "@/lib/platform/fee";
 import { isMockMode } from "@/lib/x402/paidFetch";
-import { describePortfolio, type Portfolio } from "./portfolio";
+import { describePortfolio, spendableCashUsd, type Portfolio } from "./portfolio";
 
 export interface PromptAgent {
   name: string;
@@ -410,7 +410,7 @@ ${trades}
 ## Remaining budgets this run
   - Data spend: ${money(input.dataBudgetRemainingUsd)} of ${money(input.config.risk.maxDataSpendUsdPerRun)}
   - Buys left today: ${Math.max(0, input.config.risk.maxDailyTrades - input.portfolio.tradesToday)} (sells and exits never count)
-  - Cash available: ${money(input.portfolio.cashUsd)}${
+  - Cash available: ${money(spendableCashUsd(input.portfolio))}${
     input.config.execution?.mode === "approve"
       ? `\n  - Proposals you may open this tick: ${Math.min(MAX_PROPOSALS_PER_TICK, Math.max(0, input.config.risk.maxDailyTrades - input.portfolio.tradesToday))} (one per token, best first)`
       : ""
