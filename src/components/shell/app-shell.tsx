@@ -97,7 +97,8 @@ export function AppShell({
 
       <TopBar unreadCount={badge} onOpenSearch={() => setPaletteOpen(true)} ownedSlugs={owned} />
       {tradingPaused ? <TradingPausedBanner pausedAt={pausedAt} /> : null}
-      {/* While an island is docked at the bottom, the end of every page scrolls clear of it. */}
+      {/* While the approvals island is docked at the bottom, the end of every page scrolls
+          clear of it. The run island is at the top and takes no room. */}
       <main
         id="main"
         tabIndex={-1}

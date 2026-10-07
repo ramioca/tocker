@@ -13,8 +13,8 @@ import { cn } from "@/lib/utils";
  * Bottom clearance is one variable so it can follow the app's chrome, and falls back to
  * Sonner's own 24px / 16px where there is none (the landing page, sign-in). Below `md`
  * it clears the phone tab bar — Sonner's mobile breakpoint is 600px, so both offsets
- * read it — and at any width it clears a docked run/approvals island, which would
- * otherwise sit on the same spot. The island rule chains both :has() so it outranks the
+ * read it — and at any width it clears a docked approvals island, which would
+ * otherwise sit on the same spot (the run island is docked at the top). The island rule chains both :has() so it outranks the
  * tab-bar one. A page with a sticky action bar on a phone (the builder's Create, an
  * agent's Save) lifts it past that bar and whatever is under it — otherwise the toast
  * explaining a failed save covers the button that retries it. That one reads the flag
