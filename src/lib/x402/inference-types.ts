@@ -65,19 +65,43 @@ export interface PayPerUseModel {
   outputPerMTok: number;
   /** One short line for the picker. */
   note: string;
+  /**
+   * Send no temperature. The newest Claude models refuse a request that sets one, and a
+   * request the provider refuses after payment is a step paid for and not answered.
+   */
+  omitTemperature?: boolean;
+  /**
+   * What the gateway adds to each step of this model beyond its published rule, USD, as
+   * `scripts/inference-quote.ts` last saw it. Counted in the estimates so they do not
+   * read low, and so the per-step ceiling keeps its room.
+   */
+  stepSurchargeUsd?: number;
 }
 
 /**
- * The models offered for pay-per-use. A short, fixed list on purpose: each must answer
- * many tool-calling steps inside one run's time limit, and none is a reasoning model
- * (those need their reasoning echoed back and reject a temperature).
+ * The models offered for pay-per-use, cheapest kinds first. A fixed list on purpose: the
+ * prices here are what every estimate and every per-step ceiling is made from, so a model
+ * is added by hand, with its list price, after `scripts/inference-quote.ts` has shown the
+ * gateway quotes it as expected.
+ *
+ * What is left out, and why. Models that think before they answer (the GPT-5 and GPT-6
+ * families, Gemini 2.5 Pro and 3, Grok 4, DeepSeek V4, Qwen, GLM, Kimi) spend part of the
+ * answer's token limit on that thinking, and some need it sent back on the next step;
+ * either can end a step with no usable answer after it has been paid for. They join the
+ * list once a paid run has shown one working.
  */
 export const PAY_PER_USE_MODELS: readonly PayPerUseModel[] = [
   { id: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash", inputPerMTok: 0.3, outputPerMTok: 2.5, note: "Fast and inexpensive. The default." },
-  { id: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5", inputPerMTok: 1, outputPerMTok: 5, note: "Most careful with tools. About three times the price." },
-  { id: "openai/gpt-4.1-mini", label: "GPT-4.1 mini", inputPerMTok: 0.4, outputPerMTok: 1.6, note: "A steady middle choice." },
-  { id: "openai/gpt-4o-mini", label: "GPT-4o mini", inputPerMTok: 0.15, outputPerMTok: 0.6, note: "Cheapest of the OpenAI models." },
   { id: "google/gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite", inputPerMTok: 0.1, outputPerMTok: 0.4, note: "Cheapest overall. Weakest judgement." },
+  { id: "openai/gpt-4.1-nano", label: "GPT-4.1 nano", inputPerMTok: 0.1, outputPerMTok: 0.4, note: "The cheapest OpenAI model. Weak judgement." },
+  { id: "openai/gpt-4o-mini", label: "GPT-4o mini", inputPerMTok: 0.15, outputPerMTok: 0.6, note: "Inexpensive and quick." },
+  { id: "deepseek/deepseek-chat", label: "DeepSeek Chat", inputPerMTok: 0.14, outputPerMTok: 0.28, note: "Very cheap, but slow: a long run can reach its time limit." },
+  { id: "openai/gpt-4.1-mini", label: "GPT-4.1 mini", inputPerMTok: 0.4, outputPerMTok: 1.6, note: "A steady middle choice." },
+  { id: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5", inputPerMTok: 1, outputPerMTok: 5, note: "Careful with tools. About three times the default's price." },
+  { id: "openai/gpt-4.1", label: "GPT-4.1", inputPerMTok: 2, outputPerMTok: 8, note: "Stronger judgement. About six times the default's price." },
+  { id: "anthropic/claude-sonnet-5.5", label: "Claude Sonnet 5.5", inputPerMTok: 2, outputPerMTok: 10, note: "Strong judgement. About six times the default's price.", omitTemperature: true, stepSurchargeUsd: 0.0015 },
+  { id: "openai/gpt-4o", label: "GPT-4o", inputPerMTok: 2.5, outputPerMTok: 10, note: "Stronger judgement. About seven times the default's price." },
+  { id: "anthropic/claude-opus-5.5", label: "Claude Opus 5.5", inputPerMTok: 4, outputPerMTok: 20, note: "The strongest here, and the dearest: about thirteen times the default's price.", omitTemperature: true, stepSurchargeUsd: 0.01 },
 ];
 
 export const DEFAULT_PAY_PER_USE_MODEL = "google/gemini-2.5-flash";
@@ -101,7 +125,7 @@ const GATEWAY_FLOOR_USD = 0.001;
 export function estimateStepUsd(model: PayPerUseModel, contentChars: number, messages: number, maxOutputTokens = INFERENCE_MAX_OUTPUT_TOKENS): number {
   const inputTokens = 0.48 * Math.max(0, contentChars) + 16 * Math.max(1, messages);
   const variable = (inputTokens * model.inputPerMTok + 0.1 * maxOutputTokens * model.outputPerMTok) / 1_000_000;
-  return roundUsd(Math.max(variable, GATEWAY_FLOOR_USD) + GATEWAY_FLAT_FEE_USD);
+  return roundUsd(Math.max(variable, GATEWAY_FLOOR_USD) + GATEWAY_FLAT_FEE_USD + (model.stepSurchargeUsd ?? 0));
 }
 
 /** How a typical run grows: the prompt it opens with, and what each step adds, in characters. */

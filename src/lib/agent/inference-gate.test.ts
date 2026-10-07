@@ -320,10 +320,10 @@ describe("preflightInference: one test per refusal", () => {
   });
 
   it("model_unavailable: the model is not one of the offered ones", async () => {
-    const agent = await payingAgent({ usdc: { model: "anthropic/claude-opus-5.5" } });
+    const agent = await payingAgent({ usdc: { model: "openai/gpt-5.5" } });
     const { result } = await check(agent.agentId);
     expect(reasonOf(result)).toBe("model_unavailable");
-    if (!result.ok && result.kind === "stop") expect(result.detail).toContain("anthropic/claude-opus-5.5");
+    if (!result.ok && result.kind === "stop") expect(result.detail).toContain("openai/gpt-5.5");
   });
 
   it("model_unavailable: the config asks for pay-per-use without a model or limits", async () => {

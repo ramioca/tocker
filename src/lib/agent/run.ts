@@ -60,6 +60,7 @@ import {
   NO_NEW_STEP_AFTER_MS,
   describeInferenceStop,
   newPayCounters,
+  payPerUseModel,
   type InferencePayContext,
   type InferenceStopReason,
 } from "@/lib/x402/inference-types";
@@ -772,7 +773,12 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
     // gateway's client does not read the Anthropic option.
     const callOptions = thought.provider
       ? callOptionsFor(thought.provider, config)
-      : { temperature: config.llm.temperature, providerOptions: { anthropic: { cacheControl: { type: "ephemeral" as const } } } };
+      : {
+          // A pay-per-use model that refuses a temperature is sent none: a request the
+          // provider turns down after payment is a step paid for and not answered.
+          temperature: pay && payPerUseModel(pay.model)?.omitTemperature ? undefined : config.llm.temperature,
+          providerOptions: { anthropic: { cacheControl: { type: "ephemeral" as const } } },
+        };
     const sources = resolveDataSources(config.dataSources);
 
     // The exit engine runs *before* the model thinks, so the book it reads is the book

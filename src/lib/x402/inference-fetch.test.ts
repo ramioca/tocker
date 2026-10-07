@@ -409,8 +409,8 @@ describe("createInferenceFetch: what is refused before anything is sent", () => 
   }
 
   it("refuses a model that is not on the pay-per-use list", async () => {
-    const h = harness([], { ctx: { model: "anthropic/claude-sonnet-5.5" } });
-    const stop = await h.stops(h.fetch(...chatRequest({ model: "anthropic/claude-sonnet-5.5" })));
+    const h = harness([], { ctx: { model: "openai/gpt-5.5" } });
+    const stop = await h.stops(h.fetch(...chatRequest({ model: "openai/gpt-5.5" })));
     expect(stop.reason).toBe("model_unavailable");
     expect(h.sent).toHaveLength(0);
   });

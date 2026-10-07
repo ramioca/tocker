@@ -25,6 +25,7 @@ import { seedKnownTokens } from "@/lib/trading/tokens";
 import { holdUntil } from "@/lib/x402/inference-budget";
 import {
   DEFAULT_PAY_PER_USE_MODEL,
+  PAY_PER_USE_MODELS,
   INFERENCE_GATEWAY,
   INFERENCE_STOPS,
   InferenceStop,
@@ -319,6 +320,23 @@ describe("what the model call is given", () => {
     // A third reason to stop: no new request once the run has thought for too long.
     expect(options?.stopWhen).toHaveLength(3);
     expect(options?.abortSignal).toBeInstanceOf(AbortSignal);
+    // The default model takes a temperature, so it is given the agent's own.
+    expect(options?.temperature).toBe(DEFAULT_AGENT_CONFIG.llm.temperature);
+  });
+
+  /** A request the provider refuses after payment is a step paid for and not answered. */
+  it("sends no temperature to a pay-per-use model that refuses one, and the agent's own to every other", async () => {
+    const refusing = PAY_PER_USE_MODELS.filter((model) => model.omitTemperature);
+    expect(refusing.length).toBeGreaterThan(0);
+
+    for (const model of [refusing[0], PAY_PER_USE_MODELS.find((candidate) => !candidate.omitTemperature)!]) {
+      sdk.calls.length = 0;
+      // Limits wide enough for the dearest model's simulated run.
+      const agent = await payingAgent({ model: model.id, maxUsdPerRun: 2, maxUsdPerDay: 50 });
+      expect((await runAgent({ agentId: agent.agentId, trigger: "schedule" })).status, model.id).toBe("succeeded");
+      expect(sdk.calls).toHaveLength(1);
+      expect(sdk.calls[0]?.temperature, model.id).toBe(model.omitTemperature ? undefined : DEFAULT_AGENT_CONFIG.llm.temperature);
+    }
   });
 });
 

@@ -186,13 +186,16 @@ describe("the limits a form starts with", () => {
         expect(limits.maxUsdPerRun).toBeLessThanOrEqual(USDC_RUN_CAP.max);
         expect(limits.maxUsdPerDay).toBeGreaterThanOrEqual(USDC_DAY_CAP.min);
         expect(limits.maxUsdPerDay).toBeLessThanOrEqual(USDC_DAY_CAP.max);
-        // What is offered must itself be saveable.
+        // What is offered must itself be saveable, with one honest exception: a dear model
+        // on a fast schedule is expected to cost more in a day than the most the daily
+        // limit can be set to. There the form refuses on the daily limit, and says so.
         const check = checkUsdc({
           usdc: { model: model.id, ...limits },
           intervalMinutes: minutes,
           chains: ["solana"],
         });
-        expect(check.errors, `${model.id} at ${minutes} min`).toEqual({});
+        const dearerThanAnyLimit = usdcEstimate(model.id, minutes).dayUsd > USDC_DAY_CAP.max;
+        expect(Object.keys(check.errors), `${model.id} at ${minutes} min`).toEqual(dearerThanAnyLimit ? ["maxUsdPerDay"] : []);
       }
     }
   });
@@ -270,7 +273,7 @@ describe("checkUsdc", () => {
   });
 
   it("refuses a model that is not offered, and a choice with no model at all", () => {
-    expect(check({ ...good, model: "anthropic/claude-opus-5.5" }).errors.model).toContain("not offered");
+    expect(check({ ...good, model: "openai/gpt-5.5" }).errors.model).toContain("not offered");
     expect(check(undefined).errors.model).toBe("Pick a model for pay-per-use thinking.");
   });
 
