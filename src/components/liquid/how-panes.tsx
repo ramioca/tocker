@@ -19,7 +19,7 @@ import {
   runAt,
 } from "./console-run";
 import { ApprovalDemo } from "./demo";
-import { SAMPLE_AGENT, SAMPLE_EVERY_MIN, SAMPLE_FLOOR, SAMPLE_FOUND, SAMPLE_MODE, SAMPLE_NEXT_RUN_AT, SAMPLE_RUN_AT } from "./sample";
+import { SAMPLE_AGENT, SAMPLE_AVATAR_SEED, SAMPLE_EVERY_MIN, SAMPLE_FLOOR, SAMPLE_FOUND, SAMPLE_MODE, SAMPLE_NEXT_RUN_AT, SAMPLE_RUN_AT } from "./sample";
 import { usd2, usd3 } from "./signals-data";
 
 /**
@@ -40,7 +40,7 @@ export function HowHead() {
   return (
     <div className="lp-how-head" aria-hidden>
       <span className="lp-cx-agent">
-        <AgentMark name={SAMPLE_AGENT} className="lp-cx-avatar" />
+        <AgentMark seed={SAMPLE_AVATAR_SEED} className="lp-cx-avatar" />
         <span className="lp-cx-id">
           <span className="lp-cx-name">{SAMPLE_AGENT}</span>
           <span className="lp-cx-meta lp-mono">

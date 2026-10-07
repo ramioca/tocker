@@ -11,6 +11,7 @@ import { useSafeReducedMotion } from "./motion";
 import {
   HERO_LABEL,
   SAMPLE_AGENT,
+  SAMPLE_AVATAR_SEED,
   SAMPLE_BUYS,
   SAMPLE_EVERY_MIN,
   SAMPLE_FLOOR,
@@ -84,7 +85,7 @@ export function HeroRun() {
         <div aria-hidden>
           <div className="lp-hr-head">
             <div className="lp-hr-who">
-              <AgentMark name={SAMPLE_AGENT} className="lp-hr-avatar" />
+              <AgentMark seed={SAMPLE_AVATAR_SEED} className="lp-hr-avatar" />
               <span className="lp-hr-agent">{SAMPLE_AGENT}</span>
               <span className="lp-hr-chip lp-mono">sample</span>
               <span className="lp-hr-meta lp-mono">

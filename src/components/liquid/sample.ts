@@ -17,6 +17,8 @@ import { LANDING_DEFAULTS, MODE_WORDS } from "./defaults";
  */
 
 export const SAMPLE_AGENT = "momentum-scout";
+/** Its avatar: one of the builder's preset seeds. */
+export const SAMPLE_AVATAR_SEED = "aurora";
 export const SAMPLE_PROMPT = "Momentum on Solana and Base: buy when volume and holders both accelerate.";
 export const SAMPLE_MODE = MODE_WORDS[LANDING_DEFAULTS.mode];
 export const SAMPLE_FLOOR = LANDING_DEFAULTS.minScore;
