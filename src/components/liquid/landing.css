@@ -617,3 +617,28 @@ html.lenis body {
     border: 1px solid ButtonText;
   }
 }
+
+/* ============================ chains (chain-logos.tsx) ============================ */
+.lp-chains {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.lp-chain {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+}
+.lp-chain-logo {
+  display: block;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+.lp-close-lede .lp-chains {
+  vertical-align: -0.2em;
+}
+.lp-hero-eyebrow-sep {
+  opacity: 0.5;
+}

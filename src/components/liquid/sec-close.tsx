@@ -1,4 +1,5 @@
 import { AppLink } from "./app-link";
+import { Chains } from "./chain-logos";
 import { CloseShader } from "./close-shader";
 import { Magnetic } from "./sec-magnetic";
 
@@ -15,9 +16,11 @@ export function CloseCta({ hasSession }: { hasSession: boolean }) {
         <CloseShader />
       </div>
       <h2 id="lp-close-title" className="lp-h2 lp-close-title">
-        Your strategy, on the clock.
+        Go touch grass.
       </h2>
-      <p className="lp-lede lp-close-lede">Open now on Solana and Base. It runs on your schedule.</p>
+      <p className="lp-lede lp-close-lede">
+        Your agent runs your strategy on <Chains size={18} />, on your schedule. Open beta.
+      </p>
       <Magnetic className="lp-close-cta">
         <AppLink hasSession={hasSession} />
       </Magnetic>
