@@ -318,7 +318,8 @@ export function PayPerUsePanel({
           <li>
             A run starts only when that wallet holds at least {formatUsd(walletNeedUsd(usdc))} of USDC beyond any
             trading fees it owes: the limit per run plus {formatUsd(WALLET_FLOOR_USD)} that is always left in it. On a
-            live agent that amount is set aside from its trading cash.
+            live agent, {formatUsd(2 * usdc.maxUsdPerRun + WALLET_FLOOR_USD)} is set aside from its trading cash (two
+            runs&rsquo; worth plus that {formatUsd(WALLET_FLOOR_USD)}), so a buy cannot leave it unable to think.
           </li>
           <li>
             A pay-per-use run takes at most {MAX_PAID_STEPS} steps
