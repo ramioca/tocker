@@ -266,51 +266,71 @@
 }
 
 /* ============================ buttons ============================ */
-/* The primary pill: off-white with black type. "Get started" (or "Open the
-   app") in the hero and the close. */
-.lp-btn-primary {
+/* The primary action: the app's "New agent" button, a dark pill inside the
+   liquid-metal chrome ring (create-agent-link.tsx). The ring draws the edge, so the
+   pill itself has none. */
+.lp-metal {
+  display: inline-flex;
+  border-radius: var(--r-pill);
+}
+.lp-btn-metal {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  width: auto;
   height: 48px;
-  padding-inline: 22px;
+  padding-inline: 22px 24px;
   border: 0;
   border-radius: var(--r-pill);
-  background: var(--fg);
-  color: var(--bg);
+  background: #0b0b0d;
+  color: var(--fg);
   font-size: var(--fs-body);
   font-weight: 550;
   line-height: 1;
   letter-spacing: -0.01em;
   white-space: nowrap;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
   transition:
     background-color 150ms ease-out,
-    opacity 150ms ease-out,
     transform 160ms var(--ease-out);
 }
-.lp-btn-arrow {
+.lp-btn-metal-icon {
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
-  transition: transform 200ms var(--ease-out);
 }
 @media (hover: hover) and (pointer: fine) {
-  .lp-btn-primary:hover {
-    background: #fff;
-  }
-  .lp-btn-primary:hover .lp-btn-arrow {
-    transform: translateX(3px);
+  .lp-btn-metal:hover {
+    background: #161618;
   }
 }
-.lp-btn-primary:active {
+.lp-btn-metal:active {
   transform: scale(0.97);
 }
-/* Phones: the page's primary pill goes wide and a little taller. */
+.lp-btn-metal:focus-visible {
+  outline: none;
+}
+/* The nav's copy: the same chrome at the bar's height. */
+.lp-metal-sm .lp-btn-metal {
+  height: 36px;
+  padding-inline: 12px 14px;
+  gap: 6px;
+  font-size: var(--fs-body-sm);
+}
+.lp-metal-sm .lp-btn-metal-icon {
+  width: 14px;
+  height: 14px;
+}
+/* Phones: the page's primary action goes wide and a little taller. */
 @media (max-width: 639px) {
-  .lp .lp-btn-primary {
+  .lp .lp-metal:not(.lp-metal-sm) {
     width: 100%;
     max-width: 360px;
+  }
+  .lp .lp-metal:not(.lp-metal-sm) > *,
+  .lp .lp-metal:not(.lp-metal-sm) .lp-btn-metal {
+    width: 100%;
+  }
+  .lp .lp-metal:not(.lp-metal-sm) .lp-btn-metal {
     height: 52px;
   }
 }
@@ -504,7 +524,7 @@
 
 /* Forced colours: filled pills keep an edge. */
 @media (forced-colors: active) {
-  .lp-btn-primary,
+  .lp-btn-metal,
   .lp-btn-ghost {
     border: 1px solid ButtonText;
   }

@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { AppLink } from "./app-link";
 import { HeroRun } from "./hero-run";
+import { HeroShader } from "./hero-shader";
 
 /**
  * Hero: an eyebrow, the two-line promise, one sentence on how, one action and
@@ -19,6 +20,7 @@ const delay = (s: string) => ({ "--reveal-delay": s }) as CSSProperties;
 export function Hero({ hasSession }: { hasSession: boolean }) {
   return (
     <section className="lp-hero" aria-labelledby="lp-hero-title">
+      <HeroShader />
       <div className="lp-hero-head lp-wrap">
         <p className="lp-hero-eyebrow lp-eyebrow reveal" style={delay("0s")}>
           <span className="lp-hero-dot" aria-hidden />
