@@ -20,6 +20,7 @@
 import { and, eq, gt } from "drizzle-orm";
 import { getDb, positions } from "@/db";
 import { toNumeric } from "@/lib/money";
+import { DUST_POSITION_USD, isDustPosition } from "./dust";
 
 export interface PositionState {
   amountToken: number;
@@ -197,16 +198,9 @@ export function manualSellSizing(input: {
   return { sizedUsd, amountToken, fullExit };
 }
 
-/**
- * Below this, a position is dust: not worth a guardian's attention or the network fee
- * the platform fronts to sell it, and not something the model should count as "held".
- * It stays on the row (its cents still count in equity) but leaves the book.
- */
-export const DUST_POSITION_USD = 0.25;
-
-export function isDustPosition(valueUsd: number | null): boolean {
-  return valueUsd !== null && Number.isFinite(valueUsd) && valueUsd < DUST_POSITION_USD;
-}
+// The dust floor lives in a leaf (`./dust.ts`) so the risk guard can read it without
+// this file's database imports. It is exported from here as it always was.
+export { DUST_POSITION_USD, isDustPosition };
 
 /** Whole units of `tokenId` this agent holds right now. Zero when there is no row. */
 export async function heldAmountToken(agentId: string, tokenId: string): Promise<number> {

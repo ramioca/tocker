@@ -11,7 +11,17 @@ import { RECONCILE_AFTER_MS } from "@/lib/x402/inference-reconcile";
 import { INFERENCE_GATEWAY, PAID_TIMEOUT_MS, utcDay, type InferencePaymentStatus } from "@/lib/x402/inference-types";
 import * as prices from "@/lib/trading/prices";
 import { seedKnownTokens, tokenId, USDC_SOLANA } from "@/lib/trading/tokens";
-import { describePortfolio, effectiveTicketUsd, getPortfolio, snapshotEquity, spendableCashUsd, toRiskPortfolio, type Portfolio } from "./portfolio";
+import {
+  cashForBuysUsd,
+  describePortfolio,
+  effectiveTicketUsd,
+  getPortfolio,
+  snapshotEquity,
+  spendableCashUsd,
+  toRiskPortfolio,
+  type Portfolio,
+} from "./portfolio";
+import { riskGuard, ticketCeiling } from "@/lib/trading/risk";
 import { seedAgent, setupTestDb } from "./test-support";
 
 let db: Db;
@@ -448,3 +458,200 @@ describe("a paid step in flight when the wallet was read", () => {
   });
 });
 
+/**
+ * The owner's cash reserve (`risk.cashReserveUsd`). The money stays the agent's: it is in
+ * its cash and its equity, and is only left out of what a buy may spend. Everything that
+ * works out the most an agent can buy takes it off first, from the one place.
+ */
+describe("the cash reserve in the book", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const withReserve = (cashReserveUsd: number | undefined, risk: Partial<typeof DEFAULT_AGENT_CONFIG.risk> = {}) => ({
+    ...DEFAULT_AGENT_CONFIG,
+    risk: { ...DEFAULT_AGENT_CONFIG.risk, maxTradeUsd: 100, maxPositionPct: 100, ...risk, cashReserveUsd },
+  });
+
+  it("tells the model the most it can buy once the reserve and the fee are set aside, and why", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    // The owner's book: about $20, $5 always kept. $15.80 to trade covers a $15.72 buy.
+    const owner = book({ mode: "live", cashUsd: 20.8, equityUsd: 20.8 });
+    expect(cashForBuysUsd(owner, withReserve(5))).toBe(15.8);
+    const ticket = effectiveTicketUsd(owner, withReserve(5));
+    expect(ticket).toEqual({
+      amountUsd: 15.72,
+      reason: "the $15.80 of your cash that is above your $5.00 cash reserve less the 0.5% Tocker fee charged on the fill",
+    });
+    // The figure is one the guard passes with the reserve left standing, and a cent more is refused.
+    expect(buyCostUsd(ticket.amountUsd, 50)).toBeLessThanOrEqual(15.8);
+    expect(buyCostUsd(ticket.amountUsd + 0.01, 50)).toBeGreaterThan(15.8);
+    // With the fee off the sentence names no fee.
+    vi.stubEnv("PLATFORM_FEE_BPS", "0");
+    expect(effectiveTicketUsd(owner, withReserve(5))).toEqual({
+      amountUsd: 15.8,
+      reason: "the $15.80 of your cash that is above your $5.00 cash reserve",
+    });
+  });
+
+  it("is the number the guard passes: the ticket it is told fills, and one cent more does not", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    const config = withReserve(5);
+    const owner = book({ mode: "live", cashUsd: 20.8, equityUsd: 20.8 });
+    const ticket = effectiveTicketUsd(owner, config).amountUsd;
+    const order = { chain: "solana" as const, side: "buy" as const, tokenId: "solana:X", tokenAddress: "X", symbol: "X" };
+    const score = {
+      tokenId: "solana:X", chain: "solana" as const, address: "X", symbol: "X", name: "X", total: 90, verdict: "strong" as const,
+      blockers: [], warnings: [], priceUsd: 1, liquidityUsd: 1e6, volume24hUsd: 1e6, marketCapUsd: 1e8, holderCount: 1e5, ageHours: 1e4,
+      priceChange24hPct: 0, sources: [], scoredAt: "2026-10-08T00:00:00.000Z",
+      components: { safety: 90, liquidity: 90, organic: 90, distribution: 90, momentum: 60, gecko: null, sentiment: null, smartMoney: null },
+    };
+    const agent = { id: "a1", mode: "live" as const, config };
+    expect(riskGuard(agent, toRiskPortfolio(owner), { ...order, amountUsd: ticket }, score)).toEqual({ ok: true });
+    expect(riskGuard(agent, toRiskPortfolio(owner), { ...order, amountUsd: ticket + 0.01 }, score)).toMatchObject({
+      ok: false,
+      code: "cash_reserve",
+    });
+  });
+
+  it("leaves nothing to buy with while the cash is at or under the reserve", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    // The book the owner's agent was left with: $0.80 of cash.
+    const spent = book({ mode: "live", cashUsd: 0.8, equityUsd: 20 });
+    expect(cashForBuysUsd(spent, withReserve(5))).toBe(0);
+    expect(effectiveTicketUsd(spent, withReserve(5))).toEqual({
+      amountUsd: 0,
+      reason: "the $0.00 of your cash that is above your $5.00 cash reserve less the 0.5% Tocker fee charged on the fill",
+    });
+    // Without the reserve the same book had a $0.79 ticket: the orders that could not be placed.
+    expect(effectiveTicketUsd(spent, withReserve(0)).amountUsd).toBe(0.79);
+  });
+
+  it("does not take the reserve out of the cash or the equity the book reports, or out of the other two ceilings", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    const owner = book({ mode: "live", cashUsd: 20, equityUsd: 30 });
+    const risk = toRiskPortfolio(owner);
+    // The guard is handed the cash as it was; the reserve is the guard's own to apply.
+    expect(risk.cashUsd).toBe(20);
+    expect(risk.equityUsd).toBe(30);
+    const capped = withReserve(5, { maxPositionPct: 10 });
+    expect(effectiveTicketUsd(owner, capped)).toEqual({ amountUsd: 3, reason: "maxPositionPct 10% of $30.00 equity" });
+    const text = describePortfolio(owner, withReserve(5));
+    expect(text).toContain("Cash: $20.00 · Equity: $30.00 · Mode: live");
+    expect(text).toContain("Cash reserve: your owner keeps $5.00 of your cash out of every buy, so $15.00 is available to trade.");
+  });
+
+  it("counts what is kept for thinking towards the reserve: one floor under the cash, not two", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "0");
+    const held = book({ mode: "live", cashUsd: 20, equityUsd: 20, thinkingReserveUsd: 0.85 });
+    // The guard's cash already leaves the thinking money out, and says how much.
+    expect(toRiskPortfolio(held)).toMatchObject({ cashUsd: 19.15, cashHeldBackUsd: 0.85 });
+    expect(cashForBuysUsd(held, withReserve(5))).toBe(15);
+    expect(effectiveTicketUsd(held, withReserve(5))).toEqual({
+      amountUsd: 15,
+      reason:
+        "the $15.00 of your cash that is available to trade (part of your cash is kept back for your cash reserve and to pay for your thinking)",
+    });
+    // A reserve under what thinking keeps back moves no figure: the words name both.
+    expect(cashForBuysUsd(held, withReserve(0.5))).toBe(19.15);
+    expect(effectiveTicketUsd(held, withReserve(0.5)).amountUsd).toBe(effectiveTicketUsd(held, withReserve(0)).amountUsd);
+    expect(effectiveTicketUsd(held, withReserve(0)).reason).toBe(
+      "the $19.15 of your cash that is available to trade (part of your cash is kept back to pay for your thinking)",
+    );
+  });
+
+  it("is nothing for an agent without one: every figure and every word is as it was", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    for (const reserve of [undefined, 0]) {
+      for (const sample of [
+        book({ mode: "live", cashUsd: 10, equityUsd: 10 }),
+        book({ mode: "paper", cashUsd: 0.8, equityUsd: 20 }),
+        book({ mode: "live", cashUsd: 10, equityUsd: 14, thinkingReserveUsd: 0.55 }),
+      ]) {
+        const config = withReserve(reserve);
+        expect(cashForBuysUsd(sample, config)).toBe(spendableCashUsd(sample));
+        expect(describePortfolio(sample, config)).not.toMatch(/reserve|Open positions/);
+        // The ticket is the guard's own ceiling over the guard's own view of the book.
+        expect(effectiveTicketUsd(sample, config).amountUsd).toBe(ticketCeiling(config, toRiskPortfolio(sample)).amountUsd);
+      }
+    }
+    // The guard's view of a plain book carries neither of the new fields.
+    expect(Object.keys(toRiskPortfolio(book())).sort()).toEqual(["cashUsd", "equityUsd", "positions", "tradesToday"]);
+    expect(effectiveTicketUsd(book({ mode: "live", cashUsd: 10, equityUsd: 10 }), withReserve(undefined))).toEqual({
+      amountUsd: 9.95,
+      reason: "cash $10.00 less the 0.5% Tocker fee charged on the fill",
+    });
+  });
+});
+
+/**
+ * `risk.maxOpenPositions` counts tokens with a buy waiting for approval beside what is
+ * held, so the book of an agent with a limit carries them. It is the only book that does.
+ */
+describe("the buys waiting for approval, on the book of an agent with a position limit", () => {
+  const WIF = tokenId("solana", "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm");
+  const BONK = tokenId("solana", "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263");
+
+  async function propose(
+    agent: { agentId: string; userId: string },
+    token: string,
+    overrides: Partial<typeof schema.trades.$inferInsert> = {},
+  ): Promise<void> {
+    await db.insert(schema.trades).values({
+      id: nanoid(),
+      agentId: agent.agentId,
+      ownerId: agent.userId,
+      chain: "solana",
+      side: "buy",
+      tokenId: token,
+      quoteTokenId: tokenId("solana", USDC_SOLANA),
+      amountToken: "0",
+      amountUsd: "5",
+      requestedUsd: "5",
+      priceUsd: "1",
+      feeUsd: "0",
+      status: "proposed",
+      proposedAt: new Date(),
+      isPaper: true,
+      ...overrides,
+    });
+  }
+
+  it("lists each token once, and leaves out a sell, a decided one, one past its time and one from the other mode", async () => {
+    await seedKnownTokens();
+    await db.insert(schema.tokens).values({ id: WIF, chain: "solana", address: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", symbol: "WIF", decimals: 6 }).onConflictDoNothing();
+    const agent = await seedAgent(db, {
+      config: { execution: { mode: "approve", proposalTtlMinutes: 60 }, risk: { maxOpenPositions: 3 } },
+    });
+    await propose(agent, WIF);
+    await propose(agent, WIF);
+    // None of these is a buy that could still be approved.
+    await propose(agent, BONK, { side: "sell" });
+    await propose(agent, BONK, { status: "rejected" });
+    await propose(agent, BONK, { status: "filled" });
+    await propose(agent, BONK, { proposedAt: new Date(Date.now() - 61 * 60_000) });
+    await propose(agent, BONK, { isPaper: false });
+
+    const held = await getPortfolio(agent.agentId);
+    expect(held.pendingBuyTokenIds).toEqual([WIF]);
+    expect(toRiskPortfolio(held).pendingBuyTokenIds).toEqual([WIF]);
+    expect(describePortfolio(held, { ...DEFAULT_AGENT_CONFIG, risk: { ...DEFAULT_AGENT_CONFIG.risk, maxOpenPositions: 3 } })).toContain(
+      "Open positions: 1 of 3 allowed (0 held, 1 buy waiting for your owner). You may open 2 more.",
+    );
+  });
+
+  it("is an empty list, not a missing one, for an agent with a limit and nothing waiting", async () => {
+    const agent = await seedAgent(db, { config: { risk: { maxOpenPositions: 1 } } });
+    expect((await getPortfolio(agent.agentId)).pendingBuyTokenIds).toEqual([]);
+  });
+
+  it("is not read at all for an agent with no limit: its book has no such field", async () => {
+    for (const maxOpenPositions of [null, undefined]) {
+      const agent = await seedAgent(db, {
+        config: { execution: { mode: "approve", proposalTtlMinutes: 60 }, risk: { maxOpenPositions } },
+      });
+      await propose(agent, WIF);
+      const plain = await getPortfolio(agent.agentId);
+      expect("pendingBuyTokenIds" in plain).toBe(false);
+      expect("pendingBuyTokenIds" in toRiskPortfolio(plain)).toBe(false);
+    }
+  });
+});

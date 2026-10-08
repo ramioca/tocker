@@ -18,6 +18,7 @@ import {
 } from "@/components/common/data-access";
 import { isAdminEmail } from "@/lib/admin";
 import { platformFeeBps } from "@/lib/platform/fee";
+import { getSkippingRunsLine } from "@/server/queries/agent-status";
 import { payPerUseAllowedFor } from "@/server/queries/agents";
 
 type Props = {
@@ -77,7 +78,7 @@ export default async function AgentSettingsPage({ params, searchParams }: Props)
   // rendering an editor over someone else's strategy.
   if (!agent.config) notFound();
 
-  const [balances, walletBudget, sources, keys, paused, payPerUseAllowed] = await Promise.all([
+  const [balances, walletBudget, sources, keys, paused, payPerUseAllowed, skippingLine] = await Promise.all([
     walletBalances(agent.id),
     agentWalletBudget(agent.id),
     dataSources(),
@@ -85,6 +86,9 @@ export default async function AgentSettingsPage({ params, searchParams }: Props)
     accountPaused(session.userId),
     // The switch is the server's to read; the page only ever sees the answer.
     payPerUseAllowedFor(session),
+    // Why nothing is running, for an agent set to skip scheduled runs with no room to
+    // buy. Null for every other agent, and it never throws.
+    getSkippingRunsLine(agent.id, session.userId),
   ]);
 
   // The fee is read here, on the server, and handed down: the steps quote it beside the
@@ -111,6 +115,7 @@ export default async function AgentSettingsPage({ params, searchParams }: Props)
         isAdmin={isAdminEmail(session.email)}
         payPerUseAllowed={payPerUseAllowed}
         feeBps={platformFeeBps()}
+        skippingLine={skippingLine}
       />
     </Suspense>
   );

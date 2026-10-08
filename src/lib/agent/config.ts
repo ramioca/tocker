@@ -15,6 +15,12 @@ export const chainSchema = z.enum(["solana", "base"]);
 /** The shortest schedule an agent may run on, in minutes. */
 export const MIN_SCHEDULE_MINUTES = 5;
 
+/** The highest `risk.maxOpenPositions` can be set. Above this it is not a limit anyone means. */
+export const MAX_OPEN_POSITIONS = 50;
+
+/** The largest `risk.cashReserveUsd` the schema takes: the same ceiling as one trade. */
+export const MAX_CASH_RESERVE_USD = 1_000_000;
+
 /**
  * Source ids that used to be in the registry and are still in saved configs. They are
  * dropped on parse, and the live checklist ignores them, so an agent that names one is
@@ -108,6 +114,12 @@ export const agentConfigSchema = z.object({
     exitScoreBelow: z.number().min(0).max(100).nullable(),
     exitOnLiquidityDropPct: z.number().min(1).max(99).nullable(),
     sizing: positionSizingSchema.optional(),
+    // Both optional, with no default written: a config saved before they existed has
+    // neither and must keep behaving exactly as it did. `readMaxOpenPositions` and
+    // `readCashReserveUsd` (src/lib/trading/risk.ts) turn an absent one into "no limit"
+    // and "no reserve", the way `readSizing` does for the block above.
+    maxOpenPositions: z.number().int().min(1).max(MAX_OPEN_POSITIONS).nullable().optional(),
+    cashReserveUsd: z.number().min(0).max(MAX_CASH_RESERVE_USD).optional(),
   }),
   execution: z.object({
     mode: z.enum(["auto", "approve"]),
@@ -123,6 +135,8 @@ export const agentConfigSchema = z.object({
       .min(0)
       .max(10_080)
       .transform((minutes) => (minutes > 0 && minutes < MIN_SCHEDULE_MINUTES ? MIN_SCHEDULE_MINUTES : minutes)),
+    // Optional for the same reason as the two limits above: absent is off.
+    skipWhenFull: z.boolean().optional(),
   }),
   llm: z.object({
     provider: llmProviderSchema,
@@ -191,11 +205,15 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigWithSizing = {
     // Fixed USD by default: it is the mode an operator can reason about on day one,
     // and the only one that behaves identically whether or not equity has been marked.
     sizing: { ...DEFAULT_SIZING },
+    // Both off: an agent holds as many tokens as its other limits allow and may spend
+    // its last dollar, as every agent did before these existed.
+    maxOpenPositions: null,
+    cashReserveUsd: 0,
   },
   // Ask-before-trading is the recommended first-agent posture (the builder says
   // so too). A new operator opts into "trade on its own"; they don't get it by default.
   execution: { mode: "approve", proposalTtlMinutes: 60 },
-  schedule: { intervalMinutes: 15 },
+  schedule: { intervalMinutes: 15, skipWhenFull: false },
   // 20 steps: portfolio, positions review, discovery, five scores, up to three proposals,
   // a note and a finish fit with room to widen a thin sweep; 12 forced a single proposal.
   llm: { provider: "anthropic", model: DEFAULT_MODEL_ID.anthropic, temperature: 0.4, maxSteps: 20 },
@@ -205,6 +223,10 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigWithSizing = {
  * A stored config as every reader should see it: the two rewrites the schema makes on
  * write (retired source ids dropped, data budget inside the ceiling), applied on read so
  * a row saved before them does not have to be re-saved first.
+ *
+ * And the three settings a row may predate (the position limit, the cash reserve, the
+ * skip switch) said out loud as off. The settings page compares its working copy with
+ * this one, so a switch turned on and off again has to come back to the same words.
  */
 export function readStoredConfig(config: AgentConfig): AgentConfig {
   return {
@@ -213,7 +235,10 @@ export function readStoredConfig(config: AgentConfig): AgentConfig {
     risk: {
       ...config.risk,
       maxDataSpendUsdPerRun: Math.min(config.risk.maxDataSpendUsdPerRun, MAX_DATA_SPEND_PER_RUN_USD),
+      maxOpenPositions: config.risk.maxOpenPositions ?? null,
+      cashReserveUsd: config.risk.cashReserveUsd ?? 0,
     },
+    schedule: { ...config.schedule, skipWhenFull: config.schedule.skipWhenFull ?? false },
   };
 }
 

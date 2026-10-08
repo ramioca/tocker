@@ -40,7 +40,7 @@ import {
   notifyAgentFollowers,
   requiresApproval,
 } from "@/lib/trading/proposals";
-import { riskGuard, type OrderIntent } from "@/lib/trading/risk";
+import { positionRoom, readCashReserveUsd, readMaxOpenPositions, riskGuard, roomToBuy, type OrderIntent } from "@/lib/trading/risk";
 import { executeTrade } from "@/lib/trading/settle";
 import { ensureQuoteToken, resolveToken } from "@/lib/trading/tokens";
 import {
@@ -59,7 +59,7 @@ import {
 } from "@/lib/tokens";
 import { compactNumber } from "@/lib/money";
 import type { Chain, TokenCandidate, TokenScore } from "@/server/types";
-import { describePortfolio, effectiveTicketUsd, getPortfolio, spendableCashUsd, toRiskPortfolio } from "./portfolio";
+import { cashForBuysUsd, describePortfolio, getPortfolio, toRiskPortfolio } from "./portfolio";
 import type { RunLogger } from "./logger";
 import { buildPositionTools } from "./tools-positions";
 
@@ -265,6 +265,29 @@ function ageWords(hours: number): string {
   return hours < 48 ? `${Number(hours.toFixed(1))}h` : `${Math.round(hours / 24)}d`;
 }
 
+/**
+ * Makes some calls of a tool take turns: each call `waits` says yes to starts when the
+ * one before it has settled, whichever way it ended. Every other call starts at once, as
+ * it always did. With `enabled` false the tool is handed back as it was.
+ */
+function oneAtATime<I, O>(
+  enabled: boolean,
+  waits: (input: I) => boolean,
+  execute: (input: I) => Promise<O>,
+): (input: I) => Promise<O> {
+  if (!enabled) return execute;
+  let last: Promise<unknown> = Promise.resolve();
+  return (input) => {
+    if (!waits(input)) return execute(input);
+    const call = last.then(
+      () => execute(input),
+      () => execute(input),
+    );
+    last = call.catch(() => undefined);
+    return call;
+  };
+}
+
 /** Keeps each call of a tool in `inFlight` from the moment it is made until it settles. */
 function tracked<I, O>(inFlight: Set<Promise<unknown>>, execute: (input: I) => Promise<O>): (input: I) => Promise<O> {
   return (input) => {
@@ -326,9 +349,21 @@ export function buildTools(ctx: RunContext): ToolSet {
   const sweepsInFlight = new Set<Promise<unknown>>();
 
   /**
-   * Whether a buy could still go through this tick: a buy left today, cash for a ticket,
-   * trading not paused. Unknown counts as no, because the one caller asks before sending
-   * the model back for research, and research nothing can come of is the owner's money.
+   * An agent with a position limit or a cash reserve places its buys one at a time. A
+   * step's tool calls run side by side, and two buys that each read the book before the
+   * other had landed would both pass a limit that has room for one: a fourth position
+   * under a limit of three, or two buys that together go through the reserve. Every other
+   * agent's orders run as they always did, and so does every sell: an exit never waits
+   * behind anything.
+   */
+  const buysTakeTurns = readMaxOpenPositions(agent.config.risk) !== null || readCashReserveUsd(agent.config.risk) > 0;
+
+  /**
+   * Whether a buy could still go through this tick: room for a position, a buy left
+   * today, cash for a ticket once the owner's reserve is set aside, trading not paused.
+   * Unknown counts as no, because the one caller asks before sending the model back for
+   * research, and research nothing can come of is the owner's money. The room is the risk
+   * guard's own test (`roomToBuy`), so "cannot buy" here is a buy the guard would refuse.
    * A ticket is one that would stay on the book: a position under `DUST_POSITION_USD`
    * leaves it at once and no exit rule watches it, so a few cents of cash is not a
    * reason to pay for a sweep.
@@ -336,10 +371,27 @@ export function buildTools(ctx: RunContext): ToolSet {
   const canStillBuy = async (): Promise<boolean> => {
     try {
       const portfolio = await getPortfolio(agent.id);
-      if (portfolio.cashReadFailed || portfolio.tradesToday >= agent.config.risk.maxDailyTrades) return false;
-      if (effectiveTicketUsd(portfolio, agent.config).amountUsd < DUST_POSITION_USD) return false;
+      if (portfolio.cashReadFailed) return false;
+      const room = roomToBuy({ config: agent.config }, toRiskPortfolio(portfolio), { smallestUsd: DUST_POSITION_USD });
+      if (!room.ok) return false;
       const { isTradingPaused } = await import("@/lib/security/kill-switch");
       return !(await isTradingPaused(agent.ownerId));
+    } catch {
+      return false;
+    }
+  };
+
+  /**
+   * Whether the agent is at the position limit its owner set, so that no token it does
+   * not already hold can be bought. `finish` asks before it sends the model back for more
+   * research or a fuller shortlist: both end in a buy the guard would refuse. Never true
+   * for an agent with no limit, and nothing is read for it. Unknown counts as no here:
+   * the tick is then judged as it would be without a limit.
+   */
+  const atPositionLimit = async (): Promise<boolean> => {
+    if (readMaxOpenPositions(agent.config.risk) === null) return false;
+    try {
+      return positionRoom(agent.config.risk, toRiskPortfolio(await getPortfolio(agent.id))).full;
     } catch {
       return false;
     }
@@ -986,7 +1038,7 @@ export function buildTools(ctx: RunContext): ToolSet {
           .max(500)
           .describe("One or two sentences: why, citing the score total, verdict and the component that moved you"),
       }),
-      execute: logged(ctx, "place_trade", async (input) => {
+      execute: oneAtATime(buysTakeTurns, (input) => input.side === "buy", logged(ctx, "place_trade", async (input) => {
         const parsed = z
           .object({
             chain: chainSchema,
@@ -1015,7 +1067,9 @@ export function buildTools(ctx: RunContext): ToolSet {
 
         const token = await resolveToken(parsed.chain, parsed.tokenAddress);
         const quoteTokenId = await ensureQuoteToken(parsed.chain);
-        const portfolio = await getPortfolio(agent.id);
+        // A buy is judged on a book that also shows the agent's buys in flight; a sell is
+        // read as it always was (`getPortfolio`).
+        const portfolio = await getPortfolio(agent.id, parsed.side === "buy" ? { forBuy: true } : {});
 
         const order: OrderIntent = {
           chain: parsed.chain,
@@ -1105,13 +1159,21 @@ export function buildTools(ctx: RunContext): ToolSet {
             // that is less than its cash: counting the held-back part here let a set of
             // proposals add up to money the last approval would then be refused for.
             // For every other agent it is its cash, and this sentence is what it was.
-            const purseUsd = spendableCashUsd(portfolio);
-            // How much is kept back is not said to the model, here or in its book: the
-            // figure follows a limit only the owner may read (see `describePortfolio`).
+            // The owner's cash reserve comes off as well, for the same reason: the purse
+            // is what the proposals may add up to, and the reserve is not theirs to spend.
+            const purseUsd = cashForBuysUsd(portfolio, agent.config);
+            const reserveUsd = readCashReserveUsd(agent.config.risk);
+            // How much is kept back for thinking is not said to the model, here or in its
+            // book: the figure follows a limit only the owner may read (see
+            // `describePortfolio`). The reserve is a limit the model is given.
             const purseWords =
               (portfolio.thinkingReserveUsd ?? 0) > 0
-                ? `cash available to trade $${purseUsd.toFixed(2)} (part of your cash is kept back to pay for your thinking)`
-                : `cash $${purseUsd.toFixed(2)}`;
+                ? `cash available to trade $${purseUsd.toFixed(2)} (part of your cash is kept back ${
+                    reserveUsd > 0 ? "for your cash reserve and to pay for your thinking" : "to pay for your thinking"
+                  })`
+                : reserveUsd > 0
+                  ? `cash available to trade $${purseUsd.toFixed(2)} (your owner keeps $${reserveUsd.toFixed(2)} in reserve)`
+                  : `cash $${purseUsd.toFixed(2)}`;
             const fitsUsd = maxBuyUsd(purseUsd - buyCostUsd(committedUsd, feeBps), feeBps);
             if (parsed.amountUsd > fitsUsd + 1e-9) {
               // Told in whole cents, rounded down: the figure has to be one that fits.
@@ -1344,7 +1406,7 @@ export function buildTools(ctx: RunContext): ToolSet {
           slippageBps: receipt.slippageBps,
           score: score === null ? null : { total: score.total, verdict: score.verdict, components: score.components },
         };
-      }),
+      })),
     }),
 
     post_note: tool({
@@ -1384,9 +1446,14 @@ export function buildTools(ctx: RunContext): ToolSet {
         // research checks below read the table it brings back and not an empty one: told
         // "no sweep has come back", the model sweeps again and the radar is bought twice.
         await Promise.allSettled([...sweepsInFlight]);
+        // An agent at its owner's position limit can open nothing, so it is not sent back
+        // by any of the three checks below: more scoring buys signals for tokens it cannot
+        // buy, and a fuller shortlist is a list of proposals the guard refuses. A sell this
+        // tick that freed a slot is seen here, because the book is read now.
+        const full = await atPositionLimit();
         // Once per tick: a model that scored two names off the top of the table has not
         // researched the tick. Send it back for the rest of the fresh candidates.
-        if (!researchNudged && scoredThisTick.size < MIN_SCORED_PER_TICK) {
+        if (!full && !researchNudged && scoredThisTick.size < MIN_SCORED_PER_TICK) {
           const unscored = [...freshThisTick.entries()].filter(([tokenId]) => !scoredThisTick.has(tokenId));
           if (unscored.length > 0) {
             researchNudged = true;
@@ -1423,7 +1490,7 @@ export function buildTools(ctx: RunContext): ToolSet {
         // Approval mode, once per tick: a model that scored two or three tokens above the
         // bar and proposed one has not given its owner the shortlist they asked for. Send
         // it back for the rest — or for a sentence on why each one is not worth proposing.
-        if (approvalMode && !finishNudged) {
+        if (approvalMode && !finishNudged && !full) {
           const left = [...shortlistThisTick.entries()]
             .filter(([tokenId]) => !proposedThisTick.has(tokenId))
             .map(([, s]) => s)

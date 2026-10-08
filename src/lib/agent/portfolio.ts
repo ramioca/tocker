@@ -20,25 +20,76 @@
  * to pass it), which is a change to every buy path and not one to make here. An agent
  * that trades Solana alone does not have it, and the first-trade preset leaves a
  * pay-per-use agent trading Solana alone.
+ *
+ * An agent with a position limit (`risk.maxOpenPositions`) has its buys waiting for
+ * approval read as well, on every read. And a book that is about to judge a real buy
+ * (`getPortfolio(id, { forBuy: true })`) reads two more things for an agent with a
+ * position limit or a cash reserve (`risk.cashReserveUsd`): its buys in flight, placed
+ * and not settled, and, under a reserve, its Base USDC from the chain instead of the
+ * indexer. The guard is handed all of it by `toRiskPortfolio`; see `BuyInFlight` and
+ * `getLiveCash`. Nothing of the kind is read for an agent with neither setting, or for a
+ * book that is read for any other reason: a sell, an exit, a prompt, a page.
  */
 import { isDustPosition } from "@/lib/trading/positions";
 import { nanoid } from "nanoid";
 import { exitDistances } from "@/lib/pnl";
-import { and, eq, gt, gte, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { agents, equitySnapshots, getDb, inferencePayments, positions, tokens, trades, wallets } from "@/db";
 import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
-import type { Position, TokenRef } from "@/server/types";
+import type { Chain, Position, TokenRef } from "@/server/types";
 import type { AgentWalletRef } from "@/lib/x402/types";
-import { floorToCents, formatFeeRate, maxBuyUsd, netLiveCashUsd, platformFeeBps } from "@/lib/platform/fee";
+import { toNum } from "@/lib/money";
+import { buyCostUsd, formatFeeRate, netLiveCashUsd, platformFeeBps } from "@/lib/platform/fee";
 import { accruedFeesUsd } from "@/lib/platform/fees";
 import { getMarks } from "@/lib/trading/prices";
 import { getPaperCash } from "@/lib/trading/paper";
 import { loadCachedScores } from "@/lib/trading/score-cache";
-import { toTokenRef } from "@/lib/trading/tokens";
-import { sizeCeiling, type RiskPortfolio } from "@/lib/trading/risk";
+import { USDC_BASE, toTokenRef } from "@/lib/trading/tokens";
+import { proposalExpiresAt } from "@/lib/trading/proposal-ttl";
+import { SUBMITTED_STALE_MS } from "@/lib/trading/settle";
+import {
+  buyingCashUsd,
+  positionRoom,
+  readCashReserveUsd,
+  readMaxOpenPositions,
+  ticketCeiling,
+  type RiskPortfolio,
+} from "@/lib/trading/risk";
 import { readSizing } from "@/lib/trading/sizing";
 import { dbErrorForLog } from "@/lib/security/redact";
 import { PAYMENT_IN_FLIGHT_MS, thinkSource, thinkingReserveUsd } from "./inference";
+
+/**
+ * A buy of the agent's that has passed the risk guard and has not settled: its row is
+ * `pending` or `submitted`. It is not a position yet and its cash has not left, so a
+ * second buy from another request in those seconds (a run's and the owner's, an approval
+ * and a buy by hand) would be judged on a book that shows neither.
+ */
+export interface BuyInFlight {
+  tradeId: string;
+  tokenId: string;
+  /** The order's size with its fee: what the cash will be down by when it fills. */
+  costUsd: number;
+  /** When it was placed: the moment an approval was claimed, or the row was written. */
+  at: number;
+  /** It is a proposal its owner approved (the others were placed by a run or by hand). */
+  approved: boolean;
+}
+
+/**
+ * How long a `pending` or `submitted` buy is taken to be in flight. The same two minutes
+ * after which the marks pass calls a `submitted` row abandoned (`sweepSubmittedTrades`):
+ * a quote, a swap and its confirmation fit well inside it, and a row left behind by an
+ * invocation that died must not hold a slot, or cash, for good.
+ */
+export const BUY_IN_FLIGHT_MS = SUBMITTED_STALE_MS;
+
+/**
+ * How far behind a fill an indexed balance is allowed for. The code's own notes say
+ * Privy's balance endpoint "can trail a fill by minutes"; five is one cron pass. A guess
+ * with a margin, not a measurement, and it only ever makes the reserve stricter.
+ */
+export const INDEXER_LAG_MS = 5 * 60_000;
 
 export interface Portfolio {
   agentId: string;
@@ -70,6 +121,72 @@ export interface Portfolio {
    * agent's paid steps was in flight at that read. Absent for every other agent.
    */
   cashReadAt?: Date;
+  /**
+   * Set only for an agent with a position limit (`risk.maxOpenPositions`): the tokens
+   * with a buy still waiting for its owner's approval, which count against that limit
+   * beside what is held. Absent for every other agent, and nothing is read for them.
+   */
+  pendingBuyTokenIds?: string[];
+  /**
+   * Set only on a book read to judge a buy (`forBuy`), for an agent with a position
+   * limit or a cash reserve, and only while it has any: its buys in flight
+   * ({@link BuyInFlight}). Absent on every other book, and nothing is read for them.
+   */
+  buysInFlight?: BuyInFlight[];
+  /**
+   * Set only on a book read to judge a buy (`forBuy`), for a live agent with a cash
+   * reserve whose balance had to come from the indexer (the chain did not answer): what
+   * its buys of the last {@link INDEXER_LAG_MS} moved, which that balance may not show
+   * yet. Part of `cashUsd`, and set against the reserve only. Absent on every other
+   * book, and whenever the chain answered.
+   */
+  cashUnseenUsd?: number;
+}
+
+/**
+ * The book with nothing in flight: what it is judged on once every buy still settling is
+ * left out. An approval asks the guard a second time on this when it has been refused, to
+ * tell a refusal that will still stand in a minute from one that only the buys in flight
+ * explain. It is never what a buy is let through on.
+ */
+export function withoutBuysInFlight(portfolio: Portfolio): Portfolio {
+  if (portfolio.buysInFlight === undefined && portfolio.cashUnseenUsd === undefined) return portfolio;
+  const settled = { ...portfolio };
+  delete settled.buysInFlight;
+  delete settled.cashUnseenUsd;
+  return settled;
+}
+
+/** The parts of the book that say what a buy may spend. */
+type BookCash = Pick<Portfolio, "cashUsd" | "thinkingReserveUsd" | "buysInFlight" | "cashUnseenUsd">;
+
+/**
+ * The proposal an approval is carrying out. Its row was moved to `pending` when the owner
+ * tapped Approve, before the book was read, so it is among the buys in flight: it must
+ * not be counted against itself.
+ */
+export interface DecidingProposal {
+  tradeId: string;
+  /** When it was claimed (`decidedAt`). */
+  at: number;
+}
+
+/**
+ * The buys in flight that count against an order. Every one of them, unless the order is
+ * a proposal being approved: then not its own row, and not another approved proposal
+ * claimed after it. Two approvals tapped together each find the other in flight; with no
+ * order between them, under a limit with room for one, neither would go through however
+ * often they were tapped again. So the earlier claim goes first and the later one is
+ * judged with it counted.
+ */
+function buysCounted(portfolio: Pick<Portfolio, "buysInFlight">, deciding?: DecidingProposal): BuyInFlight[] {
+  const inFlight = portfolio.buysInFlight ?? [];
+  if (!deciding) return inFlight;
+  return inFlight.filter((buy) => {
+    if (buy.tradeId === deciding.tradeId) return false;
+    const later = buy.at > deciding.at || (buy.at === deciding.at && buy.tradeId > deciding.tradeId);
+    return !(buy.approved && later);
+  });
 }
 
 /**
@@ -80,6 +197,34 @@ export function spendableCashUsd(portfolio: Pick<Portfolio, "cashUsd" | "thinkin
   const held = portfolio.thinkingReserveUsd ?? 0;
   if (!(held > 0)) return portfolio.cashUsd;
   return Math.max(0, Math.round((portfolio.cashUsd - held) * 1e6) / 1e6);
+}
+
+/**
+ * The book's cash as the risk guard is handed it: what a buy may spend before the owner's
+ * reserve, how much of the agent's cash that already leaves out, and how much of it is
+ * already spoken for (buys in flight, and buys a lagging balance may not show yet).
+ */
+function guardCash(
+  portfolio: BookCash,
+  deciding?: DecidingProposal,
+): Pick<RiskPortfolio, "cashUsd" | "cashHeldBackUsd" | "cashSpokenForUsd"> {
+  const held = portfolio.thinkingReserveUsd ?? 0;
+  const spokenFor =
+    buysCounted(portfolio, deciding).reduce((sum, buy) => sum + buy.costUsd, 0) + (portfolio.cashUnseenUsd ?? 0);
+  return {
+    cashUsd: spendableCashUsd(portfolio),
+    ...(held > 0 ? { cashHeldBackUsd: held } : {}),
+    ...(spokenFor > 0 ? { cashSpokenForUsd: Math.round(spokenFor * 1e6) / 1e6 } : {}),
+  };
+}
+
+/**
+ * What a buy may spend once the owner's cash reserve (`risk.cashReserveUsd`) is set aside
+ * as well: the figure the risk guard clears a buy against. For an agent with no reserve
+ * this is {@link spendableCashUsd}.
+ */
+export function cashForBuysUsd(portfolio: BookCash, config: AgentConfig): number {
+  return buyingCashUsd(config.risk, guardCash(portfolio));
 }
 
 export function startOfUtcDay(now: Date = new Date()): Date {
@@ -117,21 +262,69 @@ async function solanaUsdcOnChain(address: string): Promise<number | null> {
   }
 }
 
-async function getLiveCash(walletRefs: AgentWalletRef[]): Promise<{ usd: number; complete: boolean; solanaUsd: number }> {
+const BASE_USDC_DECIMALS = 6;
+
+/** How long a buy waits for the Base chain to say what a wallet holds before the indexer is asked instead. */
+const BASE_CASH_READ_MS = 5_000;
+
+/**
+ * A Base wallet's USDC straight from the chain, or null when the RPC could not say, or
+ * did not say in time: the order waiting on this is a buy inside a run.
+ */
+async function baseUsdcOnChain(address: string): Promise<number | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const { readBaseTokenBalance } = await import("@/lib/trading/base");
+    const tooSlow = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), BASE_CASH_READ_MS);
+    });
+    const raw = await Promise.race([readBaseTokenBalance(USDC_BASE, address), tooSlow]);
+    return raw === null ? null : Number(raw) / 10 ** BASE_USDC_DECIMALS;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * `baseFromChain` is asked for when a buy is about to be judged for an agent with a cash
+ * reserve, and at no other time. A Base wallet is otherwise read from Privy's indexer,
+ * as it always was, and a figure that trails a fill is harmless to the plain cash rule:
+ * a buy the money is not there for fails at the venue. The reserve has no such backstop,
+ * because the money IS there, so back-to-back buys on a balance that had not caught up
+ * went straight through it. With the flag a Base wallet is read from the chain first, as
+ * a Solana one always is.
+ *
+ * `indexed` names the chains whose figure came from the indexer all the same (the chain
+ * did not answer), so the caller can allow for what such a balance may not show yet.
+ */
+async function getLiveCash(
+  walletRefs: AgentWalletRef[],
+  options: { baseFromChain?: boolean } = {},
+): Promise<{ usd: number; complete: boolean; solanaUsd: number; indexed: Chain[] }> {
   const usable = walletRefs.filter((w) => !w.walletId.startsWith("paper_"));
-  if (usable.length === 0) return { usd: 0, complete: true, solanaUsd: 0 };
+  if (usable.length === 0) return { usd: 0, complete: true, solanaUsd: 0, indexed: [] };
   const { privy } = await import("@/lib/privy");
   const client = privy();
   let total = 0;
   // The Solana part on its own: pay-per-use thinking is paid from that wallet only.
   let solanaUsd = 0;
   let complete = true;
+  const indexed = new Set<Chain>();
   for (const w of usable) {
     if (w.chain === "solana" && w.address) {
       const onChain = await solanaUsdcOnChain(w.address);
       if (onChain !== null) {
         total += onChain;
         solanaUsd += onChain;
+        continue;
+      }
+    }
+    if (options.baseFromChain === true && w.chain === "base" && w.address) {
+      const onChain = await baseUsdcOnChain(w.address);
+      if (onChain !== null) {
+        total += onChain;
         continue;
       }
     }
@@ -145,11 +338,12 @@ async function getLiveCash(walletRefs: AgentWalletRef[]): Promise<{ usd: number;
         total += raw / 10 ** b.raw_value_decimals;
         if (w.chain === "solana") solanaUsd += raw / 10 ** b.raw_value_decimals;
       }
+      indexed.add(w.chain);
     } catch {
       complete = false;
     }
   }
-  return { usd: total, complete, solanaUsd };
+  return { usd: total, complete, solanaUsd, indexed: [...indexed] };
 }
 
 export async function getAgentWallets(agentId: string): Promise<AgentWalletRef[]> {
@@ -158,7 +352,19 @@ export async function getAgentWallets(agentId: string): Promise<AgentWalletRef[]
   return rows.map((r) => ({ chain: r.chain, walletId: r.id, address: r.address }));
 }
 
-export async function getPortfolio(agentId: string): Promise<Portfolio> {
+/**
+ * `forBuy` says this book is about to be put before the risk guard with a real buy. The
+ * three places that do that pass it: the model's `place_trade`, a buy placed by hand, and
+ * the approval of a proposed buy. For an agent with a position limit or a cash reserve
+ * the book then also carries what such a buy must not be judged without (the agent's
+ * buys in flight, and under a reserve a balance that does not trail its own fills). A
+ * new path that places buys has to pass it too, or those two rules are judged on a book
+ * that can be a few seconds, or a few minutes, behind.
+ *
+ * Without it, and for every agent with neither setting, the book is read as it always
+ * was. A sell never passes it, so no exit waits on any of this.
+ */
+export async function getPortfolio(agentId: string, options: { forBuy?: boolean } = {}): Promise<Portfolio> {
   const db = await getDb();
   const agentRows = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
   const agent = agentRows[0];
@@ -220,6 +426,12 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
     realizedPnlUsd += Number(h.position.realizedPnlUsd);
   }
 
+  const positionLimit = readMaxOpenPositions(agent.config.risk);
+  const reserveUsd = readCashReserveUsd(agent.config.risk);
+  // Whether there is anything more to read: a buy is being judged, under a rule that a
+  // book a moment behind would let it slip past.
+  const judgingBuy = options.forBuy === true && (positionLimit !== null || reserveUsd > 0);
+
   // Live cash is the wallet balance *minus what the agent already owes the platform*.
   // The fees for every fill since the last sweep are still sitting in the wallet, but
   // they are spoken for; showing the raw balance would let the agent size a trade with
@@ -230,6 +442,8 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
   let cashUsd: number;
   let heldForThinking = 0;
   let cashReadAt: Date | null = null;
+  // The chains whose balance came from the indexer. Only ever looked at under a reserve.
+  let indexedChains: Chain[] = [];
   if (agent.mode === "paper") {
     cashUsd = await getPaperCash(agentId);
   } else {
@@ -237,7 +451,10 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
     // Noted before the first wallet is asked, and only for an agent that pays for its own
     // thinking: a payment that had not landed by now is not in the balances below.
     if (thinkSource(agent.config) === "usdc") cashReadAt = new Date();
-    const live = await getLiveCash(walletRefs);
+    // For a buy under a cash reserve Base is read from the chain; every other book's
+    // wallets are read exactly as they were (see `getLiveCash`).
+    const live = await getLiveCash(walletRefs, judgingBuy && reserveUsd > 0 ? { baseFromChain: true } : {});
+    indexedChains = live.indexed;
     cashReadFailed = !live.complete;
     cashUsd = netLiveCashUsd(live.usd, await accruedFeesUsd(agentId));
     // A live agent that pays for its own thinking keeps two runs' worth of it out of its
@@ -247,6 +464,96 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
     // and never more than the Solana wallet's USDC: that is the wallet that pays, and
     // USDC on another chain cannot stand in for it. Zero for a key agent.
     heldForThinking = Math.max(0, Math.min(thinkingReserveUsd(agent.config), live.solanaUsd, cashUsd));
+  }
+
+  // The buys still waiting for the owner, for the one rule that counts them: a position
+  // limit. Read only when the agent has one, so every other book is read exactly as it
+  // was. A proposal past its time is dead whether or not the sweep has been by, and one
+  // made in the other mode can never fill (`decideProposal`), so neither takes a slot.
+  let pendingBuyTokenIds: string[] | null = null;
+  if (positionLimit !== null) {
+    const waiting = await db
+      .select({ tokenId: trades.tokenId, proposedAt: trades.proposedAt, createdAt: trades.createdAt })
+      .from(trades)
+      .where(
+        and(
+          eq(trades.agentId, agentId),
+          eq(trades.status, "proposed"),
+          eq(trades.side, "buy"),
+          eq(trades.isPaper, agent.mode === "paper"),
+        ),
+      );
+    const now = Date.now();
+    pendingBuyTokenIds = [
+      ...new Set(
+        waiting
+          .filter((row) => proposalExpiresAt(row.proposedAt ?? row.createdAt, agent.config).getTime() > now)
+          .map((row) => row.tokenId),
+      ),
+    ];
+  }
+
+  // The buys in flight, for the two rules a second buy could slip past while the first
+  // is still filling: the position limit and the cash reserve. Read only when a buy is
+  // being judged for an agent with one of them. Placed in this mode, and recently: a row
+  // an invocation left behind when it died is not a buy that is about to land.
+  let buysInFlight: BuyInFlight[] = [];
+  let cashUnseenUsd = 0;
+  if (judgingBuy) {
+    const nowMs = Date.now();
+    const feeBps = platformFeeBps();
+    const placed = await db
+      .select({
+        id: trades.id,
+        tokenId: trades.tokenId,
+        amountUsd: trades.amountUsd,
+        requestedUsd: trades.requestedUsd,
+        proposedAt: trades.proposedAt,
+        decidedAt: trades.decidedAt,
+        createdAt: trades.createdAt,
+      })
+      .from(trades)
+      .where(
+        and(
+          eq(trades.agentId, agentId),
+          inArray(trades.status, ["pending", "submitted"]),
+          eq(trades.side, "buy"),
+          eq(trades.isPaper, agent.mode === "paper"),
+        ),
+      );
+    buysInFlight = placed
+      // An approved proposal was written when it was proposed and placed when it was
+      // claimed, which is `decidedAt`; every other order is placed as its row is written.
+      .map((row) => ({ row, at: (row.decidedAt ?? row.createdAt).getTime() }))
+      .filter(({ at }) => nowMs - at < BUY_IN_FLIGHT_MS)
+      .map(({ row, at }) => ({
+        tradeId: row.id,
+        tokenId: row.tokenId,
+        costUsd: buyCostUsd(toNum(row.requestedUsd ?? row.amountUsd), feeBps),
+        at,
+        approved: row.proposedAt !== null,
+      }));
+
+    // A balance from the indexer can still show money a buy of the last few minutes has
+    // already spent. Under a reserve those buys are taken off it. (When it has caught up
+    // they are taken off twice, for a few minutes, which refuses a buy and never lets one
+    // through; and it happens only when the chain itself could not be read.)
+    if (reserveUsd > 0 && agent.mode === "live" && indexedChains.length > 0) {
+      const settled = await db
+        .select({ amountUsd: trades.amountUsd })
+        .from(trades)
+        .where(
+          and(
+            eq(trades.agentId, agentId),
+            eq(trades.status, "filled"),
+            eq(trades.side, "buy"),
+            eq(trades.isPaper, false),
+            inArray(trades.chain, indexedChains),
+            gte(trades.filledAt, new Date(nowMs - INDEXER_LAG_MS)),
+          ),
+        );
+      cashUnseenUsd = settled.reduce((sum, row) => sum + toNum(row.amountUsd), 0);
+    }
   }
 
   // Buys only. The daily limit caps how much *new* exposure an agent may take on; a
@@ -279,6 +586,9 @@ export async function getPortfolio(agentId: string): Promise<Portfolio> {
     cashReadFailed,
     ...(heldForThinking > 0 ? { thinkingReserveUsd: heldForThinking } : {}),
     ...(cashReadAt ? { cashReadAt } : {}),
+    ...(pendingBuyTokenIds ? { pendingBuyTokenIds } : {}),
+    ...(buysInFlight.length > 0 ? { buysInFlight } : {}),
+    ...(cashUnseenUsd > 0 ? { cashUnseenUsd } : {}),
   };
 }
 
@@ -333,9 +643,19 @@ async function paidStepInFlight(agentId: string, readAt: Date): Promise<boolean>
  * what is held back for thinking stops being spendable: the guard sees the cash a buy may
  * use, and the full equity for its concentration cap.
  */
-export function toRiskPortfolio(portfolio: Portfolio): RiskPortfolio {
+export function toRiskPortfolio(portfolio: Portfolio, deciding?: DecidingProposal): RiskPortfolio {
+  // Only an approval passes `deciding`: the proposal it is carrying out is itself in
+  // flight by then, and is left out of what it is judged against (`buysCounted`).
+  const inFlight = buysCounted(portfolio, deciding);
   return {
-    cashUsd: spendableCashUsd(portfolio),
+    // What a buy may spend, and what of the agent's cash that leaves out: the guard sets
+    // the owner's cash reserve against both. Nothing is added for an agent that holds
+    // nothing back.
+    ...guardCash(portfolio, deciding),
+    // Only on the book of an agent with a position limit, the rule that counts them.
+    ...(portfolio.pendingBuyTokenIds ? { pendingBuyTokenIds: portfolio.pendingBuyTokenIds } : {}),
+    // Only while an agent with a limit or a reserve has a buy in flight.
+    ...(inFlight.length > 0 ? { inFlightBuyTokenIds: [...new Set(inFlight.map((buy) => buy.tokenId))] } : {}),
     equityUsd: portfolio.equityUsd,
     tradesToday: portfolio.tradesToday,
     positions: portfolio.positions.map((p) => ({
@@ -411,46 +731,35 @@ export async function snapshotEquity(portfolio: Portfolio): Promise<boolean> {
  * refused.
  */
 export function effectiveTicketUsd(
-  portfolio: Pick<Portfolio, "cashUsd" | "equityUsd" | "thinkingReserveUsd">,
+  portfolio: BookCash & Pick<Portfolio, "equityUsd">,
   config: AgentConfig,
 ): { amountUsd: number; reason: string } {
-  const ceiling = sizeCeiling(config, portfolio, {});
   const feeBps = platformFeeBps();
-  const equity = portfolio.equityUsd > 0 ? portfolio.equityUsd : portfolio.cashUsd;
-  // What the risk guard will compare a buy with (`toRiskPortfolio`), so the number the
-  // model is told is the number it has.
-  const spendable = spendableCashUsd(portfolio);
+  // The guard's own arithmetic over what the guard will be handed (`toRiskPortfolio`), so
+  // the number the model is told is the number it has.
+  const ceiling = ticketCeiling(config, { ...guardCash(portfolio), equityUsd: portfolio.equityUsd }, feeBps);
+  const spendable = cashForBuysUsd(portfolio, config);
+  const reserveUsd = readCashReserveUsd(config.risk);
+  const thinking = (portfolio.thinkingReserveUsd ?? 0) > 0;
   // How MUCH is kept back for thinking is never put into words. It is worked out from a
   // limit only the owner may read (twice the limit for one run, plus a fixed floor), and
   // this sentence goes to a model whose rationale, posts and summary are public. The
-  // model is told that part of its cash is kept back, and what it may trade with.
-  const cashWords =
-    (portfolio.thinkingReserveUsd ?? 0) > 0
-      ? `the $${spendable.toFixed(2)} of your cash that is available to trade (part of your cash is kept back to pay for your thinking)`
+  // model is told that part of its cash is kept back, and what it may trade with. The
+  // owner's cash reserve is a figure the model is given, like its other limits.
+  const cashWords = thinking
+    ? `the $${spendable.toFixed(2)} of your cash that is available to trade (part of your cash is kept back ${
+        reserveUsd > 0 ? "for your cash reserve and to pay for your thinking" : "to pay for your thinking"
+      })`
+    : reserveUsd > 0
+      ? `the $${spendable.toFixed(2)} of your cash that is above your $${reserveUsd.toFixed(2)} cash reserve`
       : `cash $${portfolio.cashUsd.toFixed(2)}`;
 
-  const limits: Array<{ amountUsd: number; reason: string }> = [
-    {
-      amountUsd: ceiling.amountUsd,
-      reason: `${ceiling.effectiveMode.replace(/_/g, " ")} sizing — ${ceiling.explanation}`,
-    },
-    {
-      // The largest amount whose cost, fee included, the cash covers, in the whole cents
-      // an order is written in and rounded down: $5.00 covers a $4.975 buy, and a
-      // ceiling told as "$4.98" is one the guard refuses.
-      amountUsd: floorToCents(maxBuyUsd(spendable, feeBps)),
-      reason: feeBps > 0 ? `${cashWords} less the ${formatFeeRate(feeBps)} Tocker fee charged on the fill` : cashWords,
-    },
-  ];
-  if (equity > 0) {
-    limits.push({
-      amountUsd: (config.risk.maxPositionPct / 100) * equity,
-      reason: `maxPositionPct ${config.risk.maxPositionPct}% of $${equity.toFixed(2)} equity`,
-    });
-  }
-
-  const binding = limits.reduce((lowest, limit) => (limit.amountUsd < lowest.amountUsd ? limit : lowest));
-  return { amountUsd: Math.max(0, binding.amountUsd), reason: binding.reason };
+  const reasons: Record<typeof ceiling.bound, string> = {
+    sizing: `${ceiling.sizing.effectiveMode.replace(/_/g, " ")} sizing — ${ceiling.sizing.explanation}`,
+    cash: feeBps > 0 ? `${cashWords} less the ${formatFeeRate(feeBps)} Tocker fee charged on the fill` : cashWords,
+    concentration: `maxPositionPct ${config.risk.maxPositionPct}% of $${ceiling.equityUsd.toFixed(2)} equity`,
+  };
+  return { amountUsd: ceiling.amountUsd, reason: reasons[ceiling.bound] };
 }
 
 /** Compact, model-friendly rendering used by both the tick prompt and `get_portfolio`. */
@@ -473,6 +782,30 @@ export function describePortfolio(portfolio: Portfolio, config: AgentConfig): st
         ? " Adding to a token you already hold has less room than this: the position you hold counts towards the same concentration cap."
         : ""),
   ];
+  // The owner's two limits on what may be opened, said in the book and not left to a
+  // rejection: how many positions count against the limit, and what the reserve leaves.
+  const positions = positionRoom(config.risk, toRiskPortfolio(portfolio));
+  if (positions.limit !== null) {
+    const left = Math.max(0, positions.limit - positions.open);
+    const parts =
+      positions.waiting > 0
+        ? ` (${positions.held} held, ${positions.waiting} buy${positions.waiting === 1 ? "" : "s"} waiting for your owner)`
+        : "";
+    // Over the limit (it was lowered under what the agent already had), one sale does
+    // not make room, so the book does not say that it does.
+    const over = positions.open > positions.limit;
+    lines.push(
+      `Open positions: ${positions.open} of ${positions.limit} allowed${parts}. ` +
+        (over
+          ? `You are over the limit: a buy of a token you do not already hold is rejected until the count is back under ${positions.limit}. Adding to a token you hold is still allowed.`
+          : left === 0
+            ? "You are at the limit: a buy of a token you do not already hold is rejected until a position is sold. Adding to a token you hold is still allowed."
+            : `You may open ${left} more. A buy of a token you already hold is not a new position.`) +
+        " The limit is your owner's: like your other thresholds, never state it in a rationale, a post or your summary.",
+    );
+  }
+  const reserveUsd = readCashReserveUsd(config.risk);
+  const available = cashForBuysUsd(portfolio, config);
   if ((portfolio.thinkingReserveUsd ?? 0) > 0) {
     // Said plainly, or a model that sees $5.00 of cash and a $4.20 ceiling goes looking
     // for the rest. But the amount kept back is NOT said: it is worked out from a limit
@@ -480,8 +813,18 @@ export function describePortfolio(portfolio: Portfolio, config: AgentConfig): st
     // summary) is public. It is given the one figure it sizes with, and asked to keep
     // that out of public text too, because cash less that figure is the amount itself.
     lines.push(
-      `Part of that cash is kept back to pay for your own thinking and cannot be spent on a buy: $${spendableCashUsd(portfolio).toFixed(2)} is available to trade.` +
+      `Part of that cash is kept back to pay for your own thinking and cannot be spent on a buy: $${available.toFixed(2)} is available to trade.` +
         " How much is kept back follows a limit your owner set: like your other thresholds, never mention it, or the amount available to trade, in a rationale, a post or your summary.",
+    );
+  }
+  if (reserveUsd > 0) {
+    lines.push(
+      `Cash reserve: your owner keeps $${reserveUsd.toFixed(2)} of your cash out of every buy` +
+        ((portfolio.thinkingReserveUsd ?? 0) > 0
+          ? ", and the amount available to trade above already allows for it."
+          : `, so $${available.toFixed(2)} is available to trade.`) +
+        ` A buy that would leave less than $${reserveUsd.toFixed(2)} in cash after its fee is rejected; a sell never is.` +
+        " Like your other thresholds, never state the reserve in a rationale, a post or your summary.",
     );
   }
   if (portfolio.cashReadFailed) {

@@ -26,6 +26,15 @@ export const RUN_REFUSED_WITHOUT_KEY = "Attach an LLM key before running this ag
 export const RUN_DEFERRED = "This run could not be started just now. Try again in a minute.";
 
 /**
+ * A scheduled run that was not started because the agent has no room to buy and its
+ * owner has it skip such runs (`schedule.skipWhenFull`). Nothing is wrong with the agent:
+ * no run row is written, nothing is paid, and it is looked at again at its next
+ * scheduled time. Said without the owner's figures, because this text is a result of the
+ * cron pass; the owner reads the reason, with its numbers, on the agent's own pages.
+ */
+export const RUN_SKIPPED_NO_ROOM = "Not started: this agent skips scheduled runs while it has no room to buy.";
+
+/**
  * Thrown by `startRun` when a pay-per-use agent may not run: its wallet is short, a
  * limit is reached, pay-per-use is paused. No run row exists and nothing was charged.
  * The message is the sentence the owner reads, written in

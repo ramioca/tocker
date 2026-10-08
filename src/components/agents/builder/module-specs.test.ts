@@ -12,7 +12,7 @@ import {
   SPECS,
   type SpecId,
 } from "./module-specs";
-import { LLM_BOUNDS, MAX_TRADE_LADDER, RISK_BOUNDS } from "./types";
+import { CASH_RESERVE_LADDER, LLM_BOUNDS, MAX_TRADE_LADDER, RISK_BOUNDS } from "./types";
 import { roundTo, settle, type ValueSpec } from "./typed-value";
 
 type Config = typeof DEFAULT_AGENT_CONFIG;
@@ -58,6 +58,8 @@ const FIELDS: Record<Exclude<SpecId, "paperStart">, { write: (value: number) => 
     read: (c) => c.risk.maxDataSpendUsdPerRun,
   },
   slippageBps: { write: (v) => risk({ slippageBps: v }), read: (c) => c.risk.slippageBps },
+  maxOpenPositions: { write: (v) => risk({ maxOpenPositions: v }), read: (c) => c.risk.maxOpenPositions },
+  cashReserveUsd: { write: (v) => risk({ cashReserveUsd: v }), read: (c) => c.risk.cashReserveUsd },
   stopLossPct: { write: (v) => risk({ stopLossPct: v }), read: (c) => c.risk.stopLossPct },
   takeProfitPct: { write: (v) => risk({ takeProfitPct: v }), read: (c) => c.risk.takeProfitPct },
   trailingStopPct: { write: (v) => risk({ trailingStopPct: v }), read: (c) => c.risk.trailingStopPct },
@@ -150,6 +152,8 @@ describe("ranges", () => {
     ["maxPositionPct", 1, 100],
     ["maxDataSpendUsdPerRun", 0, 5],
     ["slippageBps", 10, 2_000],
+    ["maxOpenPositions", 1, 50],
+    ["cashReserveUsd", 1, 5_000],
     ["stopLossPct", 1, 90],
     ["takeProfitPct", 5, 500],
     ["trailingStopPct", 5, 90],
@@ -171,6 +175,15 @@ describe("ranges", () => {
       RISK_BOUNDS.maxTradeUsd.max,
     ]);
     expect([SPECS.maxSteps.min, SPECS.maxSteps.max]).toEqual([LLM_BOUNDS.maxSteps.min, LLM_BOUNDS.maxSteps.max]);
+    expect([SPECS.maxOpenPositions.min, SPECS.maxOpenPositions.max]).toEqual([
+      RISK_BOUNDS.maxOpenPositions.min,
+      RISK_BOUNDS.maxOpenPositions.max,
+    ]);
+    expect([SPECS.cashReserveUsd.min, SPECS.cashReserveUsd.max]).toEqual(ends(CASH_RESERVE_LADDER));
+    expect([SPECS.cashReserveUsd.min, SPECS.cashReserveUsd.max]).toEqual([
+      RISK_BOUNDS.cashReserveUsd.min,
+      RISK_BOUNDS.cashReserveUsd.max,
+    ]);
   });
 
   it("go under the slider only for the two fields a shipped preset already takes there", () => {
@@ -216,5 +229,62 @@ describe("Maximum age", () => {
     expect(settle(SPECS.maxAgeHours, "any", 24)).toMatchObject({ status: "set", value: null });
     expect(settle(SPECS.maxAgeHours, "", 24)).toEqual({ status: "unchanged" });
     expect(settle(SPECS.maxAgeHours, "any", null)).toEqual({ status: "unchanged" });
+  });
+});
+
+/**
+ * The two limits on the Risk limits step that can be off. Off is the switch's to say, so
+ * the box takes a number in range and nothing else.
+ */
+describe("Max open positions and Cash reserve", () => {
+  it("take what an owner would type, in whole positions and in dollars to the cent", () => {
+    expect(settle(SPECS.maxOpenPositions, "5", 3)).toMatchObject({ status: "set", value: 5, say: "Set to 5." });
+    expect(settle(SPECS.maxOpenPositions, "50", 3)).toMatchObject({ status: "set", value: 50 });
+    expect(settle(SPECS.maxOpenPositions, "1", 3)).toMatchObject({ status: "set", value: 1 });
+    expect(settle(SPECS.cashReserveUsd, "10", 5)).toMatchObject({ status: "set", value: 10, say: "Set to $10.00." });
+    expect(settle(SPECS.cashReserveUsd, "$12.50", 5)).toMatchObject({ status: "set", value: 12.5 });
+    expect(settle(SPECS.cashReserveUsd, "7,37", 5)).toMatchObject({ status: "set", value: 7.37 });
+    expect(settle(SPECS.cashReserveUsd, "1k", 5)).toMatchObject({ status: "set", value: 1_000 });
+    // What the box shows can be typed back and is the same number.
+    expect(SPECS.maxOpenPositions.format(3)).toBe("3");
+    expect(settle(SPECS.maxOpenPositions, "3", 3)).toEqual({ status: "unchanged" });
+    expect(SPECS.cashReserveUsd.format(5)).toBe("$5.00");
+    expect(settle(SPECS.cashReserveUsd, "$5.00", 5)).toEqual({ status: "unchanged" });
+  });
+
+  it("round what cannot be kept and say so", () => {
+    expect(settle(SPECS.maxOpenPositions, "2.6", 5)).toMatchObject({ status: "set", value: 3, say: "Rounded to 3.", show: true });
+    expect(settle(SPECS.cashReserveUsd, "5.555", 1)).toMatchObject({ status: "set", value: 5.56, say: "Rounded to $5.56.", show: true });
+  });
+
+  it("refuse a value outside the range and keep the old one, never the nearest limit", () => {
+    expect(settle(SPECS.maxOpenPositions, "0", 3)).toEqual({
+      status: "refused",
+      message: "Max open positions goes from 1 to 50. Kept 3.",
+    });
+    expect(settle(SPECS.maxOpenPositions, "51", 3)).toMatchObject({ status: "refused" });
+    expect(settle(SPECS.cashReserveUsd, "0", 5)).toEqual({
+      status: "refused",
+      message: "Cash reserve goes from $1.00 to $5,000.00. Kept $5.00.",
+    });
+    expect(settle(SPECS.cashReserveUsd, "0.5", 5)).toMatchObject({ status: "refused" });
+    expect(settle(SPECS.cashReserveUsd, "5001", 5)).toMatchObject({ status: "refused" });
+  });
+
+  it("do not take a word for off: the switch beside the box is how a limit is removed", () => {
+    for (const word of ["off", "none", "no limit", "any"]) {
+      expect(settle(SPECS.maxOpenPositions, word, 3)).toEqual({
+        status: "refused",
+        message: "Max open positions needs a number, like 3. Kept 3.",
+      });
+      expect(settle(SPECS.cashReserveUsd, word, 5)).toEqual({
+        status: "refused",
+        message: "Cash reserve needs a number, like 5 or $12.50. Kept $5.00.",
+      });
+    }
+    // Neither does an emptied box mean off, or zero.
+    expect(settle(SPECS.maxOpenPositions, "", 3)).toEqual({ status: "unchanged" });
+    expect(settle(SPECS.cashReserveUsd, "  ", 5)).toEqual({ status: "unchanged" });
+    expect(settle(SPECS.cashReserveUsd, "five", 5)).toMatchObject({ status: "refused" });
   });
 });

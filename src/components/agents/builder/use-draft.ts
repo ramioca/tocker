@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AVATAR_SEEDS, emptyDraft, withDefaultKey, type BuilderDraft } from "./types";
+import { AVATAR_SEEDS, emptyDraft, restoreDraft, withDefaultKey, type BuilderDraft } from "./types";
 import type { LlmKeyRow } from "@/server/types";
 
 // v2: the allowlist became a universe. A v1 draft cannot be migrated honestly
@@ -80,21 +80,9 @@ export function useDraft(userId: string, keys: readonly LlmKeyRow[] = [], payPer
         // necessarily a post-mount effect.
         setDraft((current) =>
           // A saved draft can name a key that has since been removed, or none at all.
-          withDefaultKey(
-            {
-              ...current,
-              ...parsed,
-              config: {
-                ...current.config,
-                ...parsed.config,
-                // The universe is nested, so a shallow spread would drop any key a
-                // saved draft predates.
-                universe: { ...current.config.universe, ...parsed.config?.universe },
-              },
-            },
-            keysRef.current,
-            { payPerUseAllowed: allowedRef.current },
-          ),
+          // Laid over the starting draft key by key (`restoreDraft`), so a setting the
+          // saved draft predates comes back as its default and not as a hole.
+          withDefaultKey(restoreDraft(current, parsed), keysRef.current, { payPerUseAllowed: allowedRef.current }),
         );
         setRestored(true);
       } else {

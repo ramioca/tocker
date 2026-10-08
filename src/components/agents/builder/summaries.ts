@@ -21,6 +21,7 @@ import { formatFeeRate } from "@/lib/platform/fee";
 import { checkUsdc, shownSource, usdcEstimate, walletNeedUsd } from "@/components/agents/thinking";
 import { providerLabel as providerLabelFor, withArticle } from "@/lib/agent/providers";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { hasAnyExitRule, toExitRules } from "@/lib/trading/exits";
 import type { DataSourceInfo } from "@/server/types";
 import {
   REQUIRED_ERROR_KEYS,
@@ -112,7 +113,13 @@ export function dataSummary(facts: CostFacts): string {
  * is the server's, in basis points, handed down as a prop; 0 when the fee is off.
  */
 export function riskSummary(risk: BuilderDraft["config"]["risk"], feeBps: number): string {
+  // The position limit and the cash reserve are said only when they are on: off is what
+  // every agent was before they existed, and a line that named them would read as news.
+  const positions = typeof risk.maxOpenPositions === "number" ? risk.maxOpenPositions : null;
+  const reserveUsd = typeof risk.cashReserveUsd === "number" && risk.cashReserveUsd > 0 ? risk.cashReserveUsd : 0;
   return `${formatUsd(risk.maxTradeUsd)}/trade · ${risk.maxDailyTrades}/day · ${risk.maxPositionPct}% max position · ${formatUsd(risk.maxDataSpendUsdPerRun)} data/run${
+    positions !== null ? ` · max ${positions} position${positions === 1 ? "" : "s"}` : ""
+  }${reserveUsd > 0 ? ` · ${formatUsd(reserveUsd)} cash reserve` : ""}${
     feeBps > 0 ? ` · Tocker fee ${formatFeeRate(feeBps)} of each fill` : ""
   }`;
 }
@@ -140,6 +147,26 @@ export function exitSummary(risk: BuilderDraft["config"]["risk"]): string {
   if (parts.length === 0) return "No automatic exits";
   const line = parts.join(" · ");
   return line.charAt(0).toUpperCase() + line.slice(1);
+}
+
+/**
+ * The sentence under the Schedule step's skip switch: what is and is not skipped, for the
+ * agent as it is set right now.
+ *
+ * It promises that the automatic exits still fire, which is only so while one of them is
+ * on. With every exit rule off a run is the only thing that sells, so such an agent's
+ * runs are not skipped while it holds a position (`fullRunSkip`,
+ * src/lib/agent/skip-full.ts), and this says that in place of the promise.
+ */
+export function skipWhenFullHint(config: Pick<BuilderDraft["config"], "schedule" | "risk">): string {
+  if (config.schedule.intervalMinutes === 0) {
+    return "With a manual schedule there is no scheduled run to skip. Run now always runs.";
+  }
+  const when =
+    "When it is at its position limit, has no cash for its smallest order after the reserve, or has used the day's buys, a scheduled run is not started";
+  return hasAnyExitRule(toExitRules(config.risk))
+    ? `${when}: it does not think, buys no data and does not review its positions. Stop loss, take profit and the other automatic exits still fire on their own, and Run now always runs.`
+    : `${when}: it does not think and buys no data. Every exit rule is off, so only a run can sell: while it holds a position its runs are not skipped. Run now always runs.`;
 }
 
 /**

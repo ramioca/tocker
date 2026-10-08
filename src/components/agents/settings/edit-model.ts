@@ -29,6 +29,7 @@ import { formatUsd } from "@/components/common/format";
 import type { AgentConfig, PositionSizingConfig } from "@/db/schema";
 import { MAX_AGENT_NAME, agentConfigSchema } from "@/lib/agent/config";
 import { thinkSource } from "@/lib/agent/inference";
+import { readCashReserveUsd, readMaxOpenPositions } from "@/lib/trading/hard-limits";
 import { readSizing } from "@/lib/trading/sizing";
 import { chainLabelFor } from "@/lib/wallets/funding";
 import type { AgentDetail } from "@/server/types";
@@ -422,13 +423,41 @@ function exitLine(
 }
 
 /**
+ * The position limit's line, when a save takes the limit away or lets the agent hold
+ * more tokens. Setting one where there was none, or lowering it, is tightening and says
+ * nothing. Both sides are read the way the guard reads them, so a config with no such
+ * field is one with no limit.
+ */
+function positionLimitLine(was: Risk, next: Risk): string | null {
+  const before = readMaxOpenPositions(was);
+  const after = readMaxOpenPositions(next);
+  if (before === null) return null;
+  if (after === null) return `Max open positions switched off (was ${before})`;
+  return raised(before, after) ? `Max open positions ${before} → ${after}` : null;
+}
+
+/**
+ * The cash reserve's line, when a save takes the reserve away or lets a buy reach
+ * further into the agent's cash. Raising it, or setting one where there was none, never
+ * asks.
+ */
+function cashReserveLine(was: Risk, next: Risk): string | null {
+  const before = readCashReserveUsd(was);
+  const after = readCashReserveUsd(next);
+  if (!(before > 0)) return null;
+  if (!(after > 0)) return `Cash reserve switched off (was ${formatUsd(before)})`;
+  return lowered(before, after) ? `Cash reserve ${formatUsd(before)} → ${formatUsd(after)}` : null;
+}
+
+/**
  * What a save would loosen on an agent that trades real money, one line each, in the
  * order the limits are set on the page. Empty when the save loosens nothing, and then
  * nobody is asked anything.
  *
  * A line is here because the change lets more money move, or lets it move with less of a
- * check: a cap raised, a larger ticket, trading without approval, a chain added, an exit
- * taken away or set wider. Tightening any of them is never a line, and neither is a
+ * check: a cap raised, a position limit raised or taken away, a cash reserve lowered or
+ * taken away, a larger ticket, trading without approval, a chain added, an exit taken
+ * away or set wider. Tightening any of them is never a line, and neither is a
  * change that moves no limit (the strategy, the universe, the data sources, the schedule,
  * the model).
  */
@@ -453,6 +482,8 @@ export function liveSaveWarnings(saved: AgentConfig, next: AgentConfig): string[
     raised(was.slippageBps, now.slippageBps)
       ? `Slippage tolerance ${slippagePct(was.slippageBps)} → ${slippagePct(now.slippageBps)}`
       : null,
+    positionLimitLine(was, now),
+    cashReserveLine(was, now),
   );
 
   const sizingWas = readSizing(was);

@@ -55,6 +55,7 @@ function render(
     balances?: WalletBalance[];
     accountPaused?: boolean;
     statusPending?: boolean;
+    skippingLine?: string | null;
   } = {},
 ): string {
   return renderToStaticMarkup(
@@ -63,6 +64,7 @@ function render(
       config: props.config ?? configOf(),
       initialBalances: props.balances ?? [walletOf(20)],
       accountPaused: props.accountPaused ?? false,
+      ...(props.skippingLine === undefined ? {} : { skippingLine: props.skippingLine }),
       statusPending: props.statusPending ?? false,
       onToggleStatus: () => {},
       onWithdraw: () => {},
@@ -133,6 +135,53 @@ describe("the agent bar's sentence", () => {
     const text = textOf(render({ agent: agentOf({ status: "error", nextRunAt: null }) }));
     expect(text).toContain("Stopped. It keeps its positions and history.");
     expect(text).not.toContain("Paused.");
+  });
+
+  /** Skipping every run under "next tick scheduled" would read as an agent that is about to act. */
+  it("says its scheduled runs are being skipped, and why, in place of the schedule", () => {
+    const line = "Skipping scheduled runs: no room to buy (3 of 3 positions). Automatic exits still run.";
+    const text = textOf(render({ skippingLine: line }));
+    expect(text).toContain(line);
+    expect(text).not.toContain("next tick");
+    // With nothing being skipped the sentence is the one it always was.
+    expect(textOf(render({ skippingLine: null }))).toContain("Runs every 1h · next tick scheduled");
+    expect(textOf(render())).toContain("Runs every 1h · next tick scheduled");
+  });
+
+  it("puts everything that stops an agent running at all before the skipping", () => {
+    const line = "Skipping scheduled runs: no room to buy (3 of 3 positions). Automatic exits still run.";
+    expect(textOf(render({ skippingLine: line, agent: agentOf({ status: "paused" }) }))).not.toContain("Skipping");
+    expect(textOf(render({ skippingLine: line, accountPaused: true }))).not.toContain("Skipping");
+    expect(textOf(render({ skippingLine: line, agent: agentOf({ llmKeyId: null }) }))).toContain("Every tick fails");
+    // A manual schedule has no scheduled run to skip.
+    expect(textOf(render({ skippingLine: line, agent: agentOf({ nextRunAt: null }), config: configOf(0) }))).toContain("Manual runs only");
+  });
+
+  /**
+   * A skipped slot leaves no run behind, so once the agent has room again nothing on the
+   * page says why its last run is older than its interval. The line then says that runs
+   * can be skipped and when the agent is next looked at.
+   */
+  it("says when an agent set to skip full runs is next looked at", () => {
+    const skips = { ...configOf(), schedule: { intervalMinutes: 60, skipWhenFull: true } } as AgentConfig;
+    const soon = new Date(Date.now() + 23 * 3_600_000).toISOString();
+    const text = textOf(render({ config: skips, agent: agentOf({ nextRunAt: soon }) }));
+    expect(text).toMatch(/Runs every 1h · skips a run with no room to buy · next look in 23 ?h/);
+    expect(text).not.toContain("next tick");
+    // Its time has come and it is waiting for the next pass.
+    const due = new Date(Date.now() - 120_000).toISOString();
+    expect(textOf(render({ config: skips, agent: agentOf({ nextRunAt: due }) }))).toContain(
+      "skips a run with no room to buy · next look now",
+    );
+    // While it is skipping, the server's sentence is the line.
+    const line = "Skipping scheduled runs: no room to buy (3 of 3 positions). Automatic exits still run.";
+    expect(textOf(render({ config: skips, skippingLine: line }))).not.toContain("next look");
+    // Never for an agent without the switch, whose line is the one it always was.
+    const off = { ...configOf(), schedule: { intervalMinutes: 60, skipWhenFull: false } } as AgentConfig;
+    expect(textOf(render({ config: off, agent: agentOf({ nextRunAt: soon }) }))).toContain("Runs every 1h · next tick scheduled");
+    expect(textOf(render({ agent: agentOf({ nextRunAt: soon }) }))).toContain("Runs every 1h · next tick scheduled");
+    // Unscheduled, there is no time to give.
+    expect(textOf(render({ config: skips, agent: agentOf({ nextRunAt: null }) }))).toContain("next tick unscheduled");
   });
 
   it("reads the saved config, whatever the page is editing", () => {

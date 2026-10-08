@@ -50,7 +50,7 @@ import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { addLlmKeyAction } from "@/components/agents/agent-actions";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
 import { DataSourcePicker } from "@/components/agents/data-source-picker";
-import { ExitRulesFields } from "@/components/agents/exit-rules";
+import { ExitRulesFields, OptionalRule } from "@/components/agents/exit-rules";
 import { UniversePreview } from "@/components/agents/settings/universe-preview";
 // From its own file, not the trading barrel, which would bring the price chart and the
 // receipts along to the page that creates an agent.
@@ -83,10 +83,15 @@ import {
   isCustomPressed,
   presetChanges,
   presetFacts,
+  withInterval,
 } from "./strategy-presets";
+import { skipWhenFullHint } from "./summaries";
 import { SimpleSelect } from "./simple-select";
 import {
   AVATAR_SEEDS,
+  CASH_RESERVE_LADDER,
+  DEFAULT_CASH_RESERVE_USD,
+  DEFAULT_MAX_OPEN_POSITIONS,
   INTERVAL_PRESETS,
   LLM_BOUNDS,
   MAX_AGENT_NAME,
@@ -984,19 +989,20 @@ export function RiskStep({
   // figure for that, nothing is said about it. Nothing is said either when it sizes its
   // tickets as a share of that equity: both sentences take every ticket to be the cap
   // itself, which is only so for a fixed one, and the sizing block below says what the
-  // next ticket would be.
-  const fundedUsd = edit
-    ? readSizing(risk).mode === "fixed_usd"
-      ? (edit.equityUsd ?? 0)
-      : 0
+  // next ticket would be. The cash reserve is weighed against the book whatever the
+  // sizing (`bookUsd`): it is a floor under cash, not a size of ticket.
+  const bookUsd = edit
+    ? (edit.equityUsd ?? 0)
     : draft.funding.mode === "fund"
       ? draft.funding.amountUsd
       : draft.paperStartingUsd;
+  const fundedUsd = edit && readSizing(risk).mode !== "fixed_usd" ? 0 : bookUsd;
   const startsWith = edit
-    ? `its ${formatUsd(fundedUsd)} of equity`
+    ? `its ${formatUsd(bookUsd)} of equity`
     : draft.funding.mode === "fund"
-      ? `the ${formatUsd(fundedUsd)} you are funding`
-      : `its ${formatUsd(fundedUsd)} paper balance`;
+      ? `the ${formatUsd(bookUsd)} you are funding`
+      : `its ${formatUsd(bookUsd)} paper balance`;
+  const reserveUsd = risk.cashReserveUsd ?? 0;
   const ticketSharePct = fundedUsd > 0 ? Math.ceil((risk.maxTradeUsd / fundedUsd) * 100) : 0;
   const positionCapTooLow = ticketSharePct > 0 && ticketSharePct > risk.maxPositionPct;
   // The fee is the same share of every ticket, so it is said as its rate, with the
@@ -1098,6 +1104,45 @@ export function RiskStep({
         />
       </div>
 
+      {/* Two limits that can be off, as every config written before them is. Off is
+          stored as no limit and as a reserve of zero, never as a missing field, so a
+          switch turned on and off again leaves the step as it was. Top-aligned like the
+          exit rules: one that is off does not stretch to match an open neighbour. */}
+      <div className="grid items-start gap-3 sm:grid-cols-2">
+        <OptionalRule
+          id="risk-max-positions"
+          label="Max open positions"
+          description="The most tokens it may hold at once. Off means no limit."
+          value={risk.maxOpenPositions ?? null}
+          defaultValue={DEFAULT_MAX_OPEN_POSITIONS}
+          onChange={(next) => patch({ maxOpenPositions: next === null ? null : Math.round(next) })}
+          spec={SPECS.maxOpenPositions}
+          slider={RISK_BOUNDS.maxOpenPositions}
+          meaning={(positions) =>
+            `With ${positions} held it buys no new token until one is sold; it can still add to one it holds, and it can always sell.`
+          }
+        />
+
+        <OptionalRule
+          id="risk-cash-reserve"
+          label="Cash reserve"
+          description="Cash it never spends on a buy. Off means it may spend its last dollar."
+          value={reserveUsd > 0 ? reserveUsd : null}
+          defaultValue={DEFAULT_CASH_RESERVE_USD}
+          onChange={(next) => patch({ cashReserveUsd: next ?? 0 })}
+          spec={SPECS.cashReserveUsd}
+          slider={{ ladder: CASH_RESERVE_LADDER }}
+          // Weighed against the whole book (`bookUsd`), not `fundedUsd`: that one is zero
+          // for a saved agent that sizes by a share of equity, and a reserve as large as
+          // the book refuses every buy however the ticket is sized.
+          meaning={(reserve) =>
+            bookUsd > 0 && reserve >= bookUsd
+              ? `A buy that would leave less than ${formatUsd(reserve)} in cash is refused, and that is ${reserve > bookUsd ? "more than" : "all of"} ${startsWith}, so every buy would be refused.`
+              : `A buy that would leave less than ${formatUsd(reserve)} in cash once its fee is paid is refused; sells are never held back.`
+          }
+        />
+      </div>
+
       {/* Sizing decides how big a ticket is within the cap above; the cap is the ceiling
           it can never cross. It is saved with the caps, in the same Save, so the ceiling
           and the ticket size are always applied together. Its preview is worked out from
@@ -1170,7 +1215,8 @@ export function ScheduleStep({
                 key={preset.minutes}
                 type="button"
                 aria-pressed={active}
-                onClick={() => updateConfig({ schedule: { intervalMinutes: preset.minutes } })}
+                // The rest of the schedule is kept: the skip switch below is part of it.
+                onClick={() => updateConfig({ schedule: withInterval(draft.config.schedule, preset.minutes) })}
                 className={cn(
                   "rounded-xl border p-3 text-left",
                   "transition-[border-color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]",
@@ -1208,6 +1254,17 @@ export function ScheduleStep({
           </p>
         ) : null}
       </Field>
+
+      {/* What a schedule is allowed to skip. Off unless the owner turns it on, and it only
+          ever holds back a scheduled run: a run started by hand, and the exit engine, are
+          not this switch's to stop. */}
+      <Toggle
+        id="schedule-skip-full"
+        label="Skip a run when there is no room to buy"
+        description={skipWhenFullHint(draft.config)}
+        checked={draft.config.schedule.skipWhenFull === true}
+        onChange={(skipWhenFull) => updateConfig({ schedule: { ...draft.config.schedule, skipWhenFull } })}
+      />
 
       {/* Only a funded agent headed for the checklist has its schedule held (the create
           sends `holdSchedule`). With "Go live after creating" off it ticks on paper, sized

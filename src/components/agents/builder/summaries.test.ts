@@ -29,6 +29,7 @@ import {
   stillNeeded,
   strategyLabel,
   thinkSummary,
+  skipWhenFullHint,
 } from "./summaries";
 import { STRATEGY_PRESETS, emptyDraft, onProvider, type BuilderDraft } from "./types";
 import { universeSummary } from "./universe-copy";
@@ -149,6 +150,82 @@ describe("riskSummary", () => {
     expect(riskSummary({ ...risk, maxTradeUsd: 2 }, FEE)).toBe(
       "$2.00/trade · 10/day · 25% max position · $1.00 data/run · Tocker fee 0.5% of each fill",
     );
+  });
+});
+
+describe("riskSummary: the position limit and the cash reserve", () => {
+  const risk = emptyDraft().config.risk;
+
+  it("names each one only when it is set, after the caps and before the fee", () => {
+    expect(riskSummary({ ...risk, maxOpenPositions: 3, cashReserveUsd: 5 }, FEE)).toBe(
+      "$100.00/trade · 10/day · 25% max position · $1.00 data/run · max 3 positions · $5.00 cash reserve · Tocker fee 0.5% of each fill",
+    );
+    expect(riskSummary({ ...risk, maxOpenPositions: 1 }, 0)).toBe(
+      "$100.00/trade · 10/day · 25% max position · $1.00 data/run · max 1 position",
+    );
+    expect(riskSummary({ ...risk, cashReserveUsd: 12.5 }, 0)).toBe(
+      "$100.00/trade · 10/day · 25% max position · $1.00 data/run · $12.50 cash reserve",
+    );
+  });
+
+  it("says nothing of either while they are off, written out or absent", () => {
+    const plain = "$100.00/trade · 10/day · 25% max position · $1.00 data/run";
+    expect(riskSummary({ ...risk, maxOpenPositions: null, cashReserveUsd: 0 }, 0)).toBe(plain);
+    const old = { ...risk };
+    delete old.maxOpenPositions;
+    delete old.cashReserveUsd;
+    expect(riskSummary(old, 0)).toBe(plain);
+  });
+
+  it("is the line on the agent card as well", () => {
+    const draft = emptyDraft();
+    draft.config.risk = { ...draft.config.risk, maxOpenPositions: 3, cashReserveUsd: 5 };
+    const rows = previewRows(draft, costFacts(draft, sources, opts), validateDraft(draft, []), {
+      hunts: "anything",
+      labels,
+      payPerUseAllowed: false,
+    });
+    expect(rows.find((row) => row.id === "limits")?.text).toBe(riskSummary(draft.config.risk, FEE));
+    expect(rows.find((row) => row.id === "limits")?.text).toContain("max 3 positions · $5.00 cash reserve");
+  });
+});
+
+/**
+ * The switch's sentence promises that the automatic exits still fire. That is only so
+ * while one of them is on, so with all of them off it says what happens instead.
+ */
+describe("skipWhenFullHint", () => {
+  const config = emptyDraft().config;
+  const noExits = {
+    ...config.risk,
+    stopLossPct: null,
+    takeProfitPct: null,
+    trailingStopPct: null,
+    maxHoldHours: null,
+    exitScoreBelow: null,
+    exitOnLiquidityDropPct: null,
+  };
+
+  it("says what is and is not skipped, for an agent with an exit rule on", () => {
+    expect(skipWhenFullHint(config)).toBe(
+      "When it is at its position limit, has no cash for its smallest order after the reserve, or has used the day's buys, a scheduled run is not started: it does not think, buys no data and does not review its positions. Stop loss, take profit and the other automatic exits still fire on their own, and Run now always runs.",
+    );
+    // One rule is enough for the promise to hold.
+    expect(skipWhenFullHint({ ...config, risk: { ...noExits, maxHoldHours: 24 } })).toContain("automatic exits still fire");
+  });
+
+  it("does not promise exits to an agent with every exit rule off, and says its runs go on while it holds a position", () => {
+    const hint = skipWhenFullHint({ ...config, risk: noExits });
+    expect(hint).toBe(
+      "When it is at its position limit, has no cash for its smallest order after the reserve, or has used the day's buys, a scheduled run is not started: it does not think and buys no data. Every exit rule is off, so only a run can sell: while it holds a position its runs are not skipped. Run now always runs.",
+    );
+    expect(hint).not.toContain("still fire");
+  });
+
+  it("says a manual schedule has nothing to skip, whatever the exit rules", () => {
+    const manual = "With a manual schedule there is no scheduled run to skip. Run now always runs.";
+    expect(skipWhenFullHint({ ...config, schedule: { intervalMinutes: 0, skipWhenFull: true } })).toBe(manual);
+    expect(skipWhenFullHint({ risk: noExits, schedule: { intervalMinutes: 0 } })).toBe(manual);
   });
 });
 

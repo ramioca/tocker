@@ -31,7 +31,8 @@ vi.mock("./portfolio", async (importOriginal) => {
   const real = await importOriginal<typeof import("./portfolio")>();
   return {
     ...real,
-    getPortfolio: async (agentId: string) => (books.byAgent.get(agentId) as Portfolio | undefined) ?? real.getPortfolio(agentId),
+    getPortfolio: async (agentId: string, options?: { forBuy?: boolean }) =>
+      (books.byAgent.get(agentId) as Portfolio | undefined) ?? real.getPortfolio(agentId, options),
   };
 });
 

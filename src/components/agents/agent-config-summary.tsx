@@ -285,6 +285,17 @@ export function AgentConfigSummary({
             <Row label="Data spend cap">
               <span className="tnum">{formatUsd(config.risk.maxDataSpendUsdPerRun)} / run</span>
             </Row>
+            {/* The two limits that can be off are listed only while they are on. */}
+            {typeof config.risk.maxOpenPositions === "number" ? (
+              <Row label="Max open positions">
+                <span className="tnum">{config.risk.maxOpenPositions}</span>
+              </Row>
+            ) : null}
+            {typeof config.risk.cashReserveUsd === "number" && config.risk.cashReserveUsd > 0 ? (
+              <Row label="Cash reserve">
+                <span className="tnum">{formatUsd(config.risk.cashReserveUsd)}</span>
+              </Row>
+            ) : null}
             <Row label="Stop / take profit">
               <span className="tnum">
                 {config.risk.stopLossPct === null ? "—" : `−${config.risk.stopLossPct}%`} /{" "}

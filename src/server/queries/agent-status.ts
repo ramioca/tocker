@@ -35,8 +35,18 @@ import { isWorkspaceScopeError } from "@/lib/agent/anthropic-workspace";
 import { thinkSource, thinkingModel } from "@/lib/agent/inference";
 import { isLlmMock } from "@/lib/agent/mock-model";
 import { narrateRun, tradeRefusals, type NarratableStep } from "@/lib/agent/narrate";
-import { getPortfolio } from "@/lib/agent/portfolio";
+import { getPortfolio, toRiskPortfolio, type Portfolio } from "@/lib/agent/portfolio";
+import { scheduledMinutes } from "@/lib/agent/schedule";
+import {
+  SKIPPING_RUNS_STILL,
+  exitRulesOn,
+  fullRunSkip,
+  skippingRunsSentence,
+  skippingRunsTitle,
+  type NoRoom,
+} from "@/lib/agent/skip-full";
 import { getPlatformWallet, platformUsdcBalances } from "@/lib/platform/wallets";
+import { readCashReserveUsd } from "@/lib/trading/hard-limits";
 import { proposalExpiresAt } from "@/lib/trading/proposals";
 import { MIN_PLATFORM_SOL } from "@/lib/wallets/gas";
 import { getSolBalance } from "@/lib/wallets/solana-rpc";
@@ -53,6 +63,7 @@ export type AgentStatusKind =
   | "no_llm_key"
   | "daily_limit"
   | "paused"
+  | "skipping_runs"
   | "low_cash"
   | "platform_gas"
   | "draft"
@@ -281,8 +292,12 @@ export interface StatusInputs {
   maxAgeHours: number | null;
   /** Undecided proposals, expiry already resolved against the agent's TTL. */
   proposals: Array<{ expiresAt: Date }>;
-  /** `null` when the book could not be read — nothing is then claimed about cash or the limit. */
-  portfolio: { cashUsd: number; tradesToday: number; cashReadFailed: boolean } | null;
+  /**
+   * `null` when the book could not be read — nothing is then claimed about cash or the limit.
+   * `reserveUsd` is the owner's cash reserve (`risk.cashReserveUsd`) when one is set:
+   * cash a buy may not spend. Absent or zero for every agent without one.
+   */
+  portfolio: { cashUsd: number; tradesToday: number; cashReadFailed: boolean; reserveUsd?: number } | null;
   /** The newest run of any status. */
   lastRun: StatusRun | null;
   /** The three newest succeeded runs, newest first. Fewer than three = no quiet verdict. */
@@ -294,6 +309,17 @@ export interface StatusInputs {
    * owner's, so it is shown to admins and to nobody else — however low the wallet is.
    */
   viewerIsAdmin: boolean;
+  /**
+   * Set when this agent's scheduled runs are being skipped right now for want of room to
+   * buy ({@link skippedRunsFor}): why. Absent or null for every agent whose owner has not
+   * turned that on, and for one that has room.
+   */
+  skipping?: NoRoom | null;
+  /**
+   * Whether any of the agent's exit rules is on (`exitRulesOn`). The skipping row says
+   * that automatic exits still run only then. Absent reads as on.
+   */
+  exitRulesOn?: boolean;
 }
 
 /**
@@ -392,11 +418,40 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
     });
   }
 
+  // ---- warn: its scheduled runs are not being started, because the owner has it skip
+  // them while it has no room to buy. Without this row an agent that is doing exactly
+  // what it was told looks like one that has stopped: no runs, no errors, nothing to read.
+  if (input.skipping && input.status === "active") {
+    push({
+      kind: "skipping_runs",
+      severity: "warn",
+      title: skippingRunsTitle(input.skipping),
+      detail: `${input.exitRulesOn === false ? "" : `${SKIPPING_RUNS_STILL} `}It is looked at again at each scheduled time, and Run now still starts a run.`,
+      action: { label: "Schedule", href: settings("execution") },
+    });
+  }
+
   // ---- warn: a live book too thin to place its own smallest buy. Withheld when a
   // wallet read failed, because `cashUsd` is then known to be too low.
   if (input.mode === "live" && input.portfolio && !input.portfolio.cashReadFailed) {
     const clip = Math.max(input.maxTradeUsd, MIN_CLIP_USD);
-    if (input.portfolio.cashUsd < clip) {
+    const reserveUsd = input.portfolio.reserveUsd ?? 0;
+    if (reserveUsd > 0) {
+      // With a cash reserve the cash a buy may spend is what is above it. Compared with
+      // all of the cash, a reserve as large as the clip would keep this row from ever
+      // showing: buying stops at the reserve, which is never under the clip, and the
+      // owner is left with an agent that runs, buys nothing and gives no reason.
+      const toTradeUsd = Math.max(0, Math.round((input.portfolio.cashUsd - reserveUsd) * 1e6) / 1e6);
+      if (toTradeUsd < clip) {
+        push({
+          kind: "low_cash",
+          severity: "warn",
+          title: `Cash to trade ${usd(toTradeUsd)} (after the ${usd(reserveUsd)} reserve) is under the ${usd(clip)} clip`,
+          detail: "A buy that size is refused until you add funds or lower Cash reserve in Settings. Exits still work.",
+          action: { label: "Add funds", href: settings("wallets") },
+        });
+      }
+    } else if (input.portfolio.cashUsd < clip) {
       push({
         kind: "low_cash",
         severity: "warn",
@@ -479,6 +534,24 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
   return items.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]).slice(0, MAX_ITEMS);
 }
 
+/**
+ * Pure: why this agent's scheduled runs are being skipped right now, or null when they
+ * are not. The run loop's own question (`fullRunSkip`), asked of the same book, and only
+ * of an agent a schedule would actually start: active, with an interval. A book that
+ * could not be read says nothing, as everywhere else in this file.
+ */
+export function skippedRunsFor(
+  agent: { status: StatusInputs["status"]; mode: "paper" | "live"; config: AgentConfig },
+  portfolio: Portfolio | null,
+): NoRoom | null {
+  if (agent.status !== "active" || portfolio === null) return null;
+  if (scheduledMinutes(agent.config.schedule?.intervalMinutes ?? 0) === 0) return null;
+  return fullRunSkip(
+    { mode: agent.mode, config: agent.config },
+    { portfolio: toRiskPortfolio(portfolio), cashReadFailed: portfolio.cashReadFailed },
+  );
+}
+
 /** What the sentences about a stop may quote: the owner's own limits and the model's name. */
 function thinkingContext(thinking: StatusThinking): { runCapUsd?: number; dayCapUsd?: number; model?: string } {
   return {
@@ -557,6 +630,8 @@ const REFUSAL_COPY: Record<string, { detail: string; hash?: string }> = {
   "position concentration": { detail: "Each order would have put too much of the book in one token.", hash: "#risk" },
   "not enough cash": { detail: "There was not enough cash to cover the order.", hash: "#wallets" },
   "daily buy limit": { detail: "The day's buys were already spent.", hash: "#risk" },
+  "position limit": { detail: "It already held as many positions as it may.", hash: "#risk" },
+  "cash reserve": { detail: "Each order would have taken its cash under the reserve.", hash: "#risk" },
   "hard gates": { detail: "The token failed a hard gate.", hash: "#universe" },
   "below the score floor": { detail: "The token scored under this agent's floor.", hash: "#universe" },
   "avoid verdict": { detail: "The token's verdict was avoid.", hash: "#universe" },
@@ -805,17 +880,45 @@ export async function getAgentStatus(agentId: string, viewerId?: string | null):
             cashUsd: portfolio.cashUsd,
             tradesToday: portfolio.tradesToday,
             cashReadFailed: portfolio.cashReadFailed,
+            // Only for an agent with a reserve, so every other agent's inputs are what they were.
+            ...(readCashReserveUsd(config.risk) > 0 ? { reserveUsd: readCashReserveUsd(config.risk) } : {}),
           }
         : null,
       lastRun: runs.last,
       recentSucceeded: runs.quiet,
       platformSolana,
       viewerIsAdmin,
+      skipping: skippedRunsFor({ status: agent.status, mode: agent.mode, config }, portfolio),
+      exitRulesOn: exitRulesOn(config),
     });
   } catch (err) {
     // The banner is an aid, never the page. A database that cannot answer at all must
     // not take the record down with it.
     console.warn(`[agent-status] ${agentId}: ${err instanceof Error ? err.message : String(err)}`);
     return [];
+  }
+}
+
+/**
+ * The one sentence the settings page's bar shows while this agent's scheduled runs are
+ * being skipped for want of room to buy, or null. Owner only, like everything here: the
+ * sentence quotes the agent's own limits.
+ *
+ * The book is read only for an agent whose owner turned the switch on, so every other
+ * settings page costs one row. Any failure is null: the bar then says what it always did.
+ */
+export async function getSkippingRunsLine(agentId: string, viewerId?: string | null): Promise<string | null> {
+  if (!viewerId) return null;
+  try {
+    const db = await getDb();
+    const [agent] = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
+    if (!agent || agent.ownerId !== viewerId) return null;
+    if (agent.config?.schedule?.skipWhenFull !== true) return null;
+    const portfolio = await guard("portfolio", () => getPortfolio(agent.id), null);
+    const room = skippedRunsFor({ status: agent.status, mode: agent.mode, config: agent.config }, portfolio);
+    return room ? skippingRunsSentence(room, exitRulesOn(agent.config)) : null;
+  } catch (err) {
+    console.warn(`[agent-status] ${agentId}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
   }
 }

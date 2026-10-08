@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Module } from "@/components/agents/builder/module";
+import { Module, type ModuleSlider } from "@/components/agents/builder/module";
 import { SPECS } from "@/components/agents/builder/module-specs";
 import { sayHold, type ValueSpec } from "@/components/agents/builder/typed-value";
 import type { AgentConfig } from "@/db/schema";
@@ -130,8 +130,12 @@ export function ExitRulesFields({
  * and the slider are its threshold. Turning it off preserves nothing — `null` is what
  * the config means by "off" — and turning it back on restores the default rather than
  * the last value, because a half-remembered threshold is worse than a stated one.
+ *
+ * Exported for the two limits on the Risk limits step that can be off in the same way
+ * (the position limit and the cash reserve), so a rule that can be off is one card
+ * everywhere.
  */
-function OptionalRule({
+export function OptionalRule({
   id,
   label,
   description,
@@ -151,7 +155,7 @@ function OptionalRule({
   /** What may be typed into the threshold, and how it is printed. */
   spec: ValueSpec;
   /** The track. */
-  slider: { min: number; max: number; step: number };
+  slider: ModuleSlider;
   meaning: (value: number) => ReactNode;
 }) {
   // While the card closes, its body goes on saying the threshold the rule just had,

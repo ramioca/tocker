@@ -26,7 +26,7 @@ import { deepestGeckoPool, getGeckoTokenInfo, getGeckoTokenPools } from "@/lib/t
 import { deriveSafety } from "@/components/agents/proposals/proposal-stats";
 import { toNum } from "@/lib/money";
 import { proposalExpiresAt, sweepBeforeRead } from "@/lib/trading/proposals";
-import { riskGuard, type OrderIntent, type RiskPortfolio } from "@/lib/trading/risk";
+import { riskGuard, withoutWaitingBuys, type OrderIntent, type RiskPortfolio } from "@/lib/trading/risk";
 import { ownerRiskMessage } from "@/lib/trading/risk-copy";
 import type { AgentConfig } from "@/db/schema";
 import type {
@@ -163,7 +163,10 @@ async function buildRow(
     trade.side === "buy" ? scoreQuietly(chain, token.address, token.symbol, agent.config) : Promise.resolve(null),
     marketStats(chain, token, base.score, Date.now()),
   ]);
-  const verdict = riskGuard({ id: agent.id, mode: agent.mode, config: agent.config }, portfolio, order, score);
+  // As an approval would judge it (`decideProposal`): against what is held, not against
+  // the other proposals waiting beside this one. An enabled Approve is then one the
+  // runtime would accept.
+  const verdict = riskGuard({ id: agent.id, mode: agent.mode, config: agent.config }, withoutWaitingBuys(portfolio), order, score);
 
   return {
     ...base,

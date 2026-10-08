@@ -5,6 +5,8 @@
  * schedule and how the agent trades, on a form whose cards are closed. The merge is
  * written out here by hand, value by value, so a change to it has to be made twice.
  */
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentConfigSchema } from "@/lib/agent/config";
 import {
@@ -14,6 +16,7 @@ import {
   isCustomPressed,
   presetChanges,
   presetFacts,
+  withInterval,
 } from "./strategy-presets";
 import { PRESET_LOOK_IDS } from "./strategy-preset-cards";
 import { STRATEGY_PRESETS, UNIVERSE_PRESETS, emptyDraft, type BuilderDraft, type StrategyPreset } from "./types";
@@ -181,11 +184,28 @@ describe("applyPresetTo", () => {
         exitScoreBelow: 55,
         exitOnLiquidityDropPct: 30,
         sizing: before.risk.sizing,
+        // Nor about the position limit or the cash reserve: the owner's stand.
+        maxOpenPositions: before.risk.maxOpenPositions,
+        cashReserveUsd: before.risk.cashReserveUsd,
       },
       execution: { mode: "approve", proposalTtlMinutes: 5 },
       schedule: { intervalMinutes: 5 },
       llm: { provider: "openai", model: "gpt-test-model", temperature: 0.9, maxSteps: 12 },
     });
+  });
+
+  it("keeps the owner's position limit, cash reserve and skip switch under a preset that sets the rest", () => {
+    const before = tuned();
+    const mine = {
+      ...before,
+      risk: { ...before.risk, maxOpenPositions: 3, cashReserveUsd: 5 },
+      schedule: { ...before.schedule, skipWhenFull: true },
+    };
+    const after = applyPresetTo(mine, preset("first-fifteen"));
+    expect(after.risk.maxOpenPositions).toBe(3);
+    expect(after.risk.cashReserveUsd).toBe(5);
+    // The preset sets the interval it needs and leaves the switch on.
+    expect(after.schedule).toEqual({ intervalMinutes: 5, skipWhenFull: true });
   });
 
   it("does not change the config it is given", () => {
@@ -195,6 +215,34 @@ describe("applyPresetTo", () => {
       applyPresetTo(before, entry);
       expect(before).toEqual(snapshot);
     }
+  });
+});
+
+/**
+ * The interval buttons on the Schedule step set one key of the schedule. The skip switch
+ * is another key of it, on the same step: written as a whole new schedule, a tap on an
+ * interval dropped the switch, which then read as off and was saved as off.
+ */
+describe("withInterval", () => {
+  it("changes the interval and keeps the skip switch as the owner had it", () => {
+    expect(withInterval({ intervalMinutes: 15, skipWhenFull: true }, 60)).toEqual({ intervalMinutes: 60, skipWhenFull: true });
+    expect(withInterval({ intervalMinutes: 15, skipWhenFull: false }, 0)).toEqual({ intervalMinutes: 0, skipWhenFull: false });
+    // A schedule that predates the switch gains nothing it did not have.
+    expect(withInterval({ intervalMinutes: 15 }, 5)).toEqual({ intervalMinutes: 5 });
+  });
+
+  it("does not change the schedule it was given", () => {
+    const before = { intervalMinutes: 15, skipWhenFull: true };
+    withInterval(before, 60);
+    expect(before).toEqual({ intervalMinutes: 15, skipWhenFull: true });
+  });
+
+  it("is how the Schedule step's interval buttons write the schedule", () => {
+    // The buttons are pressed in a browser, which no test here has. What can be held is
+    // that the step still goes through the merge and nowhere writes a bare interval.
+    const steps = readFileSync(path.join(process.cwd(), "src/components/agents/builder/steps.tsx"), "utf8");
+    expect(steps).toContain("updateConfig({ schedule: withInterval(draft.config.schedule, preset.minutes) })");
+    expect(steps).not.toMatch(/schedule:\s*\{\s*intervalMinutes/);
   });
 });
 

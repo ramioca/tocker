@@ -7,7 +7,7 @@
  * The one end-to-end case is the gate — `getAgentStatus` must answer `[]` for anyone
  * who is not the owner, because a blocker quotes the agent's thresholds.
  */
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
@@ -16,14 +16,19 @@ import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { holdUntil } from "@/lib/x402/inference-budget";
 import { INFERENCE_STOPS, describeInferenceStop, type InferenceStopReason } from "@/lib/x402/inference-types";
 import { stopFix } from "@/components/agents/thinking";
+import type { Portfolio } from "@/lib/agent/portfolio";
+import type { NoRoom } from "@/lib/agent/skip-full";
+import { tokenId } from "@/lib/trading/tokens";
 import {
   classifyRunError,
   deriveStatus,
   describeWindow,
   firstSentence,
   getAgentStatus,
+  getSkippingRunsLine,
   holdItem,
   humanDuration,
+  skippedRunsFor,
   type StatusInputs,
   type StatusThinking,
 } from "./agent-status";
@@ -351,6 +356,55 @@ describe("deriveStatus", () => {
     expect(item.kind).toBe("low_cash");
     expect(item.title).toBe("Cash $0.70 is under the $2 clip");
     expect(item.action).toEqual({ label: "Add funds", href: "/agents/fresh-hunter/settings?step=manage#wallets" });
+  });
+
+  /**
+   * With a cash reserve, buying stops at the reserve. Compared with all of its cash, an
+   * agent whose reserve is as large as its clip could never show this row: it ran, bought
+   * nothing, and the only thing said was that nothing had cleared the bar.
+   */
+  it("measures a live book with a cash reserve by the cash above the reserve", () => {
+    // The owner's agent after three $5 buys from $20: $5.005 left, all of it the reserve.
+    const [item] = deriveStatus(
+      inputs({ mode: "live", maxTradeUsd: 5, portfolio: { cashUsd: 5.005, tradesToday: 3, cashReadFailed: false, reserveUsd: 5 } }),
+    );
+    expect(item).toEqual({
+      kind: "low_cash",
+      severity: "warn",
+      title: "Cash to trade $0.01 (after the $5 reserve) is under the $5 clip",
+      detail: "A buy that size is refused until you add funds or lower Cash reserve in Settings. Exits still work.",
+      action: { label: "Add funds", href: "/agents/fresh-hunter/settings?step=manage#wallets" },
+    });
+    // Cash under the reserve is nothing to trade, never a negative figure.
+    const under = deriveStatus(
+      inputs({ mode: "live", maxTradeUsd: 5, portfolio: { cashUsd: 3.2, tradesToday: 0, cashReadFailed: false, reserveUsd: 5 } }),
+    )[0];
+    expect(under.title).toBe("Cash to trade $0 (after the $5 reserve) is under the $5 clip");
+    // A clip's worth above the reserve, and nothing is said.
+    expect(
+      deriveStatus(inputs({ mode: "live", maxTradeUsd: 5, portfolio: { cashUsd: 10, tradesToday: 0, cashReadFailed: false, reserveUsd: 5 } })),
+    ).toEqual([]);
+  });
+
+  it("is the row it always was for an agent with no reserve, absent or written as zero", () => {
+    const plain = deriveStatus(inputs({ mode: "live", portfolio: { cashUsd: 0.7, tradesToday: 1, cashReadFailed: false } }));
+    const zero = deriveStatus(
+      inputs({ mode: "live", portfolio: { cashUsd: 0.7, tradesToday: 1, cashReadFailed: false, reserveUsd: 0 } }),
+    );
+    expect(zero).toEqual(plain);
+    expect(plain[0]).toMatchObject({
+      title: "Cash $0.70 is under the $2 clip",
+      detail: "Every buy is refused for want of cash until the wallet is topped up. Exits still work.",
+    });
+    // Cash that covers the clip says nothing, with or without the field.
+    expect(deriveStatus(inputs({ mode: "live", portfolio: { cashUsd: 5.005, tradesToday: 3, cashReadFailed: false } }))).toEqual([]);
+  });
+
+  it("says nothing about a reserve on paper, or when the wallet was unreadable", () => {
+    expect(deriveStatus(inputs({ portfolio: { cashUsd: 5.005, tradesToday: 0, cashReadFailed: false, reserveUsd: 5 } }))).toEqual([]);
+    expect(
+      deriveStatus(inputs({ mode: "live", portfolio: { cashUsd: 0, tradesToday: 0, cashReadFailed: true, reserveUsd: 5 } })),
+    ).toEqual([]);
   });
 
   it("floors the clip at a dollar, so a sub-dollar maxTradeUsd still reads sensibly", () => {
@@ -830,5 +884,236 @@ describe("getAgentStatus", () => {
     expect(items.map((i) => i.kind)).not.toContain("thinking_hold");
     // Seeded with no key, and a key agent again: the key row is the one that applies.
     expect(items.map((i) => i.kind)).toContain("no_llm_key");
+  });
+});
+
+/**
+ * An agent set to skip scheduled runs while it has no room to buy starts nothing, fails
+ * nothing and says nothing in its run list. This row is how its owner sees why.
+ */
+describe("the row for an agent whose scheduled runs are being skipped", () => {
+  const FULL: NoRoom = { ok: false, code: "position_limit", positions: { limit: 3, open: 3, held: 3, waiting: 0, full: true } };
+
+  it("says that runs are being skipped, why, and what still happens", () => {
+    const [item] = deriveStatus(inputs({ skipping: FULL }));
+    expect(item).toEqual({
+      kind: "skipping_runs",
+      severity: "warn",
+      title: "Skipping scheduled runs: no room to buy (3 of 3 positions)",
+      detail: "Automatic exits still run. It is looked at again at each scheduled time, and Run now still starts a run.",
+      action: { label: "Schedule", href: "/agents/fresh-hunter/settings?step=schedule#execution" },
+    });
+  });
+
+  it("does not say that exits still run for an agent with every exit rule off", () => {
+    const [item] = deriveStatus(inputs({ skipping: FULL, exitRulesOn: false }));
+    expect(item.detail).toBe("It is looked at again at each scheduled time, and Run now still starts a run.");
+    // Said, as before, when a rule is on or the caller does not say.
+    expect(deriveStatus(inputs({ skipping: FULL, exitRulesOn: true }))[0].detail).toContain("Automatic exits still run. ");
+  });
+
+  it("names each of the three reasons in the owner's own figures", () => {
+    const title = (skipping: NoRoom) => deriveStatus(inputs({ skipping })).find((item) => item.kind === "skipping_runs")?.title;
+    expect(title({ ok: false, code: "ticket", ticketUsd: 1.28, bound: "cash", smallestUsd: 2, reserveUsd: 5 })).toBe(
+      "Skipping scheduled runs: no room to buy ($1.28 to spend after its $5.00 reserve, under the $2.00 smallest order)",
+    );
+    expect(title({ ok: false, code: "daily_limit", tradesToday: 10, maxDailyTrades: 10 })).toBe(
+      "Skipping scheduled runs: no room to buy (10 of 10 buys used today)",
+    );
+    expect(title(FULL)).toBe("Skipping scheduled runs: no room to buy (3 of 3 positions)");
+  });
+
+  it("is not there for an agent that is not skipping, or is not running at all", () => {
+    const kinds = (overrides: Partial<StatusInputs>) => deriveStatus(inputs(overrides)).map((item) => item.kind);
+    expect(kinds({})).toEqual([]);
+    expect(kinds({ skipping: null })).toEqual([]);
+    // A paused agent is told it is paused, which is the whole of why nothing runs.
+    expect(kinds({ skipping: FULL, status: "paused" })).toEqual(["paused"]);
+    expect(kinds({ skipping: FULL, status: "draft" })).toEqual(["draft"]);
+  });
+
+  describe("skippedRunsFor", () => {
+    const config = (overrides: Partial<typeof DEFAULT_AGENT_CONFIG> = {}) => ({
+      ...DEFAULT_AGENT_CONFIG,
+      schedule: { intervalMinutes: 15, skipWhenFull: true },
+      ...overrides,
+      risk: { ...DEFAULT_AGENT_CONFIG.risk, maxOpenPositions: 1, ...overrides.risk },
+    });
+    const book = (overrides: Partial<Portfolio> = {}): Portfolio => ({
+      agentId: "a1",
+      mode: "paper",
+      cashUsd: 100,
+      equityUsd: 150,
+      positions: [
+        {
+          token: { id: "solana:AAA", chain: "solana", address: "AAA", symbol: "AAA", name: "A", logoUrl: null, decimals: 6, lastPriceUsd: 1 },
+          amountToken: 50,
+          avgCostUsd: 1,
+          markPriceUsd: 1,
+          valueUsd: 50,
+          unrealizedPnlUsd: 0,
+          unrealizedPnlPct: 0,
+          realizedPnlUsd: 0,
+          openedAt: null,
+          peakPriceUsd: null,
+          entryScore: null,
+          entryLiquidityUsd: null,
+          currentScore: null,
+          stopDistancePct: null,
+          takeProfitDistancePct: null,
+        },
+      ],
+      realizedPnlUsd: 0,
+      unrealizedPnlUsd: 0,
+      tradesToday: 0,
+      startingUsd: 100,
+      cashReadFailed: false,
+      pendingBuyTokenIds: [],
+      ...overrides,
+    });
+    const agent = (overrides: Partial<Parameters<typeof skippedRunsFor>[0]> = {}) => ({
+      status: "active" as const,
+      mode: "paper" as const,
+      config: config(),
+      ...overrides,
+    });
+
+    it("is the run loop's own answer for an active agent on a schedule", () => {
+      expect(skippedRunsFor(agent(), book())).toMatchObject({ code: "position_limit", positions: { open: 1, limit: 1 } });
+    });
+
+    it("is nothing while the switch is off, which is how every agent starts", () => {
+      expect(skippedRunsFor(agent({ config: config({ schedule: { intervalMinutes: 15 } }) }), book())).toBeNull();
+      expect(skippedRunsFor(agent({ config: config({ schedule: { intervalMinutes: 15, skipWhenFull: false } }) }), book())).toBeNull();
+    });
+
+    it("is nothing for an agent no schedule would start: paused, a draft, or manual", () => {
+      expect(skippedRunsFor(agent({ status: "paused" }), book())).toBeNull();
+      expect(skippedRunsFor(agent({ status: "draft" }), book())).toBeNull();
+      expect(skippedRunsFor(agent({ config: config({ schedule: { intervalMinutes: 0, skipWhenFull: true } }) }), book())).toBeNull();
+    });
+
+    it("says nothing on a book that could not be read", () => {
+      expect(skippedRunsFor(agent(), null)).toBeNull();
+      expect(skippedRunsFor(agent(), book({ cashReadFailed: true }))).toBeNull();
+    });
+
+    it("is nothing for an agent with room", () => {
+      expect(skippedRunsFor(agent({ config: config({ risk: { ...DEFAULT_AGENT_CONFIG.risk, maxOpenPositions: 2 } }) }), book())).toBeNull();
+    });
+  });
+
+  describe("read from the database", () => {
+    let db: Db;
+    const WIF = tokenId("solana", "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm");
+
+    beforeAll(async () => {
+      db = await setupTestDb();
+      await db
+        .insert(schema.tokens)
+        // Priced from the row itself, so the position has a value with no network.
+        .values({ id: WIF, chain: "solana", address: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", symbol: "WIF", decimals: 6, lastPriceUsd: "0.5" })
+        .onConflictDoNothing();
+    }, 120_000);
+
+    // A held position is marked from the price feeds first. Kept offline: with no answer
+    // from them the mark is the price on the token's own row.
+    beforeEach(() => {
+      vi.stubGlobal("fetch", async () => new Response("[]", { status: 200, headers: { "content-type": "application/json" } }));
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    async function fullAgent(schedule: { intervalMinutes: number; skipWhenFull?: boolean }) {
+      const seeded = await seedAgent(db, { config: { chains: ["solana"], schedule, risk: { maxOpenPositions: 1 } } });
+      await db.insert(schema.positions).values({ agentId: seeded.agentId, tokenId: WIF, amountToken: "40", avgCostUsd: "0.5", openedAt: new Date() });
+      return seeded;
+    }
+
+    it("is on the owner's banner and the settings bar, in the same words, and on nobody else's", async () => {
+      const { agentId, userId } = await fullAgent({ intervalMinutes: 15, skipWhenFull: true });
+      const row = (await getAgentStatus(agentId, userId)).find((item) => item.kind === "skipping_runs");
+      expect(row?.title).toBe("Skipping scheduled runs: no room to buy (1 of 1 position)");
+      expect(await getSkippingRunsLine(agentId, userId)).toBe(
+        "Skipping scheduled runs: no room to buy (1 of 1 position). Automatic exits still run.",
+      );
+      // The sentence quotes the owner's limit, so it is the owner's alone.
+      expect(await getSkippingRunsLine(agentId, "did:privy:someone-else")).toBeNull();
+      expect(await getSkippingRunsLine(agentId, null)).toBeNull();
+      expect(await getSkippingRunsLine("no-such-agent", userId)).toBeNull();
+    });
+
+    it("does not promise exits on the bar of an agent with every exit rule off", async () => {
+      // Flat and out of cash after its reserve, with no exit rule on: skipped, since a
+      // run could only buy, and told nothing about exits, since none would fire.
+      const seeded = await seedAgent(db, {
+        paperStartingUsd: "5",
+        config: {
+          chains: ["solana"],
+          schedule: { intervalMinutes: 15, skipWhenFull: true },
+          risk: {
+            cashReserveUsd: 5,
+            stopLossPct: null,
+            takeProfitPct: null,
+            trailingStopPct: null,
+            maxHoldHours: null,
+            exitScoreBelow: null,
+            exitOnLiquidityDropPct: null,
+          },
+        },
+      });
+      expect(await getSkippingRunsLine(seeded.agentId, seeded.userId)).toBe(
+        "Skipping scheduled runs: no room to buy ($0.00 to spend after its $5.00 reserve, under the $0.25 smallest order).",
+      );
+      const row = (await getAgentStatus(seeded.agentId, seeded.userId)).find((item) => item.kind === "skipping_runs");
+      expect(row?.detail).toBe("It is looked at again at each scheduled time, and Run now still starts a run.");
+      // Holding a position, the same agent is not skipped at all: only a run can sell it.
+      await db.insert(schema.positions).values({ agentId: seeded.agentId, tokenId: WIF, amountToken: "40", avgCostUsd: "0.5", openedAt: new Date() });
+      expect(await getSkippingRunsLine(seeded.agentId, seeded.userId)).toBeNull();
+      expect((await getAgentStatus(seeded.agentId, seeded.userId)).map((item) => item.kind)).not.toContain("skipping_runs");
+    });
+
+    it("hands the banner the owner's cash reserve, so a live book is measured by the cash above it", async () => {
+      // A live agent whose only wallets are stand-ins reads as holding no cash.
+      const withReserve = await seedAgent(db, { mode: "live", config: { chains: ["solana"], risk: { maxTradeUsd: 5, cashReserveUsd: 5 } } });
+      const reserved = (await getAgentStatus(withReserve.agentId, withReserve.userId)).find((item) => item.kind === "low_cash");
+      expect(reserved?.title).toBe("Cash to trade $0 (after the $5 reserve) is under the $5 clip");
+      const without = await seedAgent(db, { mode: "live", config: { chains: ["solana"], risk: { maxTradeUsd: 5 } } });
+      const plain = (await getAgentStatus(without.agentId, without.userId)).find((item) => item.kind === "low_cash");
+      expect(plain?.title).toBe("Cash $0 is under the $5 clip");
+    });
+
+    it("is absent while the switch is off, and once the agent is paused", async () => {
+      const off = await fullAgent({ intervalMinutes: 15 });
+      expect((await getAgentStatus(off.agentId, off.userId)).map((item) => item.kind)).not.toContain("skipping_runs");
+      expect(await getSkippingRunsLine(off.agentId, off.userId)).toBeNull();
+
+      const paused = await fullAgent({ intervalMinutes: 15, skipWhenFull: true });
+      await db.update(schema.agents).set({ status: "paused" }).where(eq(schema.agents.id, paused.agentId));
+      expect((await getAgentStatus(paused.agentId, paused.userId)).map((item) => item.kind)).not.toContain("skipping_runs");
+      expect(await getSkippingRunsLine(paused.agentId, paused.userId)).toBeNull();
+    });
+  });
+});
+
+describe("the two refusals an owner's limits add, on the row for buys that were refused", () => {
+  const refusedFor = (label: string) =>
+    deriveStatus(
+      inputs({
+        recentSucceeded: [quietRun("r3", null, 0, [{ label, count: 2 }]), quietRun("r2", null), quietRun("r1", null)],
+      }),
+    ).find((item) => item.kind === "buys_refused");
+
+  it("says the position limit was in the way, and sends the owner to the risk limits", () => {
+    expect(refusedFor("position limit")).toMatchObject({
+      detail: "It already held as many positions as it may. 2 orders were turned down in the last three ticks.",
+      action: { label: "Settings", href: "/agents/fresh-hunter/settings?step=limits#risk" },
+    });
+  });
+
+  it("says the cash reserve was in the way", () => {
+    expect(refusedFor("cash reserve")).toMatchObject({
+      detail: "Each order would have taken its cash under the reserve. 2 orders were turned down in the last three ticks.",
+      action: { label: "Settings", href: "/agents/fresh-hunter/settings?step=limits#risk" },
+    });
   });
 });
