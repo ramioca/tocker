@@ -13,7 +13,7 @@ Today, traders have no edge. In twenty twenty-four, nine in ten pump.fun traders
 With Tocker, it takes one line of English. The edge: your agent buys data per call, and ten hard gates in code can veto any buy. The rails: wallet, data, inference and execution in one integration, hosted around the clock.
 
 ## product
-Here's a sample run. You write the thesis: Solana memes with real momentum, smart money buying, holders up every hour, organic chatter, no paid shills. Stop and take-profit are settings, not prose. Your agent skips BONK and POPCAT, below the floor. WIF scores eighty-one and clears all ten gates: a hundred-dollar buy, exits enforced in code. [pause] I was emotional. An agent isn't. No FOMO, no panic, no revenge trades. It just follows your rules.
+Here's a sample run. You write the thesis: Solana memes smart money is accumulating, holders growing every hour, X mindshare rising. Stop and take-profit are settings, not prose. Your agent skips BONK and POPCAT, below the floor. WIF scores eighty-one and clears all ten gates: a hundred-dollar buy, exits enforced in code. [pause] I was emotional. An agent isn't. No FOMO, no panic, no revenge trades. It just follows your rules.
 
 ## alpha
 Rules aren't edge. Neither is AI alone. Last October, six frontier models traded real money; four lost over thirty percent. So your agent buys answers over x402, the pay-per-call standard backed by Visa and Stripe. Can I actually sell this, or is it a honeypot? About seven cents a token on Solana.
