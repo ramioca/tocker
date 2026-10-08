@@ -3,7 +3,6 @@
 Code audit behind the pitch-roast answer. File refs are against origin/main.
 
 
-Refs are relative to `/tmp/claude-0/-home-user-tocker/2b3bef34-45cf-5fd0-a239-6cda5647963e/scratchpad/main-src/`. Nothing in either checkout was edited.
 
 ## 1. Candidate sourcing
 - **Solana:** Jupiter `recent`, `toptraded/24h`, `toporganicscore/24h`, up to 60 rows each (`src/lib/tokens/discover.ts:91,617-643`).
