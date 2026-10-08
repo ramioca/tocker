@@ -33,6 +33,7 @@ import { sayCount, sayHours, sayMinutes, sayUsd } from "./typed-value";
 import {
   DISCOVERY_FEEDS,
   UNIVERSE_PRESETS,
+  missingFeedSource,
   type BlocklistEntry,
   type DiscoveryFeedId,
   type UniverseConfig,
@@ -54,6 +55,9 @@ function sameSet<T>(a: readonly T[], b: readonly T[]): boolean {
   return a.length === b.length && a.every((entry) => b.includes(entry));
 }
 
+/** The amber the authority switches warn in. */
+const FEED_WARN_COLOR = "oklch(0.72 0.145 75)";
+
 // -------------------------------------------------------------- the control
 
 export function UniverseControls({
@@ -61,6 +65,7 @@ export function UniverseControls({
   universe,
   onChains,
   onUniverse,
+  dataSources,
   errors = {},
   idPrefix = "universe",
   className,
@@ -69,6 +74,11 @@ export function UniverseControls({
   universe: UniverseConfig;
   onChains: (chains: Chain[]) => void;
   onUniverse: (patch: Partial<UniverseConfig>) => void;
+  /**
+   * The agent's paid sources, when the caller knows them. A feed that buys from a source
+   * (the smart money board) says so on its card while that source is off.
+   */
+  dataSources?: readonly string[];
   errors?: Record<string, string>;
   idPrefix?: string;
   className?: string;
@@ -202,11 +212,13 @@ export function UniverseControls({
       <Field
         label="How it finds tokens"
         error={errors.universe}
-        hint="Every feed runs on each tick, and only what they surface can ever be scored. All of them are free except the paid launch radar, which is billed to the data budget."
+        hint="Every feed runs on each tick, and only what they surface can ever be scored. All of them are free except the paid launch radar and the smart money board, which are billed to the data budget."
       >
         <div className="grid gap-2 sm:grid-cols-2">
           {DISCOVERY_FEEDS.map((feed) => {
             const active = universe.discovery.includes(feed.id);
+            // On, and the source it buys from is off: it would find nothing, silently.
+            const sourceOff = active && dataSources !== undefined ? missingFeedSource(feed, dataSources) : null;
             return (
               <button
                 key={feed.id}
@@ -233,6 +245,15 @@ export function UniverseControls({
                 <span className="text-[11px] leading-relaxed text-muted-foreground">
                   {feed.caveat}
                 </span>
+                {sourceOff ? (
+                  <span className="flex gap-1.5 text-[11px] leading-relaxed" style={{ color: FEED_WARN_COLOR }}>
+                    <ShieldAlert aria-hidden className="mt-px size-3.5 shrink-0" />
+                    <span>
+                      {sourceOff} is off, so this feed finds nothing and costs nothing. Switch the
+                      source on under Data it buys.
+                    </span>
+                  </span>
+                ) : null}
               </button>
             );
           })}

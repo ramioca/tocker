@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { chooseSource, usdcEstimate, walletNeedUsd } from "@/components/agents/thinking";
 import { formatUsd } from "@/components/common/format";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { getDataSource } from "@/lib/data-sources/registry";
 import type { DataSourceInfo } from "@/server/types";
 import { REQUIRED_ORDER, REQUIRED_PLACE, ROW_PLACE, type SummaryEdit, type SummaryLabels } from "./contract";
 import {
@@ -244,6 +245,48 @@ describe("costFacts", () => {
       opts,
     );
     expect(off.radarPerRun).toBe(0);
+  });
+
+  /**
+   * The smart money board is a feed that buys from a source. It is in the estimate only
+   * when both are on, which is the rule a sweep buys it under; the source alone is the
+   * per-token read, quoted at the registry's price like any other source.
+   */
+  it("adds five cents a chain for the smart money board, and only when the feed and the source are both on", () => {
+    const nansen = { id: "nansen-smart-money", priceUsd: getDataSource("nansen-smart-money")?.priceUsd } as DataSourceInfo;
+    expect(nansen.priceUsd).toBe(0.01);
+    const priced = [...sources, nansen];
+    const withBoard = (dataSources: string[], discovery: BuilderDraft["config"]["universe"]["discovery"], chains: Array<"solana" | "base"> = ["solana"]) =>
+      costFacts(
+        draftWith((d) => {
+          d.config.dataSources = dataSources;
+          d.config.universe.discovery = discovery;
+          d.config.chains = chains;
+        }),
+        priced,
+        opts,
+      );
+
+    // Neither, which is every default: nothing.
+    expect(costFacts(emptyDraft(), priced, opts).boardPerRun).toBe(0);
+    // The source alone: one cent for the per-token read, and no board.
+    const sourceOnly = withBoard(["nansen-smart-money"], ["trending"]);
+    expect(sourceOnly).toMatchObject({ chosenCount: 1, boardPerRun: 0 });
+    expect(sourceOnly.sourcesPerRun).toBeCloseTo(0.01);
+    expect(dataSummary(sourceOnly)).toBe("1 paid source · ≈$0.01 per run, paid by Tocker");
+    // The feed alone buys nothing, so it costs nothing.
+    expect(withBoard(["x-search"], ["trending", "smart_money"]).boardPerRun).toBe(0);
+
+    const both = withBoard(["nansen-smart-money"], ["trending", "smart_money"]);
+    expect(both.boardPerRun).toBeCloseTo(0.05);
+    expect(both.costPerRun).toBeCloseTo(0.06);
+    expect(dataSummary(both)).toBe("1 paid source + smart money board · ≈$0.06 per run, paid by Tocker");
+    expect(costLines(draftWith(), both)).toContainEqual({ id: "data", label: "Data", text: "≈$0.06 a run, capped at $1.00 · Tocker pays" });
+
+    const twoChains = withBoard(["nansen-smart-money"], ["paid_launches", "smart_money"], ["solana", "base"]);
+    expect(twoChains.boardPerRun).toBeCloseTo(0.1);
+    expect(twoChains.radarPerRun).toBeCloseTo(0.04);
+    expect(dataSummary(twoChains)).toBe("1 paid source + launch radar + smart money board · ≈$0.15 per run, paid by Tocker");
   });
 
   it("prices a source with no listed price at a cent, and ignores sources not chosen", () => {

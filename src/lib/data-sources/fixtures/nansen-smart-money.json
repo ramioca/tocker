@@ -14,6 +14,19 @@
       "market_cap_usd": 1840000000
     },
     {
+      "token_address": "8RVBk8vxLiUHueLUW1f4izFVqN3nWippLhkohKg6EGkS",
+      "token_symbol": "KNOTS",
+      "chain": "solana",
+      "net_flow_1h_usd": 18420.3,
+      "net_flow_24h_usd": 412650.4,
+      "net_flow_7d_usd": 655210.0,
+      "net_flow_30d_usd": 655210.0,
+      "token_sectors": ["memecoin"],
+      "trader_count": 14,
+      "token_age_days": 33,
+      "market_cap_usd": 44600000
+    },
+    {
       "token_address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
       "token_symbol": "WIF",
       "chain": "solana",

@@ -8,6 +8,8 @@ describe("checkPaidUrl", () => {
     expect(checkPaidUrl("https://api.deepnets.ai/api/token-safety?mint=abc")).toBeNull();
     // Hostnames are case-insensitive; the URL parser lowercases them.
     expect(checkPaidUrl("https://API.Nansen.AI/api/v1/smart-money/netflow")).toBeNull();
+    // The rule is the host, not the path: a source's second endpoint is allowed as its first is.
+    expect(checkPaidUrl("https://api.nansen.ai/api/v1/tgm/flow-intelligence")).toBeNull();
   });
 
   it("refuses any other host, however close it looks", () => {

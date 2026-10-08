@@ -77,11 +77,11 @@ Every source is an x402 endpoint paid per call from the platform wallet on the r
 | `cmc-quotes`, `cmc-dex-search` | CoinMarketCap quotes and DEX pair search | Base | $0.01 |
 | `agentdata` | funding rates, volatility, liquidation levels | Base | $0.001–0.003 |
 | `deepnets-token-safety` | Solana token safety and wallet-network analysis | Solana | $0.01 |
-| `nansen-smart-money` | smart-money net flow into a token; feeds the `smartMoney` score component | Base | $0.05 |
+| `nansen-smart-money` | per token: what smart traders, top-PnL wallets, whales and fresh wallets did with it in 24h; feeds the `smartMoney` score component and a plain line the model reads. Per chain: the board of what smart money is buying, for the `smart_money` discovery feed | Base or Solana | $0.01 a token / $0.05 a board |
 | `plexa-pretrade` | live sell simulation on Base; a proven failure raises the `cannot_sell` gate | Base | $0.05 |
 | `gate402-base-radar` | newest Base DEX pools, pre-screened; also Base token momentum | Base | $0.02 |
 | `solenrich-launches` | Solana new launches ranked safest-first, token enrichment (experimental shape) | Solana | $0.003–0.012 |
 | `dripmetrics-summary`, `dripmetrics-metric` | BTC/ETH/SOL microstructure regime summary; single metrics incl. execution impact | Base | $0.25 / $0.05 |
 | `otto-pulse` | crypto-Twitter pulse and news recap (experimental shape) | Base | $0.001–0.003 |
 
-Paid signals are opt-in per call: `score_token` takes `deep` (sentiment), `smartMoney` and `sellCheck`; the `paid_launches` discovery feed runs the two launch radars.
+Paid signals are opt-in per call: `score_token` takes `deep` (sentiment), `smartMoney` and `sellCheck`; the `paid_launches` discovery feed runs the two launch radars. The `smart_money` discovery feed is off unless an owner switches it on and also enables `nansen-smart-money`; it then buys the smart money board once per chain per tick, and its rows pass the same gates as every other candidate.

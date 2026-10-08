@@ -148,10 +148,18 @@ export type AgentConfig = {
   universe: {
     /**
      * Which candidate feeds run each tick. Every one is free except `paid_launches`,
-     * which buys a launch radar per chain per sweep out of the run's data budget.
+     * which buys a launch radar per chain per sweep out of the run's data budget, and
+     * `smart_money`, which buys Nansen's smart money board once per chain per tick and
+     * only for an agent that also has the `nansen-smart-money` source enabled.
      */
     discovery: Array<
-      "new_launches" | "trending" | "top_organic" | "momentum" | "gecko_launches" | "paid_launches"
+      | "new_launches"
+      | "trending"
+      | "top_organic"
+      | "momentum"
+      | "gecko_launches"
+      | "paid_launches"
+      | "smart_money"
     >;
     /** Composite score (0-100) a token must reach before the agent may buy it. */
     minScore: number;

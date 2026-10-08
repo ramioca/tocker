@@ -30,6 +30,7 @@ export const FEED_LABEL: Record<DiscoveryFeed, string> = {
   momentum: "Momentum",
   gecko_launches: "Gecko-rated launch",
   paid_launches: "Paid launch radar",
+  smart_money: "Smart money is buying",
   manual: "Named by the agent",
 };
 

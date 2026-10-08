@@ -25,15 +25,17 @@ import { eq } from "drizzle-orm";
 import { getDb, publicTokenScores, tokenScores } from "@/db";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import type { Chain, TokenScore, TradeScore } from "@/server/types";
-import type { X402Context } from "@/lib/x402/types";
+import { X402BudgetError, X402DailyBudgetError, type X402Context } from "@/lib/x402/types";
 import { getDexScreenerToken } from "./providers/dexscreener";
 import { deepestGeckoPool, getGeckoTokenInfo, getGeckoTokenPools } from "./providers/geckoterminal";
 import { getGoPlusSecurity } from "./providers/goplus";
+import { TtlCache } from "./providers/http";
 import { getJupiterToken } from "./providers/jupiter";
 import { getRugcheckSummary } from "./providers/rugcheck";
 import { isNoData, recordScore } from "./history";
-import { scoreToken, type Universe } from "./score";
-import type { ScoreInput, SellCheckInput, SentimentInput, SmartMoneyInput } from "./types";
+import { isNativeAsset, scoreToken, type Universe } from "./score";
+import { SMART_MONEY_SOURCE_IDS, smartMoneyReading, type SmartMoneyRead } from "./smart-money";
+import type { ScoreInput, SellCheckInput, SentimentInput } from "./types";
 
 export {
   discoverCandidates,
@@ -59,6 +61,14 @@ export {
   type ScoredToken,
   type Universe,
 } from "./score";
+export {
+  smartMoneyLine,
+  smartMoneyLineFromScore,
+  smartMoneyNotReadLine,
+  smartMoneyReading,
+  SMART_MONEY_SOURCE_IDS,
+  type SmartMoneyReading,
+} from "./smart-money";
 export type * from "./types";
 
 /** How long a persisted score may be reused. */
@@ -76,8 +86,22 @@ export const SCORE_TTL_MS = 600_000;
  */
 const SENTIMENT_SOURCE_IDS = ["x-search", "sentimentalpha"] as const;
 
-/** Data sources whose `signals.smartMoneyNetflowUsd` feeds the `smartMoney` component. */
-const SMART_MONEY_SOURCE_IDS: readonly string[] = ["nansen-smart-money"];
+/**
+ * The smart money reads behind the scores this process has cached, by token.
+ *
+ * `token_scores` keeps the component and the source's name and has no column for the
+ * read itself, so a score served from that cache would come back without the words the
+ * read is said in. Kept for as long as the cached score is, and matched to it by
+ * `scoredAt`: a read is only ever handed back beside the exact score it was made for.
+ * Another process serving the same cached row has no entry here, and its caller says
+ * what the row alone still holds (`smartMoneyLineFromScore`).
+ */
+const smartMoneyReads = new TtlCache<{ scoredAt: string; read: SmartMoneyRead }>(SCORE_TTL_MS);
+
+function recallSmartMoney(score: TokenScore): SmartMoneyRead | null {
+  const kept = smartMoneyReads.get(score.tokenId);
+  return kept.hit && kept.value !== null && kept.value.scoredAt === score.scoredAt ? kept.value.read : null;
+}
 
 /**
  * Data sources whose `signals.sellable` can raise the `cannot_sell` gate. EVM only:
@@ -88,7 +112,10 @@ const SELL_CHECK_SOURCE_IDS: readonly string[] = ["plexa-pretrade"];
 
 /** Which paid signals, beyond sentiment, the caller wants folded into this score. */
 export interface PaidScoreSignals {
-  /** Buy smart-money netflow (Nansen) and score it against the token's liquidity. */
+  /**
+   * Buy the per-token smart money read (Nansen): what smart traders and top-PnL wallets
+   * did with this token in the last 24 hours, scored against the token's liquidity.
+   */
   smartMoney?: boolean;
   /** Buy a live sell simulation (Plexa, Base only). A proven failure blocks the buy. */
   sellCheck?: boolean;
@@ -302,36 +329,61 @@ function allowedBy(allowed: readonly string[] | undefined, id: string): boolean 
   return allowed === undefined || allowed.includes(id);
 }
 
+/** What became of one paid smart money read: the read, or why there is none. */
+type SmartMoneyOutcome = { read: SmartMoneyRead; source: string } | { notRead: string };
+
+/** Why a paid read did not happen, as a clause the model can be told. */
+function notReadBecause(err: unknown): string {
+  if (err instanceof X402DailyBudgetError) return "today's paid-data allowance is used up";
+  if (err instanceof X402BudgetError) {
+    // To the tenth of a cent: at two decimals half a cent of budget reads "$0.01 is left".
+    const usd = (n: number) => `$${n.toFixed(4).replace(/0{1,2}$/, "")}`;
+    return `it costs ${usd(err.priceUsd)} and ${usd(err.remainingUsd)} of this run's data budget is left`;
+  }
+  return `the source did not answer: ${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`;
+}
+
 /**
- * Buys one smart-money netflow reading over x402. Returns `null` on any failure —
- * including an exhausted budget — because a signal the agent could not afford must
- * degrade the score's *completeness*, never fail the scoring pass.
+ * Buys one per-token smart money read over x402: what the tracked wallets did with
+ * *this* token in the last 24 hours. Never throws. A read that could not be made, for
+ * any reason and an exhausted budget included, comes back as `notRead`, because a signal
+ * the agent could not afford must degrade the score's *completeness*, never fail the
+ * scoring pass.
+ *
+ * A read that was made and found nothing is still a read: the caller records the source
+ * for it, so that nothing is not bought again while the score is cached.
  */
 async function fetchSmartMoney(
   chain: Chain,
   address: string,
-  symbol: string | null,
   x402: X402Context,
   allowed: readonly string[] | undefined,
-): Promise<SmartMoneyInput | null> {
-  const { getDataSource } = await import("@/lib/data-sources/registry");
-  for (const id of SMART_MONEY_SOURCE_IDS.filter((s) => allowedBy(allowed, s))) {
+): Promise<SmartMoneyOutcome> {
+  const ids = SMART_MONEY_SOURCE_IDS.filter((s) => allowedBy(allowed, s));
+  if (ids.length === 0) return { notRead: "the smart money source is not enabled for this agent" };
+  // SOL and ETH are in every wallet; a per-token read of them says nothing about a trade.
+  if (isNativeAsset(chain, address)) return { notRead: "a chain's native asset is not read" };
+
+  const [{ getDataSource }, { parseFlowIntelligence }] = await Promise.all([
+    import("@/lib/data-sources/registry"),
+    import("@/lib/data-sources/nansen"),
+  ]);
+  let notRead = "the source is not registered";
+  for (const id of ids) {
     const source = getDataSource(id);
     if (!source) continue;
     try {
-      const result = await source.query(x402, {
-        chains: [chain],
-        tokenAddress: address,
-        ...(symbol ? { symbol } : {}),
-      });
-      const signals = result.signals ?? {};
-      if (signals.smartMoneyNetflowUsd === undefined) continue;
-      return { netflowUsd: signals.smartMoneyNetflowUsd, traderCount: null, source: id };
-    } catch {
+      const result = await source.query(x402, { endpoint: "token", chains: [chain], tokenAddress: address });
+      const read = parseFlowIntelligence(result.data);
+      if (read !== null) return { read, source: id };
+      // Paid for and unreadable. Not "nobody traded it": nothing is known.
+      notRead = "the source answered in a shape this app does not know";
+    } catch (err) {
       // Same contract as sentiment: a paid signal never breaks a free score.
+      notRead = notReadBecause(err);
     }
   }
-  return null;
+  return { notRead };
 }
 
 /**
@@ -427,6 +479,22 @@ async function gather(input: GetTokenScoreInput): Promise<ScoreInput> {
   return { ...base, jupiter: null, rugcheck: null, dexscreener, goplus, gecko };
 }
 
+/** A score, and what is known of the paid smart money read behind it. */
+export interface TokenScoreDetail {
+  score: TokenScore;
+  /**
+   * The smart money read the score was made with, when it is on hand: bought by this
+   * call, or by an earlier one in this process for the same cached score. `null` for a
+   * score with no such read, and for a cached one whose read this process never saw.
+   */
+  smartMoney: SmartMoneyRead | null;
+  /**
+   * Why a smart money read this call asked for is not in the score. `null` when none
+   * was asked for, or it was made.
+   */
+  smartMoneyNotRead: string | null;
+}
+
 /**
  * The token's score, from cache when it is fresh and was produced under the same
  * universe rules, otherwise freshly gathered, scored and persisted.
@@ -436,6 +504,15 @@ async function gather(input: GetTokenScoreInput): Promise<ScoreInput> {
  * anything at all — `*_unknown` blockers, so the risk guard refuses the buy.
  */
 export async function getTokenScore(input: GetTokenScoreInput): Promise<TokenScore> {
+  return (await getTokenScoreDetail(input)).score;
+}
+
+/**
+ * {@link getTokenScore}, with the smart money read beside the score. The read is paid
+ * data an agent bought, so it travels next to the score and never on it: a `TokenScore`
+ * is what token pages and trade records are built from.
+ */
+export async function getTokenScoreDetail(input: GetTokenScoreInput): Promise<TokenScoreDetail> {
   const now = input.now ?? Date.now();
   const id = `${input.chain}:${input.address}`;
   const key = universeKey(input.universe);
@@ -449,24 +526,38 @@ export async function getTokenScore(input: GetTokenScoreInput): Promise<TokenSco
 
   if (input.force !== true) {
     const cached = await readCache(id, key, now, wants);
-    if (cached) return cached;
+    if (cached) return { score: cached, smartMoney: recallSmartMoney(cached), smartMoneyNotRead: null };
   }
 
   const gathered = await gather(input);
+  let smartMoneyRead: SmartMoneyRead | null = null;
+  let smartMoneyNotRead: string | null = null;
 
   if (input.x402) {
     const symbol =
       gathered.jupiter?.symbol ?? gathered.dexscreener?.symbol ?? gathered.goplus?.symbol ?? input.symbolHint ?? null;
 
     // Sequential on purpose: each call checks the same budget, and a parallel pair
-    // could both see room for the last $0.05 and spend it twice.
+    // could both see room for the last cent and spend it twice.
     if (wants.sentiment && symbol) {
       const sentiment = await fetchSentiment(symbol, input.x402, input.dataSources);
       if (sentiment) gathered.sentiment = sentiment;
     }
     if (wants.smartMoney) {
-      const smartMoney = await fetchSmartMoney(input.chain, input.address, symbol, input.x402, input.dataSources);
-      if (smartMoney) gathered.smartMoney = smartMoney;
+      const outcome = await fetchSmartMoney(input.chain, input.address, input.x402, input.dataSources);
+      if ("read" in outcome) {
+        // An answer with no reading in it still names its source, with no number: the
+        // component stays null, and the cache knows not to buy the same nothing again.
+        const reading = smartMoneyReading(outcome.read);
+        gathered.smartMoney = {
+          netflowUsd: reading?.netflowUsd ?? null,
+          traderCount: reading?.wallets ?? null,
+          source: outcome.source,
+        };
+        smartMoneyRead = outcome.read;
+      } else {
+        smartMoneyNotRead = outcome.notRead;
+      }
     }
     if (wants.sellCheck) {
       const sellCheck = await fetchSellCheck(
@@ -489,7 +580,8 @@ export async function getTokenScore(input: GetTokenScoreInput): Promise<TokenSco
   // Append-only history for token pages; deduped, never throws. A default-universe
   // reading taken with private inputs is filed under no key, so it never charts as public.
   await recordScore(score, key === PUBLIC_UNIVERSE_KEY && !isPublic ? null : key);
-  return score;
+  if (smartMoneyRead) smartMoneyReads.set(score.tokenId, { scoredAt: score.scoredAt, read: smartMoneyRead });
+  return { score, smartMoney: smartMoneyRead, smartMoneyNotRead };
 }
 
 /**
@@ -539,4 +631,5 @@ export async function resetTokenCaches(): Promise<void> {
   resetDexScreenerCache();
   resetGoPlusCache();
   resetGeckoTerminalCache();
+  smartMoneyReads.clear();
 }

@@ -25,11 +25,15 @@ export const SMART_MONEY_SOURCE = "nansen-smart-money";
 export const SELL_CHECK_SOURCE = "plexa-pretrade";
 export const INTEL_SOURCE = "deepnets-token-safety";
 
-/** What each add-on costs, for planning; `paidFetch` charges the real price. */
+/**
+ * What each add-on costs, for planning; `paidFetch` charges the real price. Smart money
+ * is the per-token read's cent, not the five cents of the chain board it used to buy for
+ * every token.
+ */
 export const ENRICHMENT_PRICE_USD = {
   intel: 0.01,
   deep: 0.01,
-  smartMoney: 0.05,
+  smartMoney: 0.01,
   sellCheck: 0.05,
 } as const;
 
@@ -38,7 +42,7 @@ export interface EnrichmentPlan {
   intel: boolean;
   /** X sentiment, folded into the score as a sixth component. */
   deep: boolean;
-  /** Nansen tracked-wallet netflow, folded in as a component. */
+  /** Nansen's per-token read of tracked wallets, folded in as a component and said in a line. */
   smartMoney: boolean;
   /** Plexa live sell simulation (Base): a proven failure raises `cannot_sell`. */
   sellCheck: boolean;

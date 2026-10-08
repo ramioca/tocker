@@ -51,7 +51,15 @@ import { deepnetsTokenSafety } from "./token-intel";
 import { xSearch } from "./x-search";
 import type { DataSource } from "./normalize";
 
-export type { DataSource, NormalizedResult, PaidLaunch, Signals } from "./normalize";
+export type {
+  DataSource,
+  NormalizedResult,
+  PaidLaunch,
+  Signals,
+  SmartMoneyBoardRow,
+  SmartMoneyRead,
+  WalletFlow,
+} from "./normalize";
 
 export const DATA_SOURCES: DataSource[] = [
   xSearch,

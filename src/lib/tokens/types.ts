@@ -14,6 +14,7 @@ import type { Chain } from "@/server/types";
 import type { GeckoPool, GeckoTokenInfo } from "./providers/geckoterminal";
 
 export type { GeckoPool, GeckoTokenInfo } from "./providers/geckoterminal";
+export type { SmartMoneyRead, WalletFlow } from "./smart-money";
 
 export type {
   Chain,
@@ -202,11 +203,18 @@ export interface SentimentInput {
 /**
  * A smart-money reading bought over x402 (Nansen today). Absolute dollars, because
  * the scorer is the only thing that knows the pool it has to be weighed against.
+ *
+ * Present whenever the source answered, reading or not: a token no tracked wallet
+ * traded arrives with `netflowUsd: null`, which scores nothing and still records the
+ * source, so the same empty answer is not bought again while the score is cached.
  */
 export interface SmartMoneyInput {
-  /** Net USD in (positive) or out (negative) over the source's window. */
+  /**
+   * Net USD in (positive) or out (negative) over the last 24 hours: smart traders'
+   * net flow plus top-PnL wallets' (`smartMoneyReading` in `./smart-money`).
+   */
   netflowUsd: number | null;
-  /** How many tracked wallets were behind that flow, when the source says. */
+  /** How many tracked wallets were behind that flow: the two groups' counts added. */
   traderCount: number | null;
   source: string;
 }

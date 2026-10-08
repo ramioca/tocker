@@ -67,10 +67,14 @@ export const agentConfigSchema = z.object({
     .min(1, "Pick at least one chain")
     .transform((chains) => [...new Set(chains)]),
   universe: z.object({
-    // `paid_launches` is the only feed that costs money; it runs a paid launch radar
-    // per chain per sweep and is skipped when the run has no wallet or no budget.
+    // Two feeds cost money. `paid_launches` runs a paid launch radar per chain per sweep
+    // and is skipped when the run has no wallet or no budget. `smart_money` buys Nansen's
+    // board once per chain per tick; it is in no default and no preset, and it buys
+    // nothing unless `dataSources` also names `nansen-smart-money`.
     discovery: z
-      .array(z.enum(["new_launches", "trending", "top_organic", "momentum", "gecko_launches", "paid_launches"]))
+      .array(
+        z.enum(["new_launches", "trending", "top_organic", "momentum", "gecko_launches", "paid_launches", "smart_money"]),
+      )
       .min(1, "Pick at least one way to find tokens"),
     minScore: z.number().min(0).max(100),
     minLiquidityUsd: z.number().min(0).max(100_000_000),
@@ -168,8 +172,10 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigWithSizing = {
     maxTradeUsd: 100,
     maxDailyTrades: 10,
     maxPositionPct: 25,
-    // $1: five scored tokens with safety, sentiment and smart money bought for each is
-    // about $0.35 on Solana; $0.25 covered three and silently starved the rest.
+    // $1: room for the launch radar and for safety, sentiment and smart money on every
+    // token a tick scores (about three cents a token on Solana), with the smart money
+    // board on top when its feed is on. $0.25 once covered three tokens and silently
+    // starved the rest.
     maxDataSpendUsdPerRun: 1,
     stopLossPct: 15,
     takeProfitPct: 40,

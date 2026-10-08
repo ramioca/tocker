@@ -10,7 +10,7 @@ import { getScoreHistory, scoreTrend } from "@/lib/tokens/history";
 import { loadCachedScores } from "@/lib/trading/score-cache";
 import { buyCostUsd, floorToCents, formatFeeRate, maxBuyUsd, platformFeeBps } from "@/lib/platform/fee";
 import { MAX_PROPOSALS_PER_TICK, MIN_SCORED_PER_TICK, SEEN_WINDOW_MS } from "./limits";
-import { INTEL_SOURCE, planEnrichment, type EnrichmentPlan } from "./enrichment";
+import { INTEL_SOURCE, SMART_MONEY_SOURCE, planEnrichment, type EnrichmentPlan } from "./enrichment";
 
 import { nanoid } from "nanoid";
 import { tool, type ToolSet } from "ai";
@@ -18,6 +18,7 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { getDb, posts, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
+import { smartMoneyEndpoint } from "@/lib/data-sources/nansen";
 import { DATA_SOURCES, getDataSource, toDataSourceInfo } from "@/lib/data-sources/registry";
 import { X402BudgetError, type RunBudget, type X402Context } from "@/lib/x402/types";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
@@ -44,12 +45,17 @@ import { executeTrade } from "@/lib/trading/settle";
 import { ensureQuoteToken, resolveToken } from "@/lib/trading/tokens";
 import {
   discoverCandidates,
-  getTokenScore,
+  getTokenScoreDetail,
   MAX_DISCOVERY_LIMIT,
   renderCandidates,
   renderScore,
+  smartMoneyLine,
+  smartMoneyLineFromScore,
+  smartMoneyNotReadLine,
+  smartMoneyReading,
   sweepFilters,
   toTradeScore,
+  type TokenScoreDetail,
 } from "@/lib/tokens";
 import { compactNumber } from "@/lib/money";
 import type { Chain, TokenCandidate, TokenScore } from "@/server/types";
@@ -187,10 +193,14 @@ const discoveryFeedSchema = z.enum([
   "momentum",
   "gecko_launches",
   "paid_launches",
+  "smart_money",
 ]);
 
-/** Shrinks a score to the fields worth spending the model's context on. */
-function scorePayload(score: TokenScore): ToolOutcome {
+/**
+ * Shrinks a score to the fields worth spending the model's context on. `smartMoney` is
+ * the paid smart money read in words, when there is something to say about one.
+ */
+function scorePayload(score: TokenScore, smartMoney: string | null = null): ToolOutcome {
   return {
     ok: true,
     symbol: score.symbol,
@@ -210,8 +220,32 @@ function scorePayload(score: TokenScore): ToolOutcome {
     priceChange24hPct: score.priceChange24hPct,
     sources: score.sources,
     scoredAt: score.scoredAt,
-    rendered: renderScore(score),
+    rendered: renderScore(score, smartMoney),
   };
+}
+
+/**
+ * What a score_token result says about the paid smart money read, or `null` when there
+ * is nothing to say: the read itself when it is on hand, else what a cached score still
+ * holds of one, else why a read that was wanted is missing. `said` is the line `rendered`
+ * carries; `status` is "reading" (with the net flow and the wallet count the component
+ * was scored from), "none" (bought, and no tracked wallet traded the token), "cached"
+ * (bought with an earlier score, amounts not kept) or "not_read".
+ */
+function smartMoneyNote(detail: TokenScoreDetail, missed: string | undefined): (ToolOutcome & { said: string }) | null {
+  const { score, smartMoney: read } = detail;
+  if (read !== null) {
+    const reading = smartMoneyReading(read);
+    return {
+      status: reading === null ? "none" : "reading",
+      ...(reading === null ? {} : { netFlowUsd: reading.netflowUsd, wallets: reading.wallets }),
+      said: smartMoneyLine(read),
+    };
+  }
+  const kept = smartMoneyLineFromScore(score);
+  if (kept !== null) return { status: score.components.smartMoney === null ? "none" : "cached", said: kept };
+  if (missed !== undefined) return { status: "not_read", said: smartMoneyNotReadLine(missed.slice("smartMoney:".length)) };
+  return null;
 }
 
 /**
@@ -258,6 +292,17 @@ export function buildTools(ctx: RunContext): ToolSet {
   let notePostedThisTick = false;
   /** Tokens whose paid signals were already bought this tick — the score cache holds them. */
   const enrichedThisTick = new Set<string>();
+  /**
+   * The smart money board is the owner's to switch on, twice: the feed under "How it
+   * finds tokens" and the source that sells it under "Data it buys". Nothing the model
+   * sends changes either.
+   */
+  const smartMoneyBoardOn = universe.discovery.includes("smart_money") && allowedSources.includes(SMART_MONEY_SOURCE);
+  /**
+   * The smart money boards bought this tick, by chain. One record for every sweep of
+   * the tick, so a chain's board is paid for once however many times the model sweeps.
+   */
+  const smartMoneyBoards = new Map<Chain, Promise<TokenCandidate[]>>();
   /** Every token scored this tick, and the fresh candidates discovery surfaced — `finish` compares the two, once. */
   const scoredThisTick = new Set<string>();
   const freshThisTick = new Map<string, string>();
@@ -300,15 +345,18 @@ export function buildTools(ctx: RunContext): ToolSet {
     }
   };
 
-  /** Scores a token for this agent. Returns `null` only when scoring itself blew up. */
-  const scoreFor = async (
+  /**
+   * Scores a token for this agent, with what is known of its smart money read beside
+   * the score. Returns `null` only when scoring itself blew up.
+   */
+  const scoreDetailFor = async (
     chain: "solana" | "base",
     address: string,
     paid: { deep?: boolean; smartMoney?: boolean; sellCheck?: boolean } = {},
-  ): Promise<TokenScore | null> => {
+  ): Promise<TokenScoreDetail | null> => {
     const wantsPaid = paid.deep === true || paid.smartMoney === true || paid.sellCheck === true;
     try {
-      return await getTokenScore({
+      return await getTokenScoreDetail({
         chain,
         address,
         universe,
@@ -330,17 +378,23 @@ export function buildTools(ctx: RunContext): ToolSet {
       return null;
     }
   };
+  /** The free score alone, for the callers that only size or guard an order. */
+  const scoreFor = async (chain: "solana" | "base", address: string): Promise<TokenScore | null> =>
+    (await scoreDetailFor(chain, address))?.score ?? null;
 
   return {
     discover_tokens: tool({
-      description:
-        "Sweep your discovery feeds for tradeable candidates on your chains. Call it with no arguments first: your owner's settings (age, liquidity, holders, blocklist, feeds, chains) already apply. Free — with one exception: the `paid_launches` feed buys a pre-screened launch radar per chain (SolEnrich on Solana, gate402 on Base, about $0.02 a chain) and only runs when your config or this call asks for it. `gecko_launches` is free but narrow: it reads GeckoTerminal's new and trending pools on either chain and keeps only the tokens GeckoTerminal's own GT Score rates 50 or better, so it surfaces few names and skips anything minutes old that nobody has rated yet. Returns a ranked table already filtered on the gates that can be checked for free (age, liquidity, holders, blocklist); safety gates are applied later by score_token. maxAgeHours and minLiquidityUsd only NARROW the sweep: use them when the table is too long or your strategy is about new launches. To get more candidates, drop them or try other feeds.",
+      description: `Sweep your discovery feeds for tradeable candidates on your chains. Call it with no arguments first: your owner's settings (age, liquidity, holders, blocklist, feeds, chains) already apply. Free — with one exception: the \`paid_launches\` feed buys a pre-screened launch radar per chain (SolEnrich on Solana, gate402 on Base, about $0.02 a chain) and only runs when your config or this call asks for it. \`gecko_launches\` is free but narrow: it reads GeckoTerminal's new and trending pools on either chain and keeps only the tokens GeckoTerminal's own GT Score rates 50 or better, so it surfaces few names and skips anything minutes old that nobody has rated yet. ${
+        smartMoneyBoardOn
+          ? "`smart_money` is on for you: the first sweep of a chain each tick buys Nansen's board of the tokens tracked funds and smart traders accumulated most in 24 hours ($0.05 a chain, once), and the SM24H column is that net flow in USD."
+          : "`smart_money` is a paid feed only your owner can switch on; naming it here does nothing."
+      } Returns a ranked table already filtered on the gates that can be checked for free (age, liquidity, holders, blocklist); safety gates are applied later by score_token. maxAgeHours and minLiquidityUsd only NARROW the sweep: use them when the table is too long or your strategy is about new launches. To get more candidates, drop them or try other feeds.`,
       inputSchema: z.object({
         chain: chainSchema.optional().describe("Restrict to one chain; omit to sweep every chain you trade"),
         feeds: z
           .array(discoveryFeedSchema)
           .min(1)
-          .max(6)
+          .max(7)
           .optional()
           .describe("Sweep these feeds instead of your configured ones, for this call only. Omit to use your configured feeds"),
         maxAgeHours: z
@@ -387,6 +441,16 @@ export function buildTools(ctx: RunContext): ToolSet {
         feeds.add("gecko_launches");
         feeds.add("paid_launches");
         const ownFeeds = new Set<string>([...universe.discovery, "gecko_launches", "paid_launches"]);
+        // The smart money board follows the owner's two switches and nothing else. With
+        // both on it is in every sweep, for the reason the radars are: a model that
+        // names its own feeds must not be what leaves out data its owner turned on.
+        // Without both it is in no sweep, whatever feed list the model sends. Either way
+        // a chain's board is bought once a tick (`smartMoneyBoards`).
+        if (smartMoneyBoardOn) feeds.add("smart_money");
+        else {
+          feeds.delete("smart_money");
+          ownFeeds.delete("smart_money");
+        }
 
         // What this call narrowed, in the words the model is told it in. The model's two
         // filters are held inside the owner's (`sweepFilters`), so a filter is in this list
@@ -416,6 +480,7 @@ export function buildTools(ctx: RunContext): ToolSet {
           dataSources: allowedSources,
           alwaysPaidLaunches: true,
           paidLaunches: bought,
+          smartMoneyBoards,
           // The whole ranked pool, not `limit` rows of it. Which rows are fresh is only
           // known further down, and a pool cut to the table's size first can be all names
           // the agent has already seen while fresh ones sit just past the cut: the table
@@ -475,8 +540,13 @@ export function buildTools(ctx: RunContext): ToolSet {
           // were it bought now, a later sweep of that chain would pay for it a second time
           // in the same tick. That chain's free feeds are still swept.
           for (const chain of agent.config.chains) if (!bought.has(chain)) bought.set(chain, []);
+          // The same for the smart money board, on a copy: the tick's own record must
+          // stay empty for a chain nobody has bought, so a later sweep of it still can.
+          const boards = new Map(smartMoneyBoards);
+          for (const chain of agent.config.chains) if (!boards.has(chain)) boards.set(chain, Promise.resolve([]));
           const own = await discoverCandidates({
             ...sweep,
+            smartMoneyBoards: boards,
             chains: agent.config.chains,
             feeds: [...ownFeeds] as typeof universe.discovery,
           });
@@ -506,6 +576,8 @@ export function buildTools(ctx: RunContext): ToolSet {
           holderCount: c.holderCount,
           ageHours: c.ageHours,
           priceChange24hPct: c.priceChange24hPct,
+          // Only on a token the paid smart money board named.
+          ...(c.smartMoneyNetflowUsd === undefined ? {} : { smartMoneyNetflow24hUsd: c.smartMoneyNetflowUsd }),
           seen: seenReason(c.token.id),
         });
         const seenLine =
@@ -550,6 +622,17 @@ export function buildTools(ctx: RunContext): ToolSet {
             : null,
         ].filter((words): words is string => words !== null);
         const heldLine = held.length === 0 ? null : `Note: ${held.join(" and ")}. A token outside your owner's settings can never be bought.`;
+        // The model asked for a feed that is not its to switch on.
+        const boardLine =
+          parsed.feeds?.includes("smart_money") && !smartMoneyBoardOn
+            ? "The smart_money feed was not swept: only your owner can switch it on."
+            : null;
+        // Named as the two sets of wallets they are: the board counts funds and smart
+        // traders, score_token's line counts smart traders and top-PnL wallets. A token
+        // only a fund bought shows a flow here and "no tracked wallet" there, both true.
+        const flowLine = [...fresh, ...seen].some((c) => c.smartMoneyNetflowUsd !== undefined)
+          ? "SM24H (smartMoneyNetflow24hUsd) is the net USD Nansen's tracked funds and smart traders moved into the token in the last 24 hours. score_token's smart money line counts smart traders and top-PnL wallets, not funds, so the two can differ."
+          : null;
 
         return {
           ok: true,
@@ -562,7 +645,7 @@ export function buildTools(ctx: RunContext): ToolSet {
           ...(widened ? { widened: true, matchedYourFilters: matched } : {}),
           candidates: [...fresh, ...seen].map(row),
           rendered: `${happened === null ? "" : `${happened}\n\n`}${renderCandidates(fresh)}${seenLine}`,
-          note: [happened, "quickScore is a cheap pre-rank, not the real score.", toScore, more, heldLine]
+          note: [happened, "quickScore is a cheap pre-rank, not the real score.", toScore, more, heldLine, boardLine, flowLine]
             .filter((line): line is string => line !== null)
             .join(" "),
         };
@@ -571,7 +654,7 @@ export function buildTools(ctx: RunContext): ToolSet {
 
     score_token: tool({
       description:
-        "The full safety + quality score for one token: a 0-100 composite, a verdict, the free components, hard-gate blockers and warnings — and, for any token that clears the free gates, the paid signals your owner configured, bought automatically from your per-run data budget in this order: Deepnets safety on Solana ($0.01, returned as `intel`: mint/freeze flags, bundling, network concentration, critical risks), Plexa sell simulation on Base ($0.05, a proven failure raises cannot_sell), X sentiment (~$0.01, folded in as a component), Nansen smart-money netflow ($0.05, folded in, only on borderline-or-better scores). `paidSignals` says what was bought and `notBought` says what was not and why. A hard-blocked token buys nothing. Pass deep / smartMoney / sellCheck only to override that plan.",
+        "The full safety + quality score for one token: a 0-100 composite, a verdict, the free components, hard-gate blockers and warnings — and, for any token that clears the free gates, the paid signals your owner configured, bought automatically from your per-run data budget in this order: Deepnets safety on Solana ($0.01, returned as `intel`: mint/freeze flags, bundling, network concentration, critical risks), Plexa sell simulation on Base ($0.05, a proven failure raises cannot_sell), X sentiment (~$0.01, folded in as a component), Nansen smart money ($0.01: what smart traders and top-PnL wallets did with this token in the last 24h, folded in as a component and said in words in the `smartMoney` field and in `rendered`). `paidSignals` says what was bought and `notBought` says what was not and why. A hard-blocked token buys nothing. Pass deep / smartMoney / sellCheck only to override that plan.",
       inputSchema: z.object({
         chain: chainSchema,
         address: z.string().min(3).describe("Mint (Solana) or contract address (Base)"),
@@ -582,7 +665,7 @@ export function buildTools(ctx: RunContext): ToolSet {
         smartMoney: z
           .boolean()
           .optional()
-          .describe("Pay ~$0.05 for smart-money netflow and fold it in as a sixth component. Default false"),
+          .describe("Pay ~$0.01 for the per-token smart money read and fold it in as a component. Default false"),
         sellCheck: z
           .boolean()
           .optional()
@@ -602,8 +685,9 @@ export function buildTools(ctx: RunContext): ToolSet {
         const explicit = parsed.deep !== undefined || parsed.smartMoney !== undefined || parsed.sellCheck !== undefined;
 
         // Free first, always: the gates decide whether paying for more is worth anything.
-        const free = await scoreFor(parsed.chain, token.address);
-        if (!free) return fail(`Could not score ${token.symbol} — every data provider failed. Do not buy it.`);
+        const freeDetail = await scoreDetailFor(parsed.chain, token.address);
+        if (!freeDetail) return fail(`Could not score ${token.symbol} — every data provider failed. Do not buy it.`);
+        const free = freeDetail.score;
 
         // Then the paid signals — planned, not asked for. See ./enrichment.
         const plan: EnrichmentPlan = explicit
@@ -624,15 +708,18 @@ export function buildTools(ctx: RunContext): ToolSet {
               already: enrichedThisTick.has(token.id),
             });
 
-        let score = free;
+        let detail = freeDetail;
         if (plan.deep || plan.smartMoney || plan.sellCheck) {
-          score =
-            (await scoreFor(parsed.chain, token.address, {
+          detail =
+            (await scoreDetailFor(parsed.chain, token.address, {
               deep: plan.deep,
               smartMoney: plan.smartMoney,
               sellCheck: plan.sellCheck,
-            })) ?? free;
+            })) ?? freeDetail;
         }
+        const score = detail.score;
+        // A read that was planned and not made is said, like every other skipped signal.
+        if (plan.smartMoney && detail.smartMoneyNotRead !== null) plan.skipped.push(`smartMoney: ${detail.smartMoneyNotRead}`);
 
         let intel: { summary: string; signals: unknown } | null = null;
         if (plan.intel) {
@@ -649,6 +736,16 @@ export function buildTools(ctx: RunContext): ToolSet {
         if (plan.plannedUsd > 0 || plan.deep || plan.smartMoney || plan.sellCheck) enrichedThisTick.add(token.id);
 
         scoredThisTick.add(token.id);
+        // The smart money read in words. Only for an agent whose owner enabled the
+        // source: the score cache is shared, and a read another agent's owner paid for
+        // is not this one's to be told about.
+        const smartMoney = allowedSources.includes(SMART_MONEY_SOURCE)
+          ? smartMoneyNote(
+              detail,
+              plan.skipped.find((entry) => entry.startsWith("smartMoney:")),
+            )
+          : null;
+
         const meetsMinScore = score.blockers.length === 0 && score.verdict !== "avoid" && score.total >= universe.minScore;
         if (meetsMinScore) shortlistThisTick.set(token.id, { symbol: token.symbol, total: score.total });
         else shortlistThisTick.delete(token.id);
@@ -662,16 +759,19 @@ export function buildTools(ctx: RunContext): ToolSet {
           liquidityUsd: score.liquidityUsd,
         });
         return {
-          ...scorePayload(score),
+          ...scorePayload(score, smartMoney?.said ?? null),
           minScore: universe.minScore,
           meetsMinScore,
           trend,
           paidSignals: {
             intel: intel !== null,
             sentiment: score.components.sentiment !== null,
-            smartMoney: score.components.smartMoney !== null,
+            // The read was bought and answered, with or without a reading: "no tracked
+            // wallet traded it" is an answer, and its component is null.
+            smartMoney: score.sources.includes(SMART_MONEY_SOURCE),
             sellCheck: plan.sellCheck,
           },
+          smartMoney,
           intel,
           notBought: plan.skipped,
           dataSpentThisRunUsd: Number(ctx.budget.spentUsd.toFixed(4)),
@@ -769,6 +869,25 @@ export function buildTools(ctx: RunContext): ToolSet {
               : `Source "${source.id}" is not enabled for this agent.`,
             { enabled: allowedSources },
           );
+        }
+        // Nansen's boards cost five times its per-token read and belong to the smart
+        // money feed. With the feed off none is bought: the owner was quoted a cent a
+        // call for this source. With it on the netflow board is still refused, because
+        // discover_tokens has bought it or will this tick and a second copy is the same
+        // thing paid for twice. Refused here, before anything is paid.
+        if (source.id === SMART_MONEY_SOURCE) {
+          const endpoint = smartMoneyEndpoint(parsed.params);
+          const perToken = "To read one token, pass tokenAddress and exactly one chain: that is the $0.01 per-token read.";
+          if (endpoint !== null && endpoint !== "token" && !smartMoneyBoardOn) {
+            return fail(
+              `Not bought: Nansen's boards (netflow, holdings, dex-trades, $0.05 each) are only bought when your owner switches on the smart_money feed. ${perToken}`,
+            );
+          }
+          if (endpoint === "netflow") {
+            return fail(
+              `Not bought: discover_tokens buys the netflow board for you, once per chain per tick, and its table shows each row's flow under SM24H. ${perToken}`,
+            );
+          }
         }
         try {
           const result = await source.query(ctx.x402, parsed.params);
