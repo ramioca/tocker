@@ -22,7 +22,7 @@ Rules aren't edge. Neither is AI alone. Last October, six frontier models traded
 Who pays? Traders already do. Last year, Solana traders paid nine hundred forty million dollars to bots and terminals. That's our lane. They charge one percent a trade. We'll charge half, which covers the data and the gates.
 
 ## competition
-An early category, with good teams. We bet the other way. Most offer a chat box or a fixed bot. We give you one line of English and the dials: gates, data, model, sizing, exits. It runs hosted, 24/7. No RPC, no data keys, just your AI key, soon not even that. We publish every fill, never the strategy.
+An early category, with good teams. We bet the other way. Most offer a chat box or a fixed bot. We give you one line of English and the dials: gates, data, model, sizing, exits. It runs hosted, 24/7. No RPC, no data keys, no AI key: your agent pays for its model in USDC. We publish every fill, never the strategy.
 
 ## gtm
 That public record is the growth loop. Each trade posts with its entry score, like WIF's eighty-one, so every trade markets itself. Followers launch their own agents; next, creators share the fees. We start with Solana memecoins, four hundred eighty-two billion dollars traded last year. Then Polymarket, then tokenized stocks.
@@ -35,7 +35,7 @@ It's in private beta on Solana and Base. Tomorrow, another twenty-one thousand t
 
 ## What's labelled planned (keep it that way until shipped)
 - 50 bps fee: beta charges $0.10 flat per fill (`src/lib/platform/fee.ts`).
-- Inference paid per call in USDC: today agents run on the owner's key (Anthropic, OpenAI, OpenRouter).
+- Inference paid per call in USDC: LIVE behind a per-account switch (main #28 'Pay-per-use thinking', #29 eleven models). An agent with no LLM key buys each model step from BlockRun in USDC from its own Solana wallet; spend caps and a kill switch (INFERENCE_USDC) on the admin page. Disclose the founder's BlockRun role (Q&A 6).
 - Polymarket and tokenized stocks: "next".
 - Product slide is an illustrative mock-up of a sample run.
 
@@ -71,13 +71,13 @@ It's in private beta on Solana and Base. Tomorrow, another twenty-one thousand t
 8. **ClawPump claims $225M+ volume and has x402 and USDC inference too.** Credit it: it's the best toolkit for agents that earn, with wallets, 130 MCP tools and gasless launches. Its rug check is an opt-in skill; ours is a veto in code before every buy. It helps agents earn; Tocker trades a person's strategy in public.
 9. **"Private beta next to $2.6B of volume: why a Series A?"** Rivals' volume proves demand for agents that trade. None we found vetoes a buy on token-safety checks in code, and that is where retail loses money (research/02). Bring beta numbers: agents live, fills, and the share of candidate buys the gates vetoed.
 10. **"Can I copy an agent?"** No, by design. Copying front-runs the leader and leaks the strategy. You follow an agent's public fills and launch your own; creator fee share is next.
-11. **"USDC inference: ClawPump and Minara already have it."** Yes, which is why it isn't on the slide as a difference: paying for the model is common (credits at ClawPump, Minara, Senpi, Gina). Today agents run on your own key; per-call USDC inference is next. The edge is data, safety and the public record.
+11. **"USDC inference: ClawPump and Minara already have it."** So do we now: an agent with no key pays for its own model steps in USDC (pay-per-use, eleven models, switched on per account). It's table stakes, not the edge; the edge is data, safety and the public record.
 12. **"DXRG also says no information source gave an edge, so why buy data?"** It tested in-house context and research sub-agents, not paid on-chain feeds, in a deliberately hostile market (a 2.3% fee per swap, 12 tokens). Its point is that agents on one feed herd: 1,544 piled into one token within an hour. The same paper finds that discipline lives in the tool, not the prompt. That is the design: the agent picks its own data, and gates and exits live in code.
 13. **"76% rugs: whose number?"** SolRugDetector (arXiv, Mar 2026) labelled 76,469 of 100,063 tokens launched on Orca, Raydium and Meteora in H1 2025. Each study defines rugs differently, so don't add it to Solidus's 98.6% (liquidity collapse) or call either "scams".
 14. **"Can the owner switch gates off?"** Some, yes: 7 of the 10 are on by default and owner-configurable (src/lib/agent/config.ts). Mint, freeze, liquidity, holders, age and top-10 also block when the data is unknown; honeypot, can't-sell and tax pass when it's missing. Don't say "unknown means no" for all ten.
 15. **"You have a leaderboard too."** Yes, ranked by PnL with the score at entry. The difference is no copy trading and a private strategy, not the absence of ranking.
 
-16. **"No API keys?"** None to wire for RPC, swaps, data or X: Tocker holds those. Today you bring one AI model key (Anthropic, OpenAI or OpenRouter); paying for the model per call in USDC is next. Don't say "no keys at all" until it ships.
+16. **"No API keys?"** None. Tocker holds the RPC, swap, data and X access, and an agent with no AI key pays for its model per step in USDC (BlockRun, from the agent's own wallet). Pay-per-use is switched on per account during the beta, so say "no keys needed", and know who has it on.
 17. **"More configurable than whom?"** Concretely: strategy, score floor, liquidity/holder/age/tax thresholds, blocklist, up to 12 paid data sources, model, sizing (fixed $, % equity, volatility), exits, auto vs approve. Fere AI's catalogue agents let you tune only size, leverage, stop and take-profit; Senpi, Minara and Ask Gina also take plain-English strategies, so don't claim "the only".
 
 ## Know the field (keep off the slide)
