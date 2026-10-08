@@ -10,7 +10,7 @@ import { chooseSource, usdcEstimate, walletNeedUsd } from "@/components/agents/t
 import { formatUsd } from "@/components/common/format";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import type { DataSourceInfo } from "@/server/types";
-import { REQUIRED_ORDER, REQUIRED_PLACE, ROW_PLACE, type SummaryLabels } from "./contract";
+import { REQUIRED_ORDER, REQUIRED_PLACE, ROW_PLACE, type SummaryEdit, type SummaryLabels } from "./contract";
 import {
   commitShortLine,
   costFacts,
@@ -717,5 +717,144 @@ describe("runLine", () => {
       d.config.execution = { mode: "auto", proposalTtlMinutes: 60 };
     });
     expect(runLine(draft.config)).toBe("Discover → Score 62+ → Propose → Trade");
+  });
+});
+
+/**
+ * The same card over a saved agent, on its settings page. How it starts, how it is funded
+ * and what is signed were all settled when it was created, so the three summaries that
+ * state them say what is true of the agent now.
+ */
+describe("a saved agent's card", () => {
+  const live: SummaryEdit = { mode: "live", status: "active", balanceText: "$20.00 USDC in its wallets" };
+  const paper: SummaryEdit = { mode: "paper", status: "paused", balanceText: "$0.00 USDC in its wallets" };
+  const ctx = { hunts: "Solana · score 62+ · $15K+ liquidity · 4 feeds", labels, payPerUseAllowed: false };
+
+  it("closes the schedule row on the mode it is in, not on how it starts or its paper balance", () => {
+    const draft = emptyDraft();
+    const facts = costFacts(draft, sources, opts);
+    expect(scheduleSummary(draft, facts, labels, live)).toBe(
+      "Every 15 min · asks before each trade (1 h to decide) · live",
+    );
+    const line = scheduleSummary(draft, facts, labels, paper);
+    expect(line).toBe("Every 15 min · asks before each trade (1 h to decide) · paper");
+    expect(line).not.toContain("starts");
+    expect(line).not.toContain("$10K");
+    // The mode is all it reads, so the Schedule step can quote it without the balance.
+    expect(scheduleSummary(draft, facts, labels, { mode: "live" })).toBe(scheduleSummary(draft, facts, labels, live));
+  });
+
+  it("reads the interval and the execution from the working copy", () => {
+    const draft = draftWith((d) => {
+      d.config.schedule = { intervalMinutes: 60 };
+      d.config.execution = { mode: "auto", proposalTtlMinutes: 60 };
+    });
+    expect(scheduleSummary(draft, costFacts(draft, sources, opts), labels, live)).toBe(
+      "Every 1h · trades on its own · live",
+    );
+    const manual = draftWith((d) => {
+      d.config.schedule = { intervalMinutes: 0 };
+    });
+    expect(scheduleSummary(manual, costFacts(manual, sources, opts), labels, paper)).toBe(
+      "Manual only · asks before each trade (1 h to decide) · paper",
+    );
+  });
+
+  it("states no plan a draft could hold: not a paused start, not a funded amount, not the checklist", () => {
+    for (const draft of [
+      funded(true),
+      funded(false),
+      draftWith((d) => {
+        d.activate = false;
+        d.paperStartingUsd = 500;
+      }),
+    ]) {
+      expect(scheduleSummary(draft, costFacts(draft, sources, opts), labels, live)).toBe(
+        "Every 15 min · asks before each trade (1 h to decide) · live",
+      );
+    }
+  });
+
+  it("makes the money row the balance the page shows, then the mode", () => {
+    const draft = emptyDraft();
+    const facts = costFacts(draft, sources, opts);
+    expect(fundingSummary(draft, facts, live)).toBe("$20.00 USDC in its wallets · live");
+    expect(fundingSummary(draft, facts, paper)).toBe("$0.00 USDC in its wallets · paper");
+    // The page's own words when a wallet could not be read, never a figure in their place.
+    expect(fundingSummary(draft, facts, { ...live, balanceText: "Balance unavailable" })).toBe(
+      "Balance unavailable · live",
+    );
+    // Whatever funding a draft would have planned.
+    expect(fundingSummary(funded(true), costFacts(funded(true), sources, opts), live)).toBe(
+      "$20.00 USDC in its wallets · live",
+    );
+    const usdc = payPerUse();
+    expect(fundingSummary(usdc, costFacts(usdc, sources, usdcOpts), paper)).toBe("$0.00 USDC in its wallets · paper");
+  });
+
+  it("calls the last row Money and sends it to the agent's wallets", () => {
+    const draft = emptyDraft();
+    const facts = costFacts(draft, sources, opts);
+    const rows = previewRows(draft, facts, validateDraft(draft, []), { ...ctx, edit: live });
+    expect(rows.map((row) => row.id)).toEqual(["hunts", "data", "limits", "exits", "runs", "thinks", "money"]);
+    expect(rows.map((row) => row.label)).toEqual([
+      "Where it hunts",
+      "Data it buys",
+      "Risk limits",
+      "When it sells",
+      "Schedule & mode",
+      "How it thinks",
+      "Money",
+    ]);
+    const money = rows.find((row) => row.id === "money");
+    expect(money?.text).toBe("$20.00 USDC in its wallets · live");
+    expect(money?.place).toEqual({ step: "manage", sub: "wallets" });
+    expect(money?.needed).toBe(false);
+    expect(rows.find((row) => row.id === "runs")?.text).toBe(scheduleSummary(draft, facts, labels, live));
+    // Every other row is the one a draft has, and leads where it always did.
+    const drafted = previewRows(draft, facts, validateDraft(draft, []), ctx);
+    for (const row of rows) {
+      if (row.id === "money") continue;
+      expect(row.place).toEqual(ROW_PLACE[row.id]);
+      if (row.id !== "runs") expect(row).toEqual(drafted.find((other) => other.id === row.id));
+    }
+  });
+
+  it("leaves what is signed and what the wallet needs out of a run", () => {
+    const usdc = payPerUse();
+    const usdcFacts = costFacts(usdc, sources, usdcOpts);
+    expect(costLines(usdc, usdcFacts).map((line) => line.id)).toContain("wallet");
+    expect(costLines(usdc, usdcFacts, paper).map((line) => line.id)).toEqual(["runs", "thinking", "data", "fee"]);
+    const fund = funded(false);
+    const fundFacts = costFacts(fund, sources, opts);
+    expect(costLines(fund, fundFacts).map((line) => line.id)).toContain("sign");
+    expect(costLines(fund, fundFacts, live).map((line) => line.id)).toEqual(["runs", "thinking", "data", "fee"]);
+    // The lines that stay are the ones a draft has.
+    expect(costLines(usdc, usdcFacts, paper)).toEqual(costLines(usdc, usdcFacts).slice(0, 4));
+    const draft = emptyDraft();
+    const facts = costFacts(draft, sources, opts);
+    expect(costLines(draft, facts, live)).toEqual(costLines(draft, facts));
+  });
+
+  it("changes nothing when it is not told about a saved agent", () => {
+    for (const [draft, options] of [
+      [emptyDraft(), opts],
+      [funded(true), opts],
+      [funded(false), opts],
+      [payPerUse(), usdcOpts],
+    ] as const) {
+      const facts = costFacts(draft, sources, options);
+      const errors = validateDraft(draft, [], options);
+      const rowsCtx = { ...ctx, payPerUseAllowed: options.payPerUseAllowed };
+      expect(scheduleSummary(draft, facts, labels, undefined)).toBe(scheduleSummary(draft, facts, labels));
+      expect(fundingSummary(draft, facts, undefined)).toBe(fundingSummary(draft, facts));
+      expect(costLines(draft, facts, undefined)).toEqual(costLines(draft, facts));
+      expect(previewRows(draft, facts, errors, { ...rowsCtx, edit: undefined })).toEqual(
+        previewRows(draft, facts, errors, rowsCtx),
+      );
+    }
+    const draft = emptyDraft();
+    const rows = previewRows(draft, costFacts(draft, sources, opts), validateDraft(draft, []), ctx);
+    expect(rows.at(-1)).toMatchObject({ label: "Funding", place: { step: "create" } });
   });
 });

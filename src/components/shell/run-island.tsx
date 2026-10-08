@@ -54,12 +54,31 @@ const RUN_DOCK = "pointer-events-none fixed inset-x-0 top-[calc(3.5rem+0.625rem)
 /**
  * Where the approvals island sits. Phone: just above the tab bar. Desktop: bottom-centre.
  * It stays at the bottom because it is persistent: docked at the top it would sit over
- * the head of every page for as long as a proposal waits. `data-run-island` on this dock
- * is how the toaster and the page's bottom padding know to clear it; the run island is
- * at the other end of the screen and needs neither.
+ * the head of every page for as long as a proposal waits.
+ *
+ * A page with a sticky action bar (the agent builder, an agent's settings) is the
+ * exception. The bottom of that page is the bar's Back, Next and Save, and the island
+ * would lie on them for as long as a proposal waits. There it docks where the run island
+ * does, at every width, and the shell opens a gap under the top bar for it
+ * (app-shell.tsx), so the head of the page is not under it either. That gap is only at
+ * the top of the page: scrolled, the page passes under the island, as it does at the
+ * bottom everywhere else.
+ *
+ * The bar holds a flag on <html> while it is mounted (src/hooks/root-flag.ts), set in the
+ * commit that mounts it: on a move inside the app the island changes ends in the same
+ * frame the bar appears or goes. A full page load is the one time it can be seen to move.
+ * The island is drawn from a poll that starts once the session is known, and the bar
+ * holds its flag only once the page has arrived and is running. When the poll answers
+ * first, the island shows at the bottom over the page's skeleton and goes up when the
+ * page takes over. Nothing under it takes a press in that time.
+ *
+ * `data-run-island` on this dock is how the toaster, the page's bottom padding and the gap
+ * at the top know to clear it. The two at the bottom carry the same exception: at the top
+ * the island takes no room down there, as the run island never does.
  */
 const APPROVALS_DOCK =
-  "pointer-events-none fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4 md:bottom-6";
+  "pointer-events-none fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-4 md:bottom-6 " +
+  "[html[data-sticky-actionbar]_&]:top-[calc(3.5rem+0.625rem)] [html[data-sticky-actionbar]_&]:bottom-auto";
 
 /**
  * Every island view is capped at the viewport less the dock's gutters. The shell

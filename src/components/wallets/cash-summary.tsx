@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { formatUsd } from "@/components/common/format";
+import { agentSettingsHref } from "@/components/agents/settings/settings-href";
 import { chainLabelFor, type UnifiedCash } from "@/lib/wallets/funding";
 import { cn } from "@/lib/utils";
 import type { Chain } from "@/server/types";
@@ -70,8 +71,8 @@ export function ChainBreakdown({
   onDeposit?: (chain: Chain) => void;
   /**
    * Closes the surface this list sits in when an agent's Withdraw link is followed. A
-   * route change closes it anyway; from that agent's own settings page only the hash
-   * changes, and the panel would stay open over the card it just scrolled to.
+   * route change closes it anyway; from that agent's own settings page only the step and
+   * the hash change, and the panel would stay open over the card it just opened.
    */
   onNavigate?: () => void;
   className?: string;
@@ -133,7 +134,7 @@ export function ChainBreakdown({
             {/* Straight to the agent's Withdraw card: this money cannot be sent from the
                 cash Withdraw, and the agent's name above only leads to its page. */}
             <Link
-              href={`/agents/${agent.slug}/settings#withdraw`}
+              href={agentSettingsHref(agent.slug, "withdraw")}
               onClick={onNavigate}
               className="mt-0.5 inline-block rounded text-[11px] text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >

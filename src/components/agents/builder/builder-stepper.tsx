@@ -1,19 +1,26 @@
 import { Check, CircleAlert } from "lucide-react";
 import type { BuilderStepId, StepStatus, Via } from "./contract";
 import { EASE, FOCUS, FOCUS_OFFSET, PartIcon, SILK, TYPE } from "./look";
-import { PART_STROKE } from "./parts";
+import { PART_STROKE, type PartId } from "./parts";
 import { cn } from "@/lib/utils";
 
-export interface StepView {
-  id: BuilderStepId;
+/**
+ * One step of the rail. The id is a part, never any string: the rail draws the part's
+ * icon, so a step with no icon cannot be given to it.
+ */
+export interface StepView<Id extends PartId = BuilderStepId> {
+  id: Id;
   /** One word, for under the segment: "Hunts". */
   label: string;
   /** The step's name where there is room for it: "Where it hunts". */
   name: string;
   status: StepStatus;
-  /** The status as a word: "Needed", "Ready", "Defaults", "Edited", "Fix". */
+  /**
+   * The status as a word, which is the page's to choose: "Needed", "Ready", "Defaults",
+   * "Edited", "Fix" while creating; "Saved", "Changed", "Fix" over a saved agent.
+   */
   statusLabel: string;
-  /** "error" only after a failed Create; before that a missing thing is simply needed. */
+  /** "error" only after a failed Create or a refused save; before that a missing thing is simply needed. */
   tone: "neutral" | "error";
 }
 
@@ -72,17 +79,17 @@ function StateBadge({ status, error }: { status: StepStatus; error: boolean }) {
  * row is a target, as wide as an eighth of the screen allows (43px on a 375px phone). The
  * line lies over the bottom of the row and lets taps through.
  */
-export function BuilderStepper({
+export function BuilderStepper<Id extends PartId>({
   steps,
   current,
   onGo,
   disabled = false,
   animate = false,
 }: {
-  steps: StepView[];
-  current: BuilderStepId;
-  onGo: (id: BuilderStepId, via: Via) => void;
-  /** While the agent is being created: the steps stay where they are. */
+  steps: StepView<Id>[];
+  current: Id;
+  onGo: (id: Id, via: Via) => void;
+  /** While the agent is being created or saved: the steps stay where they are. */
   disabled?: boolean;
   /** True when the step was changed with a pointer: only then does a segment fill in motion. */
   animate?: boolean;

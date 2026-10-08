@@ -13,13 +13,22 @@ import { cn } from "@/lib/utils";
  * Bottom clearance is one variable so it can follow the app's chrome, and falls back to
  * Sonner's own 24px / 16px where there is none (the landing page, sign-in). Below `md`
  * it clears the phone tab bar — Sonner's mobile breakpoint is 600px, so both offsets
- * read it — and at any width it clears a docked approvals island, which would
- * otherwise sit on the same spot (the run island is docked at the top). The island rule chains both :has() so it outranks the
- * tab-bar one. A page with a sticky action bar on a phone (the builder's Create, an
- * agent's Save) lifts it past that bar and whatever is under it — otherwise the toast
- * explaining a failed save covers the button that retries it. That one reads the flag
- * the bar holds on <html> (src/hooks/root-flag.ts), and is important because it has to
- * win over the rules above.
+ * read it — and at any width it clears an approvals island docked at the bottom, which
+ * would otherwise sit on the same spot. The island rule chains both :has() so it outranks
+ * the tab-bar one.
+ *
+ * A page with a sticky action bar (the builder's Create, an agent's Save) lifts the toasts
+ * past that bar at every width — otherwise the toast explaining a failed save covers the
+ * button that retries it, and stays there while the pointer rests on it. On a phone that
+ * is the bar and the tab bar under it, and the rule is important because it has to win
+ * over the tab-bar one. From `md` the bar is alone at the bottom, and 7rem clears it in
+ * both places it can be: stuck to the viewport (73px tall with the agent strip in it,
+ * 69px without) and at rest at the end of a page, 24px higher. Both read the flag the
+ * bar holds on <html> (src/hooks/root-flag.ts).
+ *
+ * On such a page the approvals island docks at the top (src/components/shell/run-island.tsx)
+ * and takes no room down here, so the island rules do not apply there:
+ * `html:not([data-sticky-actionbar])`.
  */
 export function AppToaster() {
   return (
@@ -32,9 +41,10 @@ export function AppToaster() {
       mobileOffset={{ bottom: "var(--toast-bottom, 16px)" }}
       className={cn(
         "max-md:[body:has([data-tab-bar])_&]:[--toast-bottom:calc(4.5rem+env(safe-area-inset-bottom))]",
-        "max-md:[body:has([data-tab-bar]):has([data-run-island])_&]:[--toast-bottom:calc(8rem+env(safe-area-inset-bottom))]",
-        "md:[body:has([data-run-island])_&]:[--toast-bottom:6rem]",
+        "max-md:[html:not([data-sticky-actionbar])_body:has([data-tab-bar]):has([data-run-island])_&]:[--toast-bottom:calc(8rem+env(safe-area-inset-bottom))]",
+        "md:[html:not([data-sticky-actionbar])_body:has([data-run-island])_&]:[--toast-bottom:6rem]",
         "max-md:[html[data-sticky-actionbar]_&]:[--toast-bottom:calc(9rem+env(safe-area-inset-bottom))]!",
+        "md:[html[data-sticky-actionbar]_&]:[--toast-bottom:7rem]",
       )}
       toastOptions={{
         classNames: {

@@ -3,10 +3,10 @@
 import { useEffect, useId, useState } from "react";
 import { ChevronRight, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { REQUIRED_PLACE, type BuilderStepId, type Place, type PreviewRow } from "../contract";
+import { REQUIRED_PLACE } from "../contract";
 import { Facts, HAIR, PartIcon, TYPE } from "../look";
 import { ROW_PART } from "../parts";
-import { KICKER } from "./preview-head";
+import { KICKER, type CardPlace, type CardRow } from "./preview-head";
 import { rowsToTint } from "./tint";
 
 /** How long the tint stays up before it fades, in ms. The fade itself is the CSS below. */
@@ -83,10 +83,10 @@ export function PreviewRows({
   style,
 }: {
   prompt: string;
-  rows: PreviewRow[];
-  onGo: (place: Place) => void;
+  rows: CardRow[];
+  onGo: (place: CardPlace) => void;
   /** The step that is open: the rows edited there are marked. */
-  currentStep?: BuilderStepId;
+  currentStep?: string;
   /** Changes in the same render as the rows when the whole draft was swapped. */
   quietKey?: unknown;
   disabled?: boolean;

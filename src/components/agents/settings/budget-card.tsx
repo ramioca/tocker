@@ -74,7 +74,7 @@ export function BudgetCard({
       <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
         It does not cap <em className="not-italic text-foreground">trades</em>. A swap route moves
         tokens inside instructions the policy cannot read, so the size of a trade is set by{" "}
-        <span className="text-foreground">Max per trade</span> in the risk config above.
+        <span className="text-foreground">Max per trade</span> under Risk limits.
       </p>
 
       {hasRealWallets ? (

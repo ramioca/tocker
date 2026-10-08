@@ -10,6 +10,11 @@
  *
  * The summaries and the one-line cost text were inline in `agent-builder.tsx`. They are
  * moved, not reworded: the tests pin them character for character.
+ *
+ * An agent's settings page shows the same card over a saved agent. Three of these would
+ * then state a plan that was carried out when the agent was created (how it starts, how
+ * it is funded, what is signed). Each of them takes an `edit` and, given one, says what
+ * is true of the agent now. Without it every string is what it has always been.
  */
 import { formatUsd } from "@/components/common/format";
 import { checkUsdc, shownSource, usdcEstimate, walletNeedUsd } from "@/components/agents/thinking";
@@ -21,6 +26,7 @@ import {
   REQUIRED_ORDER,
   REQUIRED_PLACE,
   ROW_PLACE,
+  type BuilderStepId,
   type CostFacts,
   type CostLine,
   type KeyRef,
@@ -28,6 +34,9 @@ import {
   type PreviewRowId,
   type ReadyItem,
   type RequiredId,
+  type SettingsStepId,
+  type StepPlace,
+  type SummaryEdit,
   type SummaryLabels,
 } from "./contract";
 import {
@@ -124,8 +133,14 @@ export function exitSummary(risk: BuilderDraft["config"]["risk"]): string {
   return line.charAt(0).toUpperCase() + line.slice(1);
 }
 
-/** The "Funding" line. */
-export function fundingSummary(draft: BuilderDraft, facts: CostFacts): string {
+/**
+ * The "Funding" line. A saved agent has no funding left to plan, so with `edit` this is
+ * its "Money" line: what its wallets hold, in the words the page already uses for it
+ * (`edit.balanceText`, which is also what says so when a wallet could not be read), then
+ * the mode it is in.
+ */
+export function fundingSummary(draft: BuilderDraft, facts: CostFacts, edit?: SummaryEdit): string {
+  if (edit) return `${edit.balanceText} · ${edit.mode}`;
   return draft.funding.mode === "paper"
     ? facts.thinkingNeedUsd !== null
       ? // Paper trades need no money; pay-per-use thinking does, from the first run.
@@ -134,10 +149,21 @@ export function fundingSummary(draft: BuilderDraft, facts: CostFacts): string {
     : `${formatUsd(draft.funding.amountUsd)} USDC, signed by you on create`;
 }
 
-/** The "Schedule & mode" line. */
-export function scheduleSummary(draft: BuilderDraft, facts: CostFacts, labels: SummaryLabels): string {
+/**
+ * The "Schedule & mode" line. With `edit` it closes on the mode the saved agent is in:
+ * how it starts and what it starts with were decided when it was created, and no save
+ * changes either. Only the mode is read, so the Schedule step, which is told the mode and
+ * not the balance, can quote the same line as the agent card.
+ */
+export function scheduleSummary(
+  draft: BuilderDraft,
+  facts: CostFacts,
+  labels: SummaryLabels,
+  edit?: Pick<SummaryEdit, "mode">,
+): string {
   const interval = facts.intervalMinutes;
   const execution = executionLabel(draft.config.execution, labels);
+  if (edit) return `${labels.interval(interval)} · ${execution} · ${edit.mode}`;
   return facts.heldForLive
     ? `${labels.interval(interval)} · ${execution} · real money only, live after the checklist`
     : draft.funding.mode === "fund"
@@ -297,34 +323,76 @@ const ROW_LABEL: Record<PreviewRowId, string> = {
   money: "Funding",
 };
 
-/** The seven "Already set" rows, in the fixed order of `ROW_PLACE`. */
+/** What the last row is called on a saved agent's card, where it states a balance. */
+const SAVED_MONEY_LABEL = "Money";
+
+/**
+ * A row of a saved agent's card. The same row, except that its place can be on the
+ * settings page's own last step: that is where the money row leads.
+ */
+export type SavedPreviewRow = Omit<PreviewRow, "place"> & { place: StepPlace<BuilderStepId | SettingsStepId> };
+
+/** A saved agent's money is in its wallets, which the settings page keeps under Manage. */
+const SAVED_MONEY_PLACE: StepPlace<SettingsStepId> = { step: "manage", sub: "wallets" };
+
+interface RowsContext {
+  hunts: string;
+  labels: SummaryLabels;
+  payPerUseAllowed: boolean;
+}
+
+/**
+ * The seven "Already set" rows, in the fixed order of `ROW_PLACE`. With `ctx.edit` the
+ * card is a saved agent's: the schedule row closes on its mode, and the last row is its
+ * money, not a funding plan, and leads to its wallets.
+ */
 export function previewRows(
   draft: BuilderDraft,
   facts: CostFacts,
   errors: Record<string, string>,
-  ctx: { hunts: string; labels: SummaryLabels; payPerUseAllowed: boolean },
-): PreviewRow[] {
+  ctx: RowsContext & { edit?: undefined },
+): PreviewRow[];
+export function previewRows(
+  draft: BuilderDraft,
+  facts: CostFacts,
+  errors: Record<string, string>,
+  ctx: RowsContext & { edit?: SummaryEdit },
+): SavedPreviewRow[];
+export function previewRows(
+  draft: BuilderDraft,
+  facts: CostFacts,
+  errors: Record<string, string>,
+  ctx: RowsContext & { edit?: SummaryEdit },
+): SavedPreviewRow[] {
+  const { edit } = ctx;
   const think = thinkFrom(draft, errors, { payPerUseAllowed: ctx.payPerUseAllowed });
   const text: Record<PreviewRowId, string> = {
     hunts: ctx.hunts,
     data: dataSummary(facts),
     limits: riskSummary(draft.config.risk, facts.feeUsd),
     exits: exitSummary(draft.config.risk),
-    runs: scheduleSummary(draft, facts, ctx.labels),
+    runs: scheduleSummary(draft, facts, ctx.labels, edit),
     thinks: think.text,
-    money: fundingSummary(draft, facts),
+    money: fundingSummary(draft, facts, edit),
   };
-  return ROW_ORDER.map((id) => ({
-    id,
-    label: ROW_LABEL[id],
-    text: text[id],
-    needed: id === "thinks" && think.needed,
-    place: ROW_PLACE[id],
-  }));
+  return ROW_ORDER.map((id) => {
+    const money = edit !== undefined && id === "money";
+    return {
+      id,
+      label: money ? SAVED_MONEY_LABEL : ROW_LABEL[id],
+      text: text[id],
+      needed: id === "thinks" && think.needed,
+      place: money ? SAVED_MONEY_PLACE : ROW_PLACE[id],
+    };
+  });
 }
 
-/** The lines of "A run": how often, whose bill each part is, and what is signed. */
-export function costLines(draft: BuilderDraft, facts: CostFacts): CostLine[] {
+/**
+ * The lines of "A run": how often, whose bill each part is, and what is signed. With
+ * `edit` the last two are left out: a saved agent has nothing left to sign on create, and
+ * what its wallet holds is on its money row.
+ */
+export function costLines(draft: BuilderDraft, facts: CostFacts, edit?: SummaryEdit): CostLine[] {
   const { thinking } = facts;
   const manual = facts.intervalMinutes === 0;
   const lines: CostLine[] = [];
@@ -367,6 +435,8 @@ export function costLines(draft: BuilderDraft, facts: CostFacts): CostLine[] {
       text: `${formatUsd(facts.feeUsd)} per fill${share === null ? "" : ` (${share}% of a ticket, each way)`}`,
     });
   }
+
+  if (edit) return lines;
 
   if (draft.funding.mode === "fund") {
     lines.push({

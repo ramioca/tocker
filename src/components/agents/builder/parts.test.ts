@@ -1,7 +1,14 @@
 import { readdirSync, readFileSync } from "node:fs";
 import * as lucide from "lucide-react";
 import { describe, expect, it } from "vitest";
-import { BUILDER_STEPS, REQUIRED_ORDER, REQUIRED_PLACE, ROW_PLACE, type PreviewRowId } from "./contract";
+import {
+  BUILDER_STEPS,
+  REQUIRED_ORDER,
+  REQUIRED_PLACE,
+  ROW_PLACE,
+  SETTINGS_STEPS,
+  type PreviewRowId,
+} from "./contract";
 import { PART_ICON, PART_ICON_NAME, PART_STEP, REQUIRED_PART, ROW_PART, type PartId } from "./parts";
 
 const PARTS = Object.keys(PART_ICON) as PartId[];
@@ -10,6 +17,14 @@ const ROWS = Object.keys(ROW_PLACE) as PreviewRowId[];
 describe("part icons", () => {
   it("every step has an icon", () => {
     for (const id of BUILDER_STEPS) expect(PART_ICON[id], id).toBeDefined();
+    // The settings page draws the same rail, and the rail cannot draw a step with no icon.
+    for (const id of SETTINGS_STEPS) expect(PART_ICON[id], id).toBeDefined();
+  });
+
+  it("the Manage step of the settings page is the wrench", () => {
+    expect(PART_ICON.manage).toBe(lucide.Wrench);
+    expect(PART_ICON_NAME.manage).toBe("Wrench");
+    expect(PART_STEP.manage).toBe("manage");
   });
 
   it("every card row has a part, and that part has an icon", () => {
@@ -41,10 +56,13 @@ describe("part icons", () => {
     // The rail looks its icon up by step id and the card by the row's part. With the case
     // above, a row that is a whole step can only get that step's icon.
     for (const id of BUILDER_STEPS) expect(PART_STEP[id], id).toBe(id);
+    for (const id of SETTINGS_STEPS) expect(PART_STEP[id], id).toBe(id);
   });
 
   it("nothing else in the builder imports a part icon from lucide", () => {
     const taken = new Set(Object.values(PART_ICON_NAME));
+    // The wrench is kept to this file too, although only the settings page has a Manage step.
+    expect(taken.has("Wrench")).toBe(true);
     const dir = new URL("./", import.meta.url);
     const files = [
       ...readdirSync(dir).map((name) => new URL(name, dir)),

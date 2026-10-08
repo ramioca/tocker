@@ -3,6 +3,7 @@
 import { useId, useMemo, useRef, useState, useTransition } from "react";
 import {
   AlertTriangle,
+  CircleAlert,
   CircleDollarSign,
   FlaskConical,
   Info,
@@ -27,9 +28,11 @@ import {
 import { PayPerUsePanel, ThinkSourceChoice } from "@/components/agents/think-source";
 import {
   chooseSource,
+  dayOverLimit,
   defaultUsdc,
   shownSource,
   stepsAllowed,
+  usdcEstimate,
   type UsdcSettings,
 } from "@/components/agents/thinking";
 import { MAX_PAID_STEPS, USDC_DEFAULT_INTERVAL_MINUTES, type ThinkSource } from "@/lib/x402/inference-types";
@@ -46,6 +49,11 @@ import { addLlmKeyAction } from "@/components/agents/agent-actions";
 import { ExecutionControls } from "@/components/agents/proposals/execution-controls";
 import { DataSourcePicker } from "@/components/agents/data-source-picker";
 import { ExitRulesFields } from "@/components/agents/exit-rules";
+import { UniversePreview } from "@/components/agents/settings/universe-preview";
+// From its own file, not the trading barrel, which would bring the price chart and the
+// receipts along to the page that creates an agent.
+import { SizingControls } from "@/components/trading/sizing-controls";
+import { readSizing } from "@/lib/trading/sizing";
 import { CashTotal } from "@/components/wallets/cash-summary";
 import { DepositSheet } from "@/components/wallets/deposit-sheet";
 import { useFundingPlan } from "@/components/wallets/use-funding-plan";
@@ -59,6 +67,7 @@ import {
   transferLabel,
   transfersFor,
 } from "@/lib/wallets/funding";
+import type { EditContext } from "./contract";
 import { Field, RiskSlider, StepHeading, Toggle } from "./field";
 import { SPECS } from "./module-specs";
 import { CHOICE_CARD, CHOICE_OFF, CHOICE_ON, IconTile, Mark, TYPE, type Tone } from "./look";
@@ -92,6 +101,7 @@ import {
   type StrategyPreset,
 } from "./types";
 import { cn } from "@/lib/utils";
+import type { AgentRiskWithSizing, PositionSizingConfig } from "@/db/schema";
 import type { Chain, DataSourceInfo, LlmKeyRow } from "@/server/types";
 
 export interface StepProps {
@@ -101,9 +111,17 @@ export interface StepProps {
   errors: Record<string, string>;
   /** The one-page builder renders its own section headers; steps drop theirs. */
   hideHeading?: boolean;
+  /** Set only when the step is editing a saved agent. */
+  edit?: EditContext;
 }
 
 // ------------------------------------------------------------------ identity
+
+/**
+ * As much of a seed as a shuffle keeps in front of its four random characters. Every
+ * avatar tile's name is shorter, so a seed that started as a tile is never cut.
+ */
+const MAX_SEED_BASE = 24;
 
 export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) {
   const shuffled = !(AVATAR_SEEDS as readonly string[]).includes(draft.avatarSeed);
@@ -173,7 +191,10 @@ export function IdentityStep({ draft, update, errors, hideHeading }: StepProps) 
             type="button"
             onClick={() => {
               // Re-suffix the base seed rather than appending, so repeat shuffles stay short.
-              const base = draft.avatarSeed.split("-")[0];
+              // A saved agent that never picked an avatar is seeded with its own name,
+              // which can be as long as a name may be: cut, so the seed stays one a save
+              // accepts.
+              const base = draft.avatarSeed.split("-")[0].slice(0, MAX_SEED_BASE);
               update({ avatarSeed: `${base}-${Math.random().toString(36).slice(2, 6)}` });
               setShuffles((n) => n + 1);
             }}
@@ -457,10 +478,15 @@ export function ThinkStep({
   onKeyAdded,
   payPerUseAllowed = false,
   hideHeading,
+  edit,
 }: StepProps & {
   llmKeys: LlmKeyRow[];
   onKeyAdded: (key: LlmKeyRow) => void;
-  /** The server's answer for this viewer. False: no choice is shown, only the key fields. */
+  /**
+   * The server's answer for this viewer. False: no choice is shown, only the key fields.
+   * For a saved agent it is also true while that agent is saved on pay per use, whoever
+   * is allowed what today, so it can always be moved to its owner's key.
+   */
   payPerUseAllowed?: boolean;
 }) {
   const provider = draft.config.llm.provider;
@@ -477,14 +503,20 @@ export function ThinkStep({
   if (scheduleMovedFrom !== null && draft.config.schedule.intervalMinutes !== USDC_DEFAULT_INTERVAL_MINUTES) {
     setScheduleMovedFrom(null);
   }
-  /** The limits last set in this form, put back if the owner returns to pay-per-use. */
-  const rememberedUsdc = useRef<UsdcSettings | null>(null);
+  /**
+   * The limits last set in this form, put back if the owner returns to pay-per-use. A
+   * saved agent starts with the ones it was saved with.
+   */
+  const rememberedUsdc = useRef<UsdcSettings | null>(edit?.savedConfig.llm.usdc ?? null);
   const switchSource = (next: ThinkSource) => {
     if (next === source) return;
     if (source === "usdc") rememberedUsdc.current = draft.config.llm.usdc ?? null;
     const change = chooseSource(draft.config, next, {
       remembered: rememberedUsdc.current,
       restoreInterval: scheduleMovedFrom,
+      // An agent whose saved config names its mode has it named again on the way back,
+      // so the switch to a key is written down, not left to be read from a missing field.
+      explicitKey: edit ? edit.savedConfig.llm.source !== undefined : undefined,
     });
     updateConfig(change.config);
     setScheduleMovedFrom(change.scheduleMovedFrom);
@@ -510,6 +542,9 @@ export function ThinkStep({
           intervalMinutes={draft.config.schedule.intervalMinutes}
           maxSteps={draft.config.llm.maxSteps}
           chains={draft.config.chains}
+          // Only a saved agent can be on pay per use after the account lost it. The panel
+          // then says so, and the choice above is still how the agent leaves it.
+          allowed={edit?.payPerUseStillAllowed}
           onChange={(next) => updateConfig({ llm: { ...draft.config.llm, source: "usdc", usdc: next } })}
           scheduleMovedFrom={scheduleMovedFrom}
           scheduleSection="Schedule & mode"
@@ -787,6 +822,7 @@ export function DataStep({
   updateConfig,
   sources,
   hideHeading,
+  edit,
 }: StepProps & { sources: DataSourceInfo[] }) {
   const selected = new Set(draft.config.dataSources);
   const estimate = useMemo(
@@ -825,6 +861,9 @@ export function DataStep({
 
       <DataSourcePicker
         sources={sources}
+        // The operator's notes, such as which platform wallet pays for a source. The page
+        // that creates an agent is never told who is an operator, so they show only here.
+        isAdmin={edit?.isAdmin}
         chains={draft.config.chains as Chain[]}
         selected={draft.config.dataSources}
         onChange={(dataSources) => updateConfig({ dataSources })}
@@ -858,7 +897,7 @@ export function DataStep({
 
 // ------------------------------------------------------------------ universe
 
-export function UniverseStep({ draft, updateConfig, errors, hideHeading }: StepProps) {
+export function UniverseStep({ draft, updateConfig, errors, hideHeading, edit }: StepProps) {
   const universe = draft.config.universe;
 
   return (
@@ -877,17 +916,65 @@ export function UniverseStep({ draft, updateConfig, errors, hideHeading }: StepP
         onChains={(chains) => updateConfig({ chains })}
         onUniverse={(patch) => updateConfig({ universe: { ...universe, ...patch } })}
       />
+
+      {/* What these floors would have let through, read from the saved agent's own score
+          history, so there is none to show before an agent exists. Under the controls,
+          not above them: it is the consequence of what was just moved. Debounced, and
+          nothing waits on it. */}
+      {edit ? <UniversePreview agentId={edit.agentId} universe={universe} chains={draft.config.chains} /> : null}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------- risk
 
+/**
+ * Position sizing, which only a saved agent has on this step. `SizingControls` keeps its
+ * own copy of the value from the moment it mounts, so that a half-typed percentage is not
+ * clamped under the cursor. That copy would go on showing an edit after the agent's
+ * settings were put back to what is saved, and the next change would be made on top of
+ * it. So the controls start again whenever the value is changed by any hand but their own.
+ */
+function SavedAgentSizing({
+  risk,
+  equityUsd,
+  onChange,
+}: {
+  risk: AgentRiskWithSizing;
+  equityUsd: number | null;
+  onChange: (sizing: PositionSizingConfig) => void;
+}) {
+  const sizing = readSizing(risk);
+  const current = JSON.stringify(sizing);
+  /** The value the controls were mounted with, or last reported. */
+  const [held, setHeld] = useState(current);
+  const [mounts, setMounts] = useState(0);
+  if (held !== current) {
+    setHeld(current);
+    setMounts((count) => count + 1);
+  }
+  return (
+    <SizingControls
+      key={mounts}
+      value={sizing}
+      maxTradeUsd={risk.maxTradeUsd}
+      equityUsd={equityUsd}
+      onChange={(next) => {
+        // Read back the way the next render will read it, so this change is not taken
+        // for somebody else's.
+        setHeld(JSON.stringify(readSizing({ ...risk, sizing: next })));
+        onChange(next);
+      }}
+    />
+  );
+}
+
 export function RiskStep({
   draft,
   updateConfig,
   hideHeading,
   feeUsd = 0,
+  edit,
 }: StepProps & {
   /** Tocker's flat fee per fill, from the server; 0 when it is off. */
   feeUsd?: number;
@@ -895,10 +982,24 @@ export function RiskStep({
   const risk = draft.config.risk;
   const patch = (next: Partial<typeof risk>) => updateConfig({ risk: { ...risk, ...next } });
   // What the book will actually be worth on day one, so the caps can be checked
-  // against it here rather than discovered as a refusal on the first tick.
-  const fundedUsd = draft.funding.mode === "fund" ? draft.funding.amountUsd : draft.paperStartingUsd;
-  const startsWith =
-    draft.funding.mode === "fund" ? `the ${formatUsd(fundedUsd)} you are funding` : `its ${formatUsd(fundedUsd)} paper balance`;
+  // against it here rather than discovered as a refusal on the first tick. A saved agent
+  // has a book already, so its caps are checked against its equity; while there is no
+  // figure for that, nothing is said about it. Nothing is said either when it sizes its
+  // tickets as a share of that equity: both sentences take every ticket to be the cap
+  // itself, which is only so for a fixed one, and the sizing block below says what the
+  // next ticket would be.
+  const fundedUsd = edit
+    ? readSizing(risk).mode === "fixed_usd"
+      ? (edit.equityUsd ?? 0)
+      : 0
+    : draft.funding.mode === "fund"
+      ? draft.funding.amountUsd
+      : draft.paperStartingUsd;
+  const startsWith = edit
+    ? `its ${formatUsd(fundedUsd)} of equity`
+    : draft.funding.mode === "fund"
+      ? `the ${formatUsd(fundedUsd)} you are funding`
+      : `its ${formatUsd(fundedUsd)} paper balance`;
   const ticketSharePct = fundedUsd > 0 ? Math.ceil((risk.maxTradeUsd / fundedUsd) * 100) : 0;
   const positionCapTooLow = ticketSharePct > 0 && ticketSharePct > risk.maxPositionPct;
   // A flat fee is invisible on a $100 ticket and a real share of a $2 one, on the way in
@@ -908,6 +1009,16 @@ export function RiskStep({
     feePct === null
       ? ""
       : ` Tocker's flat ${formatUsd(feeUsd)} fee per fill is ${feePct}% of a ticket this size, each way.`;
+
+  const exitRules = (
+    <div className="space-y-2">
+      <h3 id="risk-exits" tabIndex={-1} className="scroll-mt-24 text-sm font-medium">Exit rules</h3>
+      <p className="text-xs text-muted-foreground">
+        Enforced every five minutes by the exit engine, whether or not the model is running. A stop that waits for a human is not a stop.
+      </p>
+      <ExitRulesFields value={risk} onChange={(next) => updateConfig({ risk: next })} />
+    </div>
+  );
 
   return (
     <div className="space-y-4">
@@ -989,13 +1100,24 @@ export function RiskStep({
         />
       </div>
 
-      <div className="space-y-2">
-        <h3 id="risk-exits" tabIndex={-1} className="scroll-mt-24 text-sm font-medium">Exit rules</h3>
-        <p className="text-xs text-muted-foreground">
-          Enforced every five minutes by the exit engine, whether or not the model is running. A stop that waits for a human is not a stop.
-        </p>
-        <ExitRulesFields value={risk} onChange={(next) => updateConfig({ risk: next })} />
-      </div>
+      {/* Sizing decides how big a ticket is within the cap above; the cap is the ceiling
+          it can never cross. It is saved with the caps, in the same Save, so the ceiling
+          and the ticket size are always applied together. Its preview is worked out from
+          the agent's equity, which an agent that does not exist yet has none of.
+
+          It shares the exit rules' place among the step's children and adds none of its
+          own: every slider here takes its generated id from where it sits among them, and
+          the builder, which has no sizing, must keep the ids it had. */}
+      {edit ? (
+        <>
+          <div className="border-t border-border/50 pt-4">
+            <SavedAgentSizing risk={risk} equityUsd={edit.equityUsd} onChange={(sizing) => patch({ sizing })} />
+          </div>
+          {exitRules}
+        </>
+      ) : (
+        exitRules
+      )}
     </div>
   );
 }
@@ -1008,13 +1130,19 @@ export function ScheduleStep({
   updateConfig,
   hideHeading,
   payPerUseAllowed = false,
+  edit,
 }: StepProps & {
   /** The server's answer for this viewer; see `ThinkStep`. */
   payPerUseAllowed?: boolean;
 }) {
+  const usdc = shownSource(draft.config, payPerUseAllowed) === "usdc" ? (draft.config.llm.usdc ?? null) : null;
   // On pay per use each choice says what it is expected to cost on the chosen model.
-  const payPerUseModel =
-    shownSource(draft.config, payPerUseAllowed) === "usdc" ? (draft.config.llm.usdc?.model ?? null) : null;
+  const payPerUseModel = usdc?.model ?? null;
+  // What the chosen interval is expected to cost in a day, and whether that is more than
+  // the daily limit: the same comparison `checkUsdc` refuses a create or a save on, so
+  // this line and that refusal never disagree.
+  const day = usdc ? usdcEstimate(usdc.model, draft.config.schedule.intervalMinutes) : null;
+  const overDailyLimit = usdc !== null && day !== null && day.model !== null && dayOverLimit(day, usdc);
   return (
     <div className="space-y-5">
       {hideHeading ? null : (
@@ -1068,12 +1196,27 @@ export function ScheduleStep({
             );
           })}
         </div>
+        {/* Each choice already prices itself; this is the one thing they cannot say. It
+            sits where the interval is chosen because the limit it breaks is set on
+            another step, and without it the first sign would be a refused Create or Save. */}
+        {overDailyLimit ? (
+          <p role="status" className="tnum flex items-start gap-1.5 text-xs leading-relaxed text-destructive">
+            <CircleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              About {day.runsPerDay} run{day.runsPerDay === 1 ? "" : "s"} a day is about {formatUsd(day.dayUsd)} of
+              thinking, over its {formatUsd(usdc.maxUsdPerDay)} daily limit. Raise the limit under How it thinks, or
+              run it less often.
+            </span>
+          </p>
+        ) : null}
       </Field>
 
       {/* Only a funded agent headed for the checklist has its schedule held (the create
           sends `holdSchedule`). With "Go live after creating" off it ticks on paper, sized
-          to the money it is funded with, so saying "no paper ticks" there was untrue. */}
-      {draft.funding.mode === "fund" && draft.goLive ? (
+          to the money it is funded with, so saying "no paper ticks" there was untrue.
+          A saved agent gets none of the three: what it started with was settled when it
+          was created, and no save changes it. */}
+      {edit ? null : draft.funding.mode === "fund" && draft.goLive ? (
         <div className="rounded-xl border border-border/70 bg-card/30 p-3">
           <p className="text-sm font-medium">Real money only</p>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
@@ -1119,7 +1262,11 @@ export function ScheduleStep({
 
       <Field
         label="Execution"
-        hint="You can change this any time in settings. Approval is how most people run their first live agent."
+        hint={
+          edit
+            ? "Approval applies from the next tick, and a proposal the agent already made keeps the time limit it was created with."
+            : "You can change this any time in settings. Approval is how most people run their first live agent."
+        }
       >
         <ExecutionControls
           idPrefix="builder-execution"
@@ -1128,6 +1275,10 @@ export function ScheduleStep({
         />
       </Field>
 
+      {/* The mode and whether it is running are not this step's to set once the agent
+          exists: neither is part of a save, and both are shown, and changed, above the steps. */}
+      {edit ? null : (
+      <>
       <div className="rounded-xl border border-border/70 bg-card/30 p-3">
         <p className="flex items-center gap-2 text-sm font-medium">
           Mode
@@ -1154,6 +1305,8 @@ export function ScheduleStep({
         checked={draft.activate}
         onChange={(activate) => update({ activate })}
       />
+      </>
+      )}
     </div>
   );
 }

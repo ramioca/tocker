@@ -96,13 +96,26 @@ export function AppShell({
       </a>
 
       <TopBar unreadCount={badge} onOpenSearch={() => setPaletteOpen(true)} ownedSlugs={owned} />
+      {/* Room for the approvals island where it docks at the top: on a page with a sticky
+          action bar (see run-island.tsx), for as long as a proposal waits. Without it the
+          island lies on the first row of the page (the way back, Fund, the builder's Start
+          over), and at the top of a page no scrolling brings those out from under it. 4rem
+          is the gap under the top bar and the island's two lines, with a few pixels over.
+          Above the pause banner, so that is clear of it too. The run island is given no
+          room: it leaves by itself. */}
+      <div
+        aria-hidden
+        className="hidden h-16 shrink-0 [html[data-sticky-actionbar]_body:has([data-run-island])_&]:block"
+      />
       {tradingPaused ? <TradingPausedBanner pausedAt={pausedAt} /> : null}
       {/* While the approvals island is docked at the bottom, the end of every page scrolls
-          clear of it. The run island is at the top and takes no room. */}
+          clear of it. Not on a page with a sticky action bar, where the island is at the
+          top: padding there would only lift that bar off the bottom of the page for
+          nothing. */}
       <main
         id="main"
         tabIndex={-1}
-        className="min-w-0 flex-1 pb-24 outline-none md:pb-0 [body:has([data-run-island])_&]:pb-32 md:[body:has([data-run-island])_&]:pb-20"
+        className="min-w-0 flex-1 pb-24 outline-none md:pb-0 [html:not([data-sticky-actionbar])_body:has([data-run-island])_&]:pb-32 md:[html:not([data-sticky-actionbar])_body:has([data-run-island])_&]:pb-20"
       >
         {children}
       </main>

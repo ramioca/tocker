@@ -7,6 +7,7 @@ import { ScoreBadge } from "@/components/tokens/score-badge";
 import { VERDICT_META, verdictForScore } from "@/components/tokens";
 import { sayCount, sayHours, sayMinutes, sayUsd } from "@/components/agents/builder/typed-value";
 import { DISCOVERY_FEEDS } from "@/components/agents/builder/types";
+import { agentSettingsHref, type SettingsAnchor } from "@/components/agents/settings/settings-href";
 import { THINK_SOURCE_LABELS, payPerUseModelLabel, stepsAllowed } from "@/components/agents/thinking";
 import { ownListModelName } from "@/components/agents/model-list";
 import { thinkSource } from "@/lib/agent/inference";
@@ -91,9 +92,9 @@ export function AgentConfigSummary({
 }) {
   if (!config) return null;
 
-  // Anchors on the settings form. The universe rules (feeds, the bar, authorities and
-  // the blocklist) are all one section there.
-  const edit = (anchor: string) => (agentSlug ? `/agents/${agentSlug}/settings#${anchor}` : undefined);
+  // Anchors on the settings page. The universe rules (feeds, the bar, authorities and
+  // the blocklist) are all one step there.
+  const edit = (anchor: SettingsAnchor) => (agentSlug ? agentSettingsHref(agentSlug, anchor) : undefined);
   const dataHref = edit("data");
 
   const { universe } = config;

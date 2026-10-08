@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { formatPreviewFees, formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
+import { agentSettingsHref } from "@/components/agents/settings/settings-href";
 import { placeManualTrade, previewTrade, type ManualTradeResult } from "@/server/actions/trading";
 import { TradeReceiptRow } from "@/components/trading";
 import { SELL_SLICES, floorCents, pctLabel, sliceLabel, sliceText } from "@/components/trading/sell-amount";
@@ -433,8 +434,10 @@ function SellPositionDialog({
                     : data.quoteNote,
                 )
               : sellVenueLine(chain, data.isPaper);
-  // The link only makes sense on the agent's own page, which is where this is mounted.
-  const settingsHref = /^\/agents\/[^/]+$/.test(pathname) ? `${pathname}/settings#risk` : null;
+  // The link only makes sense on the agent's own page, which is where this is mounted,
+  // and the address of that page is the only place this dialog can read the slug from.
+  const slug = /^\/agents\/([^/]+)$/.exec(pathname)?.[1];
+  const settingsHref = slug ? agentSettingsHref(slug, "risk") : null;
 
   return (
     <Dialog
