@@ -97,8 +97,14 @@ async function findDue(limit: number, now: Date): Promise<Array<{ id: string; pa
         or(isNull(userSecurity.tradingPaused), eq(userSecurity.tradingPaused, false)),
       ),
     )
-    // The id breaks ties, so two agents due at the same instant sort the same way every pass.
-    .orderBy(asc(agents.nextRunAt), asc(agents.id))
+    // Oldest due first. Agents run by the same pass are due again at the same instant
+    // (they count from the pass's start, `./schedule`), so when a later pass has fewer
+    // slots than agents due, something has to choose among equals. The id alone chose the
+    // same ones every time: the lowest ids ran on every pass and the rest on every other.
+    // A hash of the id with the due time sorts the same way for as long as the agent
+    // waits, and differently once it has run, so the wait moves around. Whoever waited is
+    // then older than the rest and goes first. The id settles a hash that collides.
+    .orderBy(asc(agents.nextRunAt), asc(sql`md5(${agents.id} || ${agents.nextRunAt}::text)`), asc(agents.id))
     .limit(limit * DUE_WINDOW_FACTOR);
   const flags = new Map(rows.map((row) => [row.id, row.paysPerUse === true]));
   return spreadAcrossOwners(rows, limit).map((id) => ({ id, paysPerUse: flags.get(id) === true }));
@@ -160,6 +166,11 @@ async function liftDueHolds(now: Date): Promise<number> {
  * route passes it). Batches run one after another inside that one invocation, so a
  * pay-per-use agent in a late batch may not have the time a paid run needs: such a run is
  * not started and the agent stays due. That is also why pay-per-use agents go first.
+ *
+ * It is also what every run of the pass counts its agent's next run from (`./schedule`),
+ * so an agent is due again one interval after the pass that ran it began, wherever in
+ * the pass its run came and however long it took. An agent the pass had no slot for is
+ * not rescheduled at all: it stays due, and is counted from the pass that does run it.
  *
  * A KNOWN LIMIT, left as it is on purpose. In practice only the first batch of a pass
  * runs pay-per-use agents. A paid run is started only in the first fifty seconds of its

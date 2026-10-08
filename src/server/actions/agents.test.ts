@@ -330,6 +330,97 @@ describe("updateAgent: the paper starting balance", () => {
   });
 });
 
+/**
+ * Every save of an active agent's settings used to set its next run a whole interval
+ * out, whether or not the schedule was touched: an owner tuning a prompt kept pushing the
+ * run away. The next run now moves only when the schedule does.
+ */
+describe("updateAgent: the next run", () => {
+  const MINUTE = 60_000;
+  const withInterval = (intervalMinutes: number, strategyPrompt = DEFAULT_AGENT_CONFIG.strategyPrompt) => ({
+    ...DEFAULT_AGENT_CONFIG,
+    strategyPrompt,
+    schedule: { intervalMinutes },
+  });
+  const nextRunOf = async (agentId: string) =>
+    (await db.select().from(schema.agents).where(eq(schema.agents.id, agentId)))[0]?.nextRunAt ?? null;
+
+  /** A signed-in owner's active agent on every 15 minutes, with `patch` on its row. */
+  async function agentWith(patch: Partial<typeof schema.agents.$inferInsert> = {}): Promise<string> {
+    const seeded = await seedAgent(db);
+    session = { userId: seeded.userId, handle: "owner", displayName: null, avatarUrl: null, email: null };
+    await db.update(schema.agents).set(patch).where(eq(schema.agents.id, seeded.agentId));
+    return seeded.agentId;
+  }
+
+  it("is left where it was by a save that does not change the interval", async () => {
+    const due = new Date(Date.now() + 3 * MINUTE);
+    const agentId = await agentWith({ nextRunAt: due });
+
+    expect((await updateAgent(agentId, { config: withInterval(15, `${DEFAULT_AGENT_CONFIG.strategyPrompt} Hold winners longer.`) })).ok).toBe(true);
+    expect(await nextRunOf(agentId)).toEqual(due);
+    // Nor by one that does not carry the config at all.
+    expect((await updateAgent(agentId, { tagline: "tuned" })).ok).toBe(true);
+    expect(await nextRunOf(agentId)).toEqual(due);
+
+    // An agent already overdue stays overdue: the save does not take its turn away.
+    const overdue = new Date(Date.now() - 2 * MINUTE);
+    await db.update(schema.agents).set({ nextRunAt: overdue }).where(eq(schema.agents.id, agentId));
+    expect((await updateAgent(agentId, { config: withInterval(15, `${DEFAULT_AGENT_CONFIG.strategyPrompt} Cut losers sooner.`) })).ok).toBe(true);
+    expect(await nextRunOf(agentId)).toEqual(overdue);
+  });
+
+  it("is counted from the save when the interval changed: one interval on, less the grace", async () => {
+    const agentId = await agentWith({ nextRunAt: new Date(Date.now() + 3 * MINUTE) });
+
+    const before = Date.now();
+    expect((await updateAgent(agentId, { config: withInterval(60) })).ok).toBe(true);
+    const next = (await nextRunOf(agentId))?.getTime() ?? 0;
+    expect(next).toBeGreaterThanOrEqual(before + 59 * MINUTE);
+    expect(next).toBeLessThanOrEqual(Date.now() + 59 * MINUTE);
+  });
+
+  it("is cleared when the agent is set to run by hand only, and set again when it is given a schedule", async () => {
+    const agentId = await agentWith({ nextRunAt: new Date(Date.now() + 3 * MINUTE) });
+
+    expect((await updateAgent(agentId, { config: withInterval(0) })).ok).toBe(true);
+    expect(await nextRunOf(agentId)).toBeNull();
+
+    const before = Date.now();
+    expect((await updateAgent(agentId, { config: withInterval(15) })).ok).toBe(true);
+    expect((await nextRunOf(agentId))?.getTime()).toBeGreaterThanOrEqual(before + 14 * MINUTE);
+  });
+
+  it("is given to a live agent that has an interval and no next run at all", async () => {
+    const agentId = await agentWith({ mode: "live", nextRunAt: null });
+
+    const before = Date.now();
+    expect((await updateAgent(agentId, { config: withInterval(15) })).ok).toBe(true);
+    const next = (await nextRunOf(agentId))?.getTime() ?? 0;
+    expect(next).toBeGreaterThanOrEqual(before + 14 * MINUTE);
+    expect(next).toBeLessThanOrEqual(Date.now() + 14 * MINUTE);
+  });
+
+  /**
+   * "Real money only": created active with its schedule held, so it takes no paper tick
+   * before it goes live (`holdSchedule`). Going live is what starts it, not a save.
+   */
+  it("is not started by a save while the agent's schedule is held for going live", async () => {
+    const agentId = await agentWith({ mode: "paper", nextRunAt: null });
+
+    expect((await updateAgent(agentId, { config: withInterval(15, `${DEFAULT_AGENT_CONFIG.strategyPrompt} Size down in chop.`) })).ok).toBe(true);
+    expect(await nextRunOf(agentId)).toBeNull();
+    expect((await updateAgent(agentId, { config: withInterval(30) })).ok).toBe(true);
+    expect(await nextRunOf(agentId)).toBeNull();
+  });
+
+  it("is not written for an agent that is not active", async () => {
+    const agentId = await agentWith({ status: "paused", nextRunAt: null });
+    expect((await updateAgent(agentId, { config: withInterval(60) })).ok).toBe(true);
+    expect(await nextRunOf(agentId)).toBeNull();
+  });
+});
+
 describe("updateAgent: a chain switched on after creation", () => {
   /** A Solana-only agent, as the default builder makes it, owned by the signed-in user. */
   async function solanaOnly(): Promise<{ id: string; userId: string }> {

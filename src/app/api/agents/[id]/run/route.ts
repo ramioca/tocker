@@ -23,7 +23,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   // When this invocation began: a pay-per-use run stops paying before the 300 s limit
-  // above, and that is counted from here.
+  // above, and that is counted from here. So is the agent's next scheduled run.
   const invocationStartedAt = Date.now();
   const { id } = await params;
 

@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
@@ -6,6 +6,8 @@ import { seedKnownTokens } from "@/lib/trading/tokens";
 import { ABANDONED_RUN_ERROR, reapStaleRuns, runAgent, startRun } from "./run";
 import { seedAgent, setupTestDb } from "./test-support";
 import { DEFAULT_AGENT_CONFIG, MIN_SCHEDULE_MINUTES, parseAgentConfig } from "./config";
+import { RunLogger } from "./logger";
+import { SCHEDULE_GRACE_MS, nextRunTime } from "./schedule";
 
 let db: Db;
 
@@ -389,11 +391,177 @@ describe("a stored config the schema no longer accepts", () => {
     });
     expect(() => parseAgentConfig({ ...DEFAULT_AGENT_CONFIG, llm: { ...DEFAULT_AGENT_CONFIG.llm, model: "not a model id" } })).toThrow();
 
-    const result = await runAgent({ agentId, trigger: "schedule" });
+    const began = Date.now();
+    const result = await runAgent({ agentId, trigger: "schedule", invocationStartedAt: began });
     expect(result.status).toBe("succeeded");
 
+    // One pass on, as for an agent set to the shortest schedule: never the one minute stored.
     const [agent] = await db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
-    const waitMs = (agent?.nextRunAt?.getTime() ?? 0) - (agent?.lastRunAt?.getTime() ?? 0);
-    expect(waitMs).toBe(MIN_SCHEDULE_MINUTES * 60_000);
+    expect(agent?.nextRunAt).toEqual(new Date(began + MIN_SCHEDULE_MINUTES * 60_000 - SCHEDULE_GRACE_MS));
+  });
+});
+
+/**
+ * An agent's next run is counted from when the invocation that ran it began (the cron
+ * pass, or the request behind Run now), not from when the run finished. Counted from the
+ * finish, every agent came due just after the pass it was set to run on and ran one pass
+ * late, every time: three runs an hour for "every 15 min". The rule and the hour it is
+ * proved on are in `schedule.test.ts` and `schedule-grid.test.ts`; this is the run loop
+ * writing it, for the ways a key agent's run ends.
+ */
+describe("when the agent is due again", () => {
+  const MINUTE = 60_000;
+  const agentRow = async (agentId: string) => (await db.select().from(schema.agents).where(eq(schema.agents.id, agentId)))[0];
+  /** The default schedule: every 15 minutes. */
+  const dueAfter = (began: number) => new Date(began + DEFAULT_AGENT_CONFIG.schedule.intervalMinutes * MINUTE - SCHEDULE_GRACE_MS);
+
+  it("is one interval, less the grace, after the pass that ran it began: a run that worked", async () => {
+    const { agentId } = await seedAgent(db, { config: { dataSources: [], chains: ["solana"] } });
+    // The pass began a little before this agent's turn came.
+    const began = Date.now() - 30_000;
+    expect((await runAgent({ agentId, trigger: "schedule", invocationStartedAt: began })).status).toBe("succeeded");
+
+    const row = await agentRow(agentId);
+    expect(row?.nextRunAt).toEqual(dueAfter(began));
+    // When it finished is still what `lastRunAt` says, and plays no part.
+    expect(row?.lastRunAt?.getTime()).toBeGreaterThan(began + 30_000 - 1);
+  });
+
+  it("is the same for a run that failed", async () => {
+    const { agentId } = await seedAgent(db, { mode: "live", config: { chains: ["solana"] } });
+    const began = Date.now();
+    expect((await runAgent({ agentId, trigger: "schedule", invocationStartedAt: began })).status).toBe("failed");
+    expect((await agentRow(agentId))?.nextRunAt).toEqual(dueAfter(began));
+  });
+
+  it("is counted from the request for a run started by hand", async () => {
+    const { agentId } = await seedAgent(db, { config: { dataSources: [], chains: ["solana"] } });
+    const began = Date.now();
+    expect((await runAgent({ agentId, trigger: "manual", invocationStartedAt: began })).status).toBe("succeeded");
+    expect((await agentRow(agentId))?.nextRunAt).toEqual(dueAfter(began));
+  });
+
+  /** Believed, a start an hour old would leave the agent due at once, after every run. */
+  it("is counted from the run's own start when the invocation's start it was handed cannot be true", async () => {
+    const { agentId } = await seedAgent(db, { config: { dataSources: [], chains: ["solana"] } });
+    const before = Date.now();
+    expect((await runAgent({ agentId, trigger: "schedule", invocationStartedAt: before - 3_600_000 })).status).toBe("succeeded");
+    const next = (await agentRow(agentId))?.nextRunAt?.getTime() ?? 0;
+    expect(next).toBeGreaterThanOrEqual(dueAfter(before).getTime());
+    expect(next).toBeLessThanOrEqual(dueAfter(Date.now()).getTime());
+  });
+
+  it("is never, for an agent that only runs by hand", async () => {
+    const { agentId } = await seedAgent(db, { config: { dataSources: [], chains: ["solana"], schedule: { intervalMinutes: 0 } } });
+    expect((await runAgent({ agentId, trigger: "manual" })).status).toBe("succeeded");
+    const row = await agentRow(agentId);
+    expect(row?.nextRunAt).toBeNull();
+    expect(row?.lastRunAt).not.toBeNull();
+  });
+
+  it("is not moved by a run that was refused because another was in flight", async () => {
+    const { agentId } = await seedAgent(db, { config: { dataSources: [], chains: ["solana"] } });
+    const due = new Date(Date.now() - MINUTE);
+    await db.update(schema.agents).set({ nextRunAt: due }).where(eq(schema.agents.id, agentId));
+    await db.insert(schema.agentRuns).values({ id: `flying-${agentId}`, agentId, trigger: "schedule", status: "running", startedAt: new Date() });
+
+    // Due, with a run in flight: the pass picks it, the claim is refused, nothing starts.
+    expect((await runAgent({ agentId, trigger: "schedule" })).status).toBe("skipped");
+    const row = await agentRow(agentId);
+    expect(row?.nextRunAt).toEqual(due);
+    expect(row?.lastRunAt).toBeNull();
+    const rows = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.agentId, agentId));
+    expect(rows.map((run) => run.status).sort()).toEqual(["cancelled", "running"]);
+  });
+
+  /**
+   * A run reads its config when it starts. Its end used to write the next run from that
+   * config, so a schedule its owner saved while it was in flight was put back: and since
+   * a save only moves the next run when the schedule changes, saving again did not mend
+   * it. The interval is now read when the run ends.
+   *
+   * Each case saves where a run flushes its transcript, which every run does once before
+   * it writes its end, and saves what `updateAgent` saves: the config, and the next run
+   * counted from the save.
+   */
+  describe("with a schedule saved while the run was in flight", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    /** Has the next run of `agentId` save `change` on the agent's row before it ends. */
+    function saveMidRun(agentId: string, change: (config: schema.AgentConfig) => Partial<typeof schema.agents.$inferInsert>): void {
+      const flush = RunLogger.prototype.flush;
+      let saved = false;
+      vi.spyOn(RunLogger.prototype, "flush").mockImplementation(async function (this: RunLogger) {
+        if (!saved) {
+          saved = true;
+          const row = await agentRow(agentId);
+          if (row) await db.update(schema.agents).set(change(row.config)).where(eq(schema.agents.id, agentId));
+        }
+        return flush.call(this);
+      });
+    }
+
+    /** The save `updateAgent` makes when the interval changes. */
+    const interval = (intervalMinutes: number) => (config: schema.AgentConfig) => ({
+      config: { ...config, schedule: { intervalMinutes } },
+      nextRunAt: nextRunTime(intervalMinutes, Date.now()),
+    });
+    const seedOn = (intervalMinutes: number) => seedAgent(db, { config: { dataSources: [], chains: ["solana"], schedule: { intervalMinutes } } });
+
+    /** It used to end with no next run at all, under "Runs every 15 min". */
+    it("keeps the schedule given to an agent that ran by hand only", async () => {
+      const { agentId } = await seedOn(0);
+      saveMidRun(agentId, interval(15));
+
+      const began = Date.now();
+      expect((await runAgent({ agentId, trigger: "manual", invocationStartedAt: began })).status).toBe("succeeded");
+      const row = await agentRow(agentId);
+      expect(row?.config.schedule.intervalMinutes).toBe(15);
+      expect(row?.nextRunAt).toEqual(new Date(began + 15 * MINUTE - SCHEDULE_GRACE_MS));
+    });
+
+    /** It used to be put back on its five minutes for one more run, paid for. */
+    it("takes no further run once the agent was set to run by hand only", async () => {
+      const { agentId } = await seedOn(5);
+      saveMidRun(agentId, interval(0));
+
+      expect((await runAgent({ agentId, trigger: "schedule", invocationStartedAt: Date.now() })).status).toBe("succeeded");
+      const row = await agentRow(agentId);
+      expect(row?.nextRunAt).toBeNull();
+      expect(row?.lastRunAt).not.toBeNull();
+    });
+
+    /** It used to wait a day for its next run. */
+    it("is due on the new interval when a daily agent was set to every 15 minutes", async () => {
+      const { agentId } = await seedOn(1_440);
+      saveMidRun(agentId, interval(15));
+
+      const began = Date.now();
+      expect((await runAgent({ agentId, trigger: "schedule", invocationStartedAt: began })).status).toBe("succeeded");
+      expect((await agentRow(agentId))?.nextRunAt).toEqual(new Date(began + 15 * MINUTE - SCHEDULE_GRACE_MS));
+    });
+
+    it("is the same for a run that failed", async () => {
+      const { agentId } = await seedAgent(db, { mode: "live", config: { chains: ["solana"], schedule: { intervalMinutes: 60 } } });
+      saveMidRun(agentId, interval(0));
+
+      expect((await runAgent({ agentId, trigger: "schedule", invocationStartedAt: Date.now() })).status).toBe("failed");
+      expect((await agentRow(agentId))?.nextRunAt).toBeNull();
+    });
+
+    /** The end of a run must not fail, or leave the agent unscheduled, over a row it cannot read a schedule from. */
+    it("counts on the interval the run started with when the row no longer holds one", async () => {
+      const { agentId } = await seedOn(60);
+      saveMidRun(agentId, (config) => ({
+        // Refused by the schema (the model), and with no schedule on it at all.
+        config: { ...config, llm: { ...config.llm, model: "not a model id" }, schedule: undefined } as unknown as schema.AgentConfig,
+      }));
+
+      const began = Date.now();
+      expect((await runAgent({ agentId, trigger: "schedule", invocationStartedAt: began })).status).toBe("succeeded");
+      expect((await agentRow(agentId))?.nextRunAt).toEqual(new Date(began + 60 * MINUTE - SCHEDULE_GRACE_MS));
+    });
   });
 });

@@ -49,7 +49,7 @@ import { AISDKError, APICallError, RetryError, ToolChoiceViolationError, generat
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { agentRuns, agents, getDb, llmKeys, notifications, tokens, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
-import { MIN_SCHEDULE_MINUTES, parseAgentConfig } from "@/lib/agent/config";
+import { parseAgentConfig } from "@/lib/agent/config";
 import { decryptSecret } from "@/lib/crypto";
 import { dbErrorForLog, redactSecrets } from "@/lib/security/redact";
 import { resolveDataSources } from "@/lib/data-sources/registry";
@@ -67,7 +67,7 @@ import {
 import { createInferenceFetch, simulateInferenceStep } from "@/lib/x402/paidFetch";
 import { newBudget, type X402Context } from "@/lib/x402/types";
 import { describeGuardian, runGuardian } from "@/lib/trading/guardian";
-import { paidStepLimit, payDeadlineAt, stopOutcome, thinkSource, thinkingModel, wrapUpReason } from "./inference";
+import { INVOCATION_LIMIT_MS, paidStepLimit, payDeadlineAt, stopOutcome, thinkSource, thinkingModel, wrapUpReason } from "./inference";
 import { admitInferenceRun, applyInferenceHold, clearInferenceHold, type InferencePlan, type RunAdmission } from "./inference-gate";
 import { RunLogger } from "./logger";
 import { createMockModel, isLlmMock } from "./mock-model";
@@ -76,6 +76,7 @@ import { buildSystemPrompt, buildTickPrompt, type RecentTrade } from "./prompts"
 import { PROVIDER_UNSUPPORTED, isProvider, providerLabel, providerRow, withArticle, type LlmProvider } from "./providers";
 import { callOptionsFor, keyScrubber, modelFor, noScrub, sentenceInBody, type KeyScrub } from "./providers-server";
 import { RUN_DEFERRED, RunRefusedError } from "./run-gate";
+import { nextRunTime, runAnchor } from "./schedule";
 import { buildTools, type RunAgentRecord, type RunContext } from "./tools";
 
 export interface RunAgentInput {
@@ -87,6 +88,9 @@ export interface RunAgentInput {
    * its deadline from here as well as from its own start, and is not started at all with
    * too little left. Defaults to now: a caller that passes nothing has a whole
    * invocation ahead of it (a manual run, a script).
+   *
+   * It is also the moment the agent's next run is counted from, for every run: the cron
+   * pass that picked it, or the request that started it by hand (`./schedule`).
    */
   invocationStartedAt?: number;
 }
@@ -341,13 +345,32 @@ async function loadRecentTrades(agentId: string, limit = 10): Promise<RecentTrad
   }));
 }
 
-function nextRunAt(config: AgentConfig, from: Date): Date | null {
-  if (config.schedule.intervalMinutes <= 0) return null;
-  // The schema applies the same floor, but `executeRun` falls back to the config as
-  // stored when a row no longer parses (the schema has tightened since it was saved),
-  // and a row like that must not be the one agent that is due again every minute.
-  const minutes = Math.max(config.schedule.intervalMinutes, MIN_SCHEDULE_MINUTES);
-  return new Date(from.getTime() + minutes * 60_000);
+/**
+ * The agent's interval as its row holds it now, read the way a run reads its config.
+ *
+ * Asked when a run ends. The run read its config when it started, and its owner may have
+ * saved another schedule since. Written from the one the run started with, the end of
+ * the run undid that save: an agent just set to "only when I press Run" took one more
+ * scheduled run, and one moved from daily to every 15 minutes waited a day for its next.
+ *
+ * `fallback` is the interval the run started with, for a row that cannot be read or has
+ * no interval on it. The end of a run must not fail over this.
+ */
+async function intervalNow(agentId: string, fallback: number): Promise<number> {
+  try {
+    const db = await getDb();
+    const [row] = await db.select({ config: agents.config }).from(agents).where(eq(agents.id, agentId)).limit(1);
+    if (!row) return fallback;
+    try {
+      return parseAgentConfig(row.config).schedule.intervalMinutes;
+    } catch {
+      // As stored, like the run's own config when it no longer parses.
+      return row.config?.schedule?.intervalMinutes ?? fallback;
+    }
+  } catch (err) {
+    console.error(`[run] the schedule of ${agentId} could not be read again: ${dbErrorForLog(err)}`);
+    return fallback;
+  }
 }
 
 /** What a run is started with once it has been let in: when its invocation began, and what it pays with. */
@@ -638,6 +661,15 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
     config = agentRow.config;
   }
 
+  // When the agent is due again, written whichever way the run ends. Counted from when
+  // the invocation that started this run began (the cron pass, or the request behind Run
+  // now), never from when the run finishes: a run that took forty seconds used to put its
+  // agent forty seconds past the pass it was set to run on, and so one whole pass late,
+  // every time. See `./schedule`. That moment is fixed here. The interval is read when
+  // the run ends, so a schedule saved while it was in flight is the one that is kept.
+  const anchor = runAnchor(start.invocationStartedAt, startedAt.getTime(), INVOCATION_LIMIT_MS);
+  const dueNext = async (): Promise<Date | null> => nextRunTime(await intervalNow(input.agentId, config.schedule.intervalMinutes), anchor);
+
   // How this run thinks, written on its row whichever way it ends.
   const source = thinkSource(config);
   const thinking = { llmSource: source, model: thinkingModel(config) };
@@ -742,7 +774,7 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
 
     await db
       .update(agents)
-      .set({ lastRunAt: finishedAt, nextRunAt: nextRunAt(config, finishedAt), updatedAt: finishedAt })
+      .set({ lastRunAt: finishedAt, nextRunAt: await dueNext(), updatedAt: finishedAt })
       .where(eq(agents.id, input.agentId));
     // It thought and it paid: whatever held it before is over.
     await endHoldAfterRun(input.agentId);
@@ -945,7 +977,7 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
 
     await db
       .update(agents)
-      .set({ lastRunAt: finishedAt, nextRunAt: nextRunAt(config, finishedAt), updatedAt: finishedAt })
+      .set({ lastRunAt: finishedAt, nextRunAt: await dueNext(), updatedAt: finishedAt })
       .where(eq(agents.id, input.agentId));
     // A pay-per-use run that worked ends whatever hold and strikes came before it.
     if (pay) await endHoldAfterRun(input.agentId);
@@ -999,7 +1031,7 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
 
       await db
         .update(agents)
-        .set({ lastRunAt: finishedAt, nextRunAt: nextRunAt(config, finishedAt), updatedAt: finishedAt })
+        .set({ lastRunAt: finishedAt, nextRunAt: await dueNext(), updatedAt: finishedAt })
         .where(eq(agents.id, input.agentId));
 
       // The hold keeps the scheduler away until its time, and tells the owner once.
@@ -1049,9 +1081,10 @@ async function executeRun(runId: string, input: RunAgentInput, start: RunStart):
       })
       .where(eq(agentRuns.id, runId));
 
+    // A found workspace is the one end that is off the schedule: due at once, as said above.
     await db
       .update(agents)
-      .set({ lastRunAt: finishedAt, nextRunAt: recovered ? finishedAt : nextRunAt(config, finishedAt), updatedAt: finishedAt })
+      .set({ lastRunAt: finishedAt, nextRunAt: recovered ? finishedAt : await dueNext(), updatedAt: finishedAt })
       .where(eq(agents.id, input.agentId));
 
     await db.insert(notifications).values({

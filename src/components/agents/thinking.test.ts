@@ -11,10 +11,12 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import { paidStepLimit, runFundsNeededUsd, thinkSource, usdcChoiceProblem } from "@/lib/agent/inference";
 import {
+  AGENT_DAY_REQUESTS,
   DEFAULT_PAY_PER_USE_MODEL,
   INFERENCE_STOPS,
   MAX_PAID_STEPS,
   PAY_PER_USE_MODELS,
+  TYPICAL_RUN,
   USDC_DAY_CAP,
   USDC_DEFAULT_INTERVAL_MINUTES,
   USDC_RUN_CAP,
@@ -147,8 +149,10 @@ describe("usdcEstimate", () => {
       const hourly = usdcEstimate(model.id, 60);
       expect(hourly.model).toBe(model);
       expect(hourly.runUsd).toBe(estimateRunUsd(model));
-      expect(hourly.runsPerDay).toBe(22);
-      expect(hourly.dayUsd).toBeCloseTo(22 * estimateRunUsd(model), 6);
+      // One run every interval, on the cron's pass: 24 in a day, not the 22 of a
+      // schedule that slipped five minutes each time.
+      expect(hourly.runsPerDay).toBe(24);
+      expect(hourly.dayUsd).toBeCloseTo(24 * estimateRunUsd(model), 6);
     }
   });
 
@@ -159,11 +163,34 @@ describe("usdcEstimate", () => {
     expect(manual.runUsd).toBeGreaterThan(0);
   });
 
-  /** The contract rounds a daily schedule down to no runs; an agent that runs daily is not free. */
-  it("counts a daily schedule as one run a day, never as none", () => {
-    const daily = usdcEstimate(DEFAULT_PAY_PER_USE_MODEL, 1_440);
-    expect(daily.runsPerDay).toBe(1);
-    expect(daily.dayUsd).toBe(daily.runUsd);
+  /** An agent that runs daily, or weekly, is not free. */
+  it("counts a daily schedule, and a longer one, as one run a day, never as none", () => {
+    for (const minutes of [1_440, 10_080]) {
+      const slow = usdcEstimate(DEFAULT_PAY_PER_USE_MODEL, minutes);
+      expect(slow.runsPerDay).toBe(1);
+      expect(slow.dayUsd).toBe(slow.runUsd);
+    }
+  });
+
+  /**
+   * An agent may make `AGENT_DAY_REQUESTS` paid requests in a UTC day: 54 runs of typical
+   * size. "Every 15 min" asks for 96 and "every 5 min" for 288, so such an agent reaches
+   * the limit part-way through the day and waits for 00:00 UTC. The day is estimated at
+   * what it can spend, not at runs it will not be let make.
+   */
+  it("counts no more runs in a day than the day's request limit has room for", () => {
+    const room = Math.floor(AGENT_DAY_REQUESTS / TYPICAL_RUN.steps);
+    expect(room).toBe(54);
+    for (const model of PAY_PER_USE_MODELS) {
+      for (const minutes of [5, 15]) {
+        const fast = usdcEstimate(model.id, minutes);
+        expect(fast.runsPerDay, `${model.id} at ${minutes} min`).toBe(room);
+        expect(fast.dayUsd).toBeCloseTo(room * estimateRunUsd(model), 6);
+      }
+      // A slower schedule fits inside the limit and is counted whole.
+      expect(usdcEstimate(model.id, 30).runsPerDay).toBe(48);
+      expect(usdcEstimate(model.id, 240).runsPerDay).toBe(6);
+    }
   });
 
   it("estimates nothing for a model that is not offered", () => {
@@ -252,7 +279,8 @@ describe("checkUsdc", () => {
   });
 
   it("refuses a schedule expected to cost more in a day than the daily limit", () => {
-    // Every five minutes on the default model is about ten dollars a day; the default limit is three.
+    // Every five minutes on the default model is about four dollars a day (as many runs
+    // as the day's request limit has room for); the default limit is three.
     const result = check(good, 5);
     expect(result.errors.maxUsdPerDay).toContain("more than its $3.00 daily limit");
     expect(result.errors.maxUsdPerDay).toContain("Raise the limit, run it less often, or pick a cheaper model.");
@@ -262,6 +290,34 @@ describe("checkUsdc", () => {
   it("accepts the same schedule once the limit covers it, and a manual schedule at any limit", () => {
     expect(check({ ...good, ...suggestedLimits(good.model, 5) }, 5).errors).toEqual({});
     expect(check({ ...good, maxUsdPerDay: USDC_DAY_CAP.min }, 0).errors).toEqual({});
+  });
+
+  /**
+   * Agents made while a schedule still slipped a pass each run: "every 15 min" ran every
+   * 20, and the builder suggested a daily limit for those 72 runs. Counted at the 96 the
+   * schedule now keeps, the estimate went over that limit ($7.06 against $7.00 on the
+   * default model) and the settings form refused every save, of anything, over a sum the
+   * request limit would not let the agent spend.
+   */
+  it("does not refuse an agent on the daily limit the builder suggested before schedules were kept to their interval", () => {
+    const halfDollarUp = (usd: number) => Math.round(Math.ceil(usd / 0.5 - 1e-9) * 0.5 * 100) / 100;
+    let judged = 0;
+    for (const model of PAY_PER_USE_MODELS) {
+      const run = estimateRunUsd(model);
+      for (const minutes of [5, 15, 60, 240, 1_440]) {
+        // As it was: a run every interval plus five minutes, and a quarter to spare.
+        const runsBefore = Math.max(1, Math.floor(1_440 / (minutes + 5)));
+        const limitBefore = Math.min(USDC_DAY_CAP.max, Math.max(USDC_DAY_CAP.min, halfDollarUp(Math.max(runsBefore * run * 1.25, 4 * run, USDC_DAY_CAP.default))));
+        // A dear model on a fast schedule was refused then as well.
+        if (runsBefore * run > limitBefore) continue;
+        judged += 1;
+        const usdc = { model: model.id, maxUsdPerRun: suggestedLimits(model.id, minutes).maxUsdPerRun, maxUsdPerDay: limitBefore };
+        expect(check(usdc, minutes).errors, `${model.id} at ${minutes} min, limit $${limitBefore}`).toEqual({});
+      }
+    }
+    expect(judged).toBeGreaterThan(PAY_PER_USE_MODELS.length * 3);
+    // The case that was reported, by its figures.
+    expect(check({ model: DEFAULT_PAY_PER_USE_MODEL, maxUsdPerRun: 0.15, maxUsdPerDay: 7 }, 15).errors).toEqual({});
   });
 
   it("refuses a dearer model on limits that fitted a cheaper one", () => {

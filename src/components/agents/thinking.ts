@@ -125,9 +125,8 @@ export interface UsdcEstimate {
  * What a model is expected to cost at a schedule. An estimate from list prices, not a
  * quote: the gateway's own price for each step is what is checked before anything is paid.
  *
- * A schedule of a day or longer counts as one run a day. The contract's `runsPerDay`
- * rounds a daily schedule down to none (the cron adds a few minutes to every interval),
- * and "$0.00 a day" under an agent that runs every day would be untrue.
+ * A schedule longer than a day counts as one run a day, never as none: "$0.00 a day"
+ * under an agent that does run would be untrue.
  */
 export function usdcEstimate(modelId: string | null | undefined, intervalMinutes: number): UsdcEstimate {
   const model = payPerUseModel(modelId);
