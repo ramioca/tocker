@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowRight, Plus, Wallet } from "lucide-react";
@@ -8,6 +9,7 @@ import { formatSignedUsd } from "@/components/common/format";
 import { AgentMoneyTable } from "@/components/money/agent-money-table";
 import { costsHint, sumCosts } from "@/components/money/cost-totals";
 import { CostsNote, FormerThinkingNote } from "@/components/money/costs-note";
+import { resolveTimeZone } from "@/components/notifications/day-bucket";
 import { MoneyHeadline } from "@/components/money/money-headline";
 import { PnlByDay } from "@/components/money/pnl-by-day";
 import { getSession } from "@/lib/auth";
@@ -85,6 +87,8 @@ export default async function MoneyPage() {
   if (!session) redirect(`/login?next=${encodeURIComponent("/money")}`);
 
   const summary = await getMoney(session.userId);
+  // The chart's hours are the viewer's, not UTC's; AppShell writes the zone. UTC until it has.
+  const timeZone = resolveTimeZone((await cookies()).get("tz")?.value);
   const hasLive = summary.live.length > 0;
   const hasAny = hasLive || summary.paper.length > 0;
   // Before anything is live, the costs worth explaining are the paper agents' — the
@@ -122,7 +126,7 @@ export default async function MoneyPage() {
                     : "Every live agent's book, summed, against where the curve started."
                 }
               />
-              <EquityChart points={summary.equity} startingUsd={summary.basisUsd} label="Live equity" />
+              <EquityChart points={summary.equity} startingUsd={summary.basisUsd} label="Live equity" timeZone={timeZone} />
             </section>
 
             <section aria-labelledby="money-days-heading" className="space-y-4">

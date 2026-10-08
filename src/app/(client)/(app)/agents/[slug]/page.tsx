@@ -1,5 +1,6 @@
 import { cache, Suspense } from "react";
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { canonicalSlug } from "@/app/(client)/(app)/agents/[slug]/canonical-slug";
 import { AgentConfigSummary } from "@/components/agents/agent-config-summary";
@@ -15,6 +16,7 @@ import { RunsTimeline } from "@/components/agents/runs-timeline";
 import { TradesTable } from "@/components/agents/trades-table";
 import { PerformancePanel } from "@/components/agents/analytics";
 import { EquityChart } from "@/components/charts/equity-chart";
+import { resolveTimeZone } from "@/components/notifications/day-bucket";
 import { accountPaused, agentBySlug, equitySeries, viewerSession } from "@/components/common/data-access";
 import { isAdminEmail } from "@/lib/admin";
 import { isLlmMock } from "@/lib/agent/mock-model";
@@ -101,6 +103,8 @@ export default async function AgentPage({ params, searchParams }: Params) {
   }
 
   const chartPoints = withLivePoint(equity.length > 1 ? equity : agent.equity, agent);
+  // The chart's hours are the viewer's, not UTC's; AppShell writes the zone. UTC until it has.
+  const timeZone = resolveTimeZone((await cookies()).get("tz")?.value);
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
@@ -135,6 +139,7 @@ export default async function AgentPage({ params, searchParams }: Params) {
                   points={chartPoints}
                   startingUsd={bookBasisUsd(agent, chartPoints[0]?.equityUsd)}
                   label={agent.name}
+                  timeZone={timeZone}
                 />
               </section>
 
