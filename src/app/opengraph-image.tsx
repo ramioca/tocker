@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ImageResponse } from "next/og";
+import { TOCKER_MARK_RATIO } from "@/components/brand/tocker-mark";
 
 /**
- * The share card: the neon T on black, the headline, the wordmark, one mono
+ * The share card: the mark and the wordmark on black, the headline, one mono
  * line, and the mark again large on the right as the card's art. Generated at
  * build time and cached.
  *
@@ -11,6 +12,10 @@ import { ImageResponse } from "next/og";
  * fetched from Google Fonts at build (an old user agent gets a WOFF/TTF the
  * renderer accepts); `fonts/Geist-Regular.ttf` (the copy that ships inside
  * next/og, SIL OFL) is always loaded too, so the card renders even offline.
+ *
+ * The mark is the real render: the 512px PNG, read from public/ and embedded
+ * as a data URL, because the renderer has no site to fetch a path from. A card
+ * without it is still a card, so a failed read leaves the text and never throws.
  */
 export const alt = "Tocker — your agent trades while you sleep.";
 export const size = { width: 1200, height: 630 };
@@ -42,8 +47,23 @@ async function loadLocalGeist(): Promise<Font | null> {
   }
 }
 
+/** The mark as a data URL, or null when the file cannot be read. */
+async function loadMark(): Promise<string | null> {
+  try {
+    const buf = await readFile(join(process.cwd(), "public/brand/tocker/v3/tocker-mark-512.png"));
+    return `data:image/png;base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
 export default async function Image() {
-  const loaded = await Promise.all([loadLocalGeist(), loadGeistFromGoogle(500), loadGeistFromGoogle(600)]);
+  const [mark, ...loaded] = await Promise.all([
+    loadMark(),
+    loadLocalGeist(),
+    loadGeistFromGoogle(500),
+    loadGeistFromGoogle(600),
+  ]);
   const fonts = loaded.filter((f): f is Font => f !== null);
 
   return new ImageResponse(
@@ -56,21 +76,24 @@ export default async function Image() {
           flexDirection: "column",
           justifyContent: "space-between",
           padding: "64px 72px",
-          background:
-            "radial-gradient(60% 70% at 80% 45%, rgba(61,107,255,0.22) 0%, rgba(255,61,203,0.08) 45%, #050507 75%)",
+          // Opaque stops on purpose: the renderer blends see-through ones into a hard
+          // ring, where a browser would draw a soft glow.
+          background: "radial-gradient(52% 64% at 79% 44%, #141f4d 0%, #0b0f24 46%, #050507 80%)",
           position: "relative",
           color: "#f4f4f1",
           fontFamily: fonts.length > 0 ? "Geist" : "sans-serif",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <NeonT width={44} stroke={60} />
+          {mark ? <Mark src={mark} width={44} /> : null}
           <div style={{ fontSize: 30, fontWeight: 600, letterSpacing: -1 }}>tocker</div>
         </div>
 
-        <div style={{ position: "absolute", right: 64, top: 120, display: "flex" }}>
-          <NeonT width={380} stroke={14} />
-        </div>
+        {mark ? (
+          <div style={{ position: "absolute", right: 64, top: 120, display: "flex" }}>
+            <Mark src={mark} width={380} />
+          </div>
+        ) : null}
 
         <div style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ fontSize: 34, fontWeight: 500, letterSpacing: -0.8, color: "rgba(244,244,241,0.72)" }}>
@@ -101,29 +124,9 @@ export default async function Image() {
 }
 
 /**
- * The new mark (public/brand/tocker/v2/tocker-mark-neon.svg) in the subset of
- * SVG the OG renderer draws: a dark glass fill and a cyan-to-magenta edge. No
- * filters, so no glow; at share-card sizes the gradient edge carries it.
+ * The mark at a given width. Both sides are spelled out from the shared ratio,
+ * so the layout never depends on what the renderer reads out of the file.
  */
-function NeonT({ width, stroke }: { width: number; stroke: number }) {
-  return (
-    <svg width={width} height={Math.round((width * 970) / 1180)} viewBox="40 170 1180 970">
-      <defs>
-        <linearGradient id="edge" x1="80" y1="200" x2="1180" y2="1100" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#3FD2FF" />
-          <stop offset="0.32" stopColor="#2F5BFF" />
-          <stop offset="0.55" stopColor="#FF2BD6" />
-          <stop offset="0.78" stopColor="#3F7BFF" />
-          <stop offset="1" stopColor="#FF3DB4" />
-        </linearGradient>
-      </defs>
-      <path
-        d="M76 204 H556 L563 386 L716 236 Q752 204 842 204 H1180 L1030 381 H802 Q727 381 727 458 V1110 L495 938 V381 H229 Z"
-        fill="#0e0c16"
-        stroke="url(#edge)"
-        strokeWidth={stroke}
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
+function Mark({ src, width }: { src: string; width: number }) {
+  return <img src={src} alt="" width={width} height={Math.round(width / TOCKER_MARK_RATIO)} />;
 }

@@ -1,5 +1,42 @@
 # Tocker brand kit
 
+## v3: the 3D "T" (current)
+
+This is the mark the site uses: the landing, the app bar, the login, the browser
+tab, the home-screen icons and the share image.
+
+One render is the master. `scripts/brand/make-mark-assets.py` cuts the T out of it
+and writes every other file below, so none of them is edited by hand: replace the
+master and run the script again.
+
+| File | What it is for |
+| --- | --- |
+| `v3/tocker-mark-3d-2000.png` | The master render, on black, 2000 x 2000. |
+| `v3/tocker-mark-3d-transparent.png` | The T alone on transparency, 1169 x 964. The source for any new size. |
+| `v3/tocker-mark-720.webp` | Transparent, 720 wide. Large placements and the sign-in provider's modal. |
+| `v3/tocker-mark-160.webp` | Transparent, 160 wide. The nav, the app bar and the login (sharp at 3x up to 53 px wide). |
+| `v3/tocker-mark-512.png` | Transparent PNG, 512 wide. For the share image, whose renderer is not a browser and may not read WebP. At 95 KB it is too heavy to put on a page. |
+
+Browsers keep the files in `v3/` for a day (`next.config.ts`), so a new cut takes
+up to a day to reach someone who has already visited. Local dev does not cache them.
+
+The script also writes the icons. They live outside this folder, where the site
+looks for them:
+
+| File | What it is for |
+| --- | --- |
+| `src/app/favicon.ico` | Browser tab: 16, 32 and 48, transparent. |
+| `src/app/icon.png` | The same icon as a PNG, 192, transparent, for browsers that prefer one. |
+| `src/app/apple-icon.png` | iOS home screen and push notifications: 180, on black. |
+| `public/icon-192.png`, `public/icon-512.png` | The installed web app (`public/manifest.webmanifest`): on black, with enough room around the T to survive a maskable crop. |
+
+In code, take the paths and the ratio (1169 / 964) from
+`src/components/brand/tocker-mark.tsx` instead of typing them again.
+
+## Earlier kit: the Ticker Knot
+
+Everything from here down describes an earlier mark. The site no longer uses it.
+
 The **Ticker Knot** is a continuous ribbon forming a lowercase `t`. The loop
 represents a live market feed, while the returning ribbon represents an agent's
 continuous observe-decide-trade cycle.

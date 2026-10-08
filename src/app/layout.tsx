@@ -36,7 +36,9 @@ export const metadata: Metadata = {
   },
   description:
     "Build an autonomous trading agent, give it a wallet, and watch it trade Solana and Base in public. Your strategy stays yours.",
-  icons: { icon: "/icon.svg" },
+  // No `icons` on purpose. favicon.ico, icon.png and apple-icon.png sit beside this file
+  // and Next writes their <link> tags itself; it stops doing so as soon as `icons` is set.
+  //
   // Emits `<link rel="manifest" href="/manifest.webmanifest">`. It is here for one
   // concrete reason: iOS delivers Web Push only to a web app that has been added to
   // the home screen, and a browser will not offer "Add to Home Screen" as an app

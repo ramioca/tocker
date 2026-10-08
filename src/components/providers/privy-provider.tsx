@@ -3,6 +3,7 @@ import { useMemo, type ReactNode } from "react";
 import { PrivyProvider } from "@privy-io/react-auth";
 import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
 import { ENABLED_LOGIN_METHODS } from "@/components/auth/login-methods";
+import { TOCKER_MARK_LG_SRC } from "@/components/brand/tocker-mark";
 import { SessionKeepAlive } from "./session-keep-alive";
 import "./privy-theme.css";
 
@@ -61,9 +62,13 @@ export function AppPrivyProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  // Privy renders the logo inside its own modal, so it wants an absolute URL.
+  // Privy renders the logo inside its own modal, so it wants an absolute URL. The modal
+  // draws it as a plain <img> on this page, 180 x 90 at most, so it takes the same WebP
+  // the page does. Keep the file small: Privy also mounts a hidden copy under this
+  // provider to have it ready, so every page here fetches it whether or not the modal
+  // ever opens.
   const logoUrl = useMemo(
-    () => (typeof window === "undefined" ? "https://tocker.xyz/icon.svg" : `${window.location.origin}/icon.svg`),
+    () => `${typeof window === "undefined" ? "https://tocker.xyz" : window.location.origin}${TOCKER_MARK_LG_SRC}`,
     [],
   );
 
@@ -80,7 +85,7 @@ export function AppPrivyProvider({ children }: { children: ReactNode }) {
         // Tocker's mark and copy.
         appearance: {
           // A hex sets the modal's surface and the vendor derives the rest from it: the
-          // sign-in card's near-black, and the violet of the mark.
+          // sign-in card's near-black, and the app's violet accent.
           theme: "#0a0a0b",
           accentColor: "#8b6cff",
           logo: logoUrl,
