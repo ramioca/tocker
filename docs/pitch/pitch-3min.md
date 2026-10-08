@@ -1,6 +1,6 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
-~378 words, about 2:20 at 160 wpm (the deck's speaker notes; trimmed Oct 8, 2026). The ~505-word, 3:10 version is kept below. Rewritten by a copywriter pass on Oct 8, 2026: the hook is the market (21,000 tokens a day); the founder's own losses to rugs, honeypots and emotion sit on the problem slide with the running cost (~$200 a month, a fee per swap, and 20+ services to wire); the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
+~381 words, about 2:20 at 160 wpm (the deck's speaker notes; trimmed Oct 8, 2026). The ~505-word, 3:10 version is kept below. Rewritten by a copywriter pass on Oct 8, 2026: the hook is the market (21,000 tokens a day); the founder's own losses to rugs, honeypots and emotion sit on the problem slide with the running cost (~$200 a month, a fee per swap, and 20+ services to wire); the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
 Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. We bet the other way.' (fallback: 'A different approach.'). Rival strip, then what all six do vs Tocker (data, safety, social), each with dated evidence. Copy, two design variants and a VC/fact critic merged on Oct 8, 2026 (research/26-competitors-deep), then rebuilt in the Slides subset (flow layout, text ≥24px, no overlays). Earlier full table: docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
 
 ## cover
@@ -13,7 +13,7 @@ Over ninety days this year, ninety-four percent of Solana memecoin wallets made 
 Tocker fixes both with one line of English. Your agent buys data per call, ten hard gates in code can veto any buy, and it runs hosted around the clock. Nothing to wire.
 
 ## product
-Here's a sample run. The thesis: memes smart money is accumulating. The agent skips BONK and POPCAT. WIF scores eighty-one, clears all ten gates, and it buys a hundred dollars, exits in code. [pause] I was emotional. An agent isn't. It just follows your rules.
+Here's a sample run. The thesis: memes smart money is accumulating. Your agent finds WIF. It scores eighty-one, clears all ten gates, and buys a hundred dollars, exits in code. [pause] I was emotional. An agent isn't. It just follows your rules.
 
 ## alpha
 Rules aren't edge, and neither is AI alone: four of six frontier models lost over thirty percent trading real money. So your agent buys answers per call over x402: who's buying, can I sell, is it a rug? About seven cents a token.
@@ -28,7 +28,7 @@ It's an early category with good teams, and we bet the other way. Most offer a c
 That public record is the growth loop: every trade posts with its score and markets itself, and followers launch their own. We start with Solana memecoins, four hundred eighty-two billion dollars last year, then Polymarket and tokenized stocks.
 
 ## team
-Why me? I lead product and growth at BlockRun, the leading x402 gateway. I founded Sorbet, a neobank moving five million a month. And I shipped Tocker in under four weeks.
+Why me? I lead product and growth at BlockRun, the leading x402 gateway. I founded Sorbet, a neobank moving five million a month. I worked on AI at Deloitte. And I shipped Tocker in under four weeks.
 
 ## thanks
 We're in private beta on Solana and Base. Tomorrow, twenty-one thousand more tokens launch. You won't have to watch one. [pause] Touch grass. Your agent is trading for you. Thank you.
