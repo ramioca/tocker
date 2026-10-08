@@ -1,31 +1,31 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
-~480 words, about 3:00 at 160 wpm. Rewritten by a copywriter pass on Oct 8, 2026: the hook is the market (21,000 tokens a day); the founder's own losses to rugs, honeypots and emotion sit on the problem slide with the running cost (~$200 a month, a fee per swap, and 20+ services to wire); the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
+~525 words, about 3:15 at 160 wpm (3:05 at 170). Rewritten by a copywriter pass on Oct 8, 2026: the hook is the market (21,000 tokens a day); the founder's own losses to rugs, honeypots and emotion sit on the problem slide with the running cost (~$200 a month, a fee per swap, and 20+ services to wire); the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
 Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. We bet the other way.' (fallback: 'A different approach.'). Rival strip, then what all six do vs Tocker (data, safety, social), each with dated evidence. Copy, two design variants and a VC/fact critic merged on Oct 8, 2026 (research/26-competitors-deep), then rebuilt in the Slides subset (flow layout, text ≥24px, no overlays). Earlier full table: docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
 
 ## cover
-Twenty-one thousand. That's how many tokens launch on pump.fun every day. Almost all collapse. Bots and insiders buy before you've read the name. [pause] Retail isn't dumb. It's outgunned. I'm Rami, and Tocker is the infrastructure for agentic trading: anyone can launch a trading agent, with the edge and the guardrails built in.
+Twenty-one thousand. That's how many tokens launch on pump.fun every day. Almost all collapse. Bots and insiders buy before you've read the name. [pause] Retail isn't dumb. It's outgunned. I'm Rami, and Tocker is the infrastructure for safe agentic trading: anyone can launch a trading agent, with the edge and the guardrails built in.
 
 ## problem
-Today, traders have no edge. In the ninety days to August, ninety-four percent of Solana memecoin wallets made no profit. I've lost more than I'd like to admit to rug pulls, honeypots and, honestly, my own emotions. And agents have no rails. Helius for RPC, Jupiter for swaps, Nansen for data, Grok to read X, Claude to decide, a server to host it. About two hundred dollars a month, a fee on every swap, and twenty-plus services you wire and babysit yourself. [pause]
+Today, traders have no edge. In the ninety days to August, ninety-four percent of Solana memecoin wallets made no profit. I've lost more than I'd like to admit to rug pulls, honeypots and, honestly, my own emotions. And agents have no rails. Helius, Jupiter, Nansen, Grok, Claude, a server: about two hundred dollars a month, a fee on every swap, and twenty-plus services you wire and babysit yourself. [pause]
 
 ## solution
-With Tocker, it takes one line of English. The edge: your agent buys data per call, and ten hard gates in code can veto any buy. The rails: wallet, data, inference and execution in one integration, hosted around the clock.
+With Tocker, it takes one line of English. The edge: your agent buys data per call, and ten hard gates in code can veto any buy. The rails: wallet, data, inference and execution in one integration, hosted around the clock. Nothing to wire, nothing to babysit.
 
 ## product
-Here's a sample run. You write the thesis: Solana memes smart money is accumulating, holders growing every hour, X mindshare rising. Stop and take-profit are settings, not prose. Your agent skips BONK and POPCAT, below the floor. WIF scores eighty-one and clears all ten gates: a hundred-dollar buy, exits enforced in code. [pause] I was emotional. An agent isn't. No FOMO, no panic, no revenge trades. It just follows your rules.
+Here's a sample run. You write the thesis: Solana memes smart money is accumulating, holders growing every hour, X mindshare rising. Your agent skips BONK and POPCAT, below the floor. WIF scores eighty-one and clears all ten gates: a hundred-dollar buy, exits enforced in code. [pause] I was emotional. An agent isn't. No FOMO, no panic, no revenge trades. It just follows your rules.
 
 ## alpha
-Rules aren't edge. Neither is AI alone. Last October, six frontier models traded real money; four lost over thirty percent. So your agent buys answers over x402, the pay-per-call standard backed by Visa and Stripe. Can I actually sell this, or is it a honeypot? About seven cents a token on Solana.
+Rules aren't edge. Neither is AI alone. Last October, six frontier models traded real money; four lost over thirty percent. So your agent buys answers over x402, the pay-per-call standard. Can I actually sell this, or is it a honeypot? About seven cents a token on Solana.
 
 ## business
 Who pays? Traders already do. Last year, Solana traders paid nine hundred forty million dollars to bots and terminals. That's our lane. They charge one percent a trade. We'll charge half, which covers the data and the gates.
 
 ## competition
-Others want this lane. It's early: six funded startups, the largest disclosed round four million. They share three defaults: bundled data, no rug veto before the buy, and copy trading. We bet the other way on all three.
+Others want this lane. It's early: six funded startups, the largest disclosed round four million, and good teams. But they share three defaults, and we bet the other way on each. They run on bundled data, so agents herd into the same tokens; ours buys its own. They cap risk, but nothing vetoes a rug before the swap; our ten gates do. And they sell copy trading, which turns fourteen percent into three; we publish every fill and keep the strategy private.
 
 ## gtm
-Your strategy stays private. Your trades don't. Each one posts with its entry score, like WIF's eighty-one, so every trade markets itself. Followers launch their own agents; next, creators share the fees. We start with Solana memecoins, four hundred eighty-two billion dollars traded last year. Then Polymarket, then tokenized stocks.
+That public record is the growth loop. Each trade posts with its entry score, like WIF's eighty-one, so every trade markets itself. Followers launch their own agents; next, creators share the fees. We start with Solana memecoins, four hundred eighty-two billion dollars traded last year. Then Polymarket, then tokenized stocks.
 
 ## team
 Why me? I lead product and growth at BlockRun, the leading x402 gateway, so I know these rails. I founded Sorbet, a neobank that raised a million dollars and transacts five million a month. I worked on AI at Deloitte. And I shipped Tocker in under four weeks.
