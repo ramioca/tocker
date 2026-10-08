@@ -1,7 +1,7 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
 ~483 words, about 3:05 at 155 wpm. Sam is an illustrative composite, not a real user. [pause] marks a beat.
-Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: market map of 65 trading-agent products (50 startups in 5 segments + 15 incumbents); only Tocker combines USDC inference (next), x402 alpha, advanced filters & gates and social trading. Sources: research/20, 21.
+Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: spotlight matrix of the 5 closest agentic-trading startups (Bankr, Nansen AI, Parasol, Senpi, Fere AI); each one's best cell is spotlighted, Tocker's row is the only one built across (USDC inference next). Cells verified in research/22.
 
 ## cover
 Three a.m. A trader, call her Sam, sees a new token trending. She buys. Minutes later, it's worth nothing. The wallets that bought first? Insiders. [pause] Sam isn't dumb. She's outgunned. I'm Rami, and this is Tocker: the infrastructure for agentic trading.
@@ -22,7 +22,7 @@ Can AI even trade? Last October, six frontier models traded real money; four los
 Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We plan to charge zero point two percent: twenty cents on a hundred dollars.
 
 ## competition
-We mapped sixty-five products where an AI agent trades for you. Each startup owns a piece: Bankr has x402 and a USDC LLM gateway, Parasol has filters, Senpi has an arena. Nobody combines all four. Tocker does: USDC inference next, x402 alpha, advanced filters and gates, and social trading, hosted 24/7.
+Each of these teams is best at one piece. Bankr already pays for inference in USDC; for us that's next. Nansen sells the best data, and we buy it. Parasol filters memecoins, Senpi trades in public, Fere runs around the clock. None we found combines them. Tocker does.
 
 ## gtm
 Every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score, never the strategy. Followers launch their own; next, creators earn a fee share. Today that's memecoins, five billion dollars a week on Solana at the August peak. Next Polymarket, then tokenized stocks.
