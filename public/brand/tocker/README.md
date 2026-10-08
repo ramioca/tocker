@@ -16,6 +16,8 @@ master and run the script again.
 | `v3/tocker-mark-720.webp` | Transparent, 720 wide. Large placements and the sign-in provider's modal. |
 | `v3/tocker-mark-160.webp` | Transparent, 160 wide. The nav, the app bar and the login (sharp at 3x up to 53 px wide). |
 | `v3/tocker-mark-512.png` | Transparent PNG, 512 wide. For the share image, whose renderer is not a browser and may not read WebP. At 95 KB it is too heavy to put on a page. |
+| `v3/tocker-banner-x.webp` | The X banner, 2000 x 667: the master for the share image's background. |
+| `v3/og-background.jpg` | The share image's background, 1200 x 630: the banner's shader on the right, faded into black. Written by `scripts/brand/make-og-background.py`; replace the banner and run it again. |
 
 Browsers keep the files in `v3/` for a day (`next.config.ts`), so a new cut takes
 up to a day to reach someone who has already visited. Local dev does not cache them.
