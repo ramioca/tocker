@@ -7,7 +7,7 @@ Reviewed over four rounds by VC-partner, design and code-level fact-check critic
 Twenty-one thousand. That's how many tokens launch on pump.fun every day. Almost all collapse. Bots and insiders buy before you've read the name. [pause] Retail isn't dumb. It's outgunned. I'm Rami, and Tocker is the infrastructure for agentic trading: anyone can launch a trading agent, with the edge and the guardrails built in.
 
 ## problem
-Today, traders have no edge. In twenty twenty-four, nine in ten pump.fun traders lost money or made under a hundred dollars. I've lost more than I'd like to admit to rug pulls, honeypots and, honestly, my own emotions. And agents have no rails. Helius for RPC, Jupiter for swaps, Nansen for data, Grok to read X, Claude to decide, a server to host it. About two hundred dollars a month, a fee on every swap, and twenty-plus services you wire and babysit yourself. [pause]
+Today, traders have no edge. In the ninety days to August, ninety-four percent of Solana memecoin wallets made no profit. I've lost more than I'd like to admit to rug pulls, honeypots and, honestly, my own emotions. And agents have no rails. Helius for RPC, Jupiter for swaps, Nansen for data, Grok to read X, Claude to decide, a server to host it. About two hundred dollars a month, a fee on every swap, and twenty-plus services you wire and babysit yourself. [pause]
 
 ## solution
 With Tocker, it takes one line of English. The edge: your agent buys data per call, and ten hard gates in code can veto any buy. The rails: wallet, data, inference and execution in one integration, hosted around the clock.
@@ -51,6 +51,7 @@ It's in private beta on Solana and Base. Tomorrow, another twenty-one thousand t
 - ~$21.5B Polymarket volume in 2025: Keyrock x Dune report via Odaily (https://www.odaily.news/en/post/5208620); Sacra concurs (research/13). Other counts: ~$22.5B (Dune dashboard), ~$10.5B (DefiLlama DEX-only)
 - $12.4B Solana tokenized-stock DEX volume, 2026 to date: CryptoBriefing (https://cryptobriefing.com/solana-tokenized-stocks-12-billion-dex-volume/). No calendar-2025 figure exists (xStocks launched 30 Jun 2025); Q2 2026 alone was $5.8B (SolanaCompass)
 - Earlier run-rate figures, kept for Q&A: $5.2B Solana memecoins in the week to 26 Aug 2026 (Blockworks); $10.8B Polymarket in June 2026 (Portals)
+- 94% of 304,161 Solana memecoin wallets made no profit over the 90 days to Aug 2026; median −$120 (fomo × Dune wallet data; say "made no profit", not "lost money") — research/28. Replaces the 2024 "9 in 10 pump.fun traders" stat.
 - Competition cells, traction and funding — research/26-competitors-deep (Oct 8 2026; supersedes 22 and 25)
 - Competition evidence (research/26-competitors-deep/proof-points.md):
   - DXRG (Barton et al., arXiv 2609.05663, Sep 2026): 3,505 user-funded AI agents on a shared 12-token Base market, 21 days. Herding: 1,544 of 3,454 active vaults bought the same token (FEET) within one hour on Mar 1; "neither fleet shows a directional edge".
