@@ -1,7 +1,7 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
 ~483 words, about 3:05 at 155 wpm. Sam is an illustrative composite, not a real user. [pause] marks a beat.
-Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: table vs Fere AI, Senpi, Ask Gina, Minara, HeyElsa ('Six agents trade. Only one buys alpha.'), cells from research/22. Alternative angles in docs/pitch/deck/competition-angles/.
+Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: clean table vs Fere AI, Senpi, Ask Gina, Minara, HeyElsa ('Six agents trade. Only one buys alpha.') with a 'Best at' column per rival; cells from research/22. Alternative angles in docs/pitch/deck/competition-angles/.
 
 ## cover
 Three a.m. A trader, call her Sam, sees a new token trending. She buys. Minutes later, it's worth nothing. The wallets that bought first? Insiders. [pause] Sam isn't dumb. She's outgunned. I'm Rami, and this is Tocker: the infrastructure for agentic trading.
@@ -22,7 +22,7 @@ Can AI even trade? Last October, six frontier models traded real money; four los
 Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We plan to charge zero point two percent: twenty cents on a hundred dollars.
 
 ## competition
-These are the agents closest to us. They all trade for you, and Senpi and Minara even let you copy traders. None does all three: buy alpha per call, screen every token, and trade in public. Tocker does. Bankr's wallet can pay x402 too, but it's rails, not a strategy agent with gates.
+These are the agents closest to us, and each is genuinely good at something: Senpi at copy trading, Minara at disciplined perps, Fere at always-on trading. None buys alpha per call, screens every token in code, and trades in public. That combination is Tocker. USDC inference is next.
 
 ## gtm
 Every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score, never the strategy. Followers launch their own; next, creators earn a fee share. Today that's memecoins, five billion dollars a week on Solana at the August peak. Next Polymarket, then tokenized stocks.
@@ -59,3 +59,4 @@ Tocker is in private beta on Solana and Base. [pause] Back to Sam. Same token. S
 4. **Why "infrastructure" without a public API/SDK?** The gates and the per-fill score record are the product; next, we sell the pre-trade check over x402 to any Coinbase, Bankr or OpenClaw agent.
 5. **What stops Nansen or GMGN adding gates?** Data is a commodity we buy from everyone (including Nansen); enforced gates plus a public, score-stamped record with private strategies is the loop.
 6. **BlockRun conflict?** Disclose the founder's BlockRun role; any inference routing through it is at provider cost, and the user can always bring their own key.
+7. **Bankr already pays x402 and sells USDC inference.** True, and we credit it: Bankr is wallet rails you command in chat. Tocker is the strategy agent on top, with gates that can veto a buy and a public fill record.
