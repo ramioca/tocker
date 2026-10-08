@@ -1,7 +1,7 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
 ~483 words, about 3:05 at 155 wpm. Sam is an illustrative composite, not a real user. [pause] marks a beat.
-Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. We bet the other way.' (fallback: 'A different approach.'). Rival strip, then what all six do vs Tocker (data, safety, social), each with dated evidence. Copy, two design variants and a VC/fact critic merged on Oct 8, 2026 (research/26-competitors-deep). Earlier full table: docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
+Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. We bet the other way.' (fallback: 'A different approach.'). Rival strip, then what all six do vs Tocker (data, safety, social), each with dated evidence. Copy, two design variants and a VC/fact critic merged on Oct 8, 2026 (research/26-competitors-deep), then rebuilt in the Slides subset (flow layout, text ≥24px, no overlays). Earlier full table: docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
 
 ## cover
 Three a.m. A trader, call her Sam, sees a new token trending. She buys. Minutes later, it's worth nothing. The wallets that bought first? Insiders. [pause] Sam isn't dumb. She's outgunned. I'm Rami, and this is Tocker: the infrastructure for agentic trading.
@@ -22,7 +22,7 @@ Can AI even trade? Last October, six frontier models traded real money; four los
 Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We plan to charge zero point two percent: twenty cents on a hundred dollars.
 
 ## competition
-Agentic trading is early: six funded startups, the largest disclosed round four million. Good teams, with three shared defaults: bundled data, no rug veto before the swap, and copy trading or volume leaderboards. We bet the other way. Our agent picks and buys data per call, ten gates in code can veto any buy, and every fill is public.
+Agentic trading is early: six funded startups, the largest disclosed round four million. Good teams, with three shared defaults: bundled data, no rug veto before the swap, and copy trading or leaderboards. We bet the other way. Our agent picks and buys data per call, ten gates in code can veto any buy, and every fill is public.
 
 ## gtm
 Every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score, never the strategy. Followers launch their own; next, creators earn a fee share. Today that's memecoins, five billion dollars a week on Solana at the August peak. Next Polymarket, then tokenized stocks.
