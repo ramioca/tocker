@@ -250,7 +250,7 @@ describe("pnlByDay", () => {
 });
 
 describe("combineEquity", () => {
-  it("buckets to 15 minutes, keeping the last point in each bucket", () => {
+  it("buckets to 15 minutes, keeping the last point in each bucket, at its own time", () => {
     const base = Date.UTC(2026, 8, 20, 12, 0);
     const series = combineEquity([
       { agentId: "a", at: base + 60_000, equityUsd: 100, cashUsd: 100 },
@@ -258,9 +258,18 @@ describe("combineEquity", () => {
       { agentId: "a", at: base + 20 * 60_000, equityUsd: 110, cashUsd: 20 },
     ]);
     expect(series).toEqual([
-      { at: new Date(base).toISOString(), equityUsd: 105, cashUsd: 50 },
-      { at: new Date(base + 15 * 60_000).toISOString(), equityUsd: 110, cashUsd: 20 },
+      { at: new Date(base + 10 * 60_000).toISOString(), equityUsd: 105, cashUsd: 50 },
+      { at: new Date(base + 20 * 60_000).toISOString(), equityUsd: 110, cashUsd: 20 },
     ]);
+  });
+
+  it("stamps a shared bucket with the latest reading any agent made in it", () => {
+    const base = Date.UTC(2026, 8, 20, 12, 0);
+    const series = combineEquity([
+      { agentId: "a", at: base + 2 * 60_000, equityUsd: 100, cashUsd: 10 },
+      { agentId: "b", at: base + 13 * 60_000, equityUsd: 40, cashUsd: 40 },
+    ]);
+    expect(series).toEqual([{ at: new Date(base + 13 * 60_000).toISOString(), equityUsd: 140, cashUsd: 50 }]);
   });
 
   it("sums agents and carries the quiet ones forward", () => {

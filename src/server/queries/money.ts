@@ -538,6 +538,9 @@ export function pnlByDay(
  *
  * Same carry-forward rule as {@link pnlByDay}, and for the same reason: a bucket where
  * only one of three agents reported is not a bucket where the other two went to zero.
+ *
+ * Each point is stamped with the latest snapshot inside its bucket, not the bucket's
+ * start: the chart prints the minute, and a reading taken at 14:25 is not one from 14:15.
  */
 export function combineEquity(
   snapshots: readonly SnapshotPoint[],
@@ -545,13 +548,14 @@ export function combineEquity(
 ): EquityPoint[] {
   const size = bucketMs > 0 ? bucketMs : EQUITY_BUCKET_MS;
   const byAgent = new Map<string, Map<number, { at: number; equityUsd: number; cashUsd: number }>>();
-  const buckets = new Set<number>();
+  // Bucket start → the latest snapshot time inside it, across every agent.
+  const buckets = new Map<number, number>();
 
   for (const point of snapshots) {
     const ms = toMs(point.at);
     if (!Number.isFinite(ms) || !Number.isFinite(point.equityUsd)) continue;
     const bucket = Math.floor(ms / size) * size;
-    buckets.add(bucket);
+    buckets.set(bucket, Math.max(buckets.get(bucket) ?? ms, ms));
     const forAgent = byAgent.get(point.agentId) ?? new Map();
     const held = forAgent.get(bucket);
     if (!held || ms >= held.at) {
@@ -561,7 +565,7 @@ export function combineEquity(
   }
 
   const carried = new Map<string, { equityUsd: number; cashUsd: number }>();
-  return [...buckets]
+  return [...buckets.keys()]
     .sort((a, b) => a - b)
     .map((bucket) => {
       let equityUsd = 0;
@@ -574,7 +578,7 @@ export function combineEquity(
         equityUsd += value.equityUsd;
         cashUsd += value.cashUsd;
       }
-      return { at: new Date(bucket).toISOString(), equityUsd, cashUsd };
+      return { at: new Date(buckets.get(bucket) ?? bucket).toISOString(), equityUsd, cashUsd };
     });
 }
 
@@ -956,13 +960,15 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
     liveFlows,
     thinking,
   ] = await Promise.all([
-    // One row per agent per 15 minutes: the last snapshot in the bucket. The bucket
-    // index alone carries the timestamp (900s divides a day exactly, so a bucket never
-    // straddles UTC midnight), which keeps a driver-specific timestamp cast out of it.
+    // One row per agent per 15 minutes: the last snapshot in the bucket, at its own time
+    // (the chart prints the minute, so not the bucket's start), read as epoch seconds the
+    // way getEquitySeries reads it. The bucket index stands in if that ever fails to read
+    // (900s divides a day exactly, so a bucket never straddles UTC midnight).
     db
       .select({
         agentId: equitySnapshots.agentId,
         bucket: bucketExpr,
+        lastAt: sql<number | string>`extract(epoch from max(${equitySnapshots.at}))::float8`,
         equityUsd: sql<string>`(array_agg(${equitySnapshots.equityUsd}::text order by ${equitySnapshots.at} desc, ${equitySnapshots.id} desc))[1]`,
         cashUsd: sql<string>`(array_agg(${equitySnapshots.cashUsd}::text order by ${equitySnapshots.at} desc, ${equitySnapshots.id} desc))[1]`,
       })
@@ -1087,7 +1093,7 @@ export async function getMoney(userId: string): Promise<MoneySummary> {
   // ---- snapshots -----------------------------------------------------------
   const points: SnapshotPoint[] = snapshotRows.map((row) => ({
     agentId: row.agentId,
-    at: Number(row.bucket) * bucketSeconds * 1000,
+    at: Number.isFinite(Number(row.lastAt)) ? Number(row.lastAt) * 1000 : Number(row.bucket) * bucketSeconds * 1000,
     equityUsd: toNum(row.equityUsd),
     cashUsd: toNum(row.cashUsd),
   }));

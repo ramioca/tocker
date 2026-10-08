@@ -98,6 +98,23 @@ describe("the chart clock", () => {
     expect(intradayPoints([t0])).toEqual([false]);
   });
 
+  it("prints the time of every point in a window of two days or less, as its axis does", () => {
+    expect(intradayPoints([t0 - 30 * HOUR, t0])).toEqual([true, true]);
+    expect(timeTickLabels([t0 - 30 * HOUR, t0], [0, 1], chartClock())).toEqual(["Oct 7 03:12", "Oct 8 09:12"]);
+  });
+
+  it("switches a few days of hourly points to times rather than repeat a date", () => {
+    const ts = Array.from({ length: 73 }, (_, h) => t0 + h * HOUR);
+    expect(timeTickLabels(ts, [0, 14, 28, 42, 56, 72], chartClock())).toEqual([
+      "Oct 8 09:12",
+      "23:12",
+      "Oct 9 13:12",
+      "Oct 10 03:12",
+      "17:12",
+      "Oct 11 09:12",
+    ]);
+  });
+
   it("labels a short window by the time of day, dating the first tick and each new day", () => {
     const ts = Array.from({ length: 25 }, (_, h) => t0 + h * HOUR);
     expect(timeTickLabels(ts, [0, 6, 12, 18, 24], chartClock())).toEqual([

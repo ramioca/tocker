@@ -222,9 +222,15 @@ export function chartClock(timeZone = 'UTC'): ChartClock {
   return clock;
 }
 
-/** For each point, whether it is one of an hourly stretch: a neighbour less than a day away. */
+/**
+ * For each point, whether its time is worth printing: it is one of an hourly stretch (a
+ * neighbour less than a day away), or the whole window is two days or less, where the
+ * axis is labelled by the time of day too (see timeTickLabels).
+ */
 export function intradayPoints(ts: readonly number[]): boolean[] {
+  const short = ts.length > 1 && ts[ts.length - 1] - ts[0] <= INTRADAY_SPAN_MS;
   return ts.map((t, i) => {
+    if (short) return true;
     const before = i > 0 ? t - ts[i - 1] : Infinity;
     const after = i < ts.length - 1 ? ts[i + 1] - t : Infinity;
     return Math.min(before, after) < INTRADAY_GAP_MS;
@@ -232,13 +238,17 @@ export function intradayPoints(ts: readonly number[]): boolean[] {
 }
 
 /**
- * The time axis's labels for the chosen ticks. A window of two days or less is labelled
- * by the time of day, with the date on its first tick and wherever a new day starts
- * ("Oct 8 09:12", "12:30", "Oct 9 00:10"); anything longer, by the date alone.
+ * The time axis's labels for the chosen ticks. By the date alone ("Oct 6", "Oct 7") while
+ * that tells the ticks apart; by the time of day, with the date on the first tick and
+ * wherever a new day starts ("Oct 8 09:12", "12:30", "Oct 9 00:10"), for a window of two
+ * days or less, or wherever two ticks would otherwise read the same date (a few days of
+ * hourly points across six ticks).
  */
 export function timeTickLabels(ts: readonly number[], ticks: readonly number[], clock: ChartClock): string[] {
   const span = ts.length > 1 ? ts[ts.length - 1] - ts[0] : Infinity;
-  if (span > INTRADAY_SPAN_MS) return ticks.map((i) => clock.day(ts[i]));
+  const days = ticks.map((i) => clock.day(ts[i]));
+  const repeats = days.some((day, k) => k > 0 && day === days[k - 1]);
+  if (span > INTRADAY_SPAN_MS && !repeats) return days;
   return ticks.map((i, k) => {
     const day = clock.day(ts[i]);
     const newDay = k === 0 || clock.day(ts[ticks[k - 1]]) !== day;

@@ -98,7 +98,17 @@ export interface PortfolioChartProps {
    * the server and the browser agree on; a page that knows the viewer's zone passes it.
    */
   timeZone?: string;
+  /**
+   * Switch to the browser's own zone once hydrated. The server and the first render keep
+   * `timeZone`, so hydration matches; a viewer the page did not know yet (no zone cookie
+   * on their first visit) still reads their own hours a moment later. Off for a series
+   * whose days are UTC days, like the landing page's sample.
+   */
+  followViewer?: boolean;
 }
+
+const noSubscribe = () => () => {};
+const browserZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
 export function PortfolioChart({
   className,
@@ -113,8 +123,11 @@ export function PortfolioChart({
   tableMaxRows,
   intro = true,
   timeZone = 'UTC',
+  followViewer = false,
 }: PortfolioChartProps) {
-  const clock = chartClock(timeZone);
+  const viewerZone = React.useSyncExternalStore(noSubscribe, browserZone, () => timeZone);
+  const zone = followViewer ? viewerZone : timeZone;
+  const clock = chartClock(zone);
   const reduce = usePrefersReducedMotion();
   const [wrapRef, width] = useElementWidth<HTMLDivElement>();
   const svgRef = React.useRef<SVGSVGElement | null>(null);
@@ -222,8 +235,8 @@ export function PortfolioChart({
     return out;
   }, [n, plotW, cx]);
   const tickLabels = React.useMemo(
-    () => timeTickLabels(view.map((p) => p.t), timeTicks, chartClock(timeZone)),
-    [view, timeTicks, timeZone],
+    () => timeTickLabels(view.map((p) => p.t), timeTicks, chartClock(zone)),
+    [view, timeTicks, zone],
   );
 
   const activeIndex = hoverIndex ?? n - 1;
@@ -572,7 +585,9 @@ export function PortfolioChart({
       </div>
       </ChartState>
       <ChartDataTable
-        caption={`${label} — value, cost basis and drawdown by date${tableStride > 1 ? `, one row in ${tableStride}` : ''}`}
+        caption={`${label} — value, cost basis and drawdown by date${
+          latest && intraday.some(Boolean) ? ` and time (${clock.zone(latest.t)})` : ''
+        }${tableStride > 1 ? `, one row in ${tableStride}` : ''}`}
         columns={['Date', 'Value', 'Basis', 'Drawdown %']}
         rows={tableRows.map((i) => [shortLabel(i), formatMoney(view[i].value), formatMoney(view[i].basis), drawdowns[i].toFixed(2)])}
       />
