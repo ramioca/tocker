@@ -14,7 +14,7 @@
  * | `momentum`     | 15     | 1h/6h/24h price trend, volume trend, liquidity trend          |
  * | `gecko`        | 10*    | GeckoTerminal's GT Score — free, but absent for unrated tokens |
  * | `sentiment`    | 15*    | x402 sentiment, only when the agent chose to pay              |
- * | `smartMoney`   | 10*    | x402 smart-money netflow vs liquidity, only when paid for     |
+ * | `smartMoney`   | 10*    | x402 per-token smart-money net flow vs liquidity, only when paid for |
  *
  * \*The three starred components *reweight* the rest rather than adding to them: the
  * five core components are scaled by `(100 − present starred weight)/100`, so the
@@ -613,6 +613,7 @@ function scoreMomentum(input: ScoreInput, facts: TokenFacts, warnings: string[])
  * Smart-money netflow as a 0-100 component. Mirrors {@link scoreSentiment}: present
  * only when the agent paid for it, and `null` — not 50 — when the source answered
  * without a number, so "nobody tracked touched this" never scores as "flow is even".
+ * The flow is the per-token read's: smart traders plus top-PnL wallets, last 24 hours.
  *
  * The reading that matters is *relative*: $80k of net inflow is an avalanche in a
  * $200k pool and a rounding error in a $40M one, so depth carries most of the weight
@@ -808,8 +809,16 @@ function sourcesOf(input: ScoreInput): string[] {
   return sources;
 }
 
-/** One-line rendering for the model's context and the run transcript. */
-export function renderScore(score: TokenScore): string {
+/**
+ * A few lines for the model's context and the run transcript.
+ *
+ * `smartMoney` is the paid smart money read said in words, or why there is none
+ * (`./smart-money`). It is the caller's to pass because the read is not on the score:
+ * the component is a number, and a number alone was being ignored. Without it the
+ * rendering is what it was before the line existed, which is also how a score cached
+ * under the old read still renders.
+ */
+export function renderScore(score: TokenScore, smartMoney?: string | null): string {
   const parts = [
     `${score.symbol} [${score.chain}] score ${score.total.toFixed(1)}/100 — ${score.verdict}`,
     `safety ${score.components.safety} · liquidity ${score.components.liquidity} · organic ${score.components.organic} · distribution ${score.components.distribution} · momentum ${score.components.momentum}${
@@ -818,6 +827,7 @@ export function renderScore(score: TokenScore): string {
       score.components.smartMoney === null ? "" : ` · smart money ${score.components.smartMoney}`
     }`,
   ];
+  if (smartMoney) parts.push(smartMoney);
   if (score.blockers.length > 0) {
     parts.push(`BLOCKED: ${score.blockers.map((b) => `${b} (${explainBlocker(b)})`).join("; ")}`);
   }

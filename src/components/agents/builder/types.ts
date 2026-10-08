@@ -274,6 +274,11 @@ export interface DiscoveryFeedMeta {
   description: string;
   /** The honest caveat. Every feed has one. */
   caveat: string;
+  /**
+   * A data source the feed buys from. With the feed on and this source off under "Data
+   * it buys", the feed finds nothing, and the control says so.
+   */
+  needsSource?: { id: string; name: string };
 }
 
 /**
@@ -286,6 +291,38 @@ export const PAID_LAUNCH_RADAR_USD_PER_CHAIN = 0.02;
 /** The radar's share of a run's data bill: nothing unless the feed is on. */
 export function launchRadarUsdPerRun(discovery: readonly string[], chains: readonly string[]): number {
   return discovery.includes("paid_launches") ? PAID_LAUNCH_RADAR_USD_PER_CHAIN * chains.length : 0;
+}
+
+/**
+ * What the smart money board costs per chain, per tick: Nansen's netflow board, bought
+ * once a chain however many times a tick sweeps.
+ */
+export const SMART_MONEY_BOARD_USD_PER_CHAIN = 0.05;
+
+/** The source that sells the board. The feed buys nothing without it. */
+export const SMART_MONEY_BOARD_SOURCE = { id: "nansen-smart-money", name: "Nansen Smart Money" } as const;
+
+/**
+ * The board's share of a run's data bill: nothing unless the feed is on *and* the
+ * source that sells it is one of the agent's, which is the rule a sweep buys it under.
+ */
+export function smartMoneyBoardUsdPerRun(
+  discovery: readonly string[],
+  chains: readonly string[],
+  dataSources: readonly string[],
+): number {
+  return discovery.includes("smart_money") && dataSources.includes(SMART_MONEY_BOARD_SOURCE.id)
+    ? SMART_MONEY_BOARD_USD_PER_CHAIN * chains.length
+    : 0;
+}
+
+/**
+ * The name of the source a feed buys from, when that source is not among the agent's:
+ * the feed then finds nothing and costs nothing, and wherever a switched-on feed is
+ * shown it has to say so. `null` for a feed that needs no source, or has it.
+ */
+export function missingFeedSource(feed: DiscoveryFeedMeta, dataSources: readonly string[]): string | null {
+  return feed.needsSource !== undefined && !dataSources.includes(feed.needsSource.id) ? feed.needsSource.name : null;
 }
 
 export const DISCOVERY_FEEDS: DiscoveryFeedMeta[] = [
@@ -325,7 +362,15 @@ export const DISCOVERY_FEEDS: DiscoveryFeedMeta[] = [
     id: "paid_launches",
     label: "Paid launch radar",
     description: "A pre-screened launch feed bought each sweep — SolEnrich on Solana, gate402 on Base.",
-    caveat: `The only feed that costs money: about $${PAID_LAUNCH_RADAR_USD_PER_CHAIN.toFixed(2)} per chain, per tick, from the data budget.`,
+    caveat: `Costs money: about $${PAID_LAUNCH_RADAR_USD_PER_CHAIN.toFixed(2)} per chain, per tick, from the data budget.`,
+  },
+  {
+    id: "smart_money",
+    label: "What smart money is buying",
+    description:
+      "The tokens Nansen's tracked funds and smart traders bought most in the last 24 hours, one board per chain. Each still has to clear your gates and your score.",
+    caveat: `Costs money: about $${SMART_MONEY_BOARD_USD_PER_CHAIN.toFixed(2)} per chain, per tick, from the data budget. It needs ${SMART_MONEY_BOARD_SOURCE.name} switched on under Data it buys.`,
+    needsSource: SMART_MONEY_BOARD_SOURCE,
   },
 ];
 

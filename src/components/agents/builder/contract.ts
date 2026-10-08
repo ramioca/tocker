@@ -156,6 +156,8 @@ export interface CostFacts {
   chosenCount: number;
   sourcesPerRun: number;
   radarPerRun: number;
+  /** The smart money board's share: nothing unless its feed and its source are both on. */
+  boardPerRun: number;
   costPerRun: number;
   dataCapUsd: number;
   intervalMinutes: number;

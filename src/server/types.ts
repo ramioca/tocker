@@ -257,8 +257,14 @@ export type DiscoveryFeed =
    * GeckoTerminal's own GT Score rates the token well. Free, but rate limited.
    */
   | "gecko_launches"
-  /** The only feed that costs money: paid launch radars (SolEnrich on Solana, gate402 on Base). */
+  /** Costs money: paid launch radars (SolEnrich on Solana, gate402 on Base). */
   | "paid_launches"
+  /**
+   * Costs money, and is off unless the owner switched it on: Nansen's board of the
+   * tokens tracked wallets accumulated most over 24 hours, bought once per chain per
+   * tick. It also needs the `nansen-smart-money` source enabled.
+   */
+  | "smart_money"
   | "manual";
 
 /**
@@ -341,6 +347,11 @@ export interface TokenCandidate {
    * report it.
    */
   buyers5m?: number | null;
+  /**
+   * Net USD tracked smart money wallets moved into the token over the last 24 hours,
+   * for a token the paid `smart_money` board named. Absent for every other candidate.
+   */
+  smartMoneyNetflowUsd?: number;
 }
 
 export interface Page<T> {

@@ -95,6 +95,7 @@ import {
   intervalHint,
   launchRadarUsdPerRun,
   onProvider,
+  smartMoneyBoardUsdPerRun,
   PAPER_BALANCES,
   RISK_BOUNDS,
   STRATEGY_PRESETS,
@@ -820,7 +821,7 @@ export function DataStep({
   );
   const chainCount = draft.config.chains.length;
   const radar = launchRadarUsdPerRun(draft.config.universe.discovery, draft.config.chains);
-
+  const board = smartMoneyBoardUsdPerRun(draft.config.universe.discovery, draft.config.chains, draft.config.dataSources);
 
   return (
     <div className="space-y-5">
@@ -871,9 +872,19 @@ export function DataStep({
             <dd className="tnum font-mono">{formatUsd(radar)}</dd>
           </div>
         ) : null}
+        {/* The same for the smart money board: a feed, switched on under the hunting
+            ground, bought once a chain from this budget. */}
+        {board > 0 ? (
+          <div className="mt-1 flex items-baseline justify-between gap-3">
+            <dt className="text-muted-foreground">
+              Smart money board, {chainCount} chain{chainCount === 1 ? "" : "s"}
+            </dt>
+            <dd className="tnum font-mono">{formatUsd(board)}</dd>
+          </div>
+        ) : null}
         <div className="mt-2 flex items-baseline justify-between gap-3 border-t border-border/60 pt-2">
           <dt>Estimated cost per run</dt>
-          <dd className="tnum font-mono font-medium">≈{formatUsd(estimate + radar)}</dd>
+          <dd className="tnum font-mono font-medium">≈{formatUsd(estimate + radar + board)}</dd>
         </div>
       </dl>
     </div>
@@ -897,6 +908,7 @@ export function UniverseStep({ draft, updateConfig, errors, hideHeading, edit }:
       <UniverseControls
         chains={draft.config.chains}
         universe={universe}
+        dataSources={draft.config.dataSources}
         errors={errors}
         onChains={(chains) => updateConfig({ chains })}
         onUniverse={(patch) => updateConfig({ universe: { ...universe, ...patch } })}

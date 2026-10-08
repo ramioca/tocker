@@ -6,7 +6,7 @@ import { formatUsd } from "@/components/common/format";
 import { ScoreBadge } from "@/components/tokens/score-badge";
 import { VERDICT_META, verdictForScore } from "@/components/tokens";
 import { sayCount, sayHours, sayMinutes, sayUsd } from "@/components/agents/builder/typed-value";
-import { DISCOVERY_FEEDS } from "@/components/agents/builder/types";
+import { DISCOVERY_FEEDS, missingFeedSource } from "@/components/agents/builder/types";
 import { agentSettingsHref, type SettingsAnchor } from "@/components/agents/settings/settings-href";
 import { THINK_SOURCE_LABELS, payPerUseModelLabel, stepsAllowed } from "@/components/agents/thinking";
 import { ownListModelName } from "@/components/agents/model-list";
@@ -14,6 +14,9 @@ import { thinkSource } from "@/lib/agent/inference";
 import { providerLabel } from "@/lib/agent/providers";
 import { cn } from "@/lib/utils";
 import type { AgentConfig } from "@/db/schema";
+
+/** The amber a setting warns in: a live authority, a feed whose source is off. */
+const WARN = "oklch(0.72 0.145 75)";
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -120,17 +123,27 @@ export function AgentConfigSummary({
           ))}
         </div>
         <ul className="mt-2 space-y-1.5">
-          {feeds.map((feed) => (
-            <li
-              key={feed.id}
-              className="glass-inset rounded-lg px-2.5 py-1.5"
-            >
-              <p className="text-xs font-medium">{feed.label}</p>
-              <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
-                {feed.description}
-              </p>
-            </li>
-          ))}
+          {feeds.map((feed) => {
+            // Switched on, and the source it buys from is not: no sweep carries it. Said
+            // here too, or this list reads as a feed that is hunting when it finds nothing.
+            const sourceOff = missingFeedSource(feed, config.dataSources);
+            return (
+              <li
+                key={feed.id}
+                className="glass-inset rounded-lg px-2.5 py-1.5"
+              >
+                <p className="text-xs font-medium">{feed.label}</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                  {feed.description}
+                </p>
+                {sourceOff ? (
+                  <p className="mt-0.5 text-[11px] leading-relaxed" style={{ color: WARN }}>
+                    Finds nothing and costs nothing until {sourceOff} is switched on under Data it buys.
+                  </p>
+                ) : null}
+              </li>
+            );
+          })}
           {feeds.length === 0 ? (
             <li className="text-sm text-muted-foreground">
               No discovery feeds — it will never see a candidate.
@@ -339,7 +352,7 @@ function Authority({
   onLabel: string;
   offLabel: string;
 }) {
-  const warn = "oklch(0.72 0.145 75)";
+  const warn = WARN;
   const Icon = on ? ShieldCheck : ShieldAlert;
   return (
     <li

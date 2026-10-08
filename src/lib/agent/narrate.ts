@@ -403,7 +403,7 @@ function describeFailure(name: string, r: Record<string, unknown>): string {
 
 /**
  * "DOVE 71 · candidate · safety 50, organic 79, distribution 91, GT 41 · Deepnets ok,
- * sentiment bought · clears the 55 floor"
+ * sentiment bought, smart money net bought $12.4K by 4 wallets · clears the 55 floor"
  */
 function describeScore(r: Record<string, unknown>): string {
   const segments: string[] = [];
@@ -434,7 +434,7 @@ function describeScore(r: Record<string, unknown>): string {
   push("smart money", components.smartMoney);
   if (parts.length > 0) segments.push(parts.join(", "));
 
-  const paid = paidReadLabels(obj(r.paidSignals));
+  const paid = paidReadLabels(obj(r.paidSignals), obj(r.smartMoney));
   if (paid.length > 0) segments.push(paid.join(", "));
 
   const notBought = strings(r.notBought).map(shortSkip);
@@ -469,19 +469,42 @@ function describeScore(r: Record<string, unknown>): string {
   return segments.length === 0 ? "Scored" : segments.join(" · ");
 }
 
-/** `paidSignals` → what was actually bought, in the order the plan buys it. */
-function paidReadLabels(signals: Record<string, unknown>): string[] {
+/**
+ * `paidSignals` → what was actually bought, in the order the plan buys it. `smartMoney`
+ * is the result's own note on that read, which says what the read found; a step stored
+ * before the note existed has none, and reads as it always did.
+ */
+function paidReadLabels(signals: Record<string, unknown>, smartMoney: Record<string, unknown> = {}): string[] {
   const labels: string[] = [];
   if (signals.intel === true) labels.push("Deepnets ok");
   if (signals.sellCheck === true) labels.push("sell check run");
   if (signals.sentiment === true) labels.push("sentiment bought");
-  if (signals.smartMoney === true) labels.push("smart money bought");
+  if (signals.smartMoney === true) labels.push(smartMoneyLabel(smartMoney));
   return labels;
 }
 
 /**
+ * What the paid smart money read found, numbers first: "smart money net bought $12.4K by
+ * 4 wallets", or that no tracked wallet had traded the token, which is an answer the
+ * owner paid for and not a missing one.
+ */
+function smartMoneyLabel(note: Record<string, unknown>): string {
+  const status = str(note.status);
+  const flow = num(note.netFlowUsd);
+  if (status === "reading" && flow !== null) {
+    const wallets = num(note.wallets);
+    const by = wallets !== null && wallets > 0 ? ` by ${round(wallets)} ${plural(wallets, "wallet")}` : "";
+    return Math.abs(flow) < 0.5
+      ? `smart money flat${by}`
+      : `smart money net ${flow > 0 ? "bought" : "sold"} ${fmtUsd(Math.abs(flow), { compact: true })}${by}`;
+  }
+  if (status === "none") return "smart money: no tracked wallet traded it";
+  return "smart money bought";
+}
+
+/**
  * `notBought` entries are written for the model and run long:
- * "smartMoney: $0.05 exceeds the $0.00 left in this run's data budget" → "smartMoney
+ * "smartMoney: $0.01 exceeds the $0.00 left in this run's data budget" → "smartMoney
  * (budget)".
  */
 function shortSkip(entry: string): string {
@@ -782,7 +805,7 @@ export function runFacts(steps: readonly NarratableStep[]): RunFacts {
         if (symbol !== null && total !== null) facts.scored.push({ symbol, total });
         if (strings(result.blockers).length > 0) facts.blocked += 1;
         const signals = obj(result.paidSignals);
-        const bought = paidReadLabels(signals);
+        const bought = paidReadLabels(signals, obj(result.smartMoney));
         if (bought.length > 0) facts.enrichedTokens += 1;
         if (signals.intel === true) paid.add("Deepnets safety");
         if (signals.sentiment === true) paid.add("sentiment");

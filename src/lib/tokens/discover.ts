@@ -33,6 +33,18 @@
  * so a token both a free and a paid feed found is still scored once. A caller that
  * sweeps twice hands both sweeps one record of what was bought
  * (`DiscoverInput.paidLaunches`), and the second pays for nothing the first bought.
+ *
+ * And a second paid feed, which is in no default and no preset:
+ *
+ * | `smart_money` | Nansen `smart-money/netflow` ($0.05 a chain): the tokens tracked funds and smart traders accumulated most over 24 hours — same endpoint on both chains |
+ *
+ * It runs only when the feed is on, the caller passed an x402 context, *and*
+ * `dataSources` names `nansen-smart-money`. The board says which tokens and how much
+ * and nothing else, so each row is looked up again with the chain's free provider
+ * (Jupiter, DexScreener) and goes through the same free gates as every other
+ * candidate; a row no free provider knows is dropped, because nothing could score it
+ * into a buy. A caller hands every sweep of a tick one record of the boards bought
+ * (`DiscoverInput.smartMoneyBoards`) and each chain's board is paid for once.
  */
 import type { Chain, DiscoveryFeed, TokenCandidate, TokenRef } from "@/server/types";
 import type { PaidLaunch } from "@/lib/data-sources/normalize";
@@ -47,7 +59,7 @@ import {
   type GeckoTokenInfo,
 } from "./providers/geckoterminal";
 import { mapLimit } from "./providers/http";
-import { getJupiterRecent, getJupiterTopOrganic, getJupiterTopTraded } from "./providers/jupiter";
+import { getJupiterRecent, getJupiterTokens, getJupiterTopOrganic, getJupiterTopTraded } from "./providers/jupiter";
 import { hardGates, toFacts, type Universe } from "./score";
 import type { DexScreenerToken, JupiterToken, TokenFacts } from "./types";
 
@@ -80,6 +92,14 @@ export interface DiscoverInput {
    * rows is not bought either, which is how a caller keeps a sweep from paying at all.
    */
   paidLaunches?: Map<Chain, TokenCandidate[]>;
+  /**
+   * The smart money boards already bought, by chain, for the `smart_money` feed. Same
+   * idea as `paidLaunches`: a sweep takes a chain's board from here instead of paying
+   * for it, and adds what it buys. An entry is the purchase itself, still under way or
+   * done, so that two sweeps running side by side wait for one purchase and never make
+   * two. A chain recorded with no rows is not bought either.
+   */
+  smartMoneyBoards?: Map<Chain, Promise<TokenCandidate[]>>;
   /** Injected in tests so age maths is deterministic. */
   now?: number;
 }
@@ -322,6 +342,82 @@ async function sweepPaidLaunches(
     bought?.set(chain, []);
     return [];
   }
+}
+
+// ---------- the smart money board (`smart_money`) ----------
+
+/** The source that sells the board. The feed buys nothing for an agent without it. */
+export const SMART_MONEY_BOARD_SOURCE = "nansen-smart-money";
+
+/**
+ * Buys one chain's smart money board and turns its rows into candidates. Never throws:
+ * a budget that cannot cover the call or an upstream failure is an empty list.
+ *
+ * Only rows with money coming *in* are leads; a token the tracked wallets sold more of
+ * than they bought is not what this feed is for. The board carries no liquidity, holder
+ * count or age, which are what the owner's free gates read, so each row is matched by
+ * address to the chain's free provider and built from that record, the way every other
+ * candidate on the chain is. A row the provider does not know is dropped: with no pool
+ * on record it could only ever score `liquidity_unknown`, and listing it is research
+ * the owner pays for and cannot act on.
+ */
+async function buySmartMoneyBoard(chain: Chain, x402: X402Context, ctx: DiscoveryContext): Promise<TokenCandidate[]> {
+  try {
+    const [{ getDataSource }, { parseNetflowBoard }] = await Promise.all([
+      import("@/lib/data-sources/registry"),
+      import("@/lib/data-sources/nansen"),
+    ]);
+    const source = getDataSource(SMART_MONEY_BOARD_SOURCE);
+    if (!source) return [];
+
+    const result = await source.query(x402, { endpoint: "netflow", chains: [chain] });
+    const rows = parseNetflowBoard(result.data)
+      .filter((row) => row.chain === chain && row.netflow24hUsd > 0)
+      .slice(0, chain === "base" ? BASE_ENRICH_CAP : PER_FEED_CAP);
+    if (rows.length === 0) return [];
+
+    if (chain === "solana") {
+      const known = await getJupiterTokens(rows.map((row) => row.address));
+      return rows.flatMap((row) => {
+        const token = known.get(row.address);
+        return token ? [{ ...fromJupiter(token, "smart_money", ctx), smartMoneyNetflowUsd: row.netflow24hUsd }] : [];
+      });
+    }
+    const known = await getDexScreenerTokens(rows.map((row) => row.address));
+    return rows.flatMap((row) => {
+      const token = known.get(row.address.toLowerCase());
+      return token ? [{ ...fromDexScreener(token, "smart_money", ctx), smartMoneyNetflowUsd: row.netflow24hUsd }] : [];
+    });
+  } catch {
+    // Left as bought, with nothing in it, for the reason the launch radar is: from here
+    // a failure after the payment looks like one before it, and asking again could pay twice.
+    return [];
+  }
+}
+
+/**
+ * One chain's smart money candidates: from the caller's record when the board is
+ * already bought or being bought, otherwise bought now and recorded.
+ *
+ * The owner switches this on twice, the feed and the source that sells the board. A
+ * sweep handed no source list, or one without that source, buys nothing: unlike the
+ * launch radars, absent never means "any" here.
+ */
+function sweepSmartMoney(
+  chain: Chain,
+  x402: X402Context,
+  dataSources: readonly string[] | undefined,
+  ctx: DiscoveryContext,
+  bought?: Map<Chain, Promise<TokenCandidate[]>>,
+): Promise<TokenCandidate[]> {
+  if (!dataSources?.includes(SMART_MONEY_BOARD_SOURCE)) return Promise.resolve([]);
+  const already = bought?.get(chain);
+  if (already) return already;
+  const buying = buySmartMoneyBoard(chain, x402, ctx);
+  // Recorded before it is awaited, so a sweep that starts while this one is still
+  // paying waits for the same purchase.
+  bought?.set(chain, buying);
+  return buying;
 }
 
 // ---------- the GeckoTerminal launch sweep (`gecko_launches`) ----------
@@ -786,6 +882,13 @@ export async function discoverCandidates(input: DiscoverInput): Promise<TokenCan
       );
     }
   }
+  // The other feed that spends money. Off unless the feed is in the list, and then
+  // only for a caller whose sources name the board's seller (`sweepSmartMoney`).
+  if (feeds.has("smart_money") && x402) {
+    for (const chain of chains) {
+      jobs.push(sweepSmartMoney(chain, x402, input.dataSources, ctx, input.smartMoneyBoards));
+    }
+  }
   const sweeps = await Promise.allSettled(jobs);
 
   const byId = new Map<string, TokenCandidate>();
@@ -794,7 +897,11 @@ export async function discoverCandidates(input: DiscoverInput): Promise<TokenCan
     for (const candidate of sweep.value) {
       const existing = byId.get(candidate.token.id);
       // Keep the richer record when a token shows up in two feeds.
-      if (!existing || (candidate.quickScore ?? 0) > (existing.quickScore ?? 0)) byId.set(candidate.token.id, candidate);
+      const kept = !existing || (candidate.quickScore ?? 0) > (existing.quickScore ?? 0) ? candidate : existing;
+      // Whichever record is kept, a token the smart money board named keeps that flow:
+      // it was paid for, and a free feed finding the same token must not drop it.
+      const flow = candidate.smartMoneyNetflowUsd ?? existing?.smartMoneyNetflowUsd;
+      byId.set(candidate.token.id, flow === undefined ? kept : { ...kept, smartMoneyNetflowUsd: flow });
     }
   }
 
@@ -839,11 +946,13 @@ export function renderCandidates(candidates: readonly TokenCandidate[]): string 
           : `${(h / 24).toFixed(0)}d`;
 
   // The five-minute buyer count only appears when a feed actually reported one, so an
-  // ordinary sweep's table is unchanged.
+  // ordinary sweep's table is unchanged. The same goes for SM24H: the 24-hour net flow
+  // of tracked smart money wallets, for the tokens the paid board named.
   const showBuyers = candidates.some((c) => (c.buyers5m ?? null) !== null);
+  const showFlow = candidates.some((c) => c.smartMoneyNetflowUsd !== undefined);
   const header = `  #  SYMBOL      CHAIN   QUICK  LIQUIDITY  VOL24H     MCAP       HOLDERS  AGE     24H%   ${
     showBuyers ? " BUY5M" : ""
-  }  FEED`;
+  }${showFlow ? ` ${"SM24H".padStart(8)}` : ""}  FEED`;
   const rows = candidates.map((c, i) => {
     const cells = [
       String(i + 1).padStart(3),
@@ -857,6 +966,9 @@ export function renderCandidates(candidates: readonly TokenCandidate[]): string 
       age(c.ageHours).padStart(6),
       (c.priceChange24hPct === null ? "—" : `${c.priceChange24hPct > 0 ? "+" : ""}${c.priceChange24hPct.toFixed(1)}`).padStart(7),
       ...(showBuyers ? [(c.buyers5m === null || c.buyers5m === undefined ? "—" : String(c.buyers5m)).padStart(5)] : []),
+      ...(showFlow
+        ? [(c.smartMoneyNetflowUsd === undefined ? "—" : `${c.smartMoneyNetflowUsd < 0 ? "-" : "+"}${money(Math.abs(c.smartMoneyNetflowUsd))}`).padStart(8)]
+        : []),
       `  ${c.origin}`,
     ];
     return cells.join(" ");

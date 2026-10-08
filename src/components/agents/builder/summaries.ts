@@ -44,6 +44,7 @@ import {
   PAID_LAUNCH_RADAR_USD_PER_CHAIN,
   STRATEGY_PRESETS,
   launchRadarUsdPerRun,
+  smartMoneyBoardUsdPerRun,
   type BuilderDraft,
 } from "./types";
 import { validateDraft } from "./validate";
@@ -57,8 +58,13 @@ export function costFacts(
   const chosen = sources.filter((source) => draft.config.dataSources.includes(source.id));
   const sourcesPerRun = chosen.reduce((sum, source) => sum + (source.priceUsd ?? 0.01), 0);
   const radarPerRun = launchRadarUsdPerRun(draft.config.universe.discovery, draft.config.chains);
+  const boardPerRun = smartMoneyBoardUsdPerRun(
+    draft.config.universe.discovery,
+    draft.config.chains,
+    draft.config.dataSources,
+  );
   // An estimate, not a ceiling: the cap below is the ceiling, so never show more than it.
-  const costPerRun = Math.min(sourcesPerRun + radarPerRun, draft.config.risk.maxDataSpendUsdPerRun);
+  const costPerRun = Math.min(sourcesPerRun + radarPerRun + boardPerRun, draft.config.risk.maxDataSpendUsdPerRun);
   const interval = draft.config.schedule.intervalMinutes;
   const runsPerDay = interval === 0 ? 0 : Math.round(1_440 / interval);
   // Pay per use: the run count and the cost are the panel's own estimate, so the commit
@@ -70,6 +76,7 @@ export function costFacts(
     chosenCount: chosen.length,
     sourcesPerRun,
     radarPerRun,
+    boardPerRun,
     costPerRun,
     dataCapUsd: draft.config.risk.maxDataSpendUsdPerRun,
     intervalMinutes: interval,
@@ -93,6 +100,7 @@ export function dataSummary(facts: CostFacts): string {
     : `${[
         facts.chosenCount > 0 ? `${facts.chosenCount} paid source${facts.chosenCount === 1 ? "" : "s"}` : null,
         facts.radarPerRun > 0 ? "launch radar" : null,
+        facts.boardPerRun > 0 ? "smart money board" : null,
       ]
         .filter(Boolean)
         .join(" + ")} · ≈${formatUsd(facts.costPerRun)} per run, paid by Tocker`;

@@ -30,6 +30,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig } from "@/db/schema";
+import { resolveDataSources } from "@/lib/data-sources/registry";
 import { DEFAULT_AGENT_CONFIG } from "./config";
 import { spendableCashUsd, type Portfolio } from "./portfolio";
 import { buildSystemPrompt, buildTickPrompt } from "./prompts";
@@ -295,6 +296,88 @@ describe("the system prompt on sweeping for tokens", () => {
 
   it("never tells the model to widen a sweep", () => {
     expect(system).not.toMatch(/widen/i);
+  });
+});
+describe("the system prompt on smart money", () => {
+  const SOURCE = "nansen-smart-money";
+  const withFeed = (dataSources: string[], discovery: AgentConfig["universe"]["discovery"]) => {
+    const base = config("auto");
+    const agentConfig: AgentConfig = { ...base, dataSources, universe: { ...base.universe, discovery } };
+    return buildSystemPrompt({ name: "Fixture", tagline: null, mode: "live", config: agentConfig }, resolveDataSources(dataSources));
+  };
+  const system = withFeed([SOURCE], DEFAULT_AGENT_CONFIG.universe.discovery);
+
+  it("says what the smart money line is, and that no tracked wallet is a fact, not a failed read and not a reason to pass", () => {
+    expect(system).toContain(
+      [
+        "  - smartMoney (10) — the net flow of smart traders and top-PnL wallets tracked by Nansen",
+        "    into this token over the last 24 hours, measured against the token's own liquidity,",
+        "    so $80k into a $200k pool scores near the top and the same $80k into a $40M pool",
+        "    barely registers. A bought read is also said in words, on a line starting \"Smart",
+        "    money, last 24h:\" (who traded it, what they net bought or sold, and what whales,",
+        "    fresh wallets, public figures and exchanges did); when that line says no tracked",
+        "    wallet traded the token there is no smartMoney component, and that is a fact about",
+        "    the token, not a failed read. That answer takes nothing off the score and is never,",
+        "    on its own, a reason to pass: a token minutes or hours old may simply not have been",
+        "    found by those wallets, or indexed by Nansen, yet.",
+        "blockers are hard-gate failures",
+      ].join("\n"),
+    );
+  });
+
+  it("tells the model which of the source's calls it can buy, and where the boards come from", () => {
+    expect(system).toMatch(
+      /'netflow', 'holdings' and 'dex-trades' \(\$0\.05 each\) are chain-wide boards of what funds and smart traders moved most; they are bought only when your owner switched on the smart money feed, and netflow only by discover_tokens\./,
+    );
+  });
+
+  it("quotes the read at one cent, and no longer at five", () => {
+    expect(system).toContain("  - **smartMoney ($0.01)** — the tie-breaker, read for this one token.");
+    expect(system).not.toContain("smartMoney ($0.05)");
+    // It is bought for every token the plan covers, not only a borderline one.
+    expect(system).toContain("first, then sentiment, then\nsmart money. You do not ask; you read.");
+    expect(system).not.toContain("borderline-or-better");
+    // The source's own line: the per-token read and its price, then the boards and theirs.
+    expect(system).toMatch(/ {2}- nansen-smart-money: Nansen Smart Money\. .*endpoint 'token' \(\$0\.01\) reads ONE token.*'netflow', 'holdings' and 'dex-trades' \(\$0\.05 each\).*\[eip155:8453, \$0\.0100\/call\]/);
+  });
+
+  it("lists the smart money feed only when the owner switched on both the feed and the source", () => {
+    const feedLine = (prompt: string) => prompt.split("\n").find((line) => line.startsWith("Discovery feeds you sweep:"));
+    const on = [...DEFAULT_AGENT_CONFIG.universe.discovery, "smart_money" as const];
+
+    // Neither: the default. The prompt is the one every existing agent has, feed-wise.
+    expect(feedLine(system)).toBe("Discovery feeds you sweep: gecko_launches, paid_launches, new_launches, trending");
+    expect(system).not.toContain("smart_money");
+
+    // The feed without the source buys nothing, so the model is not told it sweeps it.
+    const feedOnly = withFeed(["x-search"], on);
+    expect(feedLine(feedOnly)).toBe("Discovery feeds you sweep: gecko_launches, paid_launches, new_launches, trending");
+    expect(feedOnly).not.toContain("smart_money");
+    expect(feedLine(withFeed([], ["smart_money"]))).toBe("Discovery feeds you sweep: gecko_launches, paid_launches");
+
+    const both = withFeed([SOURCE], on);
+    expect(feedLine(both)).toBe("Discovery feeds you sweep: gecko_launches, paid_launches, new_launches, trending, smart_money");
+    expect(both).toContain(
+      [
+        "  - **smart_money discovery ($0.05/chain, once a tick)** — Nansen's board of the tokens",
+        "    tracked funds and smart traders accumulated most in 24 hours. Your owner switched it",
+        "    on, so discover_tokens buys it. Its rows show that net flow under SM24H and pass the",
+        "    same gates as every other candidate: being on the board is a lead, never a reason",
+        "    to skip the score.",
+      ].join("\n"),
+    );
+    expect(both).toContain("discover_tokens is free unless the `paid_launches` feed or the `smart_money` feed is in play;");
+  });
+
+  it("leaves every other word of the prompt as it was for an agent without the feed", () => {
+    const on = [...DEFAULT_AGENT_CONFIG.universe.discovery, "smart_money" as const];
+    const strip = (prompt: string) =>
+      prompt
+        .replace(/\n {2}- \*\*smart_money discovery[\s\S]*?to skip the score\./, "")
+        .replace(", smart_money", "")
+        .replace(" or the `smart_money` feed", "")
+        .replace(" the `smart_money` feed,", "");
+    expect(strip(withFeed([SOURCE], on))).toBe(system);
   });
 });
 

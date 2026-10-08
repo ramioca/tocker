@@ -53,7 +53,7 @@ export const LANDING_SOURCES: readonly LandingSource[] = [
     id: "nansen-smart-money",
     provider: "Nansen",
     name: "Smart Money netflow",
-    priceUsd: 0.05,
+    priceUsd: 0.01,
     category: "onchain",
     tier: "standard",
   },

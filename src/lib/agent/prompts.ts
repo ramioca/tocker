@@ -13,6 +13,7 @@ import { hasAnyExitRule, priceText, toExitRules } from "@/lib/trading/exits";
 import { fmtUsdExact } from "@/lib/money";
 import { feeForFill, formatFeeRate, platformFeeBps } from "@/lib/platform/fee";
 import { isMockMode } from "@/lib/x402/paidFetch";
+import { SMART_MONEY_SOURCE } from "./enrichment";
 import { describePortfolio, spendableCashUsd, type Portfolio } from "./portfolio";
 
 export interface PromptAgent {
@@ -166,6 +167,10 @@ export function buildSystemPrompt(agent: PromptAgent, sources: DataSource[]): st
           .join("\n");
 
   const { universe } = config;
+  // The smart money board needs the feed and the source that sells it. With only the
+  // feed on it is in no sweep, so the model is not told it sweeps it.
+  const smartMoneyBoardOn = universe.discovery.includes("smart_money") && sources.some((s) => s.id === SMART_MONEY_SOURCE);
+  const feeds = universe.discovery.filter((feed) => feed !== "smart_money" || smartMoneyBoardOn);
   const blocklist =
     universe.blocklist.length === 0
       ? "  (empty — nothing is banned outright)"
@@ -224,7 +229,7 @@ You may trade **any** token on your chains, including one minted minutes ago. Sa
 comes from scoring, not from a pre-approved list. Every buy is scored first, and the
 score's hard gates are enforced in code.
 
-Discovery feeds you sweep: ${universe.discovery.join(", ")}
+Discovery feeds you sweep: ${feeds.length === 0 ? "gecko_launches, paid_launches" : feeds.join(", ")}
 
 Your thresholds (a token that misses one of these cannot be bought, at any score):
   - Minimum composite score: ${universe.minScore}/100
@@ -256,9 +261,16 @@ adding a slice, so the total stays 0-100 whichever of them arrived:
     old is the normal answer rather than a red flag. A \`gt_score_low\` warning is the
     opposite: it means GeckoTerminal looked and rated the token under 40.
   - sentiment (15) — score_token with deep: true
-  - smartMoney (10) — score_token with smartMoney: true; tracked-wallet net flow measured
-    against the token's own liquidity, so $80k into a $200k pool scores near the top and
-    the same $80k into a $40M pool barely registers
+  - smartMoney (10) — the net flow of smart traders and top-PnL wallets tracked by Nansen
+    into this token over the last 24 hours, measured against the token's own liquidity,
+    so $80k into a $200k pool scores near the top and the same $80k into a $40M pool
+    barely registers. A bought read is also said in words, on a line starting "Smart
+    money, last 24h:" (who traded it, what they net bought or sold, and what whales,
+    fresh wallets, public figures and exchanges did); when that line says no tracked
+    wallet traded the token there is no smartMoney component, and that is a fact about
+    the token, not a failed read. That answer takes nothing off the score and is never,
+    on its own, a reason to pass: a token minutes or hours old may simply not have been
+    found by those wallets, or indexed by Nansen, yet.
 blockers are hard-gate failures and cannot be outscored — a token with any blocker
 is unbuyable no matter how good the rest looks. warnings are worth reading but are
 not disqualifying.
@@ -281,7 +293,7 @@ you score except one the free data has *confirmed* unbuyable (a blocker that onl
 run's data budget is spent. Your owner set that budget so it gets used; the free pass is
 a pre-read, never a reason to skip the paid one:
 Deepnets safety (Solana) or the Plexa sell check (Base) first, then sentiment, then
-smart money on a borderline-or-better score. You do not ask; you read. \`paidSignals\`
+smart money. You do not ask; you read. \`paidSignals\`
 on the result says what was bought, \`intel\` carries the safety read, and \`notBought\`
 says what was skipped and why. A decision on a token that clears the floor should cite
 what those signals said — "safety 45" from free data alone is not diligence when
@@ -292,14 +304,24 @@ What each one tells you:
     raises the \`cannot_sell\` blocker and the trade is refused. A token that scores 85
     and cannot be sold is worth zero, and that is the one failure your free providers
     cannot see. Skip it on Solana (nothing covers it) and on a token already blocked.
-  - **smartMoney ($0.05)** — the tie-breaker. Worth it on a candidate scoring 60-79
-    that you cannot decide about: tracked wallets accumulating is the difference
-    between "clean but boring" and "clean and someone with a record agrees". Pointless
-    on a token that already fails a gate, and pointless below 60 — it cannot rescue one.
+  - **smartMoney ($0.01)** — the tie-breaker, read for this one token. Tracked wallets
+    accumulating is the difference between "clean but boring" and "clean and someone
+    with a record agrees"; tracked wallets selling while the price rises is a warning.
+    Read the "Smart money, last 24h:" line and weigh it in your decision. It cannot
+    rescue a token that fails a gate.
   - **deep / sentiment (~$0.01)** — cheap enough to use on a shortlist of two or three
     when your strategy trades narrative at all.
   - **paid_launches discovery (~$0.02/chain)** — a pre-screened launch radar. Worth it
-    when the free feeds came back thin, or when you are hunting things minutes old.
+    when the free feeds came back thin, or when you are hunting things minutes old.${
+      smartMoneyBoardOn
+        ? `
+  - **smart_money discovery ($0.05/chain, once a tick)** — Nansen's board of the tokens
+    tracked funds and smart traders accumulated most in 24 hours. Your owner switched it
+    on, so discover_tokens buys it. Its rows show that net flow under SM24H and pass the
+    same gates as every other candidate: being on the board is a lead, never a reason
+    to skip the score.`
+        : ""
+    }
 Order matters: score free first, then buy the signal that would change your mind.
 Buying a signal you will ignore is the most expensive thing you can do with a tick.
 
@@ -377,8 +399,12 @@ Money, and whose it is. Two purses, and they do not behave the same way:
     agent's. Your ${money(config.risk.maxDataSpendUsdPerRun)} per-run data budget caps how
     much the platform will spend on your behalf this tick; it is not trading capital, and
     spending it does not shrink your clip. score_token is free unless you ask for a paid
-    add-on and discover_tokens is free unless the \`paid_launches\` feed is in play;
-    score_token with deep / smartMoney / sellCheck, the \`paid_launches\` feed,
+    add-on and discover_tokens is free unless the \`paid_launches\` feed${
+      smartMoneyBoardOn ? " or the `smart_money` feed" : ""
+    } is in play;
+    score_token with deep / smartMoney / sellCheck, the \`paid_launches\` feed,${
+      smartMoneyBoardOn ? " the `smart_money` feed," : ""
+    }
     query_data_source and get_token_intel on Solana all draw on that budget. Spend it on
     the one or two names you are seriously considering, never on a whole discovery table.
     When it runs out the call fails and the score comes back without that component — it

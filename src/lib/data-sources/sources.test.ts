@@ -10,16 +10,23 @@
  * (`extensions.bazaar.info.output.example`), OpenAPI document or `llms.txt` says it
  * returns — see the header of each source file for which.
  */
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { newBudget, type AgentWalletRef, type X402Context } from "@/lib/x402/types";
 import { DATA_SOURCES, getDataSource } from "./registry";
+import { smartMoneyReading } from "@/lib/tokens/smart-money";
+import emptyFlowFixture from "./fixtures/nansen-flow-intelligence-empty.json";
+import flowFixture from "./fixtures/nansen-flow-intelligence.json";
 import { parseGate402Launches } from "./gate402";
+import { parseFlowIntelligence, parseNetflowBoard, smartMoneyEndpoint } from "./nansen";
 import { parseSolEnrichLaunches } from "./solenrich";
 import type { DataSource, NormalizedResult } from "./normalize";
+
+const BONK_MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
+const BRETT = "0x532f27101965dd16442E59d40670FaF5eBB142E4";
 
 let db: Db;
 let agentId: string;
@@ -43,6 +50,18 @@ async function query(id: string, input: unknown, c = ctx()): Promise<NormalizedR
   return source(id).query(c, input);
 }
 
+/** The newest simulated payment this test's agent made: its URL is the one really called. */
+async function lastPayment() {
+  const rows = await db
+    .select()
+    .from(schema.x402Payments)
+    .where(eq(schema.x402Payments.agentId, agentId))
+    .orderBy(desc(schema.x402Payments.createdAt))
+    .limit(1);
+  if (!rows[0]) throw new Error("no payment was recorded");
+  return rows[0];
+}
+
 beforeAll(async () => {
   process.env.X402_MOCK = "1";
   db = await setupTestDb();
@@ -61,7 +80,9 @@ describe("registry entries", () => {
   const expected = [
     ["dripmetrics-summary", "eip155:8453", 0.25, false],
     ["dripmetrics-metric", "eip155:8453", 0.05, false],
-    ["nansen-smart-money", "eip155:8453", 0.05, false],
+    // The headline price is the per-token read's (probed 2026-10-08: `amount: "10000"`).
+    // Its boards still cost $0.05, charged per call like execution-impact below.
+    ["nansen-smart-money", "eip155:8453", 0.01, false],
     ["gate402-base-radar", "eip155:8453", 0.02, false],
     ["plexa-pretrade", "eip155:8453", 0.05, false],
     ["solenrich-launches", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", 0.012, true],
@@ -130,9 +151,10 @@ describe("dripmetrics-metric", () => {
   });
 });
 
-describe("nansen-smart-money", () => {
-  it("picks the agent's token out of the board and reports its netflow in dollars", async () => {
+describe("nansen-smart-money: the boards", () => {
+  it("picks a token out of the board and reports its netflow in dollars", async () => {
     const result = await query("nansen-smart-money", {
+      endpoint: "netflow",
       chains: ["solana"],
       tokenAddress: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
     });
@@ -148,10 +170,287 @@ describe("nansen-smart-money", () => {
     expect(result.summary).toContain("distributed");
   });
 
-  it("reports a token nobody tracked touched as absent, never as a netflow of zero", async () => {
-    const result = await query("nansen-smart-money", { chains: ["solana"], tokenAddress: "NotOnTheBoard1111111" });
+  it("reports a token that is not on the board as absent, never as a netflow of zero", async () => {
+    const result = await query("nansen-smart-money", {
+      endpoint: "netflow",
+      chains: ["solana"],
+      tokenAddress: "NotOnTheBoard1111111",
+    });
     expect(result.signals).toBeUndefined();
     expect(result.summary).toContain("No tracked smart-money");
+  });
+
+  it("still costs five cents, and is what a call with no token address buys", async () => {
+    for (const input of [{ chains: ["solana"] }, { endpoint: "netflow", chains: ["base"] }, { chains: ["solana", "base"], symbol: "BONK" }]) {
+      const c = ctx();
+      await query("nansen-smart-money", input, c);
+      expect(c.budget.spentUsd, JSON.stringify(input)).toBeCloseTo(0.05, 9);
+      expect((await lastPayment()).url, JSON.stringify(input)).toBe("https://api.nansen.ai/api/v1/smart-money/netflow");
+    }
+  });
+
+  /**
+   * The retired read was a board bought to look one token up. A token address with no
+   * endpoint named is the per-token read or nothing: where that read cannot answer
+   * (several chains, a thirty-day window) the call is refused, and no board is bought
+   * in its place.
+   */
+  it("is never what a token address falls back to", async () => {
+    const c = ctx();
+    await expect(query("nansen-smart-money", { chains: ["solana", "base"], tokenAddress: BONK_MINT }, c)).rejects.toThrow(
+      "nansen-smart-money: the per-token read (endpoint 'token') needs tokenAddress and exactly one chain, the one the token is on",
+    );
+    await expect(query("nansen-smart-money", { chains: ["solana"], tokenAddress: BONK_MINT, window: "30d" }, c)).rejects.toThrow(
+      "nansen-smart-money: the per-token read (endpoint 'token') covers window 1h, 24h or 7d, not 30d",
+    );
+    expect(c.budget.spentUsd).toBe(0);
+
+    // Asked for by name, the board lookup is still there, thirty days included.
+    const named = await query("nansen-smart-money", { endpoint: "netflow", chains: ["solana"], tokenAddress: BONK_MINT, window: "30d" }, c);
+    expect(named.summary).toContain("over 30d");
+    expect(c.budget.spentUsd).toBeCloseTo(0.05, 9);
+  });
+
+  it("says which endpoint a model's parameters would buy, before anything is paid", () => {
+    expect(smartMoneyEndpoint({ chains: ["solana"], tokenAddress: BONK_MINT })).toBe("token");
+    expect(smartMoneyEndpoint({ chains: ["solana", "base"], tokenAddress: BONK_MINT })).toBe("token");
+    expect(smartMoneyEndpoint({ chains: ["solana"], tokenAddress: BONK_MINT, window: "30d" })).toBe("token");
+    expect(smartMoneyEndpoint({ endpoint: "token", chains: ["solana"] })).toBe("token");
+    expect(smartMoneyEndpoint({ chains: ["solana"] })).toBe("netflow");
+    expect(smartMoneyEndpoint({ chains: ["solana"], symbol: "STONK" })).toBe("netflow");
+    expect(smartMoneyEndpoint({ endpoint: "netflow", chains: ["solana"], tokenAddress: BONK_MINT })).toBe("netflow");
+    expect(smartMoneyEndpoint({ endpoint: "holdings", chains: ["base"] })).toBe("holdings");
+    expect(smartMoneyEndpoint({ endpoint: "dex-trades", chains: ["base"] })).toBe("dex-trades");
+    // Not this source's parameters: no endpoint, and the query refuses them unpaid.
+    for (const junk of [null, undefined, "netflow", {}, { chains: [] }, { endpoint: "board", chains: ["solana"] }, { chains: ["tron"] }]) {
+      expect(smartMoneyEndpoint(junk), JSON.stringify(junk)).toBeNull();
+    }
+  });
+
+  it("turns the board into rows the smart money feed can use", async () => {
+    const result = await query("nansen-smart-money", { endpoint: "netflow", chains: ["solana"] });
+    const rows = parseNetflowBoard(result.data);
+    expect(rows.map((row) => `${row.symbol} ${row.chain} ${row.netflow24hUsd}`)).toEqual([
+      "BONK solana 1284310.22",
+      "KNOTS solana 412650.4",
+      "WIF solana -318200.75",
+      "BRETT base 96410.8",
+    ]);
+    // A row on a chain the platform does not trade, or with no address or no flow, is not a row.
+    expect(
+      parseNetflowBoard({
+        data: [
+          { token_address: "0xabc", token_symbol: "PEPE", chain: "ethereum", net_flow_24h_usd: 5 },
+          { token_symbol: "NOADDR", chain: "solana", net_flow_24h_usd: 5 },
+          { token_address: "Mint1", token_symbol: "NOFLOW", chain: "solana" },
+          "not a row",
+        ],
+      }),
+    ).toEqual([]);
+    for (const junk of [null, undefined, "text", 7, [], {}, { data: "nope" }]) expect(parseNetflowBoard(junk)).toEqual([]);
+  });
+});
+
+describe("nansen-smart-money: the per-token read", () => {
+  const TOKEN_URL = "https://api.nansen.ai/api/v1/tgm/flow-intelligence";
+
+  /** The request `paidFetch` is handed, captured from a real call in mock mode. */
+  async function requestFor(input: unknown) {
+    const paidFetchModule = await import("@/lib/x402/paidFetch");
+    const spy = vi.spyOn(paidFetchModule, "paidFetch");
+    try {
+      const c = ctx();
+      const result = await query("nansen-smart-money", input, c);
+      const request = spy.mock.calls.at(-1)?.[1];
+      if (!request) throw new Error("the source never reached paidFetch");
+      return { request, result, spentUsd: c.budget.spentUsd, payment: await lastPayment() };
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it("names the token in the request, for a Solana token and a Base one, at one cent", async () => {
+    const solana = await requestFor({ endpoint: "token", chains: ["solana"], tokenAddress: BONK_MINT });
+    expect(solana.request).toMatchObject({ url: TOKEN_URL, method: "POST", priceUsd: 0.01 });
+    expect(solana.request.body).toEqual({ chain: "solana", token_address: BONK_MINT, timeframe: "1d" });
+    expect(solana.spentUsd).toBeCloseTo(0.01, 9);
+    expect(solana.payment).toMatchObject({ url: TOKEN_URL, amountUsd: "0.010000", sourceId: "nansen-smart-money" });
+
+    const base = await requestFor({ endpoint: "token", chains: ["base"], tokenAddress: BRETT });
+    expect(base.request).toMatchObject({ url: TOKEN_URL, method: "POST", priceUsd: 0.01 });
+    expect(base.request.body).toEqual({ chain: "base", token_address: BRETT, timeframe: "1d" });
+    expect(base.spentUsd).toBeCloseTo(0.01, 9);
+    expect(base.payment).toMatchObject({ url: TOKEN_URL, amountUsd: "0.010000" });
+  });
+
+  it("is what a call with a token and its one chain buys, without being asked for by name", async () => {
+    const { request, spentUsd } = await requestFor({ chains: ["solana"], tokenAddress: BONK_MINT });
+    expect(request.url).toBe(TOKEN_URL);
+    expect(spentUsd).toBeCloseTo(0.01, 9);
+  });
+
+  it("reports smart traders plus top-PnL wallets as the net flow, and says the read in one line", async () => {
+    const result = await query("nansen-smart-money", { endpoint: "token", chains: ["solana"], tokenAddress: BONK_MINT });
+    // Fixture: smart_trader 9260.1 + top_pnl 3150.4.
+    expect(result.signals?.smartMoneyNetflowUsd).toBeCloseTo(12_410.5, 6);
+    expect(result.signals?.sentiment ?? 0).toBeGreaterThan(0);
+    expect(result.summary).toBe(
+      "Smart money, last 24h: 3 smart traders and 1 top-PnL wallet net bought $12.4k. Whales net sold $2.1k; fresh wallets net bought $40.2k; exchange net flow -$18.4k.",
+    );
+  });
+
+  it("answers a token nobody tracked has traded with no signal, never a netflow of zero", async () => {
+    const result = await query("nansen-smart-money", { endpoint: "token", chains: ["solana"], tokenAddress: "NobodyTradedThis1111" });
+    expect(result.signals).toBeUndefined();
+    expect(result.summary).toBe("Smart money, last 24h: no smart trader or top-PnL wallet tracked by Nansen traded it.");
+  });
+
+  it("asks for the window it was given, and refuses the one the read does not have", async () => {
+    const hour = await requestFor({ endpoint: "token", chains: ["base"], tokenAddress: BRETT, window: "1h" });
+    expect(hour.request.body).toEqual({ chain: "base", token_address: BRETT, timeframe: "1h" });
+    expect(hour.result.summary).toContain("Smart money, last 1h:");
+    const week = await requestFor({ endpoint: "token", chains: ["base"], tokenAddress: BRETT, window: "7d" });
+    expect(week.request.body).toEqual({ chain: "base", token_address: BRETT, timeframe: "7d" });
+
+    const c = ctx();
+    await expect(query("nansen-smart-money", { endpoint: "token", chains: ["solana"], tokenAddress: BONK_MINT, window: "30d" }, c)).rejects.toThrow(/not 30d/);
+    await expect(query("nansen-smart-money", { endpoint: "token", chains: ["solana"] }, c)).rejects.toThrow(/tokenAddress and exactly one chain/);
+    await expect(query("nansen-smart-money", { endpoint: "token", chains: ["solana", "base"], tokenAddress: BONK_MINT }, c)).rejects.toThrow(/exactly one chain/);
+    // Refused before anything was paid.
+    expect(c.budget.spentUsd).toBe(0);
+  });
+});
+
+describe("parseFlowIntelligence", () => {
+  const NONE = { netFlowUsd: null, wallets: null };
+
+  it("reads a full row, group by group", () => {
+    expect(parseFlowIntelligence(flowFixture)).toEqual({
+      smartTraders: { netFlowUsd: 9260.1, wallets: 3 },
+      topPnl: { netFlowUsd: 3150.4, wallets: 1 },
+      whales: { netFlowUsd: -2104.75, wallets: 2 },
+      freshWallets: { netFlowUsd: 40210.6, wallets: 0 },
+      publicFigures: { netFlowUsd: 0, wallets: 0 },
+      exchanges: { netFlowUsd: -18400, wallets: 0 },
+    });
+  });
+
+  it("reads an empty answer as a read with nothing in it", () => {
+    const read = parseFlowIntelligence(emptyFlowFixture);
+    expect(read).toEqual({ smartTraders: NONE, topPnl: NONE, whales: NONE, freshWallets: NONE, publicFigures: NONE, exchanges: NONE });
+    expect(read && smartMoneyReading(read)).toBeNull();
+    expect(parseFlowIntelligence({ data: [], warnings: ["fresh_wallets fields are null for this timeframe"] })).toEqual(read);
+  });
+
+  it("keeps a null as a null, and still reads the numbers beside it", () => {
+    const read = parseFlowIntelligence({
+      data: [
+        {
+          smart_trader_net_flow_usd: 5000,
+          smart_trader_wallet_count: 2,
+          top_pnl_net_flow_usd: null,
+          top_pnl_wallet_count: null,
+          whale_net_flow_usd: null,
+          whale_wallet_count: null,
+          fresh_wallets_net_flow_usd: null,
+          fresh_wallets_wallet_count: null,
+          public_figure_net_flow_usd: null,
+          exchange_net_flow_usd: "-250.5",
+        },
+      ],
+    });
+    expect(read).toEqual({
+      smartTraders: { netFlowUsd: 5000, wallets: 2 },
+      topPnl: NONE,
+      whales: NONE,
+      freshWallets: NONE,
+      publicFigures: NONE,
+      // A number sent as a string is still that number.
+      exchanges: { netFlowUsd: -250.5, wallets: null },
+    });
+    expect(read && smartMoneyReading(read)).toEqual({ netflowUsd: 5000, wallets: 2 });
+
+    // Every field null: the documented row, with nothing in it.
+    const blank = parseFlowIntelligence({ data: [{ smart_trader_net_flow_usd: null, top_pnl_net_flow_usd: null, whale_net_flow_usd: null }] });
+    expect(blank).not.toBeNull();
+    expect(blank && smartMoneyReading(blank)).toBeNull();
+  });
+
+  it("reads zero counts and zero flows as no reading, not as a flow of zero", () => {
+    const read = parseFlowIntelligence({
+      data: [
+        {
+          smart_trader_net_flow_usd: 0,
+          smart_trader_wallet_count: 0,
+          top_pnl_net_flow_usd: 0,
+          top_pnl_wallet_count: 0,
+          whale_net_flow_usd: -900,
+          whale_wallet_count: 1,
+        },
+      ],
+    });
+    expect(read?.smartTraders).toEqual({ netFlowUsd: 0, wallets: 0 });
+    expect(read?.whales).toEqual({ netFlowUsd: -900, wallets: 1 });
+    expect(read && smartMoneyReading(read)).toBeNull();
+  });
+
+  it("returns null, and never throws, for an answer that is not the documented shape", () => {
+    const unreadable: unknown[] = [
+      null,
+      undefined,
+      "Payment required",
+      42,
+      [],
+      {},
+      { text: "<html>502 Bad Gateway</html>" },
+      { error: "invalid_field_value", message: "chain" },
+      { data: null },
+      { data: "none" },
+      { data: { smart_trader_net_flow_usd: 5 } },
+      { data: [null] },
+      { data: ["row"] },
+      { data: [[1, 2, 3]] },
+      { data: [{ token_address: "x", net_flow_24h_usd: 5 }] },
+      // Wallets counted and no flow beside them: there is no number, and "nobody" would be false.
+      { data: [{ smart_trader_wallet_count: 3, top_pnl_wallet_count: 1 }] },
+    ];
+    for (const answer of unreadable) {
+      expect(() => parseFlowIntelligence(answer), JSON.stringify(answer)).not.toThrow();
+      expect(parseFlowIntelligence(answer), JSON.stringify(answer)).toBeNull();
+    }
+  });
+
+  /**
+   * Nobody has seen a paid answer. If the documented fields arrive holding something that
+   * is not a number, "no number" beside a zero count would be said to the model as "no
+   * tracked wallet traded it", which nothing in such an answer supports.
+   */
+  it("returns null when a smart trader or top-PnL field is there and is not a number", () => {
+    const row = { smart_trader_net_flow_usd: 0, smart_trader_wallet_count: 0, top_pnl_net_flow_usd: 0, top_pnl_wallet_count: 0 };
+    const notNumbers: unknown[] = ["", "   ", "$5,210", "n/a", "NaN", "Infinity", true, false, [5], {}, { value: 5 }, Number.NaN, Number.POSITIVE_INFINITY];
+    for (const field of Object.keys(row)) {
+      for (const value of notNumbers) {
+        const answer = { data: [{ ...row, [field]: value }] };
+        expect(() => parseFlowIntelligence(answer), `${field} = ${String(value)}`).not.toThrow();
+        expect(parseFlowIntelligence(answer), `${field} = ${String(value)}`).toBeNull();
+      }
+    }
+    // The two answers a reviewer was told "no tracked wallet traded it" for.
+    expect(
+      parseFlowIntelligence({ data: [{ smart_trader_net_flow_usd: "", smart_trader_wallet_count: "", top_pnl_net_flow_usd: "", top_pnl_wallet_count: "" }] }),
+    ).toBeNull();
+    expect(
+      parseFlowIntelligence({ data: [{ smart_trader_net_flow_usd: true, smart_trader_wallet_count: [2], top_pnl_net_flow_usd: [5], top_pnl_wallet_count: {} }] }),
+    ).toBeNull();
+
+    // A number written out is still that number, and null or absent is still "no number".
+    const written = parseFlowIntelligence({ data: [{ ...row, smart_trader_net_flow_usd: "5210.5", smart_trader_wallet_count: "2" }] });
+    expect(written?.smartTraders).toEqual({ netFlowUsd: 5210.5, wallets: 2 });
+    expect(parseFlowIntelligence({ data: [{ smart_trader_net_flow_usd: null, top_pnl_wallet_count: null, whale_net_flow_usd: 12 }] })).not.toBeNull();
+    // Only those four are held to it: a context field this cannot read is left out, no more.
+    const context = parseFlowIntelligence({ data: [{ ...row, smart_trader_net_flow_usd: 700, smart_trader_wallet_count: 1, whale_net_flow_usd: "n/a" }] });
+    expect(context?.whales.netFlowUsd).toBeNull();
+    expect(context && smartMoneyReading(context)).toEqual({ netflowUsd: 700, wallets: 1 });
   });
 });
 
@@ -308,6 +607,8 @@ describe("no open-ended source", () => {
       (endpoint): [string, unknown] => ["agentdata", { endpoint }],
     ),
     ...["netflow", "holdings", "dex-trades"].map((endpoint): [string, unknown] => ["nansen-smart-money", { endpoint, chains: ["solana"] }]),
+    ["nansen-smart-money", { endpoint: "token", chains: ["solana"], tokenAddress: BONK }],
+    ["nansen-smart-money", { endpoint: "token", chains: ["base"], tokenAddress: ERC20 }],
     ["plexa-pretrade", { token: ERC20 }],
     ["gate402-base-radar", { mode: "launches" }],
     ["gate402-base-radar", { mode: "momentum", address: ERC20 }],

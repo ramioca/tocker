@@ -57,6 +57,42 @@ export interface PaidLaunch {
   priceChange24hPct: number | null;
 }
 
+/** One wallet group's side of a per-token smart money read. `null` where the source gave no number. */
+export interface WalletFlow {
+  /** Net USD the group moved into the token (positive) or out of it (negative). */
+  netFlowUsd: number | null;
+  /** Distinct wallets of the group that traded it. */
+  wallets: number | null;
+}
+
+/**
+ * What one *paid* per-token smart money read said, group by group, in the shape
+ * `src/lib/tokens` needs. Smart traders and top-PnL wallets are what the score calls
+ * smart money (`smartMoneyReading`). The other four are context for the sentence the
+ * model reads and are never scored.
+ */
+export interface SmartMoneyRead {
+  smartTraders: WalletFlow;
+  topPnl: WalletFlow;
+  whales: WalletFlow;
+  freshWallets: WalletFlow;
+  publicFigures: WalletFlow;
+  exchanges: WalletFlow;
+}
+
+/**
+ * One row of a *paid* smart money board: a token the tracked wallets moved, and by how
+ * much. Discovery's `smart_money` feed turns the rows into candidates; the board itself
+ * says nothing about liquidity, holders or age, so every row is looked up again for free.
+ */
+export interface SmartMoneyBoardRow {
+  chain: "solana" | "base";
+  address: string;
+  symbol: string | null;
+  /** Net USD tracked wallets moved into the token over the last 24 hours. */
+  netflow24hUsd: number;
+}
+
 export interface NormalizedResult {
   summary: string;
   data: unknown;

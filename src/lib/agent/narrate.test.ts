@@ -223,6 +223,81 @@ describe("describeResult", () => {
     );
   });
 
+  /**
+   * The smart money read is said for what it found, not only that it was bought. The
+   * result carries a note on it; the amounts come from that note and nowhere else.
+   */
+  it("says what a smart money read found", () => {
+    const bought = { ...SCORE_DOVE, components: { ...SCORE_DOVE.components, smartMoney: 52.8 }, notBought: [] };
+    const reading = {
+      ...bought,
+      paidSignals: { intel: true, sentiment: true, smartMoney: true, sellCheck: false },
+      smartMoney: { status: "reading", netFlowUsd: 12_410.5, wallets: 4, said: "Smart money, last 24h: 3 smart traders and 1 top-PnL wallet net bought $12.4k." },
+    };
+    expect(describeResult("score_token", reading)).toBe(
+      "DOVE 71 · candidate · safety 50, liquidity 62, organic 79, distribution 91, momentum 58, GT 41, smart money 53 · Deepnets ok, sentiment bought, smart money net bought $12.4K by 4 wallets · clears the 55 floor",
+    );
+
+    const selling = { ...reading, smartMoney: { status: "reading", netFlowUsd: -2_104.75, wallets: 1, said: "…" } };
+    expect(describeResult("score_token", selling)).toContain("smart money net sold $2,104.75 by 1 wallet ·");
+    const even = { ...reading, smartMoney: { status: "reading", netFlowUsd: 0, wallets: 3, said: "…" } };
+    expect(describeResult("score_token", even)).toContain("smart money flat by 3 wallets ·");
+    const uncounted = { ...reading, smartMoney: { status: "reading", netFlowUsd: 9_500, wallets: 0, said: "…" } };
+    expect(describeResult("score_token", uncounted)).toContain("smart money net bought $9,500.00 ·");
+
+    // Bought, and nobody tracked had traded it: an answer, and it reads as one.
+    const nobody = {
+      ...SCORE_DOVE,
+      notBought: [],
+      paidSignals: { intel: true, sentiment: true, smartMoney: true, sellCheck: false },
+      smartMoney: { status: "none", said: "Smart money, last 24h: no smart trader or top-PnL wallet tracked by Nansen traded it." },
+    };
+    expect(describeResult("score_token", nobody)).toBe(
+      "DOVE 71 · candidate · safety 50, liquidity 62, organic 79, distribution 91, momentum 58, GT 41 · Deepnets ok, sentiment bought, smart money: no tracked wallet traded it · clears the 55 floor",
+    );
+
+    // Wanted and not read: it stays under notBought, where every skipped read is.
+    const notRead = {
+      ...SCORE_DOVE,
+      notBought: ["smartMoney: $0.01 exceeds the $0.00 left in this run's data budget"],
+      smartMoney: { status: "not_read", said: "Smart money: not read ($0.01 exceeds the $0.00 left in this run's data budget)." },
+    };
+    expect(describeResult("score_token", notRead)).toBe(describeResult("score_token", SCORE_DOVE));
+    const failed = { ...notRead, notBought: ["smartMoney: the source did not answer: nansen-smart-money responded 503"] };
+    expect(describeResult("score_token", failed)).toContain("notBought: smartMoney (the source did not answer");
+    const off = { ...notRead, notBought: ["smartMoney: the smart money source is not enabled for this agent"] };
+    expect(describeResult("score_token", off)).toContain("notBought: smartMoney (not configured)");
+  });
+
+  /**
+   * Steps stored before the read was said in words: `paidSignals.smartMoney` and a
+   * component, and no note. They narrate exactly as they did, and nothing throws on a
+   * note of a shape this version does not know.
+   */
+  it("still narrates a score step stored under the old read", () => {
+    const old = {
+      ...SCORE_DOVE,
+      components: { ...SCORE_DOVE.components, smartMoney: 91 },
+      paidSignals: { intel: true, sentiment: true, smartMoney: true, sellCheck: false },
+      notBought: [],
+    };
+    expect(describeResult("score_token", old)).toBe(
+      "DOVE 71 · candidate · safety 50, liquidity 62, organic 79, distribution 91, momentum 58, GT 41, smart money 91 · Deepnets ok, sentiment bought, smart money bought · clears the 55 floor",
+    );
+    // The old skip line, at the old price.
+    expect(describeResult("score_token", SCORE_DOVE)).toContain("notBought: smartMoney (budget)");
+    for (const smartMoney of [null, "bought", 7, [], { status: "reading" }, { status: "cached", said: "…" }, { netFlowUsd: "a lot" }]) {
+      expect(describeResult("score_token", { ...old, smartMoney }), JSON.stringify(smartMoney)).toContain("smart money bought ·");
+    }
+
+    const steps = [
+      { kind: "tool_call" as const, toolName: "score_token", payload: { input: { chain: "solana", address: SCORE_DOVE.address } } },
+      { kind: "tool_result" as const, toolName: "score_token", payload: { result: { ...old, dataSpentThisRunUsd: 0.07 } } },
+    ];
+    expect(runFacts(steps)).toMatchObject({ enrichedTokens: 1, paidReads: ["Deepnets safety", "sentiment", "smart money"], dataSpentUsd: 0.07 });
+    expect(narrateRun(steps)).toContain("Paid $0.07 for data on Deepnets safety, sentiment and smart money across 1 token.");
+  });
+
   it("puts a hard gate ahead of everything else", () => {
     const line = describeResult("score_token", SCORE_RUG);
     expect(line.startsWith("RUG 23 · avoid · blocked: mint_authority_unknown ·")).toBe(true);
