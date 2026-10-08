@@ -22,21 +22,27 @@ DATA = {
     ],
     "they_title": "What they share",
     "tocker_logo": "/_blob/41da4bfef67a2f6a83cfa7cf3015ecf2",
-    # (label, what all six share, what Tocker does, proof line under Tocker)
+    # (label, what all six share, evidence (pre, number, post), what Tocker does, proof line)
     "rows": [
         ("Data", "Bundled data. Paid sources opt-in at best.",
-         "Buys premium alpha per call, over x402", "SolEnrich · Nansen · X sentiment · 14 sources"),
+         ("", "3,505", " AI agents on shared data: no directional edge"),
+         "Buys premium alpha per call, over x402",
+         "SolEnrich · Nansen · Deepnets · Plexa · X sentiment · 14 sources"),
         ("Safety", "Stop-losses. Rug checks opt-in at best.",
-         "10 hard gates in code can veto any buy", "Honeypot · mint · freeze · liquidity · holders · age"),
+         ("", "76%", " of new Solana tokens in H1 2025 were rug pulls"),
+         "10 hard gates in code can veto any buy",
+         "Honeypot · mint · freeze · tax · liquidity · holders · age · unknown means no"),
         ("Social", "Copy trading, or a leaderboard.",
-         "Every fill is public. The strategy is not.", "Entry score on every fill · follow, then launch your own"),
+         ("Copying a winning memecoin wallet turns ", "14% into 3%", ""),
+         "Every fill is public. The strategy is not.",
+         "Tx, slippage and entry score on every fill · follow, then launch your own"),
     ],
-    "foot": ("Sources, Oct 2026: company docs, GitHub and X · DefiLlama · GlobeNewswire · Pump Fund · Colosseum. "
-             "Undisclosed: Minara, Ask Gina."),
-    "note": ("Agentic trading is early: six funded startups, the largest disclosed round four million, "
-             "each good at one thing. What they share: bundled data, safety as a stop-loss, social as copy "
-             "trading. We do the opposite: the agent buys alpha per call, ten gates in code can veto any buy, "
-             "and every fill is public while the strategy stays private."),
+    "foot": ("Evidence: DXRG, arXiv 2026 · SolRugDetector, arXiv 2026 · Luo et al., WWW 2026. "
+             "Rivals: docs, GitHub, X, DefiLlama, Oct 2026."),
+    "note": ("Agentic trading is early: six funded startups, the largest disclosed round four million. "
+             "What they share is bundled data, stop-losses and copy trading, and the evidence is against all three. "
+             "So the agent buys alpha per call, ten gates in code can veto any buy, and every fill is public "
+             "while the strategy stays private."),
 }
 
 MONO = "font-family:'Geist Mono', 'Courier New', monospace"
@@ -85,12 +91,15 @@ def compare():
             f'<img src="{DATA["tocker_logo"]}" alt="Tocker T mark" style="width:{round(40 * TOCKER_AR)}px;height:40px;object-fit:contain">'
             f'<p style="font-size:30px;font-weight:600;letter-spacing:-0.5px;line-height:1;color:{FG}">Tocker</p></div></div>')
     rows = ""
-    for i, (label, they, us, proof) in enumerate(DATA["rows"]):
+    for i, (label, they, ev, us, proof) in enumerate(DATA["rows"]):
+        pre, num, post = ev
+        ev_html = (f'<p style="font-size:19px;line-height:1.25;color:{DIM};white-space:nowrap;font-variant-numeric:tabular-nums">'
+                   f'{esc(pre)}<span style="color:{FG};font-weight:600">{esc(num)}</span>{esc(post)}</p>')
         top = f"border-top:1px solid {HAIR};"
         rows += (f'<div style="display:flex;flex-direction:row;align-items:stretch;height:{ROW_H}px">'
                  f'<div style="width:{LABEL_W}px;flex:none;display:flex;align-items:center;{top}">{mono(label, MID)}</div>'
-                 f'<div style="width:{THEY_W}px;flex:none;display:flex;align-items:center;padding-right:32px;{top}">'
-                 f'<p style="font-size:28px;line-height:1.25;letter-spacing:-0.3px;color:{MID};white-space:nowrap">{esc(they)}</p></div>'
+                 f'<div style="width:{THEY_W}px;flex:none;display:flex;flex-direction:column;justify-content:center;gap:10px;padding-right:32px;{top}">'
+                 f'<p style="font-size:28px;line-height:1.2;letter-spacing:-0.3px;color:{MID};white-space:nowrap">{esc(they)}</p>{ev_html}</div>'
                  f'<div style="width:{TOCK_W}px;flex:none;display:flex;flex-direction:column;justify-content:center;gap:8px;'
                  f'padding:0 32px;{"border-top:1px solid rgba(244,244,241,0.14);" if i else ""}">'
                  f'<p style="font-size:32px;line-height:1.2;letter-spacing:-0.5px;font-weight:500;color:{FG};white-space:nowrap">{esc(us)}</p>'

@@ -22,7 +22,7 @@ Can AI even trade? Last October, six frontier models traded real money; four los
 Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We plan to charge zero point two percent: twenty cents on a hundred dollars.
 
 ## competition
-Agentic trading is early: six funded startups, the largest disclosed round four million, each good at one thing. What they share: bundled data, safety as a stop-loss, social as copy trading. We do the opposite: the agent buys alpha per call, ten gates in code can veto any buy, and every fill is public while the strategy stays private.
+Agentic trading is early: six funded startups, the largest disclosed round four million. What they share is bundled data, stop-losses and copy trading, and the evidence is against all three. So the agent buys alpha per call, ten gates in code can veto any buy, and every fill is public while the strategy stays private.
 
 ## gtm
 Every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score, never the strategy. Followers launch their own; next, creators earn a fee share. Today that's memecoins, five billion dollars a week on Solana at the August peak. Next Polymarket, then tokenized stocks.
@@ -51,6 +51,10 @@ Tocker is in private beta on Solana and Base. [pause] Back to Sam. Same token. S
 - $10.8B Polymarket, June 2026: Portals — research/13
 - $5.8B Solana tokenized-stock volume, Q2 2026: SolanaCompass — research/14
 - Competition cells, traction and funding — research/26-competitors-deep (Oct 8 2026; supersedes 22 and 25)
+- Competition evidence (research/26-competitors-deep/proof-points.md):
+  - DXRG (Barton et al., arXiv 2609.05663, Sep 2026): 3,505 user-funded AI agents on a shared 12-token Base market, 21 days; "neither fleet shows a directional edge".
+  - SolRugDetector (Chen, Zheng et al., arXiv 2603.24625, Mar 2026): 76,469 of 100,063 new Solana DEX tokens in H1 2025 (76%) were labelled rug pulls.
+  - Luo et al. (WWW 2026, arXiv 2601.08641): smart-money memecoin wallets averaged 14%; copiers about 3% after price impact.
 
 ## Likely Q&A
 1. **Traction?** Honest answer: private beta, agents start on paper. Bring real numbers (beta agents, paper/live fills, % of candidate buys vetoed by gates).
@@ -64,6 +68,8 @@ Tocker is in private beta on Solana and Base. [pause] Back to Sam. Same token. S
 9. **"Private beta next to $2.6B of volume: why a Series A?"** Rivals' volume proves demand for agents that trade. None we found vetoes a buy on token-safety checks in code, and that is where retail loses money (research/02). Bring beta numbers: agents live, fills, and the share of candidate buys the gates vetoed.
 10. **"Can I copy an agent?"** No, by design. Copying front-runs the leader and leaks the strategy. You follow an agent's public fills and launch your own; creator fee share is next.
 11. **"USDC inference: ClawPump and Minara already have it."** Yes, which is why it isn't on the slide as a difference: paying for the model is common (credits at ClawPump, Minara, Senpi, Gina). Today agents run on your own key; per-call USDC inference is next. The edge is data, safety and the public record.
+12. **"DXRG says no information source gave an edge, so why buy data?"** It tested in-house context and research sub-agents, not premium on-chain feeds, in a deliberately hostile market (a 2.3% fee per swap, 12 tokens). The same paper finds that discipline lives in the tool, not the prompt: "the exit discipline that exists lives in the tool". That is our design: paid data feeds a score, and gates and exits live in code.
+13. **"76% rugs: whose number?"** SolRugDetector (arXiv, Mar 2026) labelled 76,469 of 100,063 tokens launched on Orca, Raydium and Meteora in H1 2025. Each study defines rugs differently, so don't add it to Solidus's 98.6% (liquidity collapse) or call either "scams".
 
 ## Know the field (keep off the slide)
 - Senpi's public GitHub has a "volume generation engine" built for $5M a day of BTC round-trips (Apr 2026). It is unclear whether it ran, so treat its $411M as possibly inflated. Its Agents Arena was retired Jul–Aug 2026.
