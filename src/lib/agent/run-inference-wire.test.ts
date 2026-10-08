@@ -181,19 +181,25 @@ describe("what a pay-per-use run puts on the wire", () => {
     expect(result).toMatchObject({ status: "succeeded", summary: "Looked at the book and held. Nothing traded this tick." });
     expect(result.stopReason).toBeUndefined();
 
-    expect(wire.bodies).toHaveLength(2);
+    // Three requests, not two: this agent can still buy and never swept for tokens, so its
+    // first `finish` is refused, once, and the script finishes again. That one refusal is
+    // one more paid step, and the most the refusal itself can cost a run.
+    expect(wire.bodies).toHaveLength(3);
     // The second request carries the first step's answer and its tool result back.
     const roles = (wire.bodies[1]?.messages as Array<{ role: string }>).map((message) => message.role);
     expect(roles).toContain("assistant");
     expect(roles).toContain("tool");
+    // And the third carries the refusal, with what to do instead.
+    expect(JSON.stringify(wire.bodies[1]?.messages)).not.toContain("Call discover_tokens with no arguments");
+    expect(JSON.stringify(wire.bodies[2]?.messages)).toContain("Call discover_tokens with no arguments");
 
     const payments = await paymentsOf(agent.agentId);
-    expect(payments.map((row) => row.seq)).toEqual([0, 1]);
+    expect(payments.map((row) => row.seq)).toEqual([0, 1, 2]);
     const [run] = await runsOf(agent.agentId);
     expect(Number(run?.inferenceSpendUsd)).toBeCloseTo(payments.reduce((total, row) => total + Number(row.quotedUsd), 0), 6);
-    // Both steps' tokens, as the gateway reported them.
-    expect(run?.inputTokens).toBe(2400);
-    expect(run?.outputTokens).toBe(80);
+    // Every step's tokens, as the gateway reported them.
+    expect(run?.inputTokens).toBe(3600);
+    expect(run?.outputTokens).toBe(120);
   });
 
   it("forces `finish` on the step after its last ordinary one, and takes the summary given there", async () => {

@@ -11,7 +11,7 @@ import { RunStatusBadge } from "@/components/common/status-badge";
 import { TokenIcon } from "@/components/common/token-icon";
 import { formatCount, formatDuration, formatPriceUsd, formatUsd } from "@/components/common/format";
 import { agentBySlug, runDetail, viewerSession } from "@/components/common/data-access";
-import { isTranscriptRow } from "@/lib/agent/narrate";
+import { isTranscriptRow, stepSpanMs } from "@/lib/agent/narrate";
 import { cn } from "@/lib/utils";
 
 type Params = { params: Promise<{ slug: string; runId: string }> };
@@ -56,24 +56,14 @@ export default async function RunPage({ params }: Params) {
   if (!loaded) notFound();
   const { agent, run } = loaded;
 
-  // Wall time is finish − start, but a step's own duration can outrun the run row's
-  // timestamps (the tool finished after the row was stamped), so take whichever is longer.
+  // Wall time is finish − start, and never less than the steps' own span, first row to
+  // last. No step's duration is added to that span: a row is written when its tool has
+  // finished, so adding it counted the tool twice (`stepSpanMs`).
   const wall =
     run.startedAt && run.finishedAt
       ? new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()
       : null;
-  let stepSpan: number | null = null;
-  if (run.steps.length > 0) {
-    let first = Infinity;
-    let last = -Infinity;
-    for (const step of run.steps) {
-      const at = new Date(step.createdAt).getTime();
-      first = Math.min(first, at);
-      last = Math.max(last, at + (step.durationMs ?? 0));
-    }
-    stepSpan = last - first;
-  }
-  const elapsed = wall === null ? null : Math.max(wall, stepSpan ?? 0);
+  const elapsed = wall === null ? null : Math.max(wall, stepSpanMs(run.steps) ?? 0);
   // The rows the transcript actually shows, as the runs list counts them.
   const stepCount = run.transcriptVisible
     ? run.steps.filter(isTranscriptRow).length || run.stepCount

@@ -116,7 +116,10 @@ export function compactNumber(value: number): string {
 }
 
 function trim(n: number): string {
-  return n.toFixed(n >= 100 ? 0 : n >= 10 ? 1 : 2).replace(/\.?0+$/, "");
+  const fixed = n.toFixed(n >= 100 ? 0 : n >= 10 ? 1 : 2);
+  // Only zeros after a decimal point are padding. Stripping them from a whole number
+  // turned 100 into "1", so a $100,000 floor read "$1K".
+  return fixed.includes(".") ? fixed.replace(/\.?0+$/, "") : fixed;
 }
 
 /** Percent change from `from` to `to`; null when the base is 0/absent. */

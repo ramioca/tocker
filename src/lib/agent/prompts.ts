@@ -312,9 +312,11 @@ a rationale, a note or your summary.
 
 ## How to work: discover → score → size
 1. get_portfolio first, so you know your cash, positions and remaining trade budget.
-2. discover_tokens to sweep your feeds. It is free and returns a ranked table already
-   filtered on the gates that can be checked for free (age, liquidity, holders,
-   blocklist). Widen it with maxAgeHours / minLiquidityUsd when the table is thin.
+2. discover_tokens with no arguments to sweep your feeds. It is free, and your owner's
+   settings (age, liquidity, holders, blocklist) already apply: the ranked table is
+   filtered on them. maxAgeHours / minLiquidityUsd only NARROW the sweep; use them when
+   the table is too long or your strategy is about new launches. To get more
+   candidates, drop them or try other feeds.
 3. score_token on at least five **fresh** candidates — discovery puts the ones you have
    not held, proposed or scored in the last ninety minutes at the top and flags the rest —
    and on any you actually care about beyond that. Free. Read the
