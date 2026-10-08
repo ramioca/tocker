@@ -1,7 +1,7 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
 ~483 words, about 3:05 at 155 wpm. Sam is an illustrative composite, not a real user. [pause] marks a beat.
-Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. A different approach.' Minimal: a strip of the six rivals (logo + best at), then what all six share vs what Tocker does (data, safety, social). Every 'share' line holds for all six (research/26-competitors-deep). The previous full table is in docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
+Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. We bet the other way.' (fallback: 'A different approach.'). Rival strip, then what all six do vs Tocker (data, safety, social), each with dated evidence. Copy, two design variants and a VC/fact critic merged on Oct 8, 2026 (research/26-competitors-deep). Earlier full table: docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
 
 ## cover
 Three a.m. A trader, call her Sam, sees a new token trending. She buys. Minutes later, it's worth nothing. The wallets that bought first? Insiders. [pause] Sam isn't dumb. She's outgunned. I'm Rami, and this is Tocker: the infrastructure for agentic trading.
@@ -22,7 +22,7 @@ Can AI even trade? Last October, six frontier models traded real money; four los
 Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We plan to charge zero point two percent: twenty cents on a hundred dollars.
 
 ## competition
-Agentic trading is early: six funded startups, the largest disclosed round four million. What they share is bundled data, stop-losses and copy trading, and the evidence is against all three. So the agent buys alpha per call, ten gates in code can veto any buy, and every fill is public while the strategy stays private.
+Agentic trading is early: six funded startups, the largest disclosed round four million. Good teams, with three shared defaults: bundled data, no rug veto before the swap, and copy trading or volume leaderboards. We bet the other way. Our agent picks and buys data per call, ten gates in code can veto any buy, and every fill is public.
 
 ## gtm
 Every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score, never the strategy. Followers launch their own; next, creators earn a fee share. Today that's memecoins, five billion dollars a week on Solana at the August peak. Next Polymarket, then tokenized stocks.
@@ -52,7 +52,7 @@ Tocker is in private beta on Solana and Base. [pause] Back to Sam. Same token. S
 - $5.8B Solana tokenized-stock volume, Q2 2026: SolanaCompass — research/14
 - Competition cells, traction and funding — research/26-competitors-deep (Oct 8 2026; supersedes 22 and 25)
 - Competition evidence (research/26-competitors-deep/proof-points.md):
-  - DXRG (Barton et al., arXiv 2609.05663, Sep 2026): 3,505 user-funded AI agents on a shared 12-token Base market, 21 days; "neither fleet shows a directional edge".
+  - DXRG (Barton et al., arXiv 2609.05663, Sep 2026): 3,505 user-funded AI agents on a shared 12-token Base market, 21 days. Herding: 1,544 of 3,454 active vaults bought the same token (FEET) within one hour on Mar 1; "neither fleet shows a directional edge".
   - SolRugDetector (Chen, Zheng et al., arXiv 2603.24625, Mar 2026): 76,469 of 100,063 new Solana DEX tokens in H1 2025 (76%) were labelled rug pulls.
   - Luo et al. (WWW 2026, arXiv 2601.08641): smart-money memecoin wallets averaged 14%; copiers about 3% after price impact.
 
@@ -68,8 +68,10 @@ Tocker is in private beta on Solana and Base. [pause] Back to Sam. Same token. S
 9. **"Private beta next to $2.6B of volume: why a Series A?"** Rivals' volume proves demand for agents that trade. None we found vetoes a buy on token-safety checks in code, and that is where retail loses money (research/02). Bring beta numbers: agents live, fills, and the share of candidate buys the gates vetoed.
 10. **"Can I copy an agent?"** No, by design. Copying front-runs the leader and leaks the strategy. You follow an agent's public fills and launch your own; creator fee share is next.
 11. **"USDC inference: ClawPump and Minara already have it."** Yes, which is why it isn't on the slide as a difference: paying for the model is common (credits at ClawPump, Minara, Senpi, Gina). Today agents run on your own key; per-call USDC inference is next. The edge is data, safety and the public record.
-12. **"DXRG says no information source gave an edge, so why buy data?"** It tested in-house context and research sub-agents, not premium on-chain feeds, in a deliberately hostile market (a 2.3% fee per swap, 12 tokens). The same paper finds that discipline lives in the tool, not the prompt: "the exit discipline that exists lives in the tool". That is our design: paid data feeds a score, and gates and exits live in code.
+12. **"DXRG also says no information source gave an edge, so why buy data?"** It tested in-house context and research sub-agents, not paid on-chain feeds, in a deliberately hostile market (a 2.3% fee per swap, 12 tokens). Its point is that agents on one feed herd: 1,544 piled into one token within an hour. The same paper finds that discipline lives in the tool, not the prompt. That is the design: the agent picks its own data, and gates and exits live in code.
 13. **"76% rugs: whose number?"** SolRugDetector (arXiv, Mar 2026) labelled 76,469 of 100,063 tokens launched on Orca, Raydium and Meteora in H1 2025. Each study defines rugs differently, so don't add it to Solidus's 98.6% (liquidity collapse) or call either "scams".
+14. **"Can the owner switch gates off?"** Some, yes: 7 of the 10 are on by default and owner-configurable (src/lib/agent/config.ts). Mint, freeze, liquidity, holders, age and top-10 also block when the data is unknown; honeypot, can't-sell and tax pass when it's missing. Don't say "unknown means no" for all ten.
+15. **"You have a leaderboard too."** Yes, ranked by PnL with the score at entry. The difference is no copy trading and a private strategy, not the absence of ranking.
 
 ## Know the field (keep off the slide)
 - Senpi's public GitHub has a "volume generation engine" built for $5M a day of BTC round-trips (Apr 2026). It is unclear whether it ran, so treat its $411M as possibly inflated. Its Agents Arena was retired Jul–Aug 2026.
