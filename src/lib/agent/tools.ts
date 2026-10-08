@@ -45,12 +45,15 @@ import { ensureQuoteToken, resolveToken } from "@/lib/trading/tokens";
 import {
   discoverCandidates,
   getTokenScore,
+  MAX_DISCOVERY_LIMIT,
   renderCandidates,
   renderScore,
+  sweepFilters,
   toTradeScore,
 } from "@/lib/tokens";
-import type { TokenScore } from "@/server/types";
-import { describePortfolio, getPortfolio, spendableCashUsd, toRiskPortfolio } from "./portfolio";
+import { compactNumber } from "@/lib/money";
+import type { Chain, TokenCandidate, TokenScore } from "@/server/types";
+import { describePortfolio, effectiveTicketUsd, getPortfolio, spendableCashUsd, toRiskPortfolio } from "./portfolio";
 import type { RunLogger } from "./logger";
 import { buildPositionTools } from "./tools-positions";
 
@@ -211,6 +214,23 @@ function scorePayload(score: TokenScore): ToolOutcome {
   };
 }
 
+/** An age ceiling in the candidate table's own units: "45m", "1h", "2.5h", "3d". */
+function ageWords(hours: number): string {
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))}m`;
+  return hours < 48 ? `${Number(hours.toFixed(1))}h` : `${Math.round(hours / 24)}d`;
+}
+
+/** Keeps each call of a tool in `inFlight` from the moment it is made until it settles. */
+function tracked<I, O>(inFlight: Set<Promise<unknown>>, execute: (input: I) => Promise<O>): (input: I) => Promise<O> {
+  return (input) => {
+    const call = execute(input);
+    inFlight.add(call);
+    const settled = () => void inFlight.delete(call);
+    void call.then(settled, settled);
+    return call;
+  };
+}
+
 export function buildTools(ctx: RunContext): ToolSet {
   const { agent } = ctx;
   const executorAgent: ExecutorAgent = { id: agent.id, mode: agent.mode, wallets: ctx.x402.wallets };
@@ -231,6 +251,40 @@ export function buildTools(ctx: RunContext): ToolSet {
   const scoredThisTick = new Set<string>();
   const freshThisTick = new Map<string, string>();
   let researchNudged = false;
+  /**
+   * A sweep under the owner's own settings, with no filter of the model's, has come back
+   * this tick, or a narrowed sweep has started widening to one.
+   */
+  let ownerSweepThisTick = false;
+  /**
+   * A sweep got as far as its feeds this tick, so its launch radar may be paid for,
+   * whether or not the sweep then came back. `finish` never orders a sweep after that:
+   * the sweep it ordered would buy the same radar a second time.
+   */
+  let sweepStartedThisTick = false;
+  /**
+   * The discover_tokens calls that have not come back yet. A step's tool calls run side
+   * by side, so `finish` can be called while a sweep of the same step is still out. It
+   * waits for these, and judges the tick on the table they bring back.
+   */
+  const sweepsInFlight = new Set<Promise<unknown>>();
+
+  /**
+   * Whether a buy could still go through this tick: a buy left today, cash for a ticket,
+   * trading not paused. Unknown counts as no, because the one caller asks before sending
+   * the model back for research, and research nothing can come of is the owner's money.
+   */
+  const canStillBuy = async (): Promise<boolean> => {
+    try {
+      const portfolio = await getPortfolio(agent.id);
+      if (portfolio.cashReadFailed || portfolio.tradesToday >= agent.config.risk.maxDailyTrades) return false;
+      if (effectiveTicketUsd(portfolio, agent.config).amountUsd <= 0) return false;
+      const { isTradingPaused } = await import("@/lib/security/kill-switch");
+      return !(await isTradingPaused(agent.ownerId));
+    } catch {
+      return false;
+    }
+  };
 
   /** Scores a token for this agent. Returns `null` only when scoring itself blew up. */
   const scoreFor = async (
@@ -266,7 +320,7 @@ export function buildTools(ctx: RunContext): ToolSet {
   return {
     discover_tokens: tool({
       description:
-        "Sweep your discovery feeds for tradeable candidates on your chains. Free — with one exception: the `paid_launches` feed buys a pre-screened launch radar per chain (SolEnrich on Solana, gate402 on Base, about $0.02 a chain) and only runs when your config or this call asks for it. `gecko_launches` is free but narrow: it reads GeckoTerminal's new and trending pools on either chain and keeps only the tokens GeckoTerminal's own GT Score rates 50 or better, so it surfaces few names and skips anything minutes old that nobody has rated yet. Returns a ranked table already filtered on the gates that can be checked for free (age, liquidity, holders, blocklist); safety gates are applied later by score_token.",
+        "Sweep your discovery feeds for tradeable candidates on your chains. Call it with no arguments first: your owner's settings (age, liquidity, holders, blocklist, feeds, chains) already apply. Free — with one exception: the `paid_launches` feed buys a pre-screened launch radar per chain (SolEnrich on Solana, gate402 on Base, about $0.02 a chain) and only runs when your config or this call asks for it. `gecko_launches` is free but narrow: it reads GeckoTerminal's new and trending pools on either chain and keeps only the tokens GeckoTerminal's own GT Score rates 50 or better, so it surfaces few names and skips anything minutes old that nobody has rated yet. Returns a ranked table already filtered on the gates that can be checked for free (age, liquidity, holders, blocklist); safety gates are applied later by score_token. maxAgeHours and minLiquidityUsd only NARROW the sweep: use them when the table is too long or your strategy is about new launches. To get more candidates, drop them or try other feeds.",
       inputSchema: z.object({
         chain: chainSchema.optional().describe("Restrict to one chain; omit to sweep every chain you trade"),
         feeds: z
@@ -274,12 +328,26 @@ export function buildTools(ctx: RunContext): ToolSet {
           .min(1)
           .max(6)
           .optional()
-          .describe("Override your configured feeds for this sweep only"),
-        maxAgeHours: z.number().positive().max(87_600).optional().describe("Only tokens younger than this"),
-        minLiquidityUsd: z.number().min(0).max(100_000_000).optional().describe("Raise your liquidity floor for this sweep"),
-        limit: z.number().int().min(1).max(50).optional().describe("How many candidates to return (default 20)"),
+          .describe("Sweep these feeds instead of your configured ones, for this call only. Omit to use your configured feeds"),
+        maxAgeHours: z
+          .number()
+          .positive()
+          .max(87_600)
+          .optional()
+          .describe(
+            "Narrows the sweep: only tokens younger than this many hours. Omit to use your owner's age window. It cannot go past your owner's maximum age and never finds more tokens",
+          ),
+        minLiquidityUsd: z
+          .number()
+          .min(0)
+          .max(100_000_000)
+          .optional()
+          .describe(
+            "Narrows the sweep: only tokens with at least this much liquidity, in USD. Omit to use your owner's floor. A value below your owner's floor is raised to it",
+          ),
+        limit: z.number().int().min(1).max(50).optional().describe("How many candidates to return (default 30)"),
       }),
-      execute: logged(ctx, "discover_tokens", async (input) => {
+      execute: tracked(sweepsInFlight, logged(ctx, "discover_tokens", async (input) => {
         const parsed = z
           .object({
             chain: chainSchema.optional(),
@@ -304,30 +372,61 @@ export function buildTools(ctx: RunContext): ToolSet {
         const feeds = new Set<string>(parsed.feeds ?? universe.discovery);
         feeds.add("gecko_launches");
         feeds.add("paid_launches");
-        const candidates = await discoverCandidates({
-          chains,
+        const ownFeeds = new Set<string>([...universe.discovery, "gecko_launches", "paid_launches"]);
+
+        // What this call narrowed, in the words the model is told it in. The model's two
+        // filters are held inside the owner's (`sweepFilters`), so a filter is in this list
+        // only when it is tighter than the owner's; a feed list only when it leaves out a
+        // feed the owner configured; a chain only when the agent trades another as well.
+        const applied = sweepFilters(universe, parsed);
+        const narrowedBy = [
+          applied.maxAgeHours !== null && applied.maxAgeHours !== universe.maxAgeHours ? `under ${ageWords(applied.maxAgeHours)}` : null,
+          applied.minLiquidityUsd > universe.minLiquidityUsd ? `$${compactNumber(applied.minLiquidityUsd)}+ liquidity` : null,
+          parsed.feeds && [...ownFeeds].some((feed) => !feeds.has(feed)) ? `feeds ${parsed.feeds.join(" + ")}` : null,
+          agent.config.chains.some((chain) => !chains.includes(chain)) ? `${chains.join(", ")} only` : null,
+        ].filter((words): words is string => words !== null);
+        const narrowed = narrowedBy.length > 0;
+
+        // The radars this call has paid for. Both sweeps below are handed the same map, so
+        // the second reads a chain's radar from it and never buys that radar again. (A radar
+        // is asked for the sweep's liquidity floor: when the model raised it, the rows read
+        // again are the ones above the model's floor, and the rest are not bought.)
+        const bought = new Map<Chain, TokenCandidate[]>();
+        // How many rows the table holds. Wider than the old 20 by default: the fresh part
+        // of the table is what matters.
+        const limit = parsed.limit ?? 30;
+        const sweep = {
           universe,
-          // Only used by the `paid_launches` feed; every other feed ignores both.
+          // Only used by the `paid_launches` feed; every other feed ignores these.
           x402: ctx.x402,
           dataSources: allowedSources,
           alwaysPaidLaunches: true,
+          paidLaunches: bought,
+          // The whole ranked pool, not `limit` rows of it. Which rows are fresh is only
+          // known further down, and a pool cut to the table's size first can be all names
+          // the agent has already seen while fresh ones sit just past the cut: the table
+          // then said "nothing new" and the tick ended. The table is cut once, below. A
+          // sweep's limit is a final slice, so this asks no provider for anything more.
+          limit: MAX_DISCOVERY_LIMIT,
+        };
+        // From here the launch radar may be paid for, whatever happens to this call.
+        sweepStartedThisTick = true;
+        let candidates = await discoverCandidates({
+          ...sweep,
+          chains,
           feeds: [...feeds] as typeof universe.discovery,
-          // Wider than the old 20 by default: the fresh part of the table is what
-          // matters, and a held, proposed or recently scored name takes a slot otherwise.
-          limit: parsed.limit ?? 30,
           ...(parsed.minLiquidityUsd === undefined ? {} : { minLiquidityUsd: parsed.minLiquidityUsd }),
           ...(parsed.maxAgeHours === undefined ? {} : { maxAgeHours: parsed.maxAgeHours }),
         });
 
         // What the agent has already dealt with: held, proposed and undecided, or scored
-        // within the seen window. Those stay visible, flagged and at the bottom, so the
-        // top of the table is research the agent has not done yet — the same three names
-        // re-scored every five minutes was the whole complaint.
-        const ids = candidates.map((c) => c.token.id);
+        // within the seen window. Those are flagged and go at the bottom, in the room the
+        // fresh rows leave, so the top of the table is research the agent has not done
+        // yet — the same three names re-scored every five minutes was the whole complaint.
         const [portfolio, proposed, cached] = await Promise.all([
           getPortfolio(agent.id),
           pendingProposalTokenIds(agent.id),
-          loadCachedScores(ids),
+          loadCachedScores(candidates.map((c) => c.token.id)),
         ]);
         const heldIds = new Set(portfolio.positions.map((p) => p.token.id));
         const seenReason = (tokenId: string): string | null => {
@@ -339,11 +438,49 @@ export function buildTools(ctx: RunContext): ToolSet {
           }
           return null;
         };
-        const fresh = candidates.filter((c) => seenReason(c.token.id) === null);
-        const seen = candidates.filter((c) => seenReason(c.token.id) !== null);
+        const isFresh = (c: TokenCandidate) => seenReason(c.token.id) === null;
+
+        // A narrowed sweep that came back thin widens itself, once: the same sweep under
+        // the owner's settings alone, its rows added after the ones the model's filters
+        // matched. A weak model reads "maxAgeHours" as a way to see more, passes a small
+        // number, gets an empty table and ends the tick on it (seen live, 2026-10-08).
+        // Not repeated when the owner's sweep has already come back this tick: the model
+        // has that table, and a second copy is tokens its owner pays to have read again.
+        //
+        // Thin is counted on everything the model's filters matched, before the table's
+        // limit, and a table its limit fills is not thin however low the model set it.
+        const matched = candidates.filter(isFresh).length;
+        const thin = narrowed && matched < Math.min(MIN_SCORED_PER_TICK, limit);
+        const widened = thin && !ownerSweepThisTick;
+        if (widened) {
+          // Claimed before the sweep is awaited: two calls made in one step run side by
+          // side, and only one of them may widen.
+          ownerSweepThisTick = true;
+          // The widening never pays. A radar the first sweep bought is read again from the
+          // record. One it did not buy (a chain the model left out) is left out here too:
+          // were it bought now, a later sweep of that chain would pay for it a second time
+          // in the same tick. That chain's free feeds are still swept.
+          for (const chain of agent.config.chains) if (!bought.has(chain)) bought.set(chain, []);
+          const own = await discoverCandidates({
+            ...sweep,
+            chains: agent.config.chains,
+            feeds: [...ownFeeds] as typeof universe.discovery,
+          });
+          const have = new Set(candidates.map((c) => c.token.id));
+          const added = own.filter((c) => !have.has(c.token.id));
+          for (const [id, score] of await loadCachedScores(added.map((c) => c.token.id))) cached.set(id, score);
+          candidates = [...candidates, ...added];
+        }
+        if (!narrowed) ownerSweepThisTick = true;
+
+        // One table of at most `limit` rows, fresh first; within each part the rows the
+        // model's own filters matched come before the ones the widening added.
+        const freshFound = candidates.filter(isFresh);
+        const fresh = freshFound.slice(0, limit);
+        const seen = candidates.filter((c) => !isFresh(c)).slice(0, limit - fresh.length);
         for (const c of fresh) freshThisTick.set(c.token.id, c.token.symbol);
 
-        const row = (c: (typeof candidates)[number]) => ({
+        const row = (c: TokenCandidate) => ({
           symbol: c.token.symbol,
           chain: c.token.chain,
           address: c.token.address,
@@ -362,17 +499,60 @@ export function buildTools(ctx: RunContext): ToolSet {
             ? ""
             : `\n\nAlready seen (not fresh research): ${seen.map((c) => `${c.token.symbol} (${seenReason(c.token.id)})`).join(", ")}`;
 
+        // What happened to the model's filters, said once and plainly. It leads both the
+        // table and the note, because a model may read either.
+        const filters = narrowedBy.join(", ");
+        const tokens = (n: number) => `${n} fresh token${n === 1 ? "" : "s"}`;
+        const happened = !thin
+          ? null
+          : !widened
+            ? `Your filters (${filters}) matched ${tokens(matched)}. A sweep with your owner's settings alone already ran this tick, so it was not run again.`
+            : fresh.length === 0
+              ? `Your filters (${filters}) matched 0 fresh tokens. The sweep was run again with your owner's settings alone and also found 0 fresh tokens. There is nothing new to score this tick; that is a valid result.`
+              : `Your filters (${filters}) matched ${tokens(matched)}, so this table also includes what a sweep with your owner's settings alone found.${matched > 0 ? " The tokens your filters matched are listed first." : ""}`;
+        const toScore =
+          fresh.length === 0
+            ? "There are no fresh candidates to score."
+            : fresh.length < MIN_SCORED_PER_TICK
+              ? `Score ${fresh.length === 1 ? "the 1 fresh candidate" : `all ${fresh.length} fresh candidates`} before deciding.`
+              : `Score at least ${MIN_SCORED_PER_TICK} of the fresh candidates before deciding.`;
+        // How to see more, said only to a sweep under the owner's settings that found too few
+        // fresh candidates: what cannot find more, and what can. A narrowed sweep is told
+        // nothing here. A thin one was widened above, and one with enough to score needs no
+        // second sweep: sent to sweep again, it would buy the launch radar it has just bought.
+        // `cut` is fresh candidates the table's limit left out.
+        const cut = freshFound.length > fresh.length;
+        const more =
+          narrowed || fresh.length >= MIN_SCORED_PER_TICK
+            ? null
+            : `This sweep already used your owner's settings with no extra filters${cut ? ` and stopped at its limit of ${limit} rows` : ""}. maxAgeHours and minLiquidityUsd only narrow a sweep, so they cannot find more; ${cut ? "a higher limit or other feeds can" : "only other feeds can"}.${fresh.length === 0 && !cut ? " Finding nothing new is a valid result." : ""}`;
+        // A filter that asked for more than the owner allows was not applied as written.
+        const held = [
+          parsed.minLiquidityUsd !== undefined && parsed.minLiquidityUsd < universe.minLiquidityUsd
+            ? `minLiquidityUsd was raised to your owner's floor of $${compactNumber(universe.minLiquidityUsd)}`
+            : null,
+          parsed.maxAgeHours !== undefined && universe.maxAgeHours !== null && parsed.maxAgeHours > universe.maxAgeHours
+            ? `maxAgeHours was lowered to your owner's maximum age of ${ageWords(universe.maxAgeHours)}`
+            : null,
+        ].filter((words): words is string => words !== null);
+        const heldLine = held.length === 0 ? null : `Note: ${held.join(" and ")}. A token outside your owner's settings can never be bought.`;
+
         return {
           ok: true,
-          chains,
-          feeds: [...feeds],
-          count: candidates.length,
+          chains: widened ? agent.config.chains : chains,
+          feeds: widened ? [...new Set([...feeds, ...ownFeeds])] : [...feeds],
+          count: fresh.length + seen.length,
           freshCount: fresh.length,
+          // Present only on a sweep that widened itself: how many fresh candidates the
+          // model's own filters matched before the owner's settings were swept as well.
+          ...(widened ? { widened: true, matchedYourFilters: matched } : {}),
           candidates: [...fresh, ...seen].map(row),
-          rendered: `${renderCandidates(fresh)}${seenLine}`,
-          note: `quickScore is a cheap pre-rank, not the real score. Score at least ${MIN_SCORED_PER_TICK} of the fresh candidates before deciding — widen with maxAgeHours or minLiquidityUsd, or a different feed, when fewer than ${MIN_SCORED_PER_TICK} are fresh.`,
+          rendered: `${happened === null ? "" : `${happened}\n\n`}${renderCandidates(fresh)}${seenLine}`,
+          note: [happened, "quickScore is a cheap pre-rank, not the real score.", toScore, more, heldLine]
+            .filter((line): line is string => line !== null)
+            .join(" "),
         };
-      }),
+      })),
     }),
 
     score_token: tool({
@@ -1060,6 +1240,10 @@ export function buildTools(ctx: RunContext): ToolSet {
       inputSchema: z.object({ summary: z.string().min(5).max(1000) }),
       execute: logged(ctx, "finish", async (input) => {
         const parsed = z.object({ summary: z.string() }).parse(input);
+        // A sweep called in the same step as this is still out. Wait for it, so the two
+        // research checks below read the table it brings back and not an empty one: told
+        // "no sweep has come back", the model sweeps again and the radar is bought twice.
+        await Promise.allSettled([...sweepsInFlight]);
         // Once per tick: a model that scored two names off the top of the table has not
         // researched the tick. Send it back for the rest of the fresh candidates.
         if (!researchNudged && scoredThisTick.size < MIN_SCORED_PER_TICK) {
@@ -1075,6 +1259,26 @@ export function buildTools(ctx: RunContext): ToolSet {
               { nudged: true, unscored: unscored.map(([, symbol]) => symbol) },
             );
           }
+        }
+        // The same once per tick, so no tick is ever sent back twice for research: a tick
+        // about to end having scored nothing, in which no sweep got as far as its feeds.
+        // Either it never swept, or the sweep it asked for was refused before it started
+        // (a chain it does not trade). A sweep that found nothing fresh is an answer, and
+        // that tick ends here as it always did. So does a tick whose sweep started and then
+        // failed: its launch radar may already be paid for, and a sweep ordered from here
+        // would buy the same radar a second time.
+        //
+        // A tick that only managed its book (review_positions, a sell) is sent back like
+        // any other: looking after what it holds says nothing about what is new, and the
+        // sell freed the cash a buy would use. The one tick that is let go is the one that
+        // cannot buy (no buy left today, no cash for a ticket, trading paused). Research
+        // there ends in a refusal, and its steps and paid signals are spent for nothing.
+        if (!researchNudged && scoredThisTick.size === 0 && !sweepStartedThisTick && (await canStillBuy())) {
+          researchNudged = true;
+          return fail(
+            "Not yet. No token sweep with your owner's settings has come back this tick. Call discover_tokens with no arguments, score what it returns with score_token, then call finish again.",
+            { nudged: true, notSwept: true },
+          );
         }
         // Approval mode, once per tick: a model that scored two or three tokens above the
         // bar and proposed one has not given its owner the shortlist they asked for. Send

@@ -6,6 +6,7 @@ import {
   isTranscriptRow,
   narrateRun,
   runFacts,
+  stepSpanMs,
   tradeRefusals,
   type NarratableStep,
 } from "./narrate";
@@ -150,6 +151,22 @@ describe("describeCall", () => {
     expect(describeCall("discover_tokens", {})).toBe("Sweeping the configured feeds on every chain");
   });
 
+  it("says an age ceiling in hours, and in minutes under the hour", () => {
+    // The sweep that emptied a live tick on 2026-10-08, as its row read.
+    expect(
+      describeCall("discover_tokens", { feeds: ["trending", "momentum"], chain: "solana", limit: 20, maxAgeHours: 1, minLiquidityUsd: 15_000 }),
+    ).toBe("Sweeping trending, momentum on Solana (limit 20, under 1h, min $15K liquidity)");
+    expect(describeCall("discover_tokens", { maxAgeHours: 0.25 })).toBe("Sweeping the configured feeds on every chain (under 15m)");
+    expect(describeCall("discover_tokens", { maxAgeHours: 1.5 })).toBe("Sweeping the configured feeds on every chain (under 1.5h)");
+  });
+
+  it("says a round liquidity floor in full", () => {
+    // "$1K" was what a $100,000 floor read as.
+    expect(describeCall("discover_tokens", { minLiquidityUsd: 100_000 })).toBe(
+      "Sweeping the configured feeds on every chain (min $100K liquidity)",
+    );
+  });
+
   it("uses the address until the result supplies a symbol", () => {
     const input = { chain: "solana", address: "7uvLmz9m1oQ4z1k7Sv9WcCFy2eLQ8m4bVX2b6Nn1mnop" };
     expect(describeCall("score_token", input)).toBe("Scoring 7uvL…mnop on Solana");
@@ -219,6 +236,34 @@ describe("describeResult", () => {
     );
   });
 
+  /**
+   * A sweep the agent narrowed with its own filters, which the tool then ran again under
+   * the configured settings. The line has to be true however the second sweep went.
+   */
+  it("says when a narrowed sweep was widened, and what each half found", () => {
+    const widened = { ...DISCOVERY, widened: true, matchedYourFilters: 0, count: 23, freshCount: 23 };
+    expect(describeResult("discover_tokens", widened)).toBe(
+      "0 fresh matched the agent's filters · widened to the configured settings: 23 fresh candidates · 5 feeds",
+    );
+    // Some matched: they are among the candidates counted after the colon.
+    expect(describeResult("discover_tokens", { ...widened, matchedYourFilters: 2, count: 12, freshCount: 9 })).toBe(
+      "2 fresh matched the agent's filters · widened to the configured settings: 9 fresh candidates, 3 already seen · 5 feeds",
+    );
+    expect(describeResult("discover_tokens", { ...widened, matchedYourFilters: 1, count: 1, freshCount: 1 })).toBe(
+      "1 fresh matched the agent's filters · widened to the configured settings: 1 fresh candidate · 5 feeds",
+    );
+    // The configured settings found nothing either: a real answer, said as one.
+    expect(describeResult("discover_tokens", { ...widened, count: 0, freshCount: 0, candidates: [] })).toBe(
+      "0 fresh matched the agent's filters · widened to the configured settings: 0 fresh candidates · 5 feeds",
+    );
+    // A payload with the flag and no count still reads as a widened sweep.
+    expect(describeResult("discover_tokens", { ...widened, matchedYourFilters: undefined })).toBe(
+      "too few matched the agent's filters · widened to the configured settings: 23 fresh candidates · 5 feeds",
+    );
+    // And a sweep that was not widened reads as it always did.
+    expect(describeResult("discover_tokens", { ...DISCOVERY, widened: false })).toBe("12 fresh candidates, 4 already seen · 5 feeds");
+  });
+
   it("distinguishes a proposal from a fill from a refusal", () => {
     expect(describeResult("place_trade", PROPOSED)).toBe("Proposed $2.00 buy of DOVE — expires 14:32");
     expect(describeResult("place_trade", FILLED)).toBe("Filled $2.00 of DOVE at $0.00123");
@@ -253,6 +298,15 @@ describe("describeResult", () => {
         unproposed: ["DOVE"],
       }),
     ).toBe("Sent back — above the floor but not proposed: DOVE");
+    expect(
+      describeResult("finish", {
+        ok: false,
+        reason:
+          "Not yet. No token sweep with your owner's settings has come back this tick. Call discover_tokens with no arguments, score what it returns with score_token, then call finish again.",
+        nudged: true,
+        notSwept: true,
+      }),
+    ).toBe("Sent back — no sweep under the configured settings had come back this tick");
   });
 
   it("reads the book and the held positions", () => {
@@ -330,6 +384,30 @@ describe("describeResult", () => {
       { kind: "message", payload: {} },
     ];
     expect(steps.filter(isTranscriptRow)).toHaveLength(3);
+  });
+
+  /**
+   * The live run of 2026-10-08, as its rows were stamped: the sweep was called 3s in and
+   * its result written 14.2s later, carrying those 14.2s; `finish` followed. The run took
+   * 18.5s, and its page read 28.4s because the sweep's duration was added to a row
+   * already written at the sweep's end.
+   */
+  it("spans a run's steps from the first row to the last, without adding a duration", () => {
+    const start = Date.parse("2026-10-08T12:00:00.000Z");
+    const at = (ms: number) => new Date(start + ms).toISOString();
+    const rows = [
+      { createdAt: at(3_000), durationMs: null },
+      { createdAt: at(17_200), durationMs: 14_200 },
+      { createdAt: at(18_300), durationMs: null },
+      { createdAt: at(18_400), durationMs: 90 },
+    ];
+    expect(stepSpanMs(rows)).toBe(15_400);
+    expect(stepSpanMs(rows)).toBeLessThan(18_500);
+    // Rows in any order, dates as dates, and one row alone.
+    expect(stepSpanMs([...rows].reverse())).toBe(15_400);
+    expect(stepSpanMs([{ createdAt: new Date(start) }, { createdAt: new Date(start + 250) }])).toBe(250);
+    expect(stepSpanMs([{ createdAt: at(0) }])).toBe(0);
+    expect(stepSpanMs([])).toBeNull();
   });
 });
 
@@ -426,6 +504,21 @@ describe("narrateRun", () => {
       step("error", null, { error: "Anthropic API: 401 invalid x-api-key. Check the key on this agent." }),
     ];
     expect(narrateRun(failed)).toContain("The run failed: Anthropic API: 401 invalid x-api-key");
+  });
+
+  it("counts a tick sent back to sweep, and the widened sweep's candidates", () => {
+    const steps = [
+      call("finish", { summary: "Nothing to do." }),
+      result("finish", { ok: false, reason: "Not yet. No token sweep with your owner's settings has come back this tick.", nudged: true, notSwept: true }),
+      call("discover_tokens", { maxAgeHours: 1 }),
+      result("discover_tokens", { ...DISCOVERY, widened: true, matchedYourFilters: 0, count: 23, freshCount: 23 }),
+      call("finish", { summary: "Nothing cleared the bar." }),
+      result("finish", { ok: true, summary: "Nothing cleared the bar." }),
+    ];
+    expect(runFacts(steps)).toMatchObject({ sentBack: 1, sweeps: 1, freshCandidates: 23, finished: true, refusals: [] });
+    expect(narrateRun(steps)).toBe(
+      "Discovery surfaced 23 fresh candidates; none were scored. Spent nothing on data. No orders this run. Sent back once for more work, then finished.",
+    );
   });
 
   it("says plainly when nothing was bought and nothing was traded", () => {

@@ -35,7 +35,14 @@ import { isNoData, recordScore } from "./history";
 import { scoreToken, type Universe } from "./score";
 import type { ScoreInput, SellCheckInput, SentimentInput, SmartMoneyInput } from "./types";
 
-export { discoverCandidates, quickScore, renderCandidates, DEFAULT_DISCOVERY_LIMIT } from "./discover";
+export {
+  discoverCandidates,
+  quickScore,
+  renderCandidates,
+  sweepFilters,
+  DEFAULT_DISCOVERY_LIMIT,
+  MAX_DISCOVERY_LIMIT,
+} from "./discover";
 export {
   explainBlocker,
   hardGates,

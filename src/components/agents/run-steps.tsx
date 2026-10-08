@@ -75,6 +75,16 @@ function readX402(payload: Record<string, unknown>): X402Payment | null {
   };
 }
 
+/**
+ * When a call that has its own row ended. A result (or error) row is written once the
+ * tool has finished and carries how long it took, so the call ended that long after it
+ * started. Adding the duration to the result row's own time counted the tool twice: a
+ * 14-second sweep read "28.4s" inside a run that took 18.5s.
+ */
+function endOf(call: TranscriptStep, resultAt: number, durationMs: number | null): number {
+  return durationMs === null ? resultAt : call.startedAt + durationMs;
+}
+
 function json(value: unknown): string {
   if (value === undefined) return "—";
   try {
@@ -134,7 +144,7 @@ export function RunSteps({
           open.status = "error";
           open.detail = detail;
           open.output = step.payload;
-          open.completedAt = at + (step.durationMs ?? 0);
+          open.completedAt = endOf(open, at, step.durationMs);
         } else {
           transcript.push({
             id: step.id,
@@ -184,7 +194,7 @@ export function RunSteps({
         open.status = "success";
         open.detail = detail;
         open.output = output;
-        open.completedAt = at + (step.durationMs ?? 0);
+        open.completedAt = endOf(open, at, step.durationMs);
         // Now that the symbol (and whether it proposed) is known, the call line can stop
         // saying "7uvL…mnop" and start saying "DOVE".
         open.call = describeCall(step.toolName, open.input, hintFrom(output));

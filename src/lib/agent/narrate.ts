@@ -243,7 +243,10 @@ export function describeCall(toolName: string | null | undefined, input: unknown
       const maxAge = num(args.maxAgeHours);
       const minLiquidity = num(args.minLiquidityUsd);
       if (limit !== null) qualifiers.push(`limit ${round(limit)}`);
-      if (maxAge !== null) qualifiers.push(`under ${round(maxAge)}h`);
+      // Minutes under the hour: a 15-minute ceiling rounded to hours read "under 0h".
+      if (maxAge !== null) {
+        qualifiers.push(maxAge < 1 ? `under ${round(maxAge * 60)}m` : `under ${Number(maxAge.toFixed(1))}h`);
+      }
       if (minLiquidity !== null) qualifiers.push(`min ${fmtUsd(minLiquidity, { compact: true })} liquidity`);
       const tail = qualifiers.length === 0 ? "" : ` (${qualifiers.join(", ")})`;
       return feeds.length === 0
@@ -385,6 +388,7 @@ function describeFailure(name: string, r: Record<string, unknown>): string {
     if (unproposed.length > 0) {
       return `Sent back — above the floor but not proposed: ${list(unproposed)}`;
     }
+    if (r.notSwept === true) return "Sent back — no sweep under the configured settings had come back this tick";
     return `Sent back — ${clip(firstSentence(reason), 120)}`;
   }
 
@@ -490,22 +494,37 @@ function shortSkip(entry: string): string {
   return `${key} (${clip(firstSentence(why), 32)})`;
 }
 
-/** "12 fresh candidates, 4 already seen · 5 feeds" */
+/**
+ * "12 fresh candidates, 4 already seen · 5 feeds". A sweep the agent narrowed with its
+ * own filters, and that the tool then ran again under the configured settings, says both
+ * halves: "0 fresh matched the agent's filters · widened to the configured settings: 23
+ * fresh candidates · 5 feeds". The counts after the colon are the whole table's, so the
+ * line is true whether the wider sweep found many, the same few, or nothing.
+ */
 function describeDiscovery(r: Record<string, unknown>): string {
   const total = num(r.count) ?? arr(r.candidates).length;
   const fresh = num(r.freshCount);
   const feeds = arr(r.feeds).length;
   const segments: string[] = [];
 
+  let counts: string;
   if (fresh === null) {
-    segments.push(`${round(total)} ${plural(total, "candidate")}`);
+    counts = `${round(total)} ${plural(total, "candidate")}`;
   } else {
     const seen = Math.max(0, total - fresh);
-    segments.push(
+    counts =
       seen === 0
         ? `${round(fresh)} fresh ${plural(fresh, "candidate")}`
-        : `${round(fresh)} fresh ${plural(fresh, "candidate")}, ${seen} already seen`,
+        : `${round(fresh)} fresh ${plural(fresh, "candidate")}, ${seen} already seen`;
+  }
+  if (r.widened === true) {
+    const matched = num(r.matchedYourFilters);
+    segments.push(
+      matched === null ? "too few matched the agent's filters" : `${round(matched)} fresh matched the agent's filters`,
     );
+    segments.push(`widened to the configured settings: ${counts}`);
+  } else {
+    segments.push(counts);
   }
   if (feeds > 0) segments.push(`${feeds} ${plural(feeds, "feed")}`);
   return segments.join(" · ");
@@ -614,6 +633,24 @@ export function isTranscriptRow(step: Pick<NarratableStep, "kind" | "toolName">)
   if (step.kind === "tool_result") return step.toolName === "guardian";
   if (step.kind === "error") return step.toolName === null || step.toolName === undefined;
   return false;
+}
+
+/**
+ * How long a run's stored steps span, first row to last, or null when there are none.
+ * A row is written once its work is done: a result row after its tool returned, carrying
+ * how long the tool took. So the last row's own time is already the end. Adding its
+ * duration on top counted that tool twice, and a run of 18.5s read "28.4s".
+ */
+export function stepSpanMs(steps: ReadonlyArray<{ createdAt: string | Date }>): number | null {
+  let first = Infinity;
+  let last = -Infinity;
+  for (const step of steps) {
+    const at = new Date(step.createdAt).getTime();
+    if (!Number.isFinite(at)) continue;
+    first = Math.min(first, at);
+    last = Math.max(last, at);
+  }
+  return last >= first ? last - first : null;
 }
 
 /**
