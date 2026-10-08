@@ -1,17 +1,18 @@
-"""Tocker competition slide: clean table with a 'Best at' column.
-Run: python3 -I gen.py  ->  refine/design/tbl7.html
+"""Tocker competition slide: early category, strong players, a different approach.
+Run: python3 -I gen.py  ->  refine/design/tbl8.html
 All copy and data live in DATA. Marks: Y live, P partial, N next, - not found.
 Source of truth for cells and 'Best at': /home/user/tocker/docs/pitch/research/22-matrix-verified.md
+(ClawPump: research/25-clawpump.md)
 """
 import html
 import sys
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else \
-    "/tmp/claude-0/-home-user-tocker/2b3bef34-45cf-5fd0-a239-6cda5647963e/scratchpad/refine/design/tbl7.html"
+    "/tmp/claude-0/-home-user-tocker/2b3bef34-45cf-5fd0-a239-6cda5647963e/scratchpad/refine/design/tbl8.html"
 
 DATA = {
-    "eyebrow": "Competition · AI trading agents",
-    "headline": "Six agents trade. Only one buys alpha.",
+    "eyebrow": "Competition · Agentic trading",
+    "headline": "An early category. A different approach.",
     "best_title": "Best at",
     # the founder's four, in his order
     "cols": [
@@ -24,6 +25,9 @@ DATA = {
         {"name": "Tocker", "logo": True, "fact": "Private beta",
          "best": "Paid alpha + hard gates, in public",
          "usdc": "N", "x402": "Y", "gates": "Y", "social": "Y"},
+        {"name": "ClawPump", "fact": "Pump Fund · Colosseum",
+         "best": "Agent wallets + token launches",
+         "usdc": "P", "x402": "Y", "gates": "P", "social": "-"},
         {"name": "Fere AI", "fact": "$1.3M seed · Ethereal",
          "best": "Self-improving 24/7 agent",
          "usdc": "-", "x402": "-", "gates": "P", "social": "P"},
@@ -41,12 +45,12 @@ DATA = {
          "usdc": "-", "x402": "-", "gates": "-", "social": "P"},
     ],
     "legend": [("Y", "live"), ("P", "partial"), ("-", "not found")],
-    "foot": ("Sources, Oct 2026: GlobeNewswire (Fere) · DefiLlama, Chainwire (Senpi, Minara) · "
-             "askgina.ai · HeyElsa blog · Tocker product code"),
-    "note": ("These are the agents closest to us, and each is genuinely good at something: Senpi at copy "
-             "trading, Minara at disciplined perps, Fere at always-on trading. None buys alpha per call, "
-             "screens every token in code, and trades in public. That combination is Tocker. "
-             "USDC inference is next."),
+    "foot": ("Sources, Oct 2026: clawpump.tech, Pump Fund · GlobeNewswire · DefiLlama, Chainwire · "
+             "askgina.ai · HeyElsa blog · Tocker code"),
+    "note": ("Agentic trading is a brand-new category: a handful of seed-stage teams, each genuinely good at "
+             "one thing. ClawPump at agent wallets and launches, Senpi at copy trading, Minara at disciplined perps. "
+             "Our approach is different: one agent that buys alpha per call, screens every token in code, and "
+             "trades in public."),
 }
 
 # ---------- design tokens ----------
@@ -65,9 +69,9 @@ MW = (INNER - W["name"] - W["best"]) // 4      # four mark columns
 W["name"] += INNER - W["name"] - W["best"] - 4 * MW
 
 HEAD_H = 40
-ROW_H = 80
-TOCK_H = 104
-LOGO_H = 58
+ROW_H = 72
+TOCK_H = 100
+LOGO_H = 56
 
 
 def esc(t):
@@ -135,14 +139,14 @@ def head_p(t, align="left"):
 def legend():
     items = ""
     for k, t in DATA["legend"]:
-        items += (f'<div style="display:flex;flex-direction:row;align-items:center;gap:10px">'
+        items += (f'<div style="display:flex;flex-direction:row;align-items:center;gap:6px">'
                   f'<div style="width:22px;display:flex;justify-content:center">{mark(k, 0.6)}</div>'
-                  f'<p style="font-size:20px;line-height:24px;color:{DIM};white-space:nowrap">{esc(t)}</p></div>')
-    return f'<div style="display:flex;flex-direction:row;align-items:center;gap:28px;padding:0 {PADX}px">{items}</div>'
+                  f'<p style="font-size:18px;line-height:24px;color:{DIM};white-space:nowrap">{esc(t)}</p></div>')
+    return f'<div style="display:flex;flex-direction:row;align-items:center;gap:18px">{items}</div>'
 
 
 def header():
-    cells = f'<div style="width:{W["name"]}px;flex:none"></div>'
+    cells = f'<div style="width:{W["name"]}px;flex:none;display:flex;align-items:center;height:24px">{legend()}</div>'
     cells += f'<div style="width:{W["best"]}px;flex:none">{head_p(DATA["best_title"])}</div>'
     for c in DATA["cols"]:
         cells += (f'<div style="width:{MW}px;flex:none;display:flex;justify-content:center">'
@@ -154,8 +158,7 @@ def header():
 def build():
     table = (f'<div style="display:flex;flex-direction:column">{header()}'
              + "".join(row_html(r, i) for i, r in enumerate(DATA["rows"])) + '</div>')
-    body = (f'<div style="display:flex;flex-direction:column;gap:18px;margin-top:10px">{table}'
-            f'<div style="display:flex;flex-direction:row;justify-content:flex-end">{legend()}</div></div>')
+    body = f'<div style="display:flex;flex-direction:column;margin-top:14px">{table}</div>'
     s = (
         f'<section id="competition" data-transition="fade" style="background:#000000;color:{FG};{SANS};padding:128px 128px 160px;display:flex;flex-direction:column;gap:28px">\n'
         f'<p style="{MONO};font-size:24px;letter-spacing:4px;text-transform:uppercase;color:{DIM}">{esc(DATA["eyebrow"])}</p>\n'
