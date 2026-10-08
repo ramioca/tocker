@@ -7,7 +7,7 @@
  * card rising out of depth on a painted glow (radial gradients, no blur).
  * Behind it all: a painted poster, the live silk crossfading
  * over it, and a faint grid. Colour appears where it means something: the cyan
- * dot, "sleep", the bars of the tokens that clear the floor and their buy dots.
+ * dot, "24/7", the bars of the tokens that clear the floor and their buy dots.
  *
  * Load-in and scroll depth are hero-intro.tsx (GSAP); the `.lp-intro` gate at
  * the end of the hero block is the CSS half of that contract.
@@ -223,7 +223,7 @@
 }
 .lp-h1 {
   margin-top: 28px;
-  font-size: clamp(3.25rem, 7.5vw, 7.25rem);
+  font-size: clamp(3.25rem, 6.6vw, 6.5rem);
   line-height: 0.94;
   font-weight: 600;
   letter-spacing: -0.058em;
@@ -233,22 +233,21 @@
 .lp-h1-end {
   white-space: nowrap;
 }
-/* Two set lines from 640px; free, balanced wrapping on phones. Not a <br>:
-   SplitText would keep the break on phones too. */
-@media (min-width: 640px) {
-  .lp-h1-half {
-    white-space: nowrap;
-  }
+/* Three set lines, one beat each ("Your strategy." / "Your rules." / "Trading 24/7."),
+   on phones too: each is short enough to keep to one line. */
+.lp-h1-line {
+  display: block;
+  white-space: nowrap;
 }
 /* SplitText's line masks (hero-intro.tsx) clip at the line box, and the tight
-   leading would shave the descenders of "agent", "you" and "sleep": give each
+   leading would shave the descenders of "strategy": give each
    mask room below and take it back with the margin, so the layout is unchanged. */
 .lp-hero .lp-split-line-mask {
   padding-block: 0.04em 0.16em;
   margin-block: -0.04em -0.16em;
 }
 /* The one coloured word: the brand gradient clipped to the type. The padding
-   (given back by the margin) keeps the "p" inside the painted box despite the
+   (given back by the margin) keeps the last glyph inside the painted box despite the
    tight tracking. */
 .lp-mark {
   padding-right: 0.06em;

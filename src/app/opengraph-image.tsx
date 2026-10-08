@@ -17,7 +17,7 @@ import { TOCKER_MARK_RATIO } from "@/components/brand/tocker-mark";
  * as a data URL, because the renderer has no site to fetch a path from. A card
  * without it is still a card, so a failed read leaves the text and never throws.
  */
-export const alt = "Tocker — your agent trades while you sleep.";
+export const alt = "Tocker — your strategy, your rules, trading 24/7.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -97,10 +97,10 @@ export default async function Image() {
 
         <div style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ fontSize: 34, fontWeight: 500, letterSpacing: -0.8, color: "rgba(244,244,241,0.72)" }}>
-            your agent trades while you
+            your strategy. your rules. trading
           </div>
           <div style={{ fontSize: 168, fontWeight: 600, letterSpacing: -9, lineHeight: 0.95, marginTop: 6 }}>
-            sleep.
+            24/7.
           </div>
         </div>
 
