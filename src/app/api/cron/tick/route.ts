@@ -1,6 +1,6 @@
 /**
  * Scheduler entry point. Vercel Cron hits this every 5 minutes (see `vercel.json`);
- * `pnpm tick` calls it over HTTP every minute in local dev.
+ * `pnpm tick` calls it over HTTP in local dev, no more often than that.
  *
  * Auth: `Authorization: Bearer $CRON_SECRET` only, compared in constant time and
  * refused outright when the secret is unset or too short to be one
@@ -18,7 +18,9 @@
  * Time: the moment this invocation began is handed to the scheduler. The platform ends
  * the function at `maxDuration` whatever is in flight, so a pay-per-use run, which signs
  * payments, is only started with enough of the invocation left to finish, and stops
- * paying before the limit. An agent whose run would not fit simply stays due.
+ * paying before the limit. An agent whose run would not fit simply stays due. The same
+ * moment is what each agent's next run is counted from (`src/lib/agent/schedule.ts`):
+ * an agent on fifteen minutes is due again for the pass three after this one.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { tickDueAgents } from "@/lib/agent/scheduler";
@@ -49,6 +51,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const limitParam = Number(req.nextUrl.searchParams.get("limit"));
   // Every due agent runs inside this one invocation, so the batch has to fit the
   // function's duration cap (60s on Vercel Hobby). CRON_MAX_AGENTS tunes it per deploy.
+  // Above 5 a pass is more than one batch, one after another. An agent that waited for a
+  // later batch still counts its next run from the pass's start, so that run can start
+  // minutes sooner after its last than its interval says (`src/lib/agent/schedule.ts`).
   const configured = Number(process.env.CRON_MAX_AGENTS);
   const fallback = Number.isFinite(configured) && configured > 0 ? Math.min(configured, 50) : 5;
   const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 50) : fallback;

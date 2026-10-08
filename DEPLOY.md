@@ -55,7 +55,7 @@ key. If you want working previews, give Preview its own database and its own Pri
 | `X402_MOCK` | `1` runs on fixtures. Anything else — including unset — means **real** payments; `isMockMode()` tests for exactly `"1"`. |
 | `X402_OWNER_DAILY_USD` | The most one owner's agents may spend on platform-paid data in 24 hours. Default `5`. Counted from `x402_payments`, so it holds across instances. |
 | `X402_PLATFORM_DAILY_USD` | The most all agents together may spend on platform-paid data in 24 hours. Default `100`. This is the ceiling on what the platform data wallets can lose in a day; `0` switches paid data off. |
-| `CRON_MAX_AGENTS` | Agent *runs* per `/api/cron/tick` invocation. Default 5; use 2 on Hobby. It does not limit the exit engine: `/api/cron/marks` checks every agent holding a position, live books first, up to 200 a pass. |
+| `CRON_MAX_AGENTS` | Agent *runs* per `/api/cron/tick` invocation. Default 5; use 2 on Hobby. Above 5 a pass runs in batches of five, one after another: an agent in a later batch starts late and still counts its next run from the start of the pass, so that run can start minutes sooner after its last than its interval says (one run per interval either way). It does not limit the exit engine: `/api/cron/marks` checks every agent holding a position, live books first, up to 200 a pass. |
 | `LLM_MOCK` | unset (or `0`) |
 | `SOLANA_RPC_URL` | Solana RPC, server-only. Use Helius or another provider — the public RPC is rate-limited. The browser never sees it; `/api/solana/blockhash` proxies the one call it needs. Pay-per-use thinking (section 5) reads wallets and reconciles payments through it, and refuses only an empty value: with the public endpoint set, payments are still signed. |
 | `BASE_RPC_URL` | Any Base RPC |
@@ -588,8 +588,8 @@ In the order one step runs (`src/lib/x402/inference-fetch.ts`, reached only thro
 | Breaker pause | database, automatic | none | 3 steps paid (or maybe paid) with no answer, from 2 or more accounts, in 15 minutes: 30 minutes. 5 gateway failures or 5 signature failures, from 2 or more accounts, in 10 minutes: 15 minutes. Accounts, not agents, in all three: one owner's agents count as one account however many they are, so one account cannot pause everyone, and while only one account is switched on (stage 2) none of the three can trip. Any pin mismatch, from anyone: 30 minutes. Clears itself; an admin can end it early. |
 | Per-step ceiling | code | the lower of the step cap and 2 × Tocker's own estimate + $0.002 | The estimate is made from the model's list price, not from the quote. |
 | Per-run limit | the owner, per agent | what the builder suggests: about twice a typical run on the chosen model (`$0.15` on the default model, `$0.45` on Claude Haiku 4.5) | Range $0.05 to $2. |
-| Per-day limit | the owner, per agent | what the builder suggests: every scheduled run with a quarter to spare, and at least `$3` | Range $0.50 to $50. The builder's form refuses a schedule whose estimate exceeds it. Whatever was saved, the limit itself is what is enforced, when each payment is reserved. |
-| Requests per agent per day | code | 600 | |
+| Per-day limit | the owner, per agent | what the builder suggests: every run of the day with a quarter to spare (no more runs than the request limit below has room for), and at least `$3` | Range $0.50 to $50. The builder's form refuses a schedule whose estimate exceeds it. Whatever was saved, the limit itself is what is enforced, when each payment is reserved. |
+| Requests per agent per day | code | 600 | About 54 runs of typical size (11 requests). An agent on every 15 minutes asks for 96 runs a day and one on every 5 minutes for 288: each reaches this limit part-way through the UTC day and is held until 00:00 UTC. The builder's estimate counts no more runs than fit. |
 | Runs started by hand, per account per day | code | 20 | Counted in the database. |
 | Steps per run | code | the agent's own step limit, at most 20, plus one to wrap up | |
 | Wallet floor | code | `$0.25` | A run does not start unless the wallet's Solana USDC, read from the chain, covers the run limit plus this plus the Tocker fees it owes. On a live agent **two** run limits plus this floor are also held back from buys: one for what the run in hand may still spend after the buy, one (with the floor) for what the check before the next run asks for. It still counts in the agent's cash and equity. Known gap: an agent that trades Solana **and** Base has one cash figure for both, so the hold-back comes off the total and a Solana buy can still spend the Solana USDC it was meant to protect; the agent is then held with "Add USDC to keep thinking" until USDC is added on Solana. |
@@ -818,7 +818,7 @@ the concurrency test passes.
 
 Go on only with all of these: the audit printing `No differences.` over a window that
 really held payments (its `Ledger` line counts at least 50 rows for the 24 hours; an
-hourly schedule makes about 22 runs a day, and far fewer rows than that means the agent
+hourly schedule makes 24 runs a day, and far fewer rows than that means the agent
 sat held); nothing left open on the admin card and no row marked "no verdict in time";
 the live agent's P&L unmoved by what it paid; both drills seen; and every item in step
 5 written down.

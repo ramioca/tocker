@@ -283,6 +283,57 @@ describe("a run the provider refuses", () => {
 });
 
 /**
+ * The one way a run ends that is off the schedule. An organization-level Anthropic key
+ * failed for want of its workspace header; the run finds the workspace, saves it on the
+ * key, and leaves the agent due at once so the next pass simply works. Every other end
+ * counts the next run from when the invocation began (`schedule.ts`).
+ */
+describe("a run that failed for want of a workspace, and found it", () => {
+  it("saves the workspace on the key and leaves the agent due at once, not a whole interval on", async () => {
+    const { userId, agentId } = await seedAgent(db);
+    const key = `sk-ant-${shapeless()}`;
+    const keyId = await attachKey(userId, agentId, key, "anthropic", CATALOGUE.anthropic.defaultModel);
+    const workspace = "wrkspc_01TestWorkspace";
+    const refusal = "This API key is not scoped to a workspace. Send the anthropic-workspace-id header.";
+
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input instanceof Request ? input.url : input));
+      const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+      if (url.host !== "api.anthropic.com") return json([]);
+      if (url.pathname === "/v1/messages") return json({ type: "error", error: { type: "invalid_request_error", message: refusal } }, 400);
+      if (url.pathname === "/v1/organizations/workspaces") {
+        return json({ data: [{ id: workspace, name: "Trading", archived_at: null, created_at: "2026-01-01T00:00:00Z" }] });
+      }
+      if (url.pathname === "/v1/organizations/api_keys") return json({ data: [] });
+      // The check before the run could not tell (a 500); with the header the key may act.
+      if (url.pathname === "/v1/models") return new Headers(init?.headers).has("anthropic-workspace-id") ? json({ data: [] }) : json({}, 500);
+      return json({}, 404);
+    }) as typeof fetch;
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const began = Date.now();
+      const result = await runAgent({ agentId, trigger: "schedule", invocationStartedAt: began });
+      expect(result.status).toBe("failed");
+      expect(result.error).toContain(`found this key's workspace (${workspace})`);
+      expect(result.error).toContain("The agent runs again on the next tick.");
+
+      const [saved] = await db.select().from(schema.llmKeys).where(eq(schema.llmKeys.id, keyId));
+      expect(saved?.workspaceId).toBe(workspace);
+
+      const [agent] = await db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
+      expect(agent?.nextRunAt).not.toBeNull();
+      expect(agent?.nextRunAt).toEqual(agent?.lastRunAt);
+      expect(agent?.nextRunAt?.getTime()).toBeLessThanOrEqual(Date.now());
+    } finally {
+      warn.mockRestore();
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
+/**
  * Every provider that is switched on, through a whole run: the key goes to that
  * provider's host and to no other, and a refusal that repeats it is kept without it.
  * The list is the registry's, so a provider switched on later is covered the same day.

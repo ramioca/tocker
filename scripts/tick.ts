@@ -1,15 +1,23 @@
 /**
  * Local scheduler: `pnpm tick`.
  *
- * Calls the running app's two cron routes every 60 seconds, exactly as Vercel Cron does
- * in production: `/api/cron/marks` first (cheap — marks, peaks, the exit engine, equity
- * snapshots) and then `/api/cron/tick` (the LLM runs), so a position that has blown
- * through its stop is closed before the model is asked what it thinks.
+ * Calls the running app's two cron routes as Vercel Cron does in production:
+ * `/api/cron/marks` first (cheap — marks, peaks, the exit engine, equity snapshots) and
+ * then `/api/cron/tick` (the LLM runs), so a position that has blown through its stop is
+ * closed before the model is asked what it thinks.
+ *
+ * The loop wakes every 60 seconds and calls marks each time. It calls tick only once
+ * five minutes have gone by since its last tick call began, which is the cron's own
+ * spacing. An agent is due a minute short of its interval, so that the cron finds it
+ * wherever in its minute it fires (`src/lib/agent/schedule.ts`); a tick every minute
+ * found it in that minute every time, and "every 5 min" ran every four.
  *
  * Going over HTTP (rather than importing the scheduler) means only the dev server ever
  * opens the database, which the embedded PGlite requires: a second process on the same
  * data directory silently loses writes. Run it next to `pnpm dev`.
  */
+import { PASS_EVERY_MINUTES, passIsDue } from "../src/lib/agent/schedule";
+
 const INTERVAL_MS = 60_000;
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "");
 const SECRET = process.env.CRON_SECRET?.trim();
@@ -112,7 +120,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   console.log(
-    `Petri scheduler → ${APP_URL}/api/cron/{marks,tick} every ${INTERVAL_MS / 1000}s. Ctrl-C to stop.`,
+    `Petri scheduler → ${APP_URL}/api/cron/marks every ${INTERVAL_MS / 1000}s, /api/cron/tick every ${PASS_EVERY_MINUTES} min. Ctrl-C to stop.`,
   );
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
@@ -120,10 +128,15 @@ async function main(): Promise<void> {
       process.exit(0);
     });
   }
+  let lastTickAt: number | null = null;
   for (;;) {
     // Exits before decisions, always.
     await marks();
-    await tick();
+    // Never two passes closer than the cron's: see the top of this file.
+    if (passIsDue(lastTickAt, Date.now())) {
+      lastTickAt = Date.now();
+      await tick();
+    }
     await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS));
   }
 }

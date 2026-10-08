@@ -9,6 +9,7 @@ import { NO_INFERENCE_HOLD, USDC_NOT_AVAILABLE, canThink, thinkSource, usdcChoic
 import { isLlmMock } from "@/lib/agent/mock-model";
 import { PROVIDER_UNSUPPORTED, isProvider, providerLabel, withArticle, type LlmProvider } from "@/lib/agent/providers";
 import { RUN_REFUSED_WHILE_PAUSED, RUN_REFUSED_WITHOUT_KEY, isRunRefused } from "@/lib/agent/run-gate";
+import { nextRunTime, scheduledMinutes } from "@/lib/agent/schedule";
 import { getSession } from "@/lib/auth";
 import { isTradingPaused } from "@/lib/security/kill-switch";
 import { inferenceAllowedFor, inferenceFlags } from "@/lib/x402/inference-types";
@@ -372,10 +373,20 @@ export async function updateAgent(id: string, input: Partial<CreateAgentInput>):
     const parsed = agentConfigSchema.safeParse(input.config);
     if (!parsed.success) return fail(firstIssue(parsed.error));
     patch.config = parsed.data;
-    // reschedule against the new interval
+    // The next run moves only when the schedule did, and is then counted from this save.
+    // Every save used to set it a whole interval out, so an owner adjusting anything else
+    // kept pushing the next run away. Compared as the scheduler keeps them, so a stored
+    // interval the schema has since rounded is not a change.
     if (agent.status === "active") {
-      const minutes = parsed.data.schedule.intervalMinutes;
-      patch.nextRunAt = minutes > 0 ? new Date(Date.now() + minutes * 60_000) : null;
+      const before = scheduledMinutes(agent.config?.schedule?.intervalMinutes ?? 0);
+      const minutes = scheduledMinutes(parsed.data.schedule.intervalMinutes);
+      // On paper, with an interval and no next run: a schedule held until the agent goes
+      // live (`holdSchedule`), which `goLiveAction` starts. A save is not what starts it.
+      const held = agent.mode === "paper" && agent.nextRunAt === null && before > 0;
+      // Any other active agent with an interval and no next run is given one.
+      if (!held && (minutes !== before || (minutes > 0 && agent.nextRunAt === null))) {
+        patch.nextRunAt = nextRunTime(minutes, Date.now());
+      }
     }
   }
 
@@ -543,7 +554,7 @@ export async function deleteAgent(id: string): Promise<ActionResult> {
  */
 export async function triggerRun(id: string): Promise<ActionResult<{ runId: string }>> {
   // When this invocation began. A pay-per-use run stops paying before the function's
-  // time limit, and that is counted from here.
+  // time limit, and that is counted from here. So is the agent's next scheduled run.
   const invocationStartedAt = Date.now();
   const session = await getSession();
   if (!session) return fail("Sign in first");

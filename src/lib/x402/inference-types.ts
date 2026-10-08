@@ -9,7 +9,8 @@
  * This file is the vocabulary every part of that feature shares: the reasons a payment
  * or a run can stop, the caps, the ledger's interface, the gateway's pinned identity and
  * the price table the estimates are made from. It is pure (no database, no network, no
- * secrets), so it is safe to import from a client component.
+ * secrets), so it is safe to import from a client component. Its one import is the
+ * schedule's rule, which is as pure, for the count of runs in a day.
  *
  * The rules, in one place:
  *  - Nothing is signed that is not first written to the ledger and counted against every
@@ -20,6 +21,8 @@
  *  - A stop is a named reason, never a bare failure: the owner is told what happened and
  *    what fixes it.
  */
+
+import { scheduledMinutes } from "@/lib/agent/schedule";
 
 // ---------- mode ----------
 
@@ -140,12 +143,27 @@ export function estimateRunUsd(model: PayPerUseModel, steps: number = TYPICAL_RU
   return roundUsd(total);
 }
 
-/** Pure: runs a day at a schedule. 0 minutes is manual only. The cron adds about five minutes to every interval. */
+/**
+ * Pure: the runs a pay-per-use agent makes in a day at a schedule. 0 minutes is manual
+ * only. The interval is counted as the scheduler keeps it (`scheduledMinutes`): an agent
+ * runs once every interval, on the cron's pass, so an hourly agent makes 24. It used to
+ * be one pass more between runs, and this said 22.
+ *
+ * Never more than the day's request limit has room for at a typical run's size
+ * (`AGENT_DAY_REQUESTS`, 54 runs of 11 requests). "Every 15 min" asks for 96 runs and
+ * "every 5 min" for 288; such an agent reaches the limit part-way through the day and
+ * waits for 00:00 UTC, so 96 runs' worth is a sum it cannot spend. Quoted, it put the
+ * estimate over a daily limit the builder itself had suggested, and the settings form
+ * then refused every save. Raise the request limit and this follows it.
+ */
 export function runsPerDay(intervalMinutes: number): number {
-  if (intervalMinutes <= 0) return 0;
+  const minutes = scheduledMinutes(intervalMinutes);
+  if (minutes === 0) return 0;
+  const scheduled = Math.floor(1440 / minutes);
+  const paidFor = Math.floor(AGENT_DAY_REQUESTS / TYPICAL_RUN.steps);
   // Never fewer than one: a daily or weekly schedule still runs, and an estimate of
   // nothing would be the wrong side to err on.
-  return Math.max(1, Math.floor(1440 / (intervalMinutes + 5)));
+  return Math.max(1, Math.min(scheduled, paidFor));
 }
 
 export function roundUsd(usd: number): number {
@@ -199,8 +217,8 @@ export function stepCapUsd(estimateUsd: number, hardCapUsd: number = HARD_STEP_C
 
 /**
  * Pure: limits that fit a model and a schedule, for the builder to offer. The run cap
- * leaves room for a run twice the typical size; the day cap covers every scheduled run
- * with a quarter to spare.
+ * leaves room for a run twice the typical size; the day cap covers every run of the day
+ * (`runsPerDay`) with a quarter to spare.
  */
 export function suggestUsdcLimits(model: PayPerUseModel, intervalMinutes: number): { maxUsdPerRun: number; maxUsdPerDay: number } {
   const run = estimateRunUsd(model);

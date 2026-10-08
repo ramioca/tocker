@@ -42,6 +42,7 @@ import { DEFAULT_AGENT_CONFIG } from "./config";
 import { countsAsStrike } from "./inference";
 import { INFERENCE_HOLD_NOTICE, applyInferenceHold } from "./inference-gate";
 import { RUN_DEFERRED, RunRefusedError } from "./run-gate";
+import { nextRunTime } from "./schedule";
 import { ABANDONED_RUN_ERROR, paidStop, reapStaleRuns, resolveModel, runAgent, runSummary, startRun } from "./run";
 import { findDueAgents, tickDueAgents } from "./scheduler";
 import { seedAgent, setupTestDb } from "./test-support";
@@ -535,7 +536,8 @@ describe("how each stop ends the run", () => {
     await applyInferenceHold(agent.agentId, "quote_failed", new Date(Date.now() - 3_600_000));
     seam.refuse = { atSeq: 2, reason };
 
-    const result = await runAgent({ agentId: agent.agentId, trigger: "schedule" });
+    const began = Date.now();
+    const result = await runAgent({ agentId: agent.agentId, trigger: "schedule", invocationStartedAt: began });
     // The sentence with no figure in it: a summary is public, the limits are the owner's.
     const said = describeInferenceStop(reason);
     expect(said.detail).not.toContain("$");
@@ -554,8 +556,8 @@ describe("how each stop ends the run", () => {
 
     const row = await agentRow(agent.agentId);
     expect(row).toMatchObject({ inferenceHold: null, inferenceStrikes: 0, inferenceNotifiedAt: null });
-    // Due again on its ordinary schedule.
-    expect(row.nextRunAt).not.toBeNull();
+    // Due again on its ordinary schedule: one interval from when its invocation began.
+    expect(row.nextRunAt).toEqual(nextRunTime(row.config.schedule.intervalMinutes, began));
     // The one notice is the earlier hold's. This run added none, of either kind.
     const notices = await noticesOf(agent.userId);
     expect(notices.map((notice) => notice.kind)).toEqual([INFERENCE_HOLD_NOTICE]);
@@ -568,7 +570,7 @@ describe("how each stop ends the run", () => {
     seam.refuse = { atSeq: 1, reason };
 
     const started = Date.now();
-    const result = await runAgent({ agentId: agent.agentId, trigger: "schedule" });
+    const result = await runAgent({ agentId: agent.agentId, trigger: "schedule", invocationStartedAt: started });
     const said = describeInferenceStop(reason, { runCapUsd: 0.3, dayCapUsd: 3, model: DEFAULT_PAY_PER_USE_MODEL });
     expect(result).toMatchObject({ status: "failed", stopReason: reason, error: said.detail });
 
@@ -600,7 +602,7 @@ describe("how each stop ends the run", () => {
     const steps = await stepsOf(result.runId);
     const error = steps.find((step) => step.kind === "error");
     expect(error?.payload).toMatchObject({ error: said.detail, reason });
-    expect(row.nextRunAt).not.toBeNull();
+    expect(row.nextRunAt).toEqual(nextRunTime(row.config.schedule.intervalMinutes, started));
     expect(await findDueAgents(50, new Date(Date.now() + 60_000))).not.toContain(agent.agentId);
   });
 
