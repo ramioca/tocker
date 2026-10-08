@@ -1,37 +1,37 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
-~515 words, about 3:20 at 155 wpm (3:08 at 165). No persona: the hook is the market itself (21,000 tokens a day), the founder's own losses to rugs and honeypots sit on the problem slide, and the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
+~480 words, about 3:00 at 160 wpm. Rewritten by a copywriter pass on Oct 8, 2026: the hook is the market (21,000 tokens a day); the founder's own losses to rugs, honeypots and emotion sit on the problem slide with the build cost (agencies quote $200k+ and 3–6 months); the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
 Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. We bet the other way.' (fallback: 'A different approach.'). Rival strip, then what all six do vs Tocker (data, safety, social), each with dated evidence. Copy, two design variants and a VC/fact critic merged on Oct 8, 2026 (research/26-competitors-deep), then rebuilt in the Slides subset (flow layout, text ≥24px, no overlays). Earlier full table: docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
 
 ## cover
-Every day, twenty-one thousand new tokens launch on pump.fun, and almost all collapse. Bots and insiders get in first; retail buys last. [pause] Retail isn't dumb. It's outgunned. I'm Rami, and Tocker is the infrastructure for agentic trading: your own trading agent, with the edge and the guardrails built in.
+Twenty-one thousand. That's how many tokens launch on pump.fun every day. Almost all collapse. Bots and insiders buy before you've read the name. [pause] Retail isn't dumb. It's outgunned. I'm Rami, and Tocker is the infrastructure for agentic trading: anyone can launch a trading agent, with the edge and the guardrails built in.
 
 ## problem
-Two problems. No edge: in 2024, nine in ten pump.fun traders lost money or made under a hundred dollars. I was one of them. I've lost more than I'd like to admit to rugs and honeypots, and honestly, I traded on emotion. No rails: building your own agent means wiring twenty-plus services, then running them around the clock. I know. I wired them.
+Today, traders have no edge. In twenty twenty-four, nine in ten pump.fun traders lost money or made under a hundred dollars. I've lost more than I'd like to admit to rug pulls, honeypots and, honestly, my own emotions. And agents have no rails: twenty-plus services to wire, then run it around the clock. For a production agent, agencies quote two hundred thousand dollars or more, and three to six months. [pause]
 
 ## solution
-Tocker fixes both. The edge: the agent buys smart-money, launch and sell-check data per call, and ten hard gates in code can veto any buy. The rails: wallet, data, inference and execution in one integration, hosted 24/7.
+With Tocker, it takes one line of English. The edge: your agent buys data per call, and ten hard gates in code can veto any buy. The rails: wallet, data, inference and execution in one integration, hosted around the clock.
 
 ## product
-Here's how it works. You write one line of English: liquid Solana memes, smart money buying, holders rising, take forty percent, stop at fifteen. The agent skips BONK and POPCAT, below the floor. WIF scores eighty-one, clears all ten gates, and it buys a hundred dollars, exits set in code. [pause] That's what I never had: an agent isn't emotional. No FOMO, no panic, no revenge trades. It just follows your rules.
+Here's a sample run. You write: liquid Solana memes, smart money buying, holders rising, take forty percent, stop at fifteen. Your agent skips BONK and POPCAT, below the floor. WIF scores eighty-one and clears all ten gates: a hundred-dollar buy, exits set in code. [pause] I was emotional. An agent isn't. No FOMO, no panic, no revenge trades. It just follows your rules.
 
 ## alpha
-Why buy data? Because a model alone trades blind. Last October, six frontier models traded real money, and four lost over thirty percent. So the agent buys answers over x402: what just launched, whether insiders hold the supply, whether it can actually sell. About seven cents a token.
+Rules aren't edge. Neither is AI alone. Last October, six frontier models traded real money; four lost over thirty percent. So your agent buys answers over x402, the pay-per-call standard backed by Visa and Stripe. Can I actually sell this, or is it a honeypot? About seven cents a token on Solana.
 
 ## business
-Traders already pay for this. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We'll charge fifty basis points, half what the bots take, and that covers the data and the gates.
+Who pays? Traders already do. Last year, Solana traders paid nine hundred forty million dollars to bots and terminals. That's our lane. They charge one percent a trade. We'll charge half, which covers the data and the gates.
 
 ## competition
-The category is early: six funded startups, the largest disclosed round four million. Good teams, with three shared defaults: bundled data, no rug veto before the swap, and copy trading. We bet the other way. Our agent picks and buys its data, ten gates can veto any buy, and every fill is public.
+Others want this lane. It's early: six funded startups, the largest disclosed round four million. They share three defaults: bundled data, no rug veto before the buy, and copy trading. We bet the other way on all three.
 
 ## gtm
-That public record is the growth loop. Every fill posts with its entry score, never the strategy, so every trade markets itself. Followers launch their own; next, creators share the fees. We start where the volume is: four hundred eighty-two billion dollars of Solana memecoins last year. Then Polymarket, twenty-one billion, then tokenized stocks.
+Your strategy stays private. Your trades don't. Each one posts with its entry score, like WIF's eighty-one, so every trade markets itself. Followers launch their own agents; next, creators share the fees. We start with Solana memecoins, four hundred eighty-two billion dollars traded last year. Then Polymarket, then tokenized stocks.
 
 ## team
-Why me? I lead product and growth at BlockRun, the leading x402 gateway, so I know these rails. I founded Sorbet, a neobank that raised a million dollars and moves five million a month. I worked on AI at Deloitte's Omnia. And I shipped Tocker in under four weeks.
+Why me? I lead product and growth at BlockRun, the leading x402 gateway, so I know these rails. I founded Sorbet, a neobank that raised a million dollars and transacts five million a month. I worked on AI at Deloitte. And I shipped Tocker in under four weeks.
 
 ## thanks
-Tocker is in private beta on Solana and Base. [pause] Tomorrow, another twenty-one thousand tokens launch. Your agent checks every one, and says no to the ones built to take your money. [pause] Touch grass. Your agent is trading for you. Thank you.
+It's in private beta on Solana and Base. Tomorrow, another twenty-one thousand tokens launch. You won't have to watch a single one. [pause] Touch grass. Your agent is trading for you. Thank you.
 
 ## What's labelled planned (keep it that way until shipped)
 - 50 bps fee: beta charges $0.10 flat per fill (`src/lib/platform/fee.ts`).
@@ -56,6 +56,8 @@ Tocker is in private beta on Solana and Base. [pause] Tomorrow, another twenty-o
   - DXRG (Barton et al., arXiv 2609.05663, Sep 2026): 3,505 user-funded AI agents on a shared 12-token Base market, 21 days. Herding: 1,544 of 3,454 active vaults bought the same token (FEET) within one hour on Mar 1; "neither fleet shows a directional edge".
   - SolRugDetector (Chen, Zheng et al., arXiv 2603.24625, Mar 2026): 76,469 of 100,063 new Solana DEX tokens in H1 2025 (76%) were labelled rug pulls.
   - Luo et al. (WWW 2026, arXiv 2601.08641): smart-money memecoin wallets averaged 14%; copiers about 3% after price impact.
+
+- $200k+ and 3–6 months to build a production multi-venue 24/7 trading agent: agency quotes (PixelPlex, Appinventiv, Merehead, Devtechnosys), 2026 — research/18 §3. Vendor marketing ranges (prototype $15k–$60k); say "agencies quote", never a market fact.
 
 ## Likely Q&A
 1. **Traction?** Honest answer: private beta, agents start on paper. Bring real numbers (beta agents, paper/live fills, % of candidate buys vetoed by gates).
