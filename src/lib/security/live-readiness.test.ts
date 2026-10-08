@@ -216,7 +216,7 @@ describe("simulateFirstTrade", () => {
   beforeEach(() => {
     // The fee is capitalised into the buy, so it decides whether a ticket the exact size
     // of the balance clears. Pin it rather than inheriting whatever the environment says.
-    vi.stubEnv("PLATFORM_FEE_USD", "0.10");
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
   });
   afterEach(() => vi.unstubAllEnvs());
 
@@ -239,10 +239,32 @@ describe("simulateFirstTrade", () => {
   });
 
   /** The platform fee is capitalised into the buy, so cash has to cover both. */
-  it("catches a ticket that leaves nothing for the platform fee", async () => {
-    const refusal = await simulateFirstTrade(config({ maxTradeUsd: 2, maxPositionPct: 100 }, ["solana"]), 2);
-    expect(refusal).toMatch(/Insufficient cash/);
-    expect(refusal).toMatch(/Tocker fee/);
+  it("catches a ticket that leaves nothing for the platform fee, and says the fee on that ticket", async () => {
+    const agent = config({ maxTradeUsd: 2, maxPositionPct: 100 }, ["solana"]);
+    expect(await simulateFirstTrade(agent, 2)).toBe(
+      "A $2.00 buy against the $2.00 this agent holds (plus the 0.5% Tocker fee, $0.01) would be refused by the risk guard: " +
+        "Insufficient cash: $2.00 available, $2.00 requested plus the $0.01 Tocker fee (0.5% of the fill). The most this cash covers is a $1.99 buy.",
+    );
+    // The ticket and its one cent of fee, to the cent: a buy that empties the wallet exactly.
+    expect(await simulateFirstTrade(agent, 2.01)).toBeNull();
+  });
+
+  it("works the fee out from the ticket being simulated, not from a figure per fill", async () => {
+    // 0.5% of a $100 ticket is fifty cents, so $100.49 is short and $100.50 is enough.
+    const agent = config({ maxTradeUsd: 100, maxPositionPct: 100 }, ["solana"]);
+    expect(await simulateFirstTrade(agent, 100.5)).toBeNull();
+    const refusal = await simulateFirstTrade(agent, 100.49);
+    expect(refusal).toContain("(plus the 0.5% Tocker fee, $0.50)");
+    expect(refusal).toContain("$100.49 available, $100.00 requested plus the $0.50 Tocker fee (0.5% of the fill).");
+  });
+
+  it("asks for the ticket alone, and names no fee, when the fee is off", async () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "0");
+    const agent = config({ maxTradeUsd: 2, maxPositionPct: 100 }, ["solana"]);
+    expect(await simulateFirstTrade(agent, 2)).toBeNull();
+    expect(await simulateFirstTrade(agent, 1.99)).toBe(
+      "A $2.00 buy against the $1.99 this agent holds would be refused by the risk guard: Insufficient cash: $1.99 available, $2.00 requested.",
+    );
   });
 
   it("names the chain the agent actually trades, not a default", async () => {
@@ -263,7 +285,7 @@ describe("simulateFirstTrade", () => {
     };
 
     it("refuses a wallet that covers the ticket but not the ticket and the thinking, and says why", async () => {
-      // $2.50 covers a $2.00 buy and its $0.10 fee. Not once $0.85 is kept back.
+      // $2.50 covers a $2.00 buy and its $0.01 fee. Not once $0.85 is kept back.
       expect(await simulateFirstTrade(config({ maxTradeUsd: 2, maxPositionPct: 100 }, ["solana"]), 2.5)).toBeNull();
       const refusal = await simulateFirstTrade(paying(0.3), 2.5);
       expect(refusal).toMatch(/Insufficient cash/);
@@ -271,18 +293,18 @@ describe("simulateFirstTrade", () => {
     });
 
     it("passes once the wallet covers both", async () => {
-      // The ticket, its fee, and two runs and the floor: 2.00 + 0.10 + 0.85, and 2.00 + 0.10 + 4.25.
-      expect(await simulateFirstTrade(paying(0.3), 2.95)).toBeNull();
-      expect(await simulateFirstTrade(paying(0.3), 2.9)).toMatch(/Insufficient cash/);
-      expect(await simulateFirstTrade(paying(2), 6.35)).toBeNull();
-      expect(await simulateFirstTrade(paying(2), 6.3)).toMatch(/Insufficient cash/);
+      // The ticket, its fee, and two runs and the floor: 2.00 + 0.01 + 0.85, and 2.00 + 0.01 + 4.25.
+      expect(await simulateFirstTrade(paying(0.3), 2.86)).toBeNull();
+      expect(await simulateFirstTrade(paying(0.3), 2.85)).toMatch(/Insufficient cash/);
+      expect(await simulateFirstTrade(paying(2), 6.26)).toBeNull();
+      expect(await simulateFirstTrade(paying(2), 6.25)).toMatch(/Insufficient cash/);
     });
 
     /** The checklist and the live book must hold back one and the same figure. */
     it("holds back exactly what the live book does: the one function's figure", async () => {
       for (const maxUsdPerRun of [0.05, 0.3, 1, 2]) {
         const agent = paying(maxUsdPerRun);
-        const needed = 2 + 0.1 + thinkingReserveUsd(agent);
+        const needed = 2 + 0.01 + thinkingReserveUsd(agent);
         expect(await simulateFirstTrade(agent, needed)).toBeNull();
         expect(await simulateFirstTrade(agent, needed - 0.01)).toMatch(/Insufficient cash/);
       }

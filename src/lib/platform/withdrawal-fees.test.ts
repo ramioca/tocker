@@ -114,9 +114,17 @@ beforeEach(() => {
 
 /**
  * An agent whose Base wallet is a real one (keyed by the agent's id, so the stubs above
- * can find it) holding `usdc`, owing `fills` ten-cent fees on `feeChain`.
+ * can find it) holding `usdc`, owing `fills` ten-cent fees on `feeChain`. `feesUsd`
+ * gives each fee its own amount in place of the ten cents: what a fill is charged is a
+ * share of it, so the rows of one agent need not be alike.
  */
-async function agentOwing(input: { fills: number; usdc?: number; feeChain?: "base" | "solana"; mode?: "paper" | "live" }) {
+async function agentOwing(input: {
+  fills: number;
+  usdc?: number;
+  feeChain?: "base" | "solana";
+  mode?: "paper" | "live";
+  feesUsd?: number[];
+}) {
   const seeded = await seedAgent(db, { mode: input.mode ?? "live" });
   await db
     .update(schema.wallets)
@@ -125,7 +133,8 @@ async function agentOwing(input: { fills: number; usdc?: number; feeChain?: "bas
   if (input.usdc !== undefined) chain.usdc.set(seeded.agentId, input.usdc);
 
   const feeChain = input.feeChain ?? "base";
-  for (let i = 0; i < input.fills; i += 1) {
+  const owed = input.feesUsd ?? Array.from({ length: input.fills }, () => 0.1);
+  for (const feeUsd of owed) {
     const tradeId = nanoid();
     await db.insert(schema.trades).values({
       id: tradeId,
@@ -141,7 +150,7 @@ async function agentOwing(input: { fills: number; usdc?: number; feeChain?: "bas
       status: "filled",
       isPaper: false,
     });
-    await db.insert(schema.platformFees).values({ id: nanoid(), agentId: seeded.agentId, tradeId, chain: feeChain, amountUsd: toNumeric(0.1, 6) });
+    await db.insert(schema.platformFees).values({ id: nanoid(), agentId: seeded.agentId, tradeId, chain: feeChain, amountUsd: toNumeric(feeUsd, 6) });
   }
   session = { userId: seeded.userId, handle: "owner", displayName: null, avatarUrl: null, email: null };
   return seeded;
@@ -170,6 +179,43 @@ describe("holdBaseFees", () => {
     });
     // The whole balance is the case that used to walk away with the fees.
     expect((await holdBaseFees({ agentId, amount: 10 })).ok).toBe(false);
+  });
+
+  it("says what is owed as it stands when it is not whole cents, while it holds the cents back", async () => {
+    // A cent and a quarter, the fee on a $2.50 fill. "$0.01" beside two withheld cents would not add up.
+    const { agentId } = await agentOwing({ fills: 1, usdc: 10, feesUsd: [0.0125] });
+    expect(await holdBaseFees({ agentId, amount: 9.99 })).toEqual({
+      ok: false,
+      error: "This agent owes $0.0125 in Tocker fees. The most you can withdraw is $9.98.",
+    });
+    expect(await holdBaseFees({ agentId, amount: 9.98 })).toEqual({ ok: true, owedUsd: 0.0125 });
+
+    // Fees charged at different times, of different sizes, are owed as their sum.
+    const mixed = await agentOwing({ fills: 2, usdc: 10, feesUsd: [0.1, 0.0249] });
+    expect(await holdBaseFees({ agentId: mixed.agentId, amount: 9.88 })).toEqual({
+      ok: false,
+      error: "This agent owes $0.1249 in Tocker fees. The most you can withdraw is $9.87.",
+    });
+  });
+
+  it("does not hold a debt under a cent, which the sweep that follows would leave where it is", async () => {
+    // Half a cent, the fee on a $1 fill. Holding a cent back for it left a cent that
+    // could be neither withdrawn nor deleted with.
+    const { agentId } = await agentOwing({ fills: 1, usdc: 10, feesUsd: [0.005] });
+    expect(await holdBaseFees({ agentId, amount: 10 })).toEqual({ ok: true, owedUsd: 0 });
+    expect(chain.reads).toEqual([]);
+
+    // The largest debt the ledger can hold under a cent, across two fills.
+    const under = await agentOwing({ fills: 2, usdc: 10, feesUsd: [0.005, 0.004999] });
+    expect(await holdBaseFees({ agentId: under.agentId, amount: 10 })).toEqual({ ok: true, owedUsd: 0 });
+
+    // From a cent up the sweep collects it, so it is held.
+    const cent = await agentOwing({ fills: 2, usdc: 10, feesUsd: [0.005, 0.005] });
+    expect(await holdBaseFees({ agentId: cent.agentId, amount: 10 })).toEqual({
+      ok: false,
+      error: "This agent owes $0.01 in Tocker fees. The most you can withdraw is $9.99.",
+    });
+    expect(await holdBaseFees({ agentId: cent.agentId, amount: 9.99 })).toEqual({ ok: true, owedUsd: 0.01 });
   });
 
   it("offers nothing when the wallet holds no more than it owes", async () => {
@@ -217,6 +263,23 @@ describe("collecting what is owed, whatever the batch threshold", () => {
     const log = await audits(agent.agentId);
     expect(log).toHaveLength(1);
     expect(log[0].metadata).toMatchObject({ reason: "platform_fee_settlement", chain: "base", amountUsd: 0.2, fills: 2 });
+  });
+
+  it("says in that line what was collected and from how many fills, and names no rate", async () => {
+    // The two fills below were charged different amounts: one a flat ten cents, one a
+    // share of its size. A rate printed beside them would be wrong for one of the two.
+    const agent = await agentOwing({ fills: 2, usdc: 5, feesUsd: [0.1, 0.0249] });
+    await collectFeesOwed({ id: agent.agentId, ownerId: agent.userId, name: "Test Agent" });
+
+    const log = await audits(agent.agentId);
+    expect(log).toHaveLength(1);
+    expect(log[0].summary).toBe("Settled $0.1249 of Tocker fees (2 fills) from the base wallet to the platform wallet.");
+    expect(log[0].summary).not.toMatch(/ at \$|%/);
+    // Each row is settled at the amount it was written with.
+    expect((await feeRows(agent.agentId)).map((r) => [r.amountUsd, r.status]).sort()).toEqual([
+      ["0.024900", "settled"],
+      ["0.100000", "settled"],
+    ]);
   });
 
   it("still collects from an agent that traded live and went back to paper", async () => {
@@ -351,5 +414,64 @@ describe("deleteAgent, with fees owed", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/10\.25 USDC\. Withdraw it first/);
     expect(await db.select().from(schema.agents).where(eq(schema.agents.id, agentId))).toHaveLength(1);
+  });
+});
+
+/**
+ * A fee is a share of a fill, so an agent that made one or two small fills owes less
+ * than a cent. The sweep collects from a cent up, and a wallet holding a cent cannot be
+ * deleted: whatever is held back has to be something the sweep then takes.
+ */
+describe("emptying and deleting an agent whose fees are not whole cents", () => {
+  const withdraw = (agentId: string, amount: number) =>
+    secureWithdrawAction({ agentId, chain: "base", asset: "usdc", amount, toAddress: DESTINATION });
+  const gone = async (agentId: string) =>
+    (await db.select().from(schema.agents).where(eq(schema.agents.id, agentId))).length === 0;
+
+  it("lets the whole balance go when under a cent is owed, and then deletes", async () => {
+    // A $1 buy sold back for $0.97: $0.005 and $0.00485, on a wallet left with $4.97.
+    const { agentId } = await agentOwing({ fills: 2, usdc: 4.97, feesUsd: [0.005, 0.00485] });
+
+    expect((await withdraw(agentId, 4.97)).ok).toBe(true);
+
+    // Only the owner's transfer: no sweep is sent for a debt it would not collect.
+    expect(chain.sent.map((s) => [s.amount, s.toAddress])).toEqual([[4.97, DESTINATION]]);
+    expect(chain.usdc.get(agentId)).toBe(0);
+    expect(await deleteAgent(agentId)).toEqual({ ok: true, data: undefined });
+    expect(await gone(agentId)).toBe(true);
+  });
+
+  it("lets the last cent out of a wallet that owes under a cent, so the delete is not stuck behind it", async () => {
+    const { agentId } = await agentOwing({ fills: 1, usdc: 0.01, feesUsd: [0.005] });
+
+    // A cent of USDC is the owner's to take out first, and nothing holds it back.
+    const refused = await deleteAgent(agentId);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.error).toMatch(/0\.01 USDC\. Withdraw it first/);
+
+    expect((await withdraw(agentId, 0.01)).ok).toBe(true);
+    expect(await deleteAgent(agentId)).toEqual({ ok: true, data: undefined });
+    expect(await gone(agentId)).toBe(true);
+  });
+
+  it("holds a debt of a cent or more, sweeps it after the withdrawal, and then deletes", async () => {
+    // The fee on a $2.50 fill. Two cents stay behind, and the sweep takes $0.0125 of them.
+    const { agentId } = await agentOwing({ fills: 1, usdc: 10, feesUsd: [0.0125] });
+
+    expect(await withdraw(agentId, 9.99)).toEqual({
+      ok: false,
+      error: "This agent owes $0.0125 in Tocker fees. The most you can withdraw is $9.98.",
+    });
+    expect((await withdraw(agentId, 9.98)).ok).toBe(true);
+
+    expect(chain.sent.map((s) => [s.amount, s.toAddress])).toEqual([
+      [9.98, DESTINATION],
+      [0.0125, PLATFORM_BASE],
+    ]);
+    expect((await feeRows(agentId)).map((r) => [r.amountUsd, r.status])).toEqual([["0.012500", "settled"]]);
+    // What is left is under a cent, which holds no deletion up.
+    expect(chain.usdc.get(agentId)).toBe(0.0075);
+    expect(await deleteAgent(agentId)).toEqual({ ok: true, data: undefined });
+    expect(await gone(agentId)).toBe(true);
   });
 });

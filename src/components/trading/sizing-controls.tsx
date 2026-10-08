@@ -275,8 +275,8 @@ export function SizingSummary({
       <p className="mt-1 text-[11px] leading-5 text-muted-foreground">{result.explanation}</p>
       {result.belowMinimum ? (
         <p className="mt-1 text-[11px] leading-5 text-negative">
-          That is below your ${sizing?.minTradeUsd ?? DEFAULT_SIZING.minTradeUsd} minimum ticket. Nothing blocks it, but a
-          ticket this small is mostly fees: the flat $0.10 Tocker fee alone is a real share of it.
+          That is below your ${sizing?.minTradeUsd ?? DEFAULT_SIZING.minTradeUsd} minimum ticket. Nothing blocks it: a
+          ticket this size is placed like any other.
         </p>
       ) : null}
     </div>

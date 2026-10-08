@@ -648,12 +648,15 @@ async function executeExit(ctx: ExitContext, decision: ExitDecision): Promise<Gu
     })
     .where(eq(trades.id, tradeId));
 
-  // An exit is a fill, so it pays the fee like any other. Charged here, settled later:
-  // a stop loss must never wait on a USDC transfer.
+  // An exit is a fill, so it pays the fee like any other: a share of the proceeds it
+  // actually brought in, not of the mark it was sized from. Charged here, after the
+  // sale, and settled later: a fee never shrinks an exit or makes it wait on a USDC
+  // transfer.
   const platformFeeUsd = await chargePlatformFee({
     agentId: agent.id,
     tradeId,
     chain: decision.chain,
+    fillUsd: fill.amountUsd,
     isPaper: executor.isPaper,
     now: filledAt,
   });

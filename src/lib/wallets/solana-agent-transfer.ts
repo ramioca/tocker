@@ -340,6 +340,12 @@ export function buildAgentSolTransfer(input: AgentSolTransferInput & { blockhash
 // ------------------------------------------------------------ amount checks
 
 const usdc = (base: bigint) => (Number(base) / 10 ** SOLANA_USDC_DECIMALS).toFixed(2);
+/**
+ * Fees owed are a share of each fill and seldom whole cents: two decimals when they are,
+ * otherwise every decimal the amount has, so half a cent owed does not read "0.00 USDC".
+ */
+const usdcExact = (base: bigint) =>
+  (Number(base) / 10 ** SOLANA_USDC_DECIMALS).toFixed(SOLANA_USDC_DECIMALS).replace(/0{1,4}$/, "");
 const sol = (lamports: bigint) => (Number(lamports) / 1e9).toFixed(9).replace(/0+$/, "").replace(/\.$/, "");
 
 /**
@@ -390,7 +396,7 @@ export function fitUsdcWithdrawal(input: {
   if (costs === zero) return { ok: false, problem: tooMuch };
 
   const first: string[] = [];
-  if (owed > zero) first.push(`the ${usdc(owed)} USDC it owes in Tocker trading fees`);
+  if (owed > zero) first.push(`the ${usdcExact(owed)} USDC it owes in Tocker trading fees`);
   if (fee > zero) first.push(`a one-time ${usdc(fee)} USDC for opening this wallet's USDC account (it has never held USDC)`);
   const what = first.join(" and ");
   if (held <= costs) {
@@ -401,7 +407,7 @@ export function fitUsdcWithdrawal(input: {
   }
   return {
     ok: false,
-    problem: `The agent holds ${usdc(held)} USDC, and ${what} comes out first, so it can send at most ${usdc(held - costs)} USDC here — or withdraw everything, and that comes out of the total.`,
+    problem: `The agent holds ${usdc(held)} USDC, and ${what} comes out first, so it can send at most ${usdcExact(held - costs)} USDC here — or withdraw everything, and that comes out of the total.`,
   };
 }
 
@@ -1619,7 +1625,7 @@ export async function recordAgentSolanaWithdrawal(input: {
       : "";
   const tradingNote =
     input.sent.tradingFeesUsdc > 0
-      ? ` The ${input.sent.tradingFeesUsdc.toFixed(2)} USDC of Tocker trading fees the agent owed went to Tocker in the same transaction.`
+      ? ` The ${usdcExact(BigInt(Math.round(input.sent.tradingFeesUsdc * 10 ** SOLANA_USDC_DECIMALS)))} USDC of Tocker trading fees the agent owed went to Tocker in the same transaction.`
       : "";
   const lead =
     input.sent.status === "succeeded"

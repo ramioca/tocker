@@ -1,6 +1,7 @@
 import { Address } from "@/components/common/address";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { formatUsd } from "@/components/common/format";
+import { formatFeeRate } from "@/lib/platform/fee";
 import { getPlatformOverview } from "@/server/queries/platform";
 import { DATA_SOURCES } from "@/lib/data-sources/registry";
 import { chainForNetwork } from "@/lib/x402/types";
@@ -73,7 +74,7 @@ export async function PlatformCard() {
       </p>
     );
   }
-  const feeOff = overview.feeUsd <= 0;
+  const feeOff = overview.feeBps <= 0;
 
   return (
     <div className="space-y-5">
@@ -86,8 +87,8 @@ export async function PlatformCard() {
           <span className="text-foreground">per-fill fee, which is currently switched off</span>
         ) : (
           <>
-            flat <span className="tnum font-mono text-foreground">{formatUsd(overview.feeUsd)}</span> fee charged on
-            every executed fill
+            <span className="tnum font-mono text-foreground">{formatFeeRate(overview.feeBps)}</span> Tocker fee
+            charged on every executed fill
           </>
         )}
         . Fees are collected in batches: an agent&apos;s accrued fees are swept here once they reach{" "}

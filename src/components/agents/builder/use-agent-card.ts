@@ -31,7 +31,7 @@ export function useAgentCard({
   keys,
   sources,
   payPerUseAllowed,
-  feeUsd,
+  feeBps,
   quietKey,
   currentStep,
   onGo,
@@ -42,7 +42,7 @@ export function useAgentCard({
   keys: LlmKeyRow[];
   sources: DataSourceInfo[];
   payPerUseAllowed: boolean;
-  feeUsd: number;
+  feeBps: number;
   /**
    * Changes when the whole draft was swapped rather than edited (a saved draft restored,
    * Start over, a save, a discard). The rows then change without their tint.
@@ -97,7 +97,7 @@ export function useAgentCard({
         ? { mode: editMode, status: editStatus, balanceText: editBalance }
         : undefined;
     const cardErrors = validateDraft(cardDraft, keys, { payPerUseAllowed });
-    const cardFacts = costFacts(cardDraft, sources, { payPerUseAllowed, feeUsd });
+    const cardFacts = costFacts(cardDraft, sources, { payPerUseAllowed, feeBps });
     return {
       ready: readyItems(cardDraft, cardErrors, keys, { payPerUseAllowed }),
       rows: previewRows(cardDraft, cardFacts, cardErrors, {
@@ -115,7 +115,7 @@ export function useAgentCard({
           ? null
           : (cardFacts.thinking?.runsPerDay ?? cardFacts.runsPerDay),
     };
-  }, [cardDraft, keys, sources, payPerUseAllowed, feeUsd, editMode, editStatus, editBalance]);
+  }, [cardDraft, keys, sources, payPerUseAllowed, feeBps, editMode, editStatus, editBalance]);
 
   return {
     previewProps: {

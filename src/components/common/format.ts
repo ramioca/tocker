@@ -1,4 +1,5 @@
 /** Display-only formatting. Money math never happens here — see src/lib/money.ts. */
+import { fmtUsdExact } from "@/lib/money";
 
 const usdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -140,17 +141,29 @@ export function formatTokenAmount(value: number | null | undefined, { fixed = fa
 }
 
 /**
- * The fee row of a trade preview: "≈ $0.13 (Tocker $0.10 · venue $0.03)". Null when
+ * A cost of one fill, as it stands. A fee is a share of a fill and seldom whole cents:
+ * to the cent, a fee of $0.125 reads "$0.13" and the parts of a total come to a cent
+ * more than the total beside them. Whole cents print as "$0.20", anything else keeps its
+ * decimals down to the ledger's sixth ("$0.125"). Under a cent it is left to `formatUsd`,
+ * which never rounds a small cost to nothing.
+ */
+export function formatCostUsd(usd: number): string {
+  return Math.abs(usd) < 0.01 ? formatUsd(usd) : fmtUsdExact(usd);
+}
+
+/**
+ * The fee row of a trade preview: "≈ $0.20 (Tocker $0.125 · venue $0.075)". Null when
  * the fee is off and the venue quoted nothing, so the row can be left out. An unquoted
- * venue fee is said, not printed as $0.00.
+ * venue fee is said, not printed as $0.00. Each figure is printed as it stands, so the
+ * two parts add up to the total in front of them.
  */
 export function formatPreviewFees(fees: { tockerUsd: number; venueUsd: number | null }): string | null {
   if (fees.venueUsd === null) {
-    return fees.tockerUsd > 0 ? `${formatUsd(fees.tockerUsd)} Tocker · venue fee not quoted` : null;
+    return fees.tockerUsd > 0 ? `${formatCostUsd(fees.tockerUsd)} Tocker · venue fee not quoted` : null;
   }
-  const total = formatUsd(fees.tockerUsd + fees.venueUsd);
+  const total = formatCostUsd(fees.tockerUsd + fees.venueUsd);
   if (fees.tockerUsd === 0) return `≈ ${total} venue`;
-  return `≈ ${total} (Tocker ${formatUsd(fees.tockerUsd)} · venue ${formatUsd(fees.venueUsd)})`;
+  return `≈ ${total} (Tocker ${formatCostUsd(fees.tockerUsd)} · venue ${formatCostUsd(fees.venueUsd)})`;
 }
 
 export function formatDuration(ms: number | null | undefined): string {

@@ -5,8 +5,8 @@
  * `maybeSendDigest` for the same pattern) and **never on the trade path**. That is the
  * whole design: a fill must never wait on, or be failed by, a USDC transfer. A fee is
  * accrued at fill in milliseconds and collected later, in one transfer per chain, once
- * the agent owes at least `PLATFORM_FEE_SETTLE_MIN_USD` — ten separate ten-cent
- * transfers would cost more in latency and gas than they collect.
+ * the agent owes at least `PLATFORM_FEE_SETTLE_MIN_USD` — a transfer for every fill's
+ * fee would cost more in latency and gas than it collects.
  *
  * Properties this module guarantees:
  *  - **It never throws.** Every failure is caught and reported on the result; the
@@ -15,7 +15,7 @@
  *  - **It runs after exits.** The guardian calls it from `finish()`, which runs after
  *    every exit has been executed. Selling first and sweeping second is the only order
  *    that can never turn "your stop loss fired" into "your stop loss was skipped because
- *    we were collecting a dime".
+ *    we were collecting a fee".
  *  - **Paper agents settle nothing.** Their fee rows were written `settled` at accrual
  *    with `tx_hash: "simulated"`; there is no chain to move anything on.
  *  - **A row is only ever marked settled after the transfer returned a hash.** A failed
@@ -73,8 +73,8 @@
  */
 import { and, eq, inArray, isNull, notLike, or } from "drizzle-orm";
 import { getDb, platformFees } from "@/db";
-import { toNum } from "@/lib/money";
-import { platformFeeUsd, planSettlement, settleMinUsd, sumFees, type FeeRow, type SettlementBatch } from "./fee";
+import { fmtUsdExact, toNum } from "@/lib/money";
+import { planSettlement, settleMinUsd, sumFees, type FeeRow, type SettlementBatch } from "./fee";
 import { markFeesSettled } from "./fees";
 import { PlatformWalletError, ensurePlatformWallet } from "./wallets";
 import type { Chain } from "@/server/types";
@@ -152,7 +152,7 @@ export interface SettleFeesInput {
   now?: Date;
   /**
    * Sweep once this much is owed, in place of `PLATFORM_FEE_SETTLE_MIN_USD`. The batch
-   * threshold exists so the marks pass does not send ten-cent transfers; a caller that
+   * threshold exists so the marks pass does not send a transfer per fee; a caller that
    * is about to lose its chance to collect (the owner is taking the money out, or
    * deleting the agent) passes a cent. See `./withdrawal-fees.ts`.
    */
@@ -630,9 +630,11 @@ async function audit(
       kind: "withdraw",
       agentId: input.agentId,
       agentName: input.agentName,
-      summary: `Settled $${batch.amountUsd.toFixed(2)} of Tocker fees (${batch.feeIds.length} fill${
+      // The amount is the sum of what each fill was charged when it filled. No rate is
+      // printed: the fills in one batch need not have been charged the same one.
+      summary: `Settled ${fmtUsdExact(batch.amountUsd)} of Tocker fees (${batch.feeIds.length} fill${
         batch.feeIds.length === 1 ? "" : "s"
-      } at $${platformFeeUsd().toFixed(2)}) from the ${batch.chain} wallet to the platform wallet.`,
+      }) from the ${batch.chain} wallet to the platform wallet.`,
       metadata: {
         reason: "platform_fee_settlement",
         chain: batch.chain,

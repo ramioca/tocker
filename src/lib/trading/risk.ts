@@ -24,10 +24,12 @@
  *
  * ## The platform fee
  *
- * A buy has to clear `amountUsd + PLATFORM_FEE_USD` against cash, not `amountUsd`: the
- * flat Tocker fee is charged the moment the fill lands, and an agent that spent its last
- * dollar would owe a dime it cannot pay. Sells are untouched — an exit is never blocked,
- * and a sell *adds* cash, so there is nothing to check against.
+ * A buy has to clear `amountUsd` plus that order's own fee against cash, not `amountUsd`:
+ * the Tocker fee is a share of the fill (`PLATFORM_FEE_BPS`) charged the moment it
+ * lands, and an agent that spent its last dollar would owe a fee it cannot pay. So the
+ * most an agent can buy with cash C is the largest A with A + fee(A) <= C. Sells are
+ * untouched — an exit is never blocked, and a sell *adds* cash, so there is nothing to
+ * check against.
  *
  * **Exits are never blocked by entry rules.** The blocklist, the score gates,
  * `maxTradeUsd`, the sizing ceiling, `maxDailyTrades` and the enabled-chain list all decide what an agent
@@ -40,8 +42,8 @@
 import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { Chain, TokenScore } from "@/server/types";
 import { explainBlocker } from "@/lib/tokens/score";
-import { fmtUsd } from "@/lib/money";
-import { buyCostUsd, platformFeeUsd } from "@/lib/platform/fee";
+import { fmtUsd, fmtUsdExact } from "@/lib/money";
+import { buyCostUsd, feeForFill, floorToCents, formatFeeRate, maxBuyUsd, platformFeeBps } from "@/lib/platform/fee";
 import { readSizing, sizeOrder, type SizedOrder } from "./sizing";
 
 export interface RiskAgent {
@@ -122,7 +124,11 @@ export interface RiskParams {
   total?: number;
   minScore?: number;
   cashUsd?: number;
+  /** The Tocker fee this order would pay, and the rate it was worked out at. */
   feeUsd?: number;
+  feeBps?: number;
+  /** The largest buy the cash covers with its fee, in whole cents. */
+  maxBuyUsd?: number;
   tradesToday?: number;
   maxDailyTrades?: number;
   positionUsd?: number;
@@ -305,20 +311,35 @@ export function riskGuard(
     const gate = universeGate(agent.config, order, score);
     if (!gate.ok) return gate;
 
-    // The ticket *plus* the flat platform fee that will be charged the instant it fills.
-    // Checking the notional alone would let an agent spend its last dollar and then owe
-    // ten cents it does not have — a debt that only surfaces at settlement, days later.
-    const feeUsd = platformFeeUsd();
-    const cost = buyCostUsd(order.amountUsd, feeUsd);
+    // The ticket *plus* the platform fee that will be charged on it the instant it
+    // fills, worked out from this order's own size. Checking the notional alone would
+    // let an agent spend its last dollar and then owe a fee it does not have — a debt
+    // that only surfaces at settlement, days later.
+    const feeBps = platformFeeBps();
+    const cost = buyCostUsd(order.amountUsd, feeBps);
     if (cost > portfolio.cashUsd + 1e-9) {
+      const feeUsd = feeForFill(order.amountUsd, feeBps);
+      // The most that would have passed, in the whole cents an order is written in. Said
+      // because the figures above it are too close to tell apart: $4.98 against $5.00
+      // reads as fitting, and a model that is not told $4.97 asks for $4.98 again.
+      const fitsUsd = floorToCents(maxBuyUsd(portfolio.cashUsd, feeBps));
       return {
         ok: false,
         reason:
-          feeUsd > 0
-            ? `Insufficient cash: ${fmtUsd(portfolio.cashUsd)} available, ${fmtUsd(order.amountUsd)} requested plus the ${fmtUsd(feeUsd)} Tocker fee.`
+          feeBps > 0
+            ? `Insufficient cash: ${fmtUsdExact(portfolio.cashUsd)} available, ${fmtUsdExact(order.amountUsd)} requested plus the ${fmtUsdExact(feeUsd)} Tocker fee (${formatFeeRate(feeBps)} of the fill).${
+                fitsUsd > 0 ? ` The most this cash covers is a ${fmtUsd(fitsUsd)} buy.` : ""
+              }`
             : `Insufficient cash: ${fmtUsd(portfolio.cashUsd)} available, ${fmtUsd(order.amountUsd)} requested.`,
         code: "cash",
-        params: { symbol: order.symbol, amountUsd: order.amountUsd, cashUsd: portfolio.cashUsd, feeUsd },
+        params: {
+          symbol: order.symbol,
+          amountUsd: order.amountUsd,
+          cashUsd: portfolio.cashUsd,
+          feeUsd,
+          feeBps,
+          maxBuyUsd: fitsUsd,
+        },
       };
     }
     const equity = portfolio.equityUsd > 0 ? portfolio.equityUsd : portfolio.cashUsd;

@@ -27,7 +27,7 @@
  * The platform pays for data, not the agent. The signer is the app-owned Privy server
  * wallet for the option's network (`src/lib/platform/wallets.ts`) — Base in practice.
  * An operator funds their agent to *trade*; sentiment and safety data is the platform's
- * cost of goods, recovered through the flat per-fill fee.
+ * cost of goods, recovered through the per-fill fee.
  *
  * Everything else about the call is unchanged and still per-agent: the per-run budget
  * (`risk.maxDataSpendUsdPerRun`), the per-payment spend cap, and the `x402_payments`

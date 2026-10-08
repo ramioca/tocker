@@ -574,4 +574,18 @@ describe("finish: a tick about to end having looked at nothing", () => {
     await db.insert(schema.userSecurity).values({ userId: paused.ownerId, tradingPaused: true, tradingPausedAt: new Date() });
     expect(await paused.finish()).toMatchObject({ ok: true });
   });
+
+  /**
+   * A few cents of cash is a ticket the guard would pass, and one that leaves the book
+   * the moment it fills: a position under a quarter of a dollar is dust, and no exit
+   * rule watches it. That is not a buy worth a sweep and its paid signals.
+   */
+  it("is let go when all its cash would buy is dust, and sent back from the first ticket that is not", async () => {
+    const roomy = { risk: { maxPositionPct: 100 } };
+    const dust = await tick(roomy, { paperStartingUsd: "0.20" });
+    expect(await dust.finish()).toMatchObject({ ok: true });
+
+    const enough = await tick(roomy, { paperStartingUsd: "0.30" });
+    expect(await enough.finish()).toMatchObject({ ok: false, nudged: true, notSwept: true });
+  });
 });

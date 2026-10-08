@@ -632,11 +632,13 @@ export async function decideProposal(input: {
     })
     .where(eq(trades.id, input.tradeId));
 
-  // An approved proposal is a fill like any other, so it pays the same flat fee.
+  // An approved proposal is a fill like any other, so it pays the same fee: a share of
+  // what filled, which need not be what was proposed.
   const platformFeeUsd = await chargePlatformFee({
     agentId: row.agent.id,
     tradeId: input.tradeId,
     chain,
+    fillUsd: fill.amountUsd,
     isPaper: executor.isPaper,
     now: filledAt,
   });

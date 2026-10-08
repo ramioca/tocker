@@ -40,7 +40,6 @@ export function StrategyPresetCards({
   presets,
   pressedId,
   factsLine,
-  feeNote,
   onApply,
   customPressed,
   onCustom,
@@ -50,8 +49,6 @@ export function StrategyPresetCards({
   pressedId: string | null;
   /** The agent this preset would leave behind, in one line. */
   factsLine: (preset: StrategyPreset) => string;
-  /** What the flat fee takes from this preset's ticket; empty when there is nothing to say. */
-  feeNote: (preset: StrategyPreset) => string;
   onApply: (preset: StrategyPreset) => void;
   /** The prompt is empty or the owner's own, so the blank card is the one that is on. */
   customPressed: boolean;
@@ -65,7 +62,6 @@ export function StrategyPresetCards({
         const base = `strategy-preset-${preset.id}`;
         const look = LOOK[preset.id] ?? FALLBACK;
         const facts = factsLine(preset).split(" · ");
-        const fee = feeNote(preset).trim();
         return (
           <button
             key={preset.id}
@@ -89,14 +85,6 @@ export function StrategyPresetCards({
             </span>
             <span id={`${base}-blurb`} className="text-[13px] leading-5 text-pretty text-muted-foreground">
               {preset.blurb}
-              {/* The fee sentence on its own line. The space before it is for the spoken
-                  description, which would otherwise run the two sentences together. */}
-              {fee ? (
-                <>
-                  {" "}
-                  <span className="tnum mt-1.5 block text-xs leading-[18px] text-foreground/80">{fee}</span>
-                </>
-              ) : null}
               <span className="sr-only"> Replaces the strategy prompt; you can undo it.</span>
             </span>
             {/* Pushed to the foot, so the facts of two cards in a row sit on one line

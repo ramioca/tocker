@@ -1,8 +1,8 @@
 /**
- * The tick prompt, and what it tells an agent it may spend. Then one step of the system
- * prompt: how to sweep for tokens.
+ * The tick prompt, and what it tells an agent it may spend. Then two parts of the system
+ * prompt: how to sweep for tokens, and what Tocker charges.
  *
- * Three things are pinned here.
+ * Four things are pinned here.
  *
  * First, a live agent that pays for its own thinking keeps part of its cash out of its
  * trades, and every figure the model sizes a buy from has to be the one the risk guard
@@ -15,12 +15,18 @@
  * `origin/main`, to the byte. The texts below were produced by running `origin/main`'s
  * own `prompts.ts` and `portfolio.ts` (copied out with `git show origin/main:<file>`) on
  * the inputs this file builds, and are pasted as they came. A change that moves one
- * character of a key agent's prompt fails here.
+ * character of a key agent's prompt fails here. One line is not `origin/main`'s: the
+ * "Max ticket right now" of the book bound by its cash, which states the fee as it is
+ * charged (a share of the fill) and the largest buy that cash covers with it.
  *
  * Third, the system prompt used to say "Widen it with maxAgeHours / minLiquidityUsd when
  * the table is thin". Neither can widen anything: the owner's age window and liquidity
  * floor are hard gates. A weak model took the sentence at its word, passed a small
  * maxAgeHours, got an empty table and ended the tick on it.
+ *
+ * Fourth, the model sizes its buys from what the system prompt says Tocker charges. It
+ * is told the rate, what the rate comes to on its own largest ticket, and that the
+ * ceiling in its book has allowed for it; with the fee off it is told of no fee at all.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig } from "@/db/schema";
@@ -171,7 +177,7 @@ const LIVE_KEY_AGENT_BOUND_BY_ITS_CASH = `New tick (schedule) at 2026-10-06T12:0
 Cash: $5.00 · Equity: $5.00 · Mode: live
 Realized PnL $1.25 · Unrealized PnL $0.00
 Trades today: 2/6
-Max ticket right now: $4.90 — the binding limit is cash $5.00 minus the $0.10 Tocker fee charged on the fill. An order above this is rejected, not trimmed.
+Max ticket right now: $4.97 — the binding limit is cash $5.00 less the 0.5% Tocker fee charged on the fill. An order above this is rejected, not trimmed.
 Positions: none.
 
 ## Exit engine, just before this tick
@@ -191,7 +197,7 @@ Positions: none.
 Decide what, if anything, to do this tick. Finish with the finish tool.`;
 
 beforeEach(() => {
-  vi.stubEnv("PLATFORM_FEE_USD", "0.10");
+  vi.stubEnv("PLATFORM_FEE_BPS", "50");
 });
 
 afterEach(() => {
@@ -207,7 +213,7 @@ describe("the tick prompt of an agent that holds nothing back", () => {
     expect(buildTickPrompt(input("paper", "approve"))).toBe(PAPER_AGENT_IN_APPROVAL_MODE);
   });
 
-  it("is origin/main's, byte for byte, where the cash is what binds the ceiling", () => {
+  it("is pinned, byte for byte, where the cash is what binds the ceiling", () => {
     expect(buildTickPrompt(cashBound("live"))).toBe(LIVE_KEY_AGENT_BOUND_BY_ITS_CASH);
     expect(buildTickPrompt(cashBound("paper"))).toBe(LIVE_KEY_AGENT_BOUND_BY_ITS_CASH.replace("Mode: live", "Mode: paper"));
   });
@@ -239,7 +245,7 @@ describe("the tick prompt of a live agent that pays for its own thinking", () =>
     expect(prompt).toContain("Part of that cash is kept back to pay for your own thinking and cannot be spent on a buy: $4.15 is available to trade.");
     // And the ceiling, its reason and that line all work from the same figure.
     expect(prompt).toContain(
-      "Max ticket right now: $4.05 — the binding limit is the $4.15 of your cash that is available to trade (part of your cash is kept back to pay for your thinking) minus the $0.10 Tocker fee charged on the fill.",
+      "Max ticket right now: $4.12 — the binding limit is the $4.15 of your cash that is available to trade (part of your cash is kept back to pay for your thinking) less the 0.5% Tocker fee charged on the fill.",
     );
   });
 
@@ -289,5 +295,75 @@ describe("the system prompt on sweeping for tokens", () => {
 
   it("never tells the model to widen a sweep", () => {
     expect(system).not.toMatch(/widen/i);
+  });
+});
+
+describe("the system prompt on what Tocker charges", () => {
+  const agent = (maxTradeUsd = 50) => ({
+    name: "Fixture",
+    tagline: null,
+    mode: "live" as const,
+    config: { ...config("auto"), risk: { ...config("auto").risk, maxTradeUsd } },
+  });
+
+  it("states the rate, what it comes to on this agent's own ticket, and that the ceiling allows for it", () => {
+    const system = buildSystemPrompt(agent(), []);
+    expect(system).toContain(
+      [
+        "  - Tocker charges 0.5% of each fill, buy or sell, taken from this agent's own wallet.",
+        "    On a buy it is capitalised into the cost basis and on a sell it comes off what the",
+        "    sale brings in: a $50.00 fill pays $0.25. The guard requires cash for the ticket",
+        "    **plus** its fee, and \"Max ticket right now\" in your book has already allowed for",
+        "    it — that line is the true ceiling, and the three limits above are only the inputs",
+        "    to it.",
+      ].join("\n"),
+    );
+    expect(system).toContain(
+      [
+        "   40%-of-equity concentration cap and the cash you have once",
+        "   the 0.5% Tocker fee on the fill is set aside, and it names which of the three is binding. Inside it,",
+      ].join("\n"),
+    );
+    expect(system).toContain(
+      "  - **Trading is paid by this agent's own wallet**: the ticket, the venue's fee, and Tocker's 0.5% of each fill.",
+    );
+  });
+
+  it("works the example out from the ticket and the rate, whatever they are", () => {
+    expect(buildSystemPrompt(agent(2), [])).toContain("a $2.00 fill pays $0.01.");
+    expect(buildSystemPrompt(agent(1), [])).toContain("a $1.00 fill pays $0.005.");
+    vi.stubEnv("PLATFORM_FEE_BPS", "25");
+    const quarter = buildSystemPrompt(agent(100), []);
+    expect(quarter).toContain("Tocker charges 0.25% of each fill");
+    expect(quarter).toContain("a $100.00 fill pays $0.25.");
+    expect(quarter).toContain("the 0.25% Tocker fee on the fill is set aside");
+    expect(quarter).toContain("Tocker's 0.25% of each fill.");
+    vi.stubEnv("PLATFORM_FEE_BPS", "100");
+    expect(buildSystemPrompt(agent(100), [])).toContain("Tocker charges 1% of each fill");
+  });
+
+  it("no longer calls the fee flat, or a drag on a small ticket", () => {
+    const system = buildSystemPrompt(agent(2), []);
+    expect(system).not.toMatch(/flat (fee|\$)/i);
+    expect(system).not.toMatch(/real drag|5% before the price moves/);
+    expect(system).not.toContain("$0.1000");
+  });
+
+  it("names no fee at all when the fee is off, and still points at the ceiling", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "0");
+    const system = buildSystemPrompt(agent(), []);
+    expect(system).not.toMatch(/Tocker charges|Tocker fee|Tocker's \d/);
+    expect(system).not.toContain("of each fill");
+    expect(system).toContain(
+      ["  - \"Max ticket right now\" in your book is the true ceiling, and the three limits above", "    are only the inputs to it."].join("\n"),
+    );
+    expect(system).toContain("concentration cap and the cash you have, and it names which of the three is binding.");
+    expect(system).toContain("  - **Trading is paid by this agent's own wallet**: the ticket and the venue's fee.");
+  });
+
+  it("keeps the simulator's own fee apart from Tocker's in a paper agent's prompt", () => {
+    const system = buildSystemPrompt({ ...agent(), mode: "paper" }, []);
+    expect(system).toContain("Fills are simulated at real quoted prices with a 0.30% venue fee.");
+    expect(system).toContain("Tocker charges 0.5% of each fill");
   });
 });

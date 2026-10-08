@@ -588,6 +588,18 @@ describe("an owner's withdrawal pays what the agent owes Tocker first", () => {
     expect(owedAll.ok).toBe(false);
   });
 
+  it("says fees that are not whole cents as they stand, and the most that can go to the same precision", () => {
+    // Half a cent owed, the fee on a $1 fill. "0.00 USDC it owes" beside a refusal explains nothing.
+    const fit = fitUsdcWithdrawal({ heldBaseUnits: usdc(10), amountBaseUnits: usdc(9.999), feeBaseUnits: BigInt(0), owedBaseUnits: usdc(0.005) });
+    expect(fit.ok).toBe(false);
+    if (!fit.ok) expect(fit.problem).toMatch(/the 0\.005 USDC it owes in Tocker trading fees comes out first, so it can send at most 9\.995 USDC here/);
+    // What fits beside them still goes, to the micro-USDC.
+    expect(fitUsdcWithdrawal({ heldBaseUnits: usdc(10), amountBaseUnits: usdc(9.995), feeBaseUnits: BigInt(0), owedBaseUnits: usdc(0.005) })).toMatchObject({
+      ok: true,
+      amountBaseUnits: usdc(9.995),
+    });
+  });
+
   it("puts the account fee and the trading fees in one transfer to the platform, split under the cap, and never on a sweep", () => {
     const instructions = agentUsdcTransferInstructions({
       agent: AGENT,

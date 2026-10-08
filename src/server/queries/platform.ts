@@ -19,7 +19,7 @@ import "server-only";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb, platformFees, x402Payments } from "@/db";
 import { toNum } from "@/lib/money";
-import { platformFeeUsd, settleMinUsd } from "@/lib/platform/fee";
+import { platformFeeBps, settleMinUsd } from "@/lib/platform/fee";
 import { listPlatformWallets, platformWalletPurpose, readPlatformBalance } from "@/lib/platform/wallets";
 import { isMockMode } from "@/lib/x402/paidFetch";
 import { chainForNetwork } from "@/lib/x402/types";
@@ -55,8 +55,8 @@ export interface PlatformWalletView {
 
 export interface PlatformOverview {
   wallets: PlatformWalletView[];
-  /** What each fill is charged right now. 0 means the fee is switched off. */
-  feeUsd: number;
+  /** The share of each fill charged right now, in basis points. 0 means the fee is switched off. */
+  feeBps: number;
   /** What an agent has to owe before the guardian sweeps. */
   settleMinUsd: number;
   /** True when `X402_MOCK=1`: no real payment has been made, whatever the table says. */
@@ -150,7 +150,7 @@ export async function getPlatformOverview(now: Date = new Date()): Promise<Platf
 
   return {
     wallets,
-    feeUsd: platformFeeUsd(),
+    feeBps: platformFeeBps(),
     settleMinUsd: settleMinUsd(),
     mockData: isMockMode(),
     accruedUsd,

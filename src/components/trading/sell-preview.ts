@@ -65,7 +65,7 @@ export function thinPoolLine(pct: number): string {
   return `That is ${shown}% under the last price: this pool is thin. Smaller slices may sell better.`;
 }
 
-/** The fees a preview carries: Tocker's flat fee, and the venue's when it quoted one. */
+/** The fees a preview carries: Tocker's fee on this order, and the venue's when it quoted one. */
 type PreviewFees = { tockerUsd: number; venueUsd: number | null };
 
 /**
@@ -85,8 +85,8 @@ export function afterFeesLabel(fees: PreviewFees | null | undefined): string | n
  * What a quoted sale leaves once those fees are taken off, the way the book counts a
  * sell (`applyFillToPosition`, `realisedOnSale`): proceeds less the venue's fee and
  * Tocker's. The fees are the preview's own figures, never a constant. Null without a
- * quote. Can go below zero, and should: selling a few cents of dust costs more than it
- * brings in, and that is worth seeing before confirming.
+ * quote. Not floored at zero: should the fees ever come to more than the sale brings
+ * in, that is worth seeing before confirming.
  */
 export function proceedsAfterFees(proceedsUsd: number | null | undefined, fees: PreviewFees): number | null {
   if (typeof proceedsUsd !== "number" || !Number.isFinite(proceedsUsd)) return null;

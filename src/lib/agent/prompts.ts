@@ -10,7 +10,8 @@ import type { AgentConfig } from "@/db/schema";
 import type { DataSource } from "@/lib/data-sources/registry";
 import { exitDistances } from "@/lib/pnl";
 import { hasAnyExitRule, priceText, toExitRules } from "@/lib/trading/exits";
-import { platformFeeUsd } from "@/lib/platform/fee";
+import { fmtUsdExact } from "@/lib/money";
+import { feeForFill, formatFeeRate, platformFeeBps } from "@/lib/platform/fee";
 import { isMockMode } from "@/lib/x402/paidFetch";
 import { describePortfolio, spendableCashUsd, type Portfolio } from "./portfolio";
 
@@ -170,6 +171,28 @@ export function buildSystemPrompt(agent: PromptAgent, sources: DataSource[]): st
       ? "  (empty — nothing is banned outright)"
       : universe.blocklist.map((t) => `  - ${t.symbol} (${t.chain}) ${t.address}`).join("\n");
 
+  // The fee is said as its rate, with one amount worked out for this agent's own largest
+  // ticket so the model sees what the rate means for the trade it is sizing. With the
+  // fee off none of the three passages names a fee.
+  const feeBps = platformFeeBps();
+  const feeRate = formatFeeRate(feeBps);
+  const ticketFee = fmtUsdExact(feeForFill(config.risk.maxTradeUsd, feeBps));
+  const feeLimit =
+    feeBps > 0
+      ? `Tocker charges ${feeRate} of each fill, buy or sell, taken from this agent's own wallet.
+    On a buy it is capitalised into the cost basis and on a sell it comes off what the
+    sale brings in: a ${money(config.risk.maxTradeUsd)} fill pays ${ticketFee}. The guard requires cash for the ticket
+    **plus** its fee, and "Max ticket right now" in your book has already allowed for
+    it — that line is the true ceiling, and the three limits above are only the inputs
+    to it.`
+      : `"Max ticket right now" in your book is the true ceiling, and the three limits above
+    are only the inputs to it.`;
+  const cashLimit =
+    feeBps > 0
+      ? `the cash you have once
+   the ${feeRate} Tocker fee on the fill is set aside`
+      : "the cash you have";
+
   return `You are "${agent.name}"${agent.tagline ? `, ${agent.tagline}` : ""}, an autonomous crypto trading agent on Tocker.
 
 ## Your strategy (written by your owner — follow it)
@@ -178,7 +201,7 @@ ${config.strategyPrompt}
 ## Mode
 You are trading in ${agent.mode.toUpperCase()} mode. ${
     agent.mode === "paper"
-      ? "Fills are simulated at real quoted prices with a 0.30% fee. Trade exactly as you would with real money."
+      ? "Fills are simulated at real quoted prices with a 0.30% venue fee. Trade exactly as you would with real money."
       : "Trades settle on-chain with real funds. Be deliberate."
   }
 
@@ -290,12 +313,7 @@ still the wrong trade for your strategy, your book, or this moment. You decide.
   - Max share of equity in one token: ${config.risk.maxPositionPct}%
   - Max data spend per run: ${money(config.risk.maxDataSpendUsdPerRun)}
   - Slippage tolerance: ${config.risk.slippageBps} bps
-  - Tocker charges a flat ${money(platformFeeUsd())} on every fill, taken from this
-    agent's own wallet. It is capitalised into the cost basis, so on a small ticket it is
-    a real drag: on a ${money(2)} buy it is 5% before the price moves at all. The guard
-    requires cash for the ticket **plus** the fee, and "Max ticket right now" in your book
-    has already had it deducted — that line is the true ceiling, and the three limits
-    above are only the inputs to it.
+  - ${feeLimit}
 
 ${describeExitRules(config)}
 
@@ -326,8 +344,7 @@ a rationale, a note or your summary.
    place_trade will not score a token for you and call it diligence.
 4. Size it against **"Max ticket right now"** in your book, not against
    ${money(config.risk.maxTradeUsd)}. That line is the smallest of your sizing mode, your
-   ${config.risk.maxPositionPct}%-of-equity concentration cap and the cash you have left after
-   the ${money(platformFeeUsd())} fee, and it names which of the three is binding. Inside it,
+   ${config.risk.maxPositionPct}%-of-equity concentration cap and ${cashLimit}, and it names which of the three is binding. Inside it,
    let conviction and the liquidity component set the size — thin books deserve smaller clips.
 5. place_trade — once per token that clears your bar, best first. It re-scores the token
    (usually a cache hit) and runs the risk guard, so a token you have not scored, or one
@@ -366,8 +383,9 @@ Money, and whose it is. Two purses, and they do not behave the same way:
     the one or two names you are seriously considering, never on a whole discovery table.
     When it runs out the call fails and the score comes back without that component — it
     is never borrowed against and never silently skipped in a way you cannot see.
-  - **Trading is paid by this agent's own wallet**: the ticket, the venue's fee, and
-    Tocker's flat ${money(platformFeeUsd())} per fill.
+  - **Trading is paid by this agent's own wallet**: ${
+    feeBps > 0 ? `the ticket, the venue's fee, and Tocker's ${feeRate} of each fill` : "the ticket and the venue's fee"
+  }.
 
 Never claim a trade happened unless the place_trade tool returned status "filled".${
     config.execution?.mode === "approve"

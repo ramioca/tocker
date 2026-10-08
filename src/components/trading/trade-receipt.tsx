@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ArrowUpRight, ReceiptText, TriangleAlert } from "lucide-react";
 import { Address } from "@/components/common/address";
-import { formatAbsolute, formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
+import { formatAbsolute, formatCostUsd, formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import {
@@ -209,17 +209,17 @@ export function TradeReceiptDetail({
       </Group>
 
       <Group title="Costs">
-        <Field label="Venue fee">{formatUsd(receipt.venueFeeUsd)}</Field>
+        <Field label="Venue fee">{formatCostUsd(receipt.venueFeeUsd)}</Field>
         {/*
           The platform's own cut, named the way it is named everywhere else ("Tocker
           fee" — see PLATFORM_FEE_LABEL). Shown only when there was one: a receipt from
-          before the fee existed, or from a deploy with PLATFORM_FEE_USD=0, should not
-          grow a row that says $0.00 and makes the reader wonder what they missed.
+          before the fee existed, or from a deploy with the fee off, should not grow a
+          row that says $0.00 and makes the reader wonder what they missed. The amount
+          is the one recorded on the fill, and no rate is printed beside it: the rate
+          in force today is not what an older fill was charged at.
         */}
         {receipt.platformFeeUsd && receipt.platformFeeUsd > 0 ? (
-          <Field label="Tocker fee" hint="per fill">
-            {formatUsd(receipt.platformFeeUsd)}
-          </Field>
+          <Field label="Tocker fee">{formatCostUsd(receipt.platformFeeUsd)}</Field>
         ) : null}
         <Field label="Network fee">
           {receipt.simulated ? (
@@ -228,10 +228,10 @@ export function TradeReceiptDetail({
           ) : receipt.networkFeeUsd === null ? (
             <span className="text-muted-foreground">not reported</span>
           ) : (
-            formatUsd(receipt.networkFeeUsd)
+            formatCostUsd(receipt.networkFeeUsd)
           )}
         </Field>
-        <Field label="Total">{formatUsd(receipt.totalFeeUsd)}</Field>
+        <Field label="Total">{formatCostUsd(receipt.totalFeeUsd)}</Field>
       </Group>
 
       {receipt.scoreTotal === null ? null : (

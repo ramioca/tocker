@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { chainLabel } from "@/components/common/chain-badge";
-import { formatUsd } from "@/components/common/format";
+import { formatCostUsd, formatUsd } from "@/components/common/format";
 import type { AdminTradeRow } from "@/server/queries/admin";
 import { cn } from "@/lib/utils";
 import { DataTable, EmptyRow, PINNED_TIME_WIDTH, TableShell, Td, Th } from "./table-shell";
@@ -84,7 +84,7 @@ export function AdminTradesTable({ rows }: { rows: AdminTradeRow[] }) {
                 </Td>
                 <Td numeric>{formatUsd(row.notionalUsd)}</Td>
                 <Td numeric muted>
-                  {row.platformFeeUsd === null ? "—" : formatUsd(row.platformFeeUsd)}
+                  {row.platformFeeUsd === null ? "—" : formatCostUsd(row.platformFeeUsd)}
                 </Td>
                 <Td>
                   <ModeBadge mode={row.isPaper ? "paper" : "live"} size="xs" />

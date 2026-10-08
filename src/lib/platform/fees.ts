@@ -9,7 +9,7 @@
  * Two properties it must have, and has:
  *
  *  - **It never throws.** A fee is the platform's problem; a fill is the operator's
- *    money. Losing the ten cents is annoying, turning a filled trade into a failed one
+ *    money. Losing the fee is annoying, turning a filled trade into a failed one
  *    because the fee ledger hiccuped is unforgivable. Failures log and return 0, and the
  *    receipt then honestly says the fill carried no platform fee.
  *  - **It is idempotent.** `platform_fees_trade_idx` is unique on `trade_id`, so a
@@ -24,12 +24,18 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, platformFees } from "@/db";
 import { toNum, toNumeric } from "@/lib/money";
 import type { Chain } from "@/server/types";
-import { SIMULATED_SETTLEMENT_TX, platformFeeUsd, sumFees, type FeeRow } from "./fee";
+import { SIMULATED_SETTLEMENT_TX, feeForFill, platformFeeBps, sumFees, type FeeRow } from "./fee";
 
 export interface ChargeFeeInput {
   agentId: string;
   tradeId: string;
   chain: Chain;
+  /**
+   * What the fill actually moved, in USD: the USDC spent on a buy, the USDC received on
+   * a sell. The fee is a share of this, never of the size that was asked for: an exit
+   * that fills under its mark pays on what it brought in.
+   */
+  fillUsd: number;
   /** Paper fills settle instantly and simulated; live fills accrue for the sweep. */
   isPaper: boolean;
   now?: Date;
@@ -38,15 +44,16 @@ export interface ChargeFeeInput {
 /**
  * Records the fee for one fill and returns what was actually charged in USD.
  *
- * Returns 0 when the fee is disabled (`PLATFORM_FEE_USD=0`) or when the write failed —
- * in both cases nothing downstream should pretend a fee exists.
+ * Returns 0 when the fee is disabled (`PLATFORM_FEE_BPS=0`), when the fill is too small
+ * for its fee to reach the ledger's sixth decimal, or when the write failed. In all
+ * three nothing is written and nothing downstream should pretend a fee exists.
  */
 export async function chargePlatformFee(input: ChargeFeeInput): Promise<number> {
-  const amountUsd = platformFeeUsd();
-  if (!(amountUsd > 0)) return 0;
-
   const now = input.now ?? new Date();
   try {
+    const amountUsd = feeForFill(input.fillUsd, platformFeeBps());
+    if (!(amountUsd > 0)) return 0;
+
     const db = await getDb();
     const inserted = await db
       .insert(platformFees)
@@ -66,8 +73,9 @@ export async function chargePlatformFee(input: ChargeFeeInput): Promise<number> 
 
     if (inserted.length > 0) return toNum(inserted[0]?.amountUsd);
 
-    // Already charged for this trade. Report the amount on the ledger, not the current
-    // env value — the receipt must agree with what the agent was actually billed.
+    // Already charged for this trade. Report the amount on the ledger, not one worked
+    // out again at the current rate — the receipt must agree with what the agent was
+    // actually billed.
     const [existing] = await db
       .select({ amountUsd: platformFees.amountUsd })
       .from(platformFees)

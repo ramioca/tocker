@@ -20,7 +20,7 @@ import { getSession } from "@/lib/auth";
 import { positionSizingSchema } from "@/lib/agent/config";
 import type { PositionSizingConfig } from "@/lib/trading/sizing";
 import { getAgentWallets, getPortfolio, snapshotEquity, toRiskPortfolio } from "@/lib/agent/portfolio";
-import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
+import { feeForFill, platformFeeBps } from "@/lib/platform/fee";
 import { chargePlatformFee } from "@/lib/platform/fees";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
@@ -249,7 +249,10 @@ export async function previewTrade(input: PreviewTradeInput): Promise<ActionResu
       positionValueUsd: held?.valueUsd ?? null,
       isPaper: agent.mode === "paper",
       requiresApproval: requiresApproval(config),
-      fees: { tockerUsd: feeEnabled() ? platformFeeUsd() : 0, venueUsd: venueFeeUsd },
+      // The fee is a share of what the order would fill at: the dollars typed for a buy,
+      // the venue's quoted proceeds for a sell, and the slice at the last mark when the
+      // venue did not quote. An estimate; the receipt carries what was charged.
+      fees: { tockerUsd: feeForFill(indicative.amountUsd ?? sizedUsd, platformFeeBps()), venueUsd: venueFeeUsd },
       quoted,
       quoteNote,
       slippageLimitBps: config.risk.slippageBps,
@@ -510,12 +513,13 @@ export async function placeManualTrade(
     })
     .where(eq(trades.id, tradeId));
 
-  // The owner's own trade pays the same flat fee the agent's does. "Manual" is a
-  // judgement call, not a discount.
+  // The owner's own trade pays the same fee the agent's does, on what the fill
+  // actually moved. "Manual" is a judgement call, not a discount.
   const platformFeeUsd = await chargePlatformFee({
     agentId: agent.id,
     tradeId,
     chain: input.chain,
+    fillUsd: fill.amountUsd,
     isPaper: executor.isPaper,
     now: filledAt,
   });

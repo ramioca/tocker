@@ -159,16 +159,51 @@ const payer = row({
 /** Markup as the words a reader sees: no tags, one space between words. */
 const flat = (html: string) => html.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
 
-const note = (s: MoneySummary, scope: "live" | "paper" = "live") =>
+const note = (s: MoneySummary, scope: "live" | "paper" = "live", feeBps = 50) =>
   renderToStaticMarkup(
     createElement(CostsNote, {
       summary: s,
       scope,
       totals: scope === "paper" ? sumCosts(s.paper) : undefined,
-      feeUsd: 0.1,
+      feeBps,
       settleMinUsd: 1,
     }),
   );
+
+/**
+ * The amount beside "Tocker fee" is the sum of what each fill was charged when it
+ * filled. The sentence under it says what a fill is charged now, as a rate, and must
+ * not read as how that sum was reached: older fills paid a flat ten cents each.
+ */
+describe("what the Money page says the Tocker fee is", () => {
+  const owner = summary([row()], null);
+
+  it("states the rate for a live book, and that the total is what each fill was charged", () => {
+    const said = flat(note(owner));
+    expect(said).toContain(
+      "0.5% of each executed fill — buy or sell, whether the agent placed it, you approved it, or the exit engine took it. The total above is what each fill was charged when it filled.",
+    );
+    expect(said).not.toMatch(/flat|rather than a percentage/i);
+  });
+
+  it("states the same rate for a paper book, where nothing is collected, and says the same of its total", () => {
+    // A paper book keeps the ten cents its older fills were charged, like a live one.
+    expect(flat(note(owner, "paper"))).toContain(
+      "0.5% of each simulated fill, taken out of the paper book so its P&amp;L compares with a live one. The total above is what each fill was charged when it filled. Nothing is collected until an agent trades live.",
+    );
+  });
+
+  it("follows the rate it is handed", () => {
+    expect(flat(note(owner, "live", 25))).toContain("0.25% of each executed fill");
+    expect(flat(note(owner, "live", 100))).toContain("1% of each executed fill");
+  });
+
+  it("says the fee is off without claiming nothing was ever charged", () => {
+    const said = flat(note(owner, "live", 0));
+    expect(said).toContain("The per-fill fee is switched off on this deployment, so new fills are charged nothing.");
+    expect(said).not.toContain("of each executed fill");
+  });
+});
 
 describe("an owner who has never paid for a step", () => {
   const plain = summary([row()], null);

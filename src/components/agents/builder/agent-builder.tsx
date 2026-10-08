@@ -152,17 +152,18 @@ export function AgentBuilder({
   userId,
   sources,
   initialKeys,
-  feeUsd,
+  feeBps,
   payPerUseAllowed = false,
 }: {
   userId: string;
   sources: DataSourceInfo[];
   initialKeys: LlmKeyRow[];
   /**
-   * Tocker's flat fee per fill, from the server (`platformFeeUsd()`); 0 when the fee is
-   * off. The page reads it because the env it comes from never reaches the browser.
+   * Tocker's fee in basis points of each fill, from the server (`platformFeeBps()`); 0
+   * when the fee is off. The page reads it because the env it comes from never reaches
+   * the browser.
    */
-  feeUsd: number;
+  feeBps: number;
   /**
    * Whether this viewer may build an agent that pays for its own thinking, decided on the
    * server (`payPerUseAllowedFor`). False, the default, and this page is the one it was
@@ -203,7 +204,7 @@ export function AgentBuilder({
 
   const payPerUse = shownSource(draft.config, payPerUseAllowed) === "usdc";
   // Every figure the bar and the read-back lines quote, worked out once (`./summaries`).
-  const facts = costFacts(draft, sources, { payPerUseAllowed, feeUsd });
+  const facts = costFacts(draft, sources, { payPerUseAllowed, feeBps });
   // The agent card, and the ready count the bar quotes beside it. A draft swapped whole
   // (restored, started over, undone) changes its rows without their tint.
   const { previewProps, ready, readyCount, cardDraft, announcement } = useAgentCard({
@@ -211,7 +212,7 @@ export function AgentBuilder({
     keys,
     sources,
     payPerUseAllowed,
-    feeUsd,
+    feeBps,
     quietKey: restored,
     currentStep: step,
     onGo: goFromCard,
@@ -436,7 +437,7 @@ export function AgentBuilder({
     allErrors: errors,
     facts,
     sources,
-    feeUsd,
+    feeBps,
     keys,
     onKeyAdded: (key) => setKeys((current) => [key, ...current]),
     payPerUseAllowed,

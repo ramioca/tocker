@@ -43,6 +43,8 @@ import { ChainBadge } from "@/components/common/chain-badge";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { FeesCovered } from "@/components/common/fees-covered";
 import { formatUsd } from "@/components/common/format";
+import { fmtUsdExact } from "@/lib/money";
+import { feeForFill, formatFeeRate } from "@/lib/platform/fee";
 import { shownUsdc } from "@/components/wallets/cash-display";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { addLlmKeyAction } from "@/components/agents/agent-actions";
@@ -89,7 +91,6 @@ import {
   LLM_BOUNDS,
   MAX_AGENT_NAME,
   MAX_TRADE_LADDER,
-  feeSharePct,
   firstKeyFor,
   intervalHint,
   launchRadarUsdPerRun,
@@ -706,24 +707,9 @@ export function StrategyStep({
   draft,
   updateConfig,
   errors,
-  feeUsd = 0,
-}: StepProps & {
-  /** Tocker's flat fee per fill, from the server; 0 when it is off. */
-  feeUsd?: number;
-}) {
+}: StepProps) {
   const pressedPreset = STRATEGY_PRESETS.find((preset) => preset.prompt === draft.config.strategyPrompt) ?? null;
   const promptRef = useRef<HTMLTextAreaElement>(null);
-  // A preset that sets a small ticket also decides how much of every trade the flat fee
-  // takes, and its paper record starts that far under water. Said with the blurb, from
-  // the preset's own size and the server's fee, so neither number is written twice.
-  const presetFeeNote = (preset: StrategyPreset): string => {
-    const ticket = preset.risk?.maxTradeUsd;
-    const pct = ticket === undefined ? null : feeSharePct(ticket, feeUsd);
-    return ticket === undefined || pct === null
-      ? ""
-      : ` At ${formatUsd(ticket)} a trade, Tocker's flat ${formatUsd(feeUsd)} fee per fill is ${pct}% each way.`;
-  };
-
   const applyPreset = (preset: StrategyPreset) => {
     const before = draft.config;
     const next = applyPresetTo(before, preset);
@@ -775,7 +761,6 @@ export function StrategyStep({
           // Read from the same merge a tap would write, so the line cannot promise an
           // agent the preset does not make.
           factsLine={(preset) => presetFacts(applyPresetTo(draft.config, preset), PRESET_LABELS)}
-          feeNote={presetFeeNote}
           onApply={applyPreset}
           customPressed={isCustomPressed(draft.config.strategyPrompt)}
           onCustom={applyCustom}
@@ -973,11 +958,11 @@ export function RiskStep({
   draft,
   updateConfig,
   hideHeading,
-  feeUsd = 0,
+  feeBps = 0,
   edit,
 }: StepProps & {
-  /** Tocker's flat fee per fill, from the server; 0 when it is off. */
-  feeUsd?: number;
+  /** Tocker's fee in basis points of each fill, from the server; 0 when it is off. */
+  feeBps?: number;
 }) {
   const risk = draft.config.risk;
   const patch = (next: Partial<typeof risk>) => updateConfig({ risk: { ...risk, ...next } });
@@ -1002,13 +987,14 @@ export function RiskStep({
       : `its ${formatUsd(fundedUsd)} paper balance`;
   const ticketSharePct = fundedUsd > 0 ? Math.ceil((risk.maxTradeUsd / fundedUsd) * 100) : 0;
   const positionCapTooLow = ticketSharePct > 0 && ticketSharePct > risk.maxPositionPct;
-  // A flat fee is invisible on a $100 ticket and a real share of a $2 one, on the way in
-  // and again on the way out. Said here, where the ticket is sized; silent from 1% down.
-  const feePct = feeSharePct(risk.maxTradeUsd, feeUsd);
+  // The fee is the same share of every ticket, so it is said as its rate, with the
+  // amount it comes to on the ticket being sized here, printed as it is and not to the
+  // nearest cent. An illustration from the server's rate: what a fill is charged is
+  // worked out on the server when it fills.
   const feeNote =
-    feePct === null
-      ? ""
-      : ` Tocker's flat ${formatUsd(feeUsd)} fee per fill is ${feePct}% of a ticket this size, each way.`;
+    feeBps > 0
+      ? ` Tocker's fee is ${formatFeeRate(feeBps)} of each fill: ${fmtUsdExact(feeForFill(risk.maxTradeUsd, feeBps))} on a ticket this size.`
+      : "";
 
   const exitRules = (
     <div className="space-y-2">

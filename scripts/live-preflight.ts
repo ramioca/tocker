@@ -204,7 +204,7 @@ async function main() {
       }
       console.log(
         `      Default sources price on: ${needed.join(", ") || "nothing paid"}. Both wallets also receive the ` +
-          `per-fill fee (PLATFORM_FEE_USD, default $0.10), swept in batches once an agent owes ` +
+          `per-fill fee (PLATFORM_FEE_BPS, default 50: 0.5% of each fill), swept in batches once an agent owes ` +
           `PLATFORM_FEE_SETTLE_MIN_USD (default $1.00).`,
       );
       console.log(

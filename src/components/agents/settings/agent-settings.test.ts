@@ -105,7 +105,7 @@ function render(
         accountPaused: false,
         isAdmin: false,
         payPerUseAllowed: props.payPerUseAllowed ?? false,
-        feeUsd: 0.25,
+        feeBps: 25,
       }),
     ),
   );
@@ -145,6 +145,21 @@ describe("an agent's settings page", () => {
     for (const gone of ["Create agent", "Skip to the end", "Still needed", "New agent", "Activate immediately"]) {
       expect(text, gone).not.toContain(gone);
     }
+  });
+
+  it("states Tocker's fee as the rate the server handed it, with what that is on this agent's ticket", () => {
+    // The page is handed 25 basis points; the agent's ticket is $100.
+    const text = words(render());
+    expect(CONFIG.risk.maxTradeUsd).toBe(100);
+    // The read-back line of the limits step, and the same words on the agent card.
+    expect(text).toContain("$1.00 data/run · Tocker fee 0.25% of each fill");
+    // Under Max per trade, where the ticket is sized.
+    expect(text).toContain("Tocker's fee is 0.25% of each fill: $0.25 on a ticket this size.");
+    // And on the card's "A run" lines.
+    expect(text).toContain("Fee 0.25% of each fill");
+    // The fee is the same share of every ticket: no preset card singles one out, and
+    // nothing calls it flat.
+    expect(text).not.toMatch(/flat|each way|per fill/);
   });
 
   it("opens on the first step, and on the step the address names", () => {
