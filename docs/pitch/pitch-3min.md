@@ -1,9 +1,9 @@
 # Tocker — 3-minute pitch (short deck, v6)
 
-~433 words over 11 slides, about 2:40 at 160 wpm. Reworked on Oct 8, 2026 after a pitch roast that pushed on three things: "what's the edge?", "the competitors are well established", and "performance". [pause] marks a beat.
+~445 words over 11 slides, about 2:40 at 160 wpm. Reworked on Oct 8, 2026 after a pitch roast that pushed on three things: "what's the edge?", "the competitors are well established", and "performance". [pause] marks a beat.
 - **Edge** (new slide, replaces the x402 "alpha" slide): not prediction but not losing, in three steps. Refuse the rugs (gates in code), pick by your thesis (paid data, cents a token), exit by rule. Evidence: research/29, code: research/30.
 - **Proof** (new slide): a pre-registered gate audit and a real-money house cohort with controls. This is a plan, not a result; the slide commits us to running it.
-- **Competition** (rebuilt): the trading terminals (Axiom, GMGN, fomo, Photon, Trojan) and the AI startups, against Tocker. "They sell speed. We sell discipline."
+- **Competition**: AI trading startups only. "Good teams. We built the safer agent." What all six do vs Tocker, safety first: no rug veto before the swap vs 10 code gates the AI can't override; bundled data vs data bought per call; copy trading vs every fill public, never the strategy. Terminals (Axiom, GMGN, fomo) stay in Q&A 5 and Know the field.
 - **Stale facts fixed:** the 0.5% fee is live (main #53), the beta is open, and the solution slide no longer says "sell-check data" (Solana has no sell test).
 Earlier competition designs: docs/pitch/deck/competition-angles/.
 
@@ -29,7 +29,7 @@ Claims aren't proof, so we'll prove it in public. We log every launch with its g
 Who pays? Traders already do: nine hundred forty million dollars last year to Solana bots and terminals, at one percent a trade. We charge half, and it's live.
 
 ## competition
-The terminals are big and good: Axiom, GMGN, fomo. They sell speed. But our ninety-four percent comes from fomo's own wallet data. Speed doesn't fix losing. We sell discipline: your thesis, run 24/7, gates the AI can't override, every fill public, at half the fee.
+Six AI trading startups, good teams, mostly perps and chat. We're better in three ways. Safety: nothing of theirs vetoes a rug before the swap; ours does, in code, and the AI can't override it. Data: they share bundled feeds, so agents herd; ours buys its own, per call. And we publish every fill, never the strategy.
 
 ## gtm
 That public record is the growth loop: every trade posts with its score and markets itself, and followers launch their own. We start with Solana memecoins, four hundred eighty-two billion dollars last year, then Polymarket and tokenized stocks.

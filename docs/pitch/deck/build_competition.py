@@ -11,9 +11,9 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else \
     "/tmp/claude-0/-home-user-tocker/2b3bef34-45cf-5fd0-a239-6cda5647963e/scratchpad/refine/design/cmp11.html"
 
 DATA = {
-    "eyebrow": "Competition · Agentic trading",
+    "eyebrow": "Competition · AI trading startups",
     # Founder's original, kept as an option: "An early category. A different approach."
-    "headline": "An early category. We bet the other way.",
+    "headline": "Good teams. We built the safer agent.",
     "field_label": "Six funded startups · largest disclosed round $4M",
     # (name, logo blob, best at; "invert" flips a light tile dark)
     "field": [
@@ -28,14 +28,14 @@ DATA = {
     "tocker_logo": "/_blob/41da4bfef67a2f6a83cfa7cf3015ecf2",
     # (label, all six do, evidence (pre, number, post), Tocker lead, Tocker rest, proof)
     "rows": [
-        ("Data", "Run on bundled data by default.",
-         ("", "1,544", " AI agents piled into one token in an hour"),
-         "Picks and buys data", " per call, on x402.",
-         "Nansen · Deepnets · X sentiment · x402 Bazaar"),
         ("Safety", "Cap risk. No rug veto before the swap.",
          ("", "76%", " of new Solana DEX tokens in H1 2025 were rugs"),
          "Vetoes unsafe buys", " with 10 code gates.",
-         "Honeypot, tax, authority, liquidity, holders and more"),
+         "The AI can't override them. Neither can a prompt."),
+        ("Data", "Run on bundled data by default.",
+         ("", "1,544", " AI agents piled into one token in an hour"),
+         "Picks and buys data", " per call, on x402.",
+         "Nansen smart money · Deepnets rug risk · X sentiment"),
         ("Social", "Copy trading, or volume and earnings boards.",
          ("Copying a top memecoin wallet: ", "14% becomes 3%", ""),
          "Publishes every fill,", " never the strategy.",
@@ -43,10 +43,9 @@ DATA = {
     ],
     "foot": ("Evidence: DXRG, arXiv 2609.05663 · SolRugDetector, arXiv 2603.24625 · Luo et al., WWW 2026. "
              "Rivals: docs, GitHub, X, Oct 2026."),
-    "note": ("Agentic trading is early: six funded startups, the largest disclosed round four million. "
-             "Good teams, with three shared defaults: bundled data, no rug veto before the swap, and copy trading "
-             "or leaderboards. We bet the other way. Our agent picks and buys data per call, ten gates in code "
-             "can veto any buy, and every fill is public."),
+    "note": ("Six AI trading startups, good teams, mostly perps and chat. We're better in three ways. Safety: nothing "
+             "of theirs vetoes a rug before the swap; ours does, in code, and the AI can't override it. Data: they share "
+             "bundled feeds, so agents herd; ours buys its own, per call. And we publish every fill, never the strategy."),
 }
 
 MONO = "font-family:'Geist Mono', 'Courier New', monospace"
