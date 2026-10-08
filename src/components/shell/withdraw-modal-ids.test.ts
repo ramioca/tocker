@@ -18,18 +18,29 @@ function idsIn(source: string): string[] {
  */
 describe("the cash Withdraw dialog's element ids", () => {
   const dialog = idsIn(readFileSync(join(components, "shell", "withdraw-modal.tsx"), "utf8"));
-  const settingsDir = join(components, "agents", "settings");
-  const settings = readdirSync(settingsDir)
-    .filter((file) => file.endsWith(".tsx"))
-    .flatMap((file) => idsIn(readFileSync(join(settingsDir, file), "utf8")));
+  /** Every literal id in a folder's components, tests left out. */
+  const idsOf = (dir: string) =>
+    readdirSync(dir)
+      .filter((file) => file.endsWith(".tsx") && !file.endsWith(".test.tsx"))
+      .flatMap((file) => idsIn(readFileSync(join(dir, file), "utf8")));
+  const settings = idsOf(join(components, "agents", "settings"));
+  // That page's steps are the builder's own step bodies, so their ids are on it too.
+  const builderDir = join(components, "agents", "builder");
+  const builder = [...idsOf(builderDir), ...idsOf(join(builderDir, "preview"))];
 
   it("finds the ids it is meant to compare", () => {
     expect(dialog).toContain("cash-withdraw-amount");
     expect(settings).toContain("withdraw-amount");
+    expect(builder).toContain("agent-name");
+    expect(builder).toContain("risk-max-trade");
   });
 
   it("shares none with the agent settings page it can open over", () => {
     expect(dialog.filter((id) => settings.includes(id))).toEqual([]);
+  });
+
+  it("shares none with the steps that page draws, which the builder draws too", () => {
+    expect(dialog.filter((id) => builder.includes(id))).toEqual([]);
   });
 
   it("points every label and description at an id the dialog itself renders", () => {

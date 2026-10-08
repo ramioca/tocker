@@ -11,6 +11,7 @@ import { RETIRED_DATA_SOURCE_IDS } from "@/lib/agent/config";
 import { thinkSource, thinkingReserveUsd } from "@/lib/agent/inference";
 import { dataChainsFor, getDataSource } from "@/lib/data-sources/registry";
 import { isMockMode } from "@/lib/x402/paidFetch";
+import { agentSettingsHref } from "@/components/agents/settings/settings-href";
 import { UNAVAILABLE_TO_USERS, getMfaStatus } from "./mfa";
 import { getKillSwitch } from "./kill-switch";
 import { listSimulatedOpenPositions } from "./paper-positions";
@@ -282,7 +283,6 @@ export interface ReadinessInput {
 
 export async function evaluateLiveReadiness(input: ReadinessInput): Promise<LiveReadiness> {
   const capUsd = input.capUsd ?? FIRST_TRADE_PRESET.maxTradeUsd;
-  const settings = `/agents/${input.slug}/settings`;
 
   // The checklist is owner-only, so the owner is the viewer. Deployment details (env
   // var names, Tocker's own wallets) are for an admin; everyone else gets the outcome.
@@ -292,16 +292,16 @@ export async function evaluateLiveReadiness(input: ReadinessInput): Promise<Live
     checkDatabase(viewerIsAdmin),
     Promise.resolve(checkPrivy(viewerIsAdmin)),
     checkMfa(input.ownerId),
-    checkWallets(input.agentId, input.config.chains, settings),
+    checkWallets(input.agentId, input.config.chains, input.slug),
     getKillSwitch(input.ownerId),
-    checkData(input.config, settings, viewerIsAdmin),
+    checkData(input.config, input.slug, viewerIsAdmin),
     checkPaperPositions(input.agentId, input.slug),
   ]);
 
   // The risk step is the only one that has to wait for a balance, because the whole
   // point of it now is to run the real guard against the real number.
   const [risk, gas] = await Promise.all([
-    checkRisk(input.config, capUsd, wallets.usdc, settings),
+    checkRisk(input.config, capUsd, wallets.usdc, input.slug),
     checkGas(input.config, viewerIsAdmin),
   ]);
 
@@ -312,7 +312,7 @@ export async function evaluateLiveReadiness(input: ReadinessInput): Promise<Live
     wallets.walletsStep,
     wallets.fundingStep,
     gas,
-    checkBudget(input.config, input.walletBudget ?? null, capUsd, settings),
+    checkBudget(input.config, input.walletBudget ?? null, capUsd, input.slug),
     risk,
     data,
     {
@@ -481,7 +481,7 @@ async function checkMfa(ownerId: string): Promise<ReadinessStep> {
 async function checkWallets(
   agentId: string,
   chains: Chain[],
-  settings: string,
+  slug: string,
 ): Promise<{
   walletsStep: ReadinessStep;
   fundingStep: ReadinessStep;
@@ -512,7 +512,7 @@ async function checkWallets(
         title: "Real agent wallets",
         state: "fail",
         detail: `Could not read this agent's wallets: ${error}`,
-        fix: { label: "Agent settings → Wallets", href: `${settings}#wallets` },
+        fix: { label: "Agent settings → Wallets", href: agentSettingsHref(slug, "wallets") },
       }
     : missing.length > 0
       ? {
@@ -520,7 +520,7 @@ async function checkWallets(
           title: "Real agent wallets",
           state: "fail",
           detail: `No wallet on ${chainNames(missing)}. The agent cannot trade a chain it has no wallet for.`,
-          fix: { label: "Agent settings → Wallets", href: `${settings}#wallets` },
+          fix: { label: "Agent settings → Wallets", href: agentSettingsHref(slug, "wallets") },
         }
       : paper.length > 0
         ? {
@@ -528,7 +528,7 @@ async function checkWallets(
             title: "Real agent wallets",
             state: "fail",
             detail: `${chainNames(paper.map((w) => w.chain))} still ${paper.length === 1 ? "has a placeholder wallet" : "have placeholder wallets"} from paper mode, created before real wallets were available here. ${paper.length === 1 ? "It holds" : "They hold"} nothing and can sign nothing.`,
-            fix: { label: "Agent settings → Wallets", href: `${settings}#wallets` },
+            fix: { label: "Agent settings → Wallets", href: agentSettingsHref(slug, "wallets") },
           }
         : {
             id: "wallets",
@@ -600,7 +600,7 @@ async function checkWallets(
       walletsStep.state === "fail"
         ? "Cannot check a balance until the agent has real wallets."
         : `${usdc.toFixed(2)} USDC (need ${MIN_USDC.toFixed(2)}).${intentNote}`,
-    fix: fundedUsdc || pendingFunding ? null : { label: fixLabel, href: `${settings}#wallets` },
+    fix: fundedUsdc || pendingFunding ? null : { label: fixLabel, href: agentSettingsHref(slug, "wallets") },
     ...(pendingFunding ? { pending: true } : {}),
   };
 
@@ -895,7 +895,7 @@ export function checkBudget(
   config: AgentConfig,
   walletBudget: WalletBudget | null,
   capUsd: number,
-  settings: string,
+  slug: string,
 ): ReadinessStep {
   const { risk } = config;
   const dailyMax = risk.maxTradeUsd * risk.maxDailyTrades;
@@ -908,7 +908,7 @@ export function checkBudget(
       title: "Spend caps applied",
       state: "fail",
       detail: `Its per-trade cap is ${fmtUsd(risk.maxTradeUsd)}, above the ${fmtUsd(capUsd)} you entered.`,
-      fix: { label: "Agent settings → Risk", href: `${settings}#risk` },
+      fix: { label: "Agent settings → Risk", href: agentSettingsHref(slug, "risk") },
     };
   }
   const ceiling = "Whatever happens, it can only ever spend the USDC in its own wallet, and it stops when that is gone.";
@@ -918,7 +918,7 @@ export function checkBudget(
       title: "Spend caps applied",
       state: "fail",
       detail: `${appLayer} This agent pays for its own thinking from its Solana wallet, and it is not allowed to pay for anything until that wallet has a spending limit applied. Save the agent's risk settings to apply one.`,
-      fix: { label: "Agent settings → Wallet budget", href: `${settings}#budget` },
+      fix: { label: "Agent settings → Wallet budget", href: agentSettingsHref(slug, "budget") },
     };
   }
   if (!walletBudget) {
@@ -927,7 +927,7 @@ export function checkBudget(
       title: "Spend caps applied",
       state: "warn",
       detail: `${appLayer} ${ceiling} No wallet-level budget is attached — optional; one would make the wallet itself refuse an over-cap transfer as a second layer.`,
-      fix: { label: "Agent settings → Wallet budget", href: `${settings}#budget` },
+      fix: { label: "Agent settings → Wallet budget", href: agentSettingsHref(slug, "budget") },
     };
   }
   if (walletBudget.perTxUsd > capUsd) {
@@ -936,7 +936,7 @@ export function checkBudget(
       title: "Spend caps applied",
       state: "warn",
       detail: `${appLayer} ${ceiling} The wallet policy underneath allows up to ${fmtUsd(walletBudget.perTxUsd)} a transfer — looser than the app cap, which is the one that binds.`,
-      fix: { label: "Agent settings → Wallet budget", href: `${settings}#budget` },
+      fix: { label: "Agent settings → Wallet budget", href: agentSettingsHref(slug, "budget") },
     };
   }
   return {
@@ -967,7 +967,7 @@ async function checkRisk(
   config: AgentConfig,
   capUsd: number,
   usdc: number | null,
-  settings: string,
+  slug: string,
 ): Promise<ReadinessStep> {
   const verdict = evaluateFirstTradeRisk(config, capUsd);
   const mode =
@@ -981,7 +981,7 @@ async function checkRisk(
       title: "Risk config sane for a first trade",
       state: "fail",
       detail: `Not yet: ${verdict.problems.join("; ")}. ${mode}`,
-      fix: { label: "Agent settings → Risk", href: `${settings}#risk` },
+      fix: { label: "Agent settings → Risk", href: agentSettingsHref(slug, "risk") },
     };
   }
 
@@ -994,7 +994,7 @@ async function checkRisk(
       title: "Risk config sane for a first trade",
       state: "warn",
       detail: `${shape} The balance could not be read, so a trade could not be simulated against it. ${mode}`,
-      fix: { label: "Agent settings → Risk", href: `${settings}#risk` },
+      fix: { label: "Agent settings → Risk", href: agentSettingsHref(slug, "risk") },
     };
   }
 
@@ -1005,7 +1005,7 @@ async function checkRisk(
       title: "Risk config sane for a first trade",
       state: "fail",
       detail: `${refusal}. ${mode}`,
-      fix: { label: "Agent settings → Risk", href: `${settings}#risk` },
+      fix: { label: "Agent settings → Risk", href: agentSettingsHref(slug, "risk") },
     };
   }
 
@@ -1015,7 +1015,7 @@ async function checkRisk(
       title: "Risk config sane for a first trade",
       state: "warn",
       detail: `${shape} Simulated against the ${fmtUsd(usdc)} it holds, a ${fmtUsd(config.risk.maxTradeUsd)} buy clears the risk guard. ${mode} Worth knowing: ${verdict.cautions.join("; ")}.`,
-      fix: { label: "Agent settings → Risk", href: `${settings}#risk` },
+      fix: { label: "Agent settings → Risk", href: agentSettingsHref(slug, "risk") },
     };
   }
 
@@ -1035,8 +1035,8 @@ async function checkRisk(
  * places, so the step reports whichever is wrong and sends the operator to the right
  * screen for it.
  */
-async function checkData(config: AgentConfig, settings: string, viewerIsAdmin: boolean): Promise<ReadinessStep> {
-  const step = checkDataSources(config, settings, viewerIsAdmin);
+async function checkData(config: AgentConfig, slug: string, viewerIsAdmin: boolean): Promise<ReadinessStep> {
+  const step = checkDataSources(config, slug, viewerIsAdmin);
   // Mock mode already fails the step for a better reason, and there is no wallet
   // question when nothing is being paid.
   if (isMockMode() || step.state === "fail") return step;
@@ -1167,7 +1167,7 @@ async function checkPlatformDataWallets(
   }
 }
 
-export function checkDataSources(config: AgentConfig, settings: string, viewerIsAdmin: boolean): ReadinessStep {
+export function checkDataSources(config: AgentConfig, slug: string, viewerIsAdmin: boolean): ReadinessStep {
   // `isMockMode()` is the authority on what the runtime actually does: mock only
   // when X402_MOCK is exactly "1". Reading it rather than re-deriving the rule is
   // the point — a checklist that disagrees with the code it is checking is worse
@@ -1194,7 +1194,7 @@ export function checkDataSources(config: AgentConfig, settings: string, viewerIs
       title: "Data sources live",
       state: "fail",
       detail: `${unknown.join(", ")} ${unknown.length === 1 ? "is" : "are"} not in the data-source registry any more.`,
-      fix: { label: "Agent settings → Data", href: `${settings}#data` },
+      fix: { label: "Agent settings → Data", href: agentSettingsHref(slug, "data") },
     };
   }
   if (sourceIds.length === 0) {
@@ -1203,7 +1203,7 @@ export function checkDataSources(config: AgentConfig, settings: string, viewerIs
       title: "Data sources live",
       state: "warn",
       detail: "No paid sources configured. Scoring still runs on the free providers; the agent just buys no sentiment.",
-      fix: { label: "Agent settings → Data", href: `${settings}#data` },
+      fix: { label: "Agent settings → Data", href: agentSettingsHref(slug, "data") },
     };
   }
   return {

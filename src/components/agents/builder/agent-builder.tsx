@@ -1,57 +1,29 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bot, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
-import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { createAgentAction } from "@/components/agents/agent-actions";
-import { providerLabel as providerLabelFor } from "@/lib/agent/providers";
-import {
-  DataStep,
-  FundingStep,
-  IdentityStep,
-  RiskStep,
-  ScheduleStep,
-  StrategyStep,
-  ThinkStep,
-  UniverseStep,
-  ttlLabel,
-} from "./steps";
-import { universeSummary } from "./universe-controls";
+import { agentSettingsHref } from "@/components/agents/settings/settings-href";
+import { FundingStep } from "./steps";
 import { useDraft } from "./use-draft";
 import { validateDraft } from "./validate";
-import { BuilderStepper, type StepView } from "./builder-stepper";
+import type { StepView } from "./builder-stepper";
 import { CommitBar } from "./commit-bar";
 import { CommitSentence } from "./commit-sentence";
 import { EASE, FOCUS, ReadyPips, TYPE } from "./look";
 import { ReviewReady } from "./review-ready";
-import {
-  BUILDER_STEPS,
-  type BuilderStepId,
-  type Place,
-  type StepStatus,
-  type SummaryLabels,
-  type Via,
-} from "./contract";
-import { firstErrorKey, firstErrorPlace, neighbours, stepStatus } from "./flow";
+import { BUILDER_STEPS, type BuilderStepId } from "./contract";
+import { firstErrorKey, firstErrorPlace, requestedStep, resumeStep, stepHref, stepStatus } from "./flow";
 import { AgentPreview } from "./preview/agent-preview";
 import { PreviewPeek } from "./preview/preview-peek";
 import { NowLine, StepPanel } from "./step-panel";
-import {
-  commitShortLine,
-  costFacts,
-  costLines,
-  dataSummary,
-  fundingSummary,
-  previewRows,
-  readyItems,
-  riskSummary,
-  runLine,
-  scheduleSummary,
-  stillNeeded,
-} from "./summaries";
-import { useBuilderStep } from "./use-builder-step";
+import { ConfigPanels, STATUS_WORDS, STEP_LABELS, STEP_NAMES, type StepContext } from "./step-registry";
+import { StepShell } from "./step-shell";
+import { commitShortLine, costFacts, fundingSummary, stillNeeded } from "./summaries";
+import { useAgentCard } from "./use-agent-card";
+import { useStepFlow } from "./use-step-flow";
 import { shownSource, stripPayPerUse } from "@/components/agents/thinking";
 import { useFundingPlan } from "@/components/wallets/use-funding-plan";
 import { isTransferStatusUnknown } from "@/components/wallets/funding-attempt";
@@ -78,7 +50,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { AgentConfig } from "@/db/schema";
 import type { Chain, DataSourceInfo, LlmKeyRow } from "@/server/types";
 import { cn } from "@/lib/utils";
 
@@ -91,60 +62,14 @@ import { cn } from "@/lib/utils";
  * read back as one sentence above the controls. Beside the form sits a card of the agent
  * being made, filled in from the draft as the user goes.
  *
- * This file is the shell: the draft, the keys, which step is showing, and the create
- * itself. The steps' controls are `./steps`, the sentences every part quotes are
- * `./summaries`, and where an error or a link takes the user is `./flow`.
+ * This file is what creating adds to the page of steps an agent's settings share: the
+ * draft, the keys, the last step and the create itself. The page is `./step-shell`, which
+ * step is showing is `./use-step-flow`, the seven config steps are `./step-registry`
+ * (their controls `./steps`), the sentences every part quotes are `./summaries`, and
+ * where an error or a link takes the user is `./flow`.
  *
  * What a draft needs before it can be created is decided in `./validate.ts`.
  */
-
-/** The two labels the summaries cannot import themselves: they live in `.tsx` files. */
-const LABELS: SummaryLabels = { interval: intervalLabel, ttl: ttlLabel };
-
-/** One word each: eight of them share the width of the form. */
-const STEP_LABELS: Record<BuilderStepId, string> = {
-  name: "Name",
-  strategy: "Strategy",
-  hunts: "Hunts",
-  data: "Data",
-  limits: "Limits",
-  schedule: "Schedule",
-  brain: "Brain",
-  create: "Create",
-};
-
-/**
- * What a step is called where there is room for more than a word: the Next button, the
- * phone's "Step 3 of 8" line and a screen reader.
- */
-const STEP_NAMES: Record<BuilderStepId, string> = {
-  name: "Name",
-  strategy: "Strategy",
-  hunts: "Where it hunts",
-  data: "Data it buys",
-  limits: "Risk limits",
-  schedule: "Schedule & mode",
-  brain: "How it thinks",
-  create: "Review and create",
-};
-
-const STATUS_WORDS: Record<StepStatus, string> = {
-  needed: "Needed",
-  ready: "Ready",
-  defaults: "Defaults",
-  edited: "Edited",
-  fix: "Fix",
-};
-
-/**
- * A move the page has been asked to make, kept until the render that makes it has
- * committed: only then is the step showing, so only then can a control on it take focus.
- */
-interface PendingMove {
-  place: Place;
-  /** Called when none of the place's controls is on the page. */
-  missing?: () => void;
-}
 
 /**
  * Sign every transfer in the plan, in order, recording each outcome.
@@ -264,104 +189,35 @@ export function AgentBuilder({
   );
   const visibleErrors = attempted ? errors : {};
 
-  const nav = useBuilderStep({ restored, errors });
-  const step = nav.step;
-
-  const pendingPlace = useRef<PendingMove | null>(null);
-  /** The step the effect below last saw, to tell a step change it was not told about. */
-  const shownStep = useRef<BuilderStepId | null>(null);
-  const columnRef = useRef<HTMLDivElement>(null);
-  // Counted so a move to a place on the step that is already showing still reaches the
-  // effect.
-  const [moves, setMoves] = useState(0);
-  // How the user last touched the page. The agent card reports a click on a row without
-  // saying how it was made, and a keyboard move must not animate the step.
-  const lastInput = useRef<Via>("pointer");
-
-  /** Go to a place: show its step, then put focus on its control. */
-  const goTo = (place: Place, via: Via, missing?: () => void) => {
+  // Which step is showing, and the way from one to another: the address, the focus, the
+  // browser's Back button. A restored draft resumes where something is still missing.
+  const flow = useStepFlow({
+    steps: BUILDER_STEPS,
+    read: requestedStep,
+    hrefOf: stepHref,
     // Nobody leaves the step while its agent is being created.
-    if (creatingRef.current) return;
-    pendingPlace.current = { place, missing };
-    setMoves((count) => count + 1);
-    nav.go(place, via);
-  };
-  const goFromCard = (place: Place) => goTo(place, lastInput.current);
+    locked: () => creatingRef.current,
+    resume: { restored, step: () => resumeStep(errors) },
+  });
+  const { step, goTo, goFromCard } = flow;
 
-  // After the commit that un-hides the panel, so focus can never land on a hidden control
-  // and the focused control already carries its error when a screen reader announces it.
-  useEffect(() => {
-    const arriving = shownStep.current === null;
-    const stepChanged = shownStep.current !== step;
-    shownStep.current = step;
-    let move = pendingPlace.current;
-    pendingPlace.current = null;
-    if (arriving) {
-      // The first paint, a deep link included: the page is where it should be, and focus
-      // stays where the browser put it.
-      move = null;
-    } else if (!move && stepChanged) {
-      // The browser's Back or Forward button, or a restored draft resuming: the step
-      // changed without a place, so focus goes to its heading.
-      move = { place: { step } };
-    }
-    if (!move || move.place.step !== step) return;
-
-    const target = move.place.focusIds?.map((id) => document.getElementById(id)).find((el) => el !== null);
-    if (target) {
-      const smooth = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      target.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "center" });
-      target.focus({ preventScroll: true });
-      return;
-    }
-    move.missing?.();
-    // A plain step change: the top of the form, at once, with focus on the step's heading.
-    columnRef.current?.scrollIntoView({ behavior: "auto", block: "start" });
-    document.getElementById(`step-${step}-title`)?.focus({ preventScroll: true });
-  }, [step, moves]);
-
-  const providerLabel = providerLabelFor(draft.config.llm.provider);
   const payPerUse = shownSource(draft.config, payPerUseAllowed) === "usdc";
   // Every figure the bar and the read-back lines quote, worked out once (`./summaries`).
   const facts = costFacts(draft, sources, { payPerUseAllowed, feeUsd });
-  const ready = readyItems(draft, errors, keys, { payPerUseAllowed });
-  const readyCount = ready.filter((item) => item.ready).length;
-  // The one line that speaks the ready count, whichever copies of the agent card are on
-  // screen. Spoken only when the count moves, and empty until it first does.
-  const [counted, setCounted] = useState(readyCount);
-  const [announcement, setAnnouncement] = useState("");
-  if (counted !== readyCount) {
-    setCounted(readyCount);
-    setAnnouncement(`${readyCount} of ${ready.length} ready`);
-  }
+  // The agent card, and the ready count the bar quotes beside it. A draft swapped whole
+  // (restored, started over, undone) changes its rows without their tint.
+  const { previewProps, ready, readyCount, cardDraft, announcement } = useAgentCard({
+    draft,
+    keys,
+    sources,
+    payPerUseAllowed,
+    feeUsd,
+    quietKey: restored,
+    currentStep: step,
+    onGo: goFromCard,
+    disabled: creating,
+  });
   const firstMissing = ready.find((item) => !item.ready) ?? null;
-
-  // The agent card reads a deferred copy of the draft, so typing in an 8,000-character
-  // prompt never waits on it. Derived, never stored: no effect and no second draft.
-  const cardDraft = useDeferredValue(draft);
-  // Deferred with it, so the card learns that the draft was swapped whole (restored,
-  // started over, undone) in the same render as its rows change.
-  const cardRestored = useDeferredValue(restored);
-  const card = useMemo(() => {
-    const cardErrors = validateDraft(cardDraft, keys, { payPerUseAllowed });
-    const cardFacts = costFacts(cardDraft, sources, { payPerUseAllowed, feeUsd });
-    return {
-      ready: readyItems(cardDraft, cardErrors, keys, { payPerUseAllowed }),
-      rows: previewRows(cardDraft, cardFacts, cardErrors, {
-        hunts: universeSummary(cardDraft.config.universe as AgentConfig["universe"], cardDraft.config.chains),
-        labels: LABELS,
-        payPerUseAllowed,
-      }),
-      costs: costLines(cardDraft, cardFacts),
-      runLine: runLine(cardDraft.config),
-      // No figure on a manual schedule, or while a funded agent waits for the checklist:
-      // the Runs line then stands as text.
-      runsPerDay:
-        cardFacts.intervalMinutes === 0 || cardFacts.heldForLive
-          ? null
-          : (cardFacts.thinking?.runsPerDay ?? cardFacts.runsPerDay),
-    };
-  }, [cardDraft, keys, sources, payPerUseAllowed, feeUsd]);
 
   // Funding cannot be validated from the draft alone — it depends on what the
   // user holds right now — so it gets its own gate, checked at submit time.
@@ -390,7 +246,7 @@ export function AgentBuilder({
         "The connection dropped while the transfer was being sent, so it may still arrive. Check the agent's balance in two minutes before funding again.",
       duration: 15_000,
     });
-    router.push(`/agents/${slug}/settings#wallets`);
+    router.push(agentSettingsHref(slug, "wallets"));
   };
 
   const create = async () => {
@@ -560,55 +416,46 @@ export function AgentBuilder({
       label: STEP_LABELS[id],
       name: STEP_NAMES[id],
       status,
-      statusLabel: STATUS_WORDS[status],
+      statusLabel: STATUS_WORDS.create[status],
       // Red is for after a failed Create. Before one, a missing thing is simply needed.
       tone: attempted && (status === "needed" || status === "fix") ? "error" : "neutral",
     };
   });
-  const { back, next } = neighbours(step);
+  const { back, next } = flow;
   const fix = (id: BuilderStepId) => stepStatus(id, errors, statusCtx) === "fix";
 
   const stepProps = { draft, update, updateConfig, errors: visibleErrors, hideHeading: true };
-  const previewProps = {
-    draft: cardDraft,
-    ready: card.ready,
-    rows: card.rows,
-    costs: card.costs,
-    runLine: card.runLine,
-    runsPerDay: card.runsPerDay,
-    onGo: goFromCard,
-    currentStep: step,
-    quietKey: cardRestored,
-    disabled: creating,
+  // What the seven config steps are drawn from. An error shows under its control only
+  // after a failed Create; the sentence under a step's title reads all of them.
+  const ctx: StepContext = {
+    mode: "create",
+    draft,
+    update,
+    updateConfig,
+    errors: visibleErrors,
+    allErrors: errors,
+    facts,
+    sources,
+    feeUsd,
+    keys,
+    onKeyAdded: (key) => setKeys((current) => [key, ...current]),
+    payPerUseAllowed,
+    fix,
   };
-  const panel = (id: BuilderStepId) => ({
-    id,
-    active: step === id,
-    direction: nav.direction,
-    animate: nav.animate,
-  });
 
   return (
     <>
-    {fundingRetry ? (
-      <FundingRetryDialog retry={fundingRetry} onRetry={retryFunding} onSkip={skipFunding} />
-    ) : null}
-    <div
-      className="mx-auto w-full max-w-[1120px] px-4 pt-3 pb-6 sm:px-6 sm:pt-6"
-      onPointerDownCapture={() => {
-        lastInput.current = "pointer";
-      }}
-      onKeyDownCapture={() => {
-        lastInput.current = "keyboard";
-      }}
-    >
-      <p aria-live="polite" className="sr-only">
-        {announcement}
-      </p>
-      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-8 xl:grid-cols-[minmax(0,1fr)_400px] xl:gap-12">
-        {/* The form. 672px is the width every control in it was built for. */}
-        <div ref={columnRef} className="mx-auto w-full max-w-2xl min-w-0 scroll-mt-20 lg:mx-0">
-          {/* The page's name is a label: the step's title below is the one large line. */}
+      {fundingRetry ? (
+        <FundingRetryDialog retry={fundingRetry} onRetry={retryFunding} onSkip={skipFunding} />
+      ) : null}
+      <StepShell
+        flow={flow}
+        steps={steps}
+        announcement={announcement}
+        disabled={creating}
+        panelMinHeight="min-h-[calc(100dvh-17rem)]"
+        // The page's name is a label: the step's title below is the one large line.
+        top={
           <div className="flex min-h-11 items-center justify-between gap-3 sm:min-h-7">
             <h1 className="flex items-center gap-2 text-[13px] leading-5 font-medium text-foreground">
               <Bot aria-hidden className="size-4 text-primary" />
@@ -653,157 +500,29 @@ export function AgentBuilder({
               </div>
             ) : null}
           </div>
-          {/* On a phone the introduction is read once, on the first step: after that the
-              space is the form's. */}
+        }
+        // On a phone the introduction is read once, on the first step: after that the
+        // space is the form's.
+        intro={
           <p className={cn("mt-1 text-[13px] leading-5 text-muted-foreground", step !== "name" && "max-sm:hidden")}>
             <span className="sm:hidden">A name, a strategy, a way to think. The rest is already set.</span>
             <span className="hidden sm:inline">
               Three things are yours to decide: a name, a strategy, a way to think. Everything else is already set.
             </span>
           </p>
-
-          <div className="mt-1 sm:mt-6">
-            <BuilderStepper
-              steps={steps}
-              current={step}
-              onGo={(id, via) => goTo({ step: id }, via)}
-              disabled={creating}
-              animate={nav.animate}
-            />
-          </div>
-
-          {/* A minimum height, so a short step never makes the page shorter than the
-              viewport and the bar below does not jump between steps. */}
-          <div className="mt-2 min-h-[calc(100dvh-17rem)]">
+        }
+        panels={
+          <ConfigPanels ctx={ctx} flow={flow}>
             <StepPanel
-              {...panel("name")}
-              title="Name it"
-              lead="The name sits above every trade it posts. The rest of this step is optional."
-            >
-              <IdentityStep {...stepProps} />
-            </StepPanel>
-
-            <StepPanel
-              {...panel("strategy")}
-              title="What should it do?"
-              lead={
-                errors.strategyPrompt ? (
-                  "Pick a starting point or write your own."
-                ) : (
-                  <>
-                    Pick a starting point or write your own. One is already written
-                    <span className="hidden sm:inline">, so you can press Next</span>.
-                  </>
-                )
-              }
-            >
-              <StrategyStep {...stepProps} feeUsd={feeUsd} />
-            </StepPanel>
-
-            <StepPanel
-              {...panel("hunts")}
-              title="Where it hunts"
-              lead={
-                fix("hunts") ? (
-                  "Which tokens it is allowed to look at. It needs a look before you can create."
-                ) : (
-                  <>
-                    Which tokens it is allowed to look at.
-                    <span className="max-sm:hidden"> Already set: change it only if you want to.</span>
-                  </>
-                )
-              }
-              now={universeSummary(draft.config.universe as AgentConfig["universe"], draft.config.chains)}
-            >
-              <UniverseStep {...stepProps} />
-            </StepPanel>
-
-            <StepPanel
-              {...panel("data")}
-              title="Data it buys"
-              lead={
-                fix("data") ? (
-                  "What it pays to read before it decides. It needs a look before you can create."
-                ) : (
-                  <>
-                    What it pays to read before it decides.
-                    <span className="max-sm:hidden"> Already set: change it only if you want to.</span>
-                  </>
-                )
-              }
-              now={dataSummary(facts)}
-            >
-              <DataStep {...stepProps} sources={sources} />
-            </StepPanel>
-
-            <StepPanel
-              {...panel("limits")}
-              title="Risk limits"
-              lead={
-                fix("limits") ? (
-                  "Enforced in code before any trade. One of them needs a look before you can create."
-                ) : (
-                  <>
-                    Enforced in code before any trade.
-                    <span className="max-sm:hidden"> Already set: change them only if you want to.</span>
-                  </>
-                )
-              }
-              // The fee closes the line: this is the one sentence about trades that is on
-              // screen before any control, and nothing else in the builder names the fee.
-              now={riskSummary(draft.config.risk, feeUsd)}
-            >
-              <RiskStep {...stepProps} feeUsd={feeUsd} />
-            </StepPanel>
-
-            <StepPanel
-              {...panel("schedule")}
-              title="Schedule & mode"
-              lead={
-                fix("schedule") ? (
-                  "How often it runs and whether it asks you first. It needs a look before you can create."
-                ) : (
-                  <>
-                    How often it runs and whether it asks you first.
-                    <span className="max-sm:hidden"> Already set: change it only if you want to.</span>
-                  </>
-                )
-              }
-              now={scheduleSummary(draft, facts, LABELS)}
-            >
-              <ScheduleStep {...stepProps} payPerUseAllowed={payPerUseAllowed} />
-            </StepPanel>
-
-            <StepPanel
-              {...panel("brain")}
-              title="How it thinks"
-              lead={
-                payPerUse
-                  ? "Paying per run in USDC from the agent's own wallet. No key needed."
-                  : errors.llmKeyId
-                    ? payPerUseAllowed
-                      ? "The one thing we cannot decide for you. Add a key from any provider, or choose pay per use below."
-                      : "The one thing we cannot decide for you. Add a key from any provider, or press Next and come back to it later."
-                    : errors.llm
-                      ? "Check the model settings below."
-                      : `Using your ${providerLabel} key. Nothing to do here unless you want a different model.`
-              }
-            >
-              <ThinkStep
-                {...stepProps}
-                llmKeys={keys}
-                onKeyAdded={(key) => setKeys((current) => [key, ...current])}
-                payPerUseAllowed={payPerUseAllowed}
-              />
-            </StepPanel>
-
-            <StepPanel
-              {...panel("create")}
+              id="create"
+              active={step === "create"}
+              direction={flow.direction}
+              animate={flow.animate}
               title="Review and create"
               lead="Check the card, choose how to fund it, then create."
             >
               <div className="space-y-6">
-                <ReviewReady items={card.ready} onGo={goFromCard} disabled={creating} />
+                <ReviewReady items={previewProps.ready} onGo={goFromCard} disabled={creating} />
 
                 {/* On the last step because it decides what the user signs when they press
                     Create, and that button is on this screen. */}
@@ -824,77 +543,69 @@ export function AgentBuilder({
                 </div>
               </div>
             </StepPanel>
-          </div>
-        </div>
-
-        {/* The agent card, in its own column from lg, so nothing the form does moves it.
-            The height stops it sliding under the bar below. The padding leaves room for the
-            card's shadow, and the mask fades the cut instead of slicing a row in half. */}
-        <div className="hidden lg:block">
-          <div className="scrollbar-thin lg:sticky lg:top-20 lg:-mx-4 lg:max-h-[calc(100dvh-11rem)] lg:overflow-y-auto lg:scroll-pb-8 lg:px-4 lg:pb-8 lg:[mask-image:linear-gradient(to_bottom,black_calc(100%-24px),transparent)]">
-            <AgentPreview {...previewProps} reveal />
-          </div>
-        </div>
-      </div>
-
-      <CommitBar
-        step={step}
-        nextLabel={next ? STEP_NAMES[next] : null}
-        onBack={back ? (via) => goTo({ step: back }, via) : null}
-        onNext={(via) => {
-          // Next never refuses: what is still missing is said by the stepper and the agent card.
-          if (next) goTo({ step: next }, via);
-        }}
-        // Offered once the strategy and the way to think are ready: with a key on the
-        // account that is on arrival, and the only thing that can still be missing is a name.
-        onSkipToEnd={
-          step !== "create" && ready.every((item) => item.ready || item.id === "name")
-            ? (via) => goTo({ step: "create" }, via)
-            : null
+          </ConfigPanels>
         }
-        stillNeeded={stillNeeded(ready, errors)}
-        onStillNeeded={() => {
-          if (firstMissing) goTo(firstMissing.place, lastInput.current);
-        }}
-        submit={submit}
-        creating={creating}
-        sentence={<CommitSentence draft={draft} facts={facts} />}
-        signing={<CommitSentence draft={draft} facts={facts} part="signing" />}
-        // The same words the strip carries on the other steps, where a signature is coming.
-        signingShort={draft.funding.mode === "fund" ? commitShortLine(draft, facts) : null}
-        // The agent beside Create, from lg. Hidden from a screen reader there: the card and
-        // the tiles above already say all of it.
-        identity={
-          <span className="flex items-center gap-2.5">
-            <AgentAvatar seed={cardDraft.avatarSeed} name={cardDraft.name.trim() || "Unnamed agent"} size="sm" />
-            <span className="min-w-0">
-              <span
-                className={cn(
-                  "block max-w-40 truncate text-sm leading-5 font-medium",
-                  cardDraft.name.trim() ? null : "text-muted-foreground",
-                )}
+        card={<AgentPreview {...previewProps} reveal />}
+        bar={
+          <CommitBar
+            step={step}
+            nextLabel={next ? STEP_NAMES[next] : null}
+            onBack={back ? (via) => goTo({ step: back }, via) : null}
+            onNext={(via) => {
+              // Next never refuses: what is still missing is said by the stepper and the agent card.
+              if (next) goTo({ step: next }, via);
+            }}
+            // Offered once the strategy and the way to think are ready: with a key on the
+            // account that is on arrival, and the only thing that can still be missing is a name.
+            onSkipToEnd={
+              step !== "create" && ready.every((item) => item.ready || item.id === "name")
+                ? (via) => goTo({ step: "create" }, via)
+                : null
+            }
+            stillNeeded={stillNeeded(ready, errors)}
+            onStillNeeded={() => {
+              if (firstMissing) goFromCard(firstMissing.place);
+            }}
+            submit={submit}
+            creating={creating}
+            sentence={<CommitSentence draft={draft} facts={facts} />}
+            signing={<CommitSentence draft={draft} facts={facts} part="signing" />}
+            // The same words the strip carries on the other steps, where a signature is coming.
+            signingShort={draft.funding.mode === "fund" ? commitShortLine(draft, facts) : null}
+            // The agent beside Create, from lg. Hidden from a screen reader there: the card and
+            // the tiles above already say all of it.
+            identity={
+              <span className="flex items-center gap-2.5">
+                <AgentAvatar seed={cardDraft.avatarSeed} name={cardDraft.name.trim() || "Unnamed agent"} size="sm" />
+                <span className="min-w-0">
+                  <span
+                    className={cn(
+                      "block max-w-40 truncate text-sm leading-5 font-medium",
+                      cardDraft.name.trim() ? null : "text-muted-foreground",
+                    )}
+                  >
+                    {cardDraft.name.trim() || "Unnamed agent"}
+                  </span>
+                  <span className={cn(TYPE.caption, "flex items-center gap-2 text-muted-foreground")}>
+                    {readyCount} of {ready.length} ready <ReadyPips ready={ready.map((item) => item.ready)} />
+                  </span>
+                </span>
+              </span>
+            }
+            peek={
+              <PreviewPeek
+                draft={cardDraft}
+                readyCount={readyCount}
+                shortLine={commitShortLine(draft, facts)}
+                compact={step === "create"}
+                disabled={creating}
               >
-                {cardDraft.name.trim() || "Unnamed agent"}
-              </span>
-              <span className={cn(TYPE.caption, "flex items-center gap-2 text-muted-foreground")}>
-                {readyCount} of {ready.length} ready <ReadyPips ready={ready.map((item) => item.ready)} />
-              </span>
-            </span>
-          </span>
-        }
-        peek={
-          <PreviewPeek
-            draft={cardDraft}
-            readyCount={readyCount}
-            shortLine={commitShortLine(draft, facts)}
-            compact={step === "create"}
-            disabled={creating}
-          >
-            <AgentPreview {...previewProps} />
-          </PreviewPeek>
+                <AgentPreview {...previewProps} />
+              </PreviewPeek>
+            }
+          />
         }
       />
-    </div>
     </>
   );
 }

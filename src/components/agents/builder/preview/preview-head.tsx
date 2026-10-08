@@ -4,12 +4,23 @@ import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { chainLabelFor } from "@/lib/wallets/funding";
 import { cn } from "@/lib/utils";
 import type { Chain } from "@/server/types";
-import { REQUIRED_PLACE, type Place } from "../contract";
+import { REQUIRED_PLACE, type PreviewRow, type ReadyItem, type StepPlace } from "../contract";
 import { HAIR, TYPE } from "../look";
 import type { BuilderDraft } from "../types";
 
 /** The small mono label over each block of the agent card. */
 export const KICKER = TYPE.kicker;
+
+/**
+ * Where a click on the card can lead. The card is shown over a draft and over a saved
+ * agent, whose pages do not end on the same step, so a place here is on either page and
+ * the page that is showing the card ignores one that is not its own.
+ */
+export type CardPlace = StepPlace<string>;
+/** One row of "Yours to decide", as the card takes it. */
+export type CardReadyItem = Omit<ReadyItem, "place"> & { place: CardPlace };
+/** One row of "Already set", as the card takes it. */
+export type CardRow = Omit<PreviewRow, "place"> & { place: CardPlace };
 
 /**
  * Block A of the agent card: the avatar, the name, the tagline, who can see it, and how
@@ -24,7 +35,7 @@ export function PreviewHead({
   style,
 }: {
   draft: BuilderDraft;
-  onGo: (place: Place) => void;
+  onGo: (place: CardPlace) => void;
   disabled?: boolean;
   className?: string;
   style?: React.CSSProperties;

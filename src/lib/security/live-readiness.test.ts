@@ -308,30 +308,31 @@ describe("simulateFirstTrade", () => {
  * never thinks.
  */
 describe("checkBudget", () => {
-  const settings = "/agents/a/settings";
+  const slug = "a";
   const key = config({ maxTradeUsd: 2 }, ["solana"]);
   const paying: AgentConfig = { ...key, llm: { ...key.llm, source: "usdc", usdc: { model: "google/gemini-2.5-flash", maxUsdPerRun: 0.3, maxUsdPerDay: 3 } } };
 
   it("only warns a key agent about a missing wallet budget, as before", () => {
-    expect(checkBudget(key, null, 2, settings).state).toBe("warn");
-    expect(checkBudget(key, { perTxUsd: 2, policyIds: {} }, 2, settings).state).toBe("pass");
-    expect(checkBudget(key, { perTxUsd: 50, policyIds: { solana: "pol_1" } }, 2, settings).state).toBe("warn");
+    expect(checkBudget(key, null, 2, slug).state).toBe("warn");
+    expect(checkBudget(key, { perTxUsd: 2, policyIds: {} }, 2, slug).state).toBe("pass");
+    expect(checkBudget(key, { perTxUsd: 50, policyIds: { solana: "pol_1" } }, 2, slug).state).toBe("warn");
   });
 
   it("fails an agent that pays per use until its Solana wallet has a policy", () => {
-    const none = checkBudget(paying, null, 2, settings);
+    const none = checkBudget(paying, null, 2, slug);
     expect(none.state).toBe("fail");
     expect(none.detail).toMatch(/pays for its own thinking/);
-    expect(none.fix?.href).toBe(`${settings}#budget`);
+    expect(none.fix?.href).toBe("/agents/a/settings?step=manage#budget");
     // A policy on Base is not one on the wallet that pays.
-    expect(checkBudget(paying, { perTxUsd: 2, policyIds: { base: "pol_b" } }, 2, settings).state).toBe("fail");
-    expect(checkBudget(paying, { perTxUsd: 2, policyIds: { solana: "pol_s" } }, 2, settings).state).toBe("pass");
+    expect(checkBudget(paying, { perTxUsd: 2, policyIds: { base: "pol_b" } }, 2, slug).state).toBe("fail");
+    expect(checkBudget(paying, { perTxUsd: 2, policyIds: { solana: "pol_s" } }, 2, slug).state).toBe("pass");
   });
 
   it("still names the per-trade cap first when that is what is wrong", () => {
-    const over = checkBudget({ ...paying, risk: { ...paying.risk, maxTradeUsd: 9 } }, null, 2, settings);
+    const over = checkBudget({ ...paying, risk: { ...paying.risk, maxTradeUsd: 9 } }, null, 2, slug);
     expect(over.state).toBe("fail");
     expect(over.detail).toMatch(/above the \$2\.00 you entered/);
+    expect(over.fix?.href).toBe("/agents/a/settings?step=limits#risk");
   });
 });
 
@@ -370,7 +371,7 @@ describe("dataChainsFor", () => {
 
 describe("checkDataSources", () => {
   const withSources = (dataSources: string[]): AgentConfig => ({ ...config(), dataSources });
-  const check = (dataSources: string[]) => checkDataSources(withSources(dataSources), "/agents/a/settings", false);
+  const check = (dataSources: string[]) => checkDataSources(withSources(dataSources), "a", false);
 
   beforeEach(() => {
     vi.stubEnv("X402_MOCK", "");
@@ -397,6 +398,7 @@ describe("checkDataSources", () => {
     const step = check(["x-search", "made-up-source"]);
     expect(step.state).toBe("fail");
     expect(step.detail).toContain("made-up-source");
+    expect(step.fix?.href).toBe("/agents/a/settings?step=data#data");
   });
 });
 

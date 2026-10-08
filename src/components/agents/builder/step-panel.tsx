@@ -1,5 +1,5 @@
-import type { BuilderStepId } from "./contract";
 import { Facts, SILK_V, TYPE } from "./look";
+import type { PartId } from "./parts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -26,7 +26,7 @@ export function StepPanel({
   now,
   children,
 }: {
-  id: BuilderStepId;
+  id: PartId;
   active: boolean;
   /** 1 when the user moved forward to get here, -1 when they moved back. */
   direction: 1 | -1;

@@ -7,6 +7,7 @@ import { loginMethodEnabled } from "@/components/auth/login-methods";
 import { PRIVY_APP_ID } from "@/components/providers/privy-provider";
 import { ME_WALLETS_QUERY_KEY } from "@/components/wallets/use-cash";
 import { clearAllDrafts } from "@/components/agents/builder/use-draft";
+import { clearEditStashes } from "@/components/agents/settings/use-edit-stash";
 import type { Session } from "@/server/types";
 import { readSession } from "./session-fetch";
 
@@ -45,13 +46,16 @@ export const SESSION_QUERY_KEY = ["session"] as const;
  * Forget everything the previous account left in this tab. The query cache holds owner-only
  * data — run transcripts, unredacted trade errors, balances, proposals — and a shared device
  * must not replay it to whoever signs in (or just looks) next. The builder draft holds a
- * strategy prompt. `clear()` rather than invalidating keys one by one: a key added later is
- * covered without anyone remembering to list it here.
+ * strategy prompt, and so do the unsaved edits an agent's settings page holds in memory
+ * for an owner who leaves it and comes back.
+ * `clear()` rather than invalidating keys one by one: a key added later is covered without
+ * anyone remembering to list it here.
  */
 function purgeSignedOutState(queryClient: QueryClient): void {
   queryClient.clear();
   queryClient.setQueryData(SESSION_QUERY_KEY, null);
   clearAllDrafts();
+  clearEditStashes();
 }
 
 function askForSession(): Promise<Response> {

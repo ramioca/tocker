@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { formatUsd } from "@/components/common/format";
+import { agentSettingsHref } from "@/components/agents/settings/settings-href";
 import type { AgentCash } from "@/lib/wallets/funding";
 
 /** Agents listed by name before the rest collapse into "and N more". */
@@ -13,7 +14,7 @@ const TEXT_LINK =
 
 /** Where an agent's money is taken out: its Withdraw card. */
 export function agentWithdrawHref(slug: string): string {
-  return `/agents/${slug}/settings#withdraw`;
+  return agentSettingsHref(slug, "withdraw");
 }
 
 /**
@@ -36,7 +37,7 @@ export function WithdrawEmpty({
   onDeposit?: () => void;
   /**
    * Closes the dialog. The chip closes it on a route change, but a link to the page the
-   * user is already on only changes the hash.
+   * user is already on only changes the step and the hash.
    */
   onNavigate: () => void;
 }) {

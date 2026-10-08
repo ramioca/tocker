@@ -20,6 +20,7 @@ import { payPerUseModelLabel } from "./thinking";
 import { useRunStatus } from "@/components/providers/run-status";
 import { followUser } from "@/components/feed/feed-actions";
 import { FundAgentDrawer } from "./settings/fund-agent-drawer";
+import { agentSettingsHref } from "./settings/settings-href";
 import { useWalletBalances } from "./settings/wallets-card";
 import { ManualTradeSheet } from "./manual-trade";
 import { triggerRunAction } from "./agent-actions";
@@ -185,7 +186,7 @@ export function AgentHeader({
               {/* Visible, not a tooltip: a disabled button explains nothing on touch. */}
               {runBlocker ? (
                 <Link
-                  href={runBlocker.action?.href ?? `/agents/${agent.slug}/settings#brain`}
+                  href={runBlocker.action?.href ?? agentSettingsHref(agent.slug, "brain")}
                   className="rounded text-xs font-medium text-foreground/85 underline decoration-muted-foreground/50 underline-offset-2 transition-colors duration-150 hover:decoration-foreground focus-ring"
                 >
                   Attach a key to run
@@ -198,7 +199,7 @@ export function AgentHeader({
               <OwnerMoneyActions agent={agent} isAdmin={isAdmin} />
 
               <Link
-                href={`/agents/${agent.slug}/settings`}
+                href={agentSettingsHref(agent.slug)}
                 className={cn(HEADER_ACTION, "border-border hover:bg-muted")}
               >
                 <Settings2 aria-hidden className="size-3.5" />

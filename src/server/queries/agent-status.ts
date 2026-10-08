@@ -40,6 +40,7 @@ import { getPlatformWallet, platformUsdcBalances } from "@/lib/platform/wallets"
 import { proposalExpiresAt } from "@/lib/trading/proposals";
 import { MIN_PLATFORM_SOL } from "@/lib/wallets/gas";
 import { getSolBalance } from "@/lib/wallets/solana-rpc";
+import { agentSettingsHref, parseAnchor, type SettingsAnchor } from "@/components/agents/settings/settings-href";
 import { payPerUseModelLabel, stopFix, stopWords } from "@/components/agents/thinking";
 import type { Db } from "@/db";
 
@@ -303,7 +304,7 @@ export interface StatusInputs {
  */
 export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
   const items: AgentStatusItem[] = [];
-  const settings = (hash = "") => `/agents/${input.slug}/settings${hash}`;
+  const settings = (anchor: SettingsAnchor) => agentSettingsHref(input.slug, anchor);
   const push = (item: AgentStatusItem) => items.push(item);
 
   // ---- block: proposals waiting on a human, soonest expiry first.
@@ -365,7 +366,7 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
       severity: "block",
       title: "No LLM key attached",
       detail: "The agent cannot think without one, so every tick fails before it starts.",
-      action: { label: "Attach a key", href: settings("#brain") },
+      action: { label: "Attach a key", href: settings("brain") },
     });
   }
 
@@ -376,7 +377,7 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
       severity: "block",
       title: `Daily buy limit reached (${input.portfolio.tradesToday} of ${input.maxDailyTrades})`,
       detail: `Resets at 00:00 UTC, in ${humanDuration(msUntilUtcMidnight(input.now))}. Sells are never blocked by it.`,
-      action: { label: "Raise the limit", href: settings("#risk") },
+      action: { label: "Raise the limit", href: settings("risk") },
     });
   }
 
@@ -387,7 +388,7 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
       severity: "warn",
       title: "Paused — runs are off",
       detail: "The scheduler skips a paused agent, so nothing is discovered, scored or exited.",
-      action: { label: "Resume", href: settings() },
+      action: { label: "Resume", href: settings("status") },
     });
   }
 
@@ -401,7 +402,7 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
         severity: "warn",
         title: `Cash ${usd(input.portfolio.cashUsd)} is under the ${usd(clip)} clip`,
         detail: "Every buy is refused for want of cash until the wallet is topped up. Exits still work.",
-        action: { label: "Add funds", href: settings("#wallets") },
+        action: { label: "Add funds", href: settings("wallets") },
       });
     }
   }
@@ -436,7 +437,7 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
       severity: "info",
       title: "Still a draft — it has never been scheduled",
       detail: "Activate it and it starts ticking on its cadence.",
-      action: { label: "Activate", href: settings() },
+      action: { label: "Activate", href: settings("status") },
     });
   }
 
@@ -458,7 +459,7 @@ export function deriveStatus(input: StatusInputs): AgentStatusItem[] {
         detail: `${copy?.detail ?? `${capitalize(refused.label)}.`} ${orders} turned down in the last three ticks.`,
         action:
           copy?.hash !== undefined
-            ? { label: "Settings", href: settings(copy.hash) }
+            ? { label: "Settings", href: settingsAt(input.slug, copy.hash) }
             : { label: "Open the run", href: `/agents/${input.slug}/runs/${refused.runId}` },
       });
     } else {
@@ -518,7 +519,6 @@ export function holdItem(
   now: Date,
 ): AgentStatusItem {
   const words = stopWords(hold.reason, thinkingContext(thinking));
-  const settings = (hash: string) => `/agents/${slug}/settings${hash}`;
   const fix = words.reason ? stopFix(words.reason) : { label: "Open settings", hash: "#thinking" };
 
   const wait = hold.until ? hold.until.getTime() - now.getTime() : 0;
@@ -533,9 +533,17 @@ export function holdItem(
     severity: "block",
     title: words.title,
     detail: `${words.detail} ${again}${byHand}`,
-    action: { label: fix.label, href: "hash" in fix ? settings(fix.hash) : fix.path },
-    secondaryAction: { label: "Use my own key", href: settings("#brain") },
+    action: { label: fix.label, href: "hash" in fix ? settingsAt(slug, fix.hash) : fix.path },
+    secondaryAction: { label: "Use my own key", href: agentSettingsHref(slug, "brain") },
   };
+}
+
+/**
+ * The settings link for a section named by its hash, as `REFUSAL_COPY` and `stopFix` name
+ * theirs. A hash the settings page does not know opens the page on its first step.
+ */
+function settingsAt(slug: string, hash: string): string {
+  return agentSettingsHref(slug, parseAnchor(hash) ?? undefined);
 }
 
 /**
@@ -592,9 +600,9 @@ function runErrorAction(kind: RunErrorKind, slug: string, runId: string | null):
     case "anthropic_credits":
       return { label: "Top up Anthropic", href: "https://platform.claude.com/settings/billing" };
     case "anthropic_workspace":
-      return { label: "Fix the key", href: `/agents/${slug}/settings#brain` };
+      return { label: "Fix the key", href: agentSettingsHref(slug, "brain") };
     case "no_llm_key":
-      return { label: "Attach a key", href: `/agents/${slug}/settings#brain` };
+      return { label: "Attach a key", href: agentSettingsHref(slug, "brain") };
     case "unknown":
       return runId ? { label: "Open the run", href: `/agents/${slug}/runs/${runId}` } : undefined;
   }

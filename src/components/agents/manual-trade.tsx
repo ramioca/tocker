@@ -38,6 +38,7 @@ import { Address } from "@/components/common/address";
 import { formatPreviewFees, formatPriceUsd, formatTokenAmount, formatUsd } from "@/components/common/format";
 import { Field } from "@/components/agents/builder/field";
 import { SellPositionHost } from "@/components/agents/sell-position";
+import { agentSettingsHref } from "@/components/agents/settings/settings-href";
 import { ScoreBadge } from "@/components/tokens";
 import { placeManualTrade, previewTrade } from "@/server/actions/trading";
 import { TradeReceiptCard } from "@/components/trading";
@@ -704,7 +705,7 @@ function TradeSheet({
           {shownFailure !== null ? (
             <TradeFailureAlert
               text={shownFailure}
-              settingsHref={`/agents/${agent.slug}/settings#risk`}
+              settingsHref={agentSettingsHref(agent.slug, "risk")}
               widerSlippage={isSlippageFailure(shownFailure) && widerLeft ? "above" : null}
             />
           ) : null}

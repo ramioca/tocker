@@ -26,7 +26,16 @@ import { cn } from "@/lib/utils";
  * server refuses (`deleteAgent`), and this card says what is left and where to take it
  * out, instead of letting someone type the name and hold for two seconds to be told no.
  */
-export function DangerZone({ agent, balances = [] }: { agent: AgentDetail; balances?: WalletBalance[] }) {
+export function DangerZone({
+  agent,
+  balances = [],
+  onWithdraw,
+}: {
+  agent: AgentDetail;
+  balances?: WalletBalance[];
+  /** Show the Withdraw form. It is on this page, so the way there is a callback, never a link that would reload it. */
+  onWithdraw: () => void;
+}) {
   const router = useRouter();
   const [typed, setTyped] = useState("");
   const confirmed = typed.trim().toLowerCase() === agent.name.trim().toLowerCase();
@@ -102,12 +111,14 @@ export function DangerZone({ agent, balances = [] }: { agent: AgentDetail; balan
               </Link>
             ) : null}
             {hasWithdrawable ? (
-              <a
-                href="#withdraw"
-                className="rounded underline underline-offset-2 transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              <button
+                type="button"
+                onClick={onWithdraw}
+                // Drawn like the link beside it; on touch an invisible band makes it 44px tall.
+                className="relative rounded underline underline-offset-2 transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:after:absolute pointer-coarse:after:-inset-x-1 pointer-coarse:after:-inset-y-3.5"
               >
                 Withdraw
-              </a>
+              </button>
             ) : null}
           </div>
         </div>

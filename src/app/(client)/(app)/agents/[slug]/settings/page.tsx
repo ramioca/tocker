@@ -1,14 +1,11 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { canonicalSlug } from "@/app/(client)/(app)/agents/[slug]/canonical-slug";
-import { ArrowLeft } from "lucide-react";
-import { AgentSettingsForm } from "@/components/agents/settings/agent-settings-form";
-import { DangerZone } from "@/components/agents/settings/danger-zone";
-import { GoLiveCard } from "@/components/agents/settings/go-live-card";
-import { WalletsCard } from "@/components/agents/settings/wallets-card";
-import { WithdrawForm } from "@/components/agents/settings/withdraw-form";
-import { AgentAvatar } from "@/components/common/agent-avatar";
+import { SETTINGS_STEPS } from "@/components/agents/builder/contract";
+import { AgentSettings } from "@/components/agents/settings/agent-settings";
+import { agentSettingsHref } from "@/components/agents/settings/settings-href";
 import { EmptyState } from "@/components/common/empty-state";
 import {
   accountPaused,
@@ -19,15 +16,16 @@ import {
   viewerSession,
   walletBalances,
 } from "@/components/common/data-access";
-import { BudgetCard } from "@/components/agents/settings/budget-card";
-import { HashScroll } from "@/components/agents/settings/hash-scroll";
-import { MoneyStrip } from "@/components/agents/settings/money-strip";
 import { isAdminEmail } from "@/lib/admin";
+import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
 import { payPerUseAllowedFor } from "@/server/queries/agents";
 
-type Params = { params: Promise<{ slug: string }> };
+type Props = {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
 
-// The Withdraw card and the delete in the danger zone are server actions, and they take
+// The Withdraw form and the delete on the Manage step are server actions, and they take
 // their time limit from this page (Next's route-segment-config/maxDuration). A Base
 // withdrawal waits on its transfer and is followed by the sweep of the Tocker fees the
 // agent owes, a second transfer; deleting sweeps them too. Neither may be cut off between
@@ -36,10 +34,20 @@ export const maxDuration = 300;
 
 export const metadata: Metadata = { title: "Agent settings" };
 
-export default async function AgentSettingsPage({ params }: Params) {
-  const slug = await canonicalSlug(params, "/settings");
+export default async function AgentSettingsPage({ params, searchParams }: Props) {
+  // The query is handed on in both places that rebuild the address, so a link to one step
+  // still lands on it after a mixed-case slug is corrected or a sign-in.
+  const slug = await canonicalSlug(params, "/settings", searchParams);
   const session = await viewerSession();
-  if (!session) redirect(`/login?next=${encodeURIComponent(`/agents/${slug}/settings`)}`);
+  if (!session) {
+    // Only a step this page has is carried through the sign-in. The `#anchor` of a link
+    // is the browser's and never reaches the server.
+    const { step } = await searchParams;
+    const named = SETTINGS_STEPS.find((id) => id === step);
+    const path = agentSettingsHref(slug);
+    const back = named ? `${path}?${new URLSearchParams({ step: named }).toString()}` : path;
+    redirect(`/login?next=${encodeURIComponent(back)}`);
+  }
   const agent = await agentBySlug(slug, session?.userId ?? null);
   if (!agent) notFound();
 
@@ -75,76 +83,35 @@ export default async function AgentSettingsPage({ params }: Params) {
     dataSources(),
     llmKeys(session.userId),
     accountPaused(session.userId),
-    // The switch is the server's to read; the form only ever sees the answer.
+    // The switch is the server's to read; the page only ever sees the answer.
     payPerUseAllowedFor(session),
   ]);
-  const isAdmin = isAdminEmail(session.email);
-  const hasRealWallets = balances.some((wallet) => !wallet.walletId.startsWith("paper_"));
 
+  // The fee is read here, on the server, and handed down: the steps quote it beside the
+  // trade size, and a figure typed into a component would outlive a change to it.
+  //
+  // The page reads `?step=` with `useSearchParams`, which wants a Suspense boundary above
+  // it. This route is rendered per request (it reads the session), so the hook has the
+  // address on the server, the step a link names is the first thing painted, and the
+  // boundary never shows its fallback.
+  //
+  // Keyed by the agent: the edits in progress belong to one agent, and must never be
+  // carried onto another's page.
   return (
-    <div className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6">
-      <Link
-        href={`/agents/${agent.slug}`}
-        className="inline-flex items-center gap-1.5 rounded text-xs text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <ArrowLeft aria-hidden className="size-3.5" />
-        {agent.name}
-      </Link>
-
-      <header className="mt-3 flex items-center gap-3">
-        <AgentAvatar seed={agent.avatarSeed} name={agent.name} size="lg" />
-        <div className="min-w-0">
-          <h1 className="truncate text-lg font-semibold tracking-tight">{agent.name}</h1>
-          <p className="text-xs text-muted-foreground">
-            Settings · {agent.llmKeyLabel ?? "no key attached"}
-          </p>
-        </div>
-      </header>
-
-      {/*
-        Money first, then the strategy editor, then the rest of the money in full.
-
-        The three things an operator opens this page to do — fund it, put it live, take
-        it out — used to sit below eight cards of strategy editing. The strip at the top
-        is the shortcut; the cards below are unchanged and still hold the detail, so
-        there is one Fund sheet and one Withdraw form in the product, not two.
-
-        Every card carries an `id` and `scroll-mt-20` so readiness, the live checklist
-        and the strip can link straight at one (#wallets #risk #budget #mode #withdraw)
-        and land clear of the sticky top bar.
-      */}
-      <div className="mt-6 space-y-6">
-        <HashScroll />
-        <MoneyStrip agent={agent} initialBalances={balances} isAdmin={isAdmin} />
-
-        <AgentSettingsForm
-          agent={agent}
-          config={agent.config}
-          sources={sources}
-          llmKeys={keys}
-          accountPaused={paused}
-          isAdmin={isAdmin}
-          payPerUseAllowed={payPerUseAllowed}
-        />
-
-        <div id="wallets" className="scroll-mt-20">
-          <WalletsCard agentId={agent.id} agentName={agent.name} initialBalances={balances} isAdmin={isAdmin} />
-        </div>
-        <div id="budget" className="scroll-mt-20">
-          <BudgetCard
-            agentId={agent.id}
-            initialPerTxUsd={walletBudget?.perTxUsd ?? null}
-            hasRealWallets={hasRealWallets}
-          />
-        </div>
-        <div id="mode" className="scroll-mt-20">
-          <GoLiveCard agent={agent} isAdmin={isAdmin} />
-        </div>
-        <div id="withdraw" className="scroll-mt-20">
-          <WithdrawForm agent={agent} balances={balances} perTxUsd={walletBudget?.perTxUsd ?? null} />
-        </div>
-        <DangerZone agent={agent} balances={balances} />
-      </div>
-    </div>
+    <Suspense fallback={null}>
+      <AgentSettings
+        key={agent.id}
+        agent={agent}
+        config={agent.config}
+        sources={sources}
+        llmKeys={keys}
+        balances={balances}
+        walletBudget={walletBudget}
+        accountPaused={paused}
+        isAdmin={isAdminEmail(session.email)}
+        payPerUseAllowed={payPerUseAllowed}
+        feeUsd={feeEnabled() ? platformFeeUsd() : 0}
+      />
+    </Suspense>
   );
 }

@@ -5,8 +5,13 @@
  *
  * Nothing here is saved. The draft, its storage and the payload sent on create are
  * `./types` and `./use-draft`, and this file does not touch them.
+ *
+ * An agent's settings page shows the same steps over a saved agent, so the words the
+ * two pages share are here too: the steps of that page, and what a step body or a
+ * summary is told when the agent already exists.
  */
-import type { LlmKeyRow } from "@/server/types";
+import type { AgentConfig } from "@/db/schema";
+import type { AgentStatus, LlmKeyRow } from "@/server/types";
 import type { UsdcEstimate } from "@/components/agents/thinking";
 
 /** The steps, in the order the stepper shows them. Also the values `?step=` accepts. */
@@ -21,6 +26,25 @@ export const BUILDER_STEPS = [
   "create",
 ] as const;
 export type BuilderStepId = (typeof BUILDER_STEPS)[number];
+
+/** The seven steps that edit the config. Creating an agent and editing one show the same seven. */
+export type SharedStepId = Exclude<BuilderStepId, "create">;
+
+/**
+ * The steps of an agent's settings page, in order: the same seven, then Manage where the
+ * builder has its last step. Also the values that page's `?step=` accepts.
+ */
+export const SETTINGS_STEPS = [
+  "name",
+  "strategy",
+  "hunts",
+  "data",
+  "limits",
+  "schedule",
+  "brain",
+  "manage",
+] as const;
+export type SettingsStepId = (typeof SETTINGS_STEPS)[number];
 
 /**
  * Old links only. The rules used to be cards that opened on one "rules" step, and an
@@ -44,13 +68,19 @@ export const LEGACY_RULES_STEP = "rules";
 export const LEGACY_RULES_TARGET: BuilderStepId = "hunts";
 
 /**
- * Somewhere the page can take the user: a step, and the DOM ids to try for focus, first
- * one that exists wins. With none, or none on the page, focus goes to the step's heading.
+ * Somewhere a page of steps can take the user: a step, and the DOM ids to try for focus,
+ * first one that exists wins. With none, or none on the page, focus goes to the step's
+ * heading. `sub` names a section inside the step. Only the settings page's Manage step
+ * has sections, and the builder never reads it.
  */
-export interface Place {
-  step: BuilderStepId;
+export interface StepPlace<Id extends string> {
+  step: Id;
   focusIds?: string[];
+  sub?: string;
 }
+
+/** A place in the builder. */
+export type Place = StepPlace<BuilderStepId>;
 
 /** How a step change was made. Only a pointer move animates the panel. */
 export type Via = "pointer" | "keyboard" | "auto";
@@ -149,6 +179,29 @@ export interface SummaryLabels {
 
 /** As much of a saved key as the summaries read. */
 export type KeyRef = Pick<LlmKeyRow, "id" | "provider">;
+
+/** Present only when the body is editing a saved agent. Absent in the builder. */
+export interface EditContext {
+  agentId: string;
+  mode: "paper" | "live";
+  equityUsd: number | null;
+  isAdmin: boolean;
+  /** The config as last saved: the pay-per-use choice stays offered to an agent already on it. */
+  savedConfig: AgentConfig;
+  /** False when the account may no longer use pay per use; the panel says so and the agent can still leave it. */
+  payPerUseStillAllowed: boolean;
+}
+
+/**
+ * What the summaries are told about a saved agent, where a draft has only plans: the mode
+ * it is in, whether it is running, and the money in its wallets as the page already shows
+ * it. Absent in the builder.
+ */
+export interface SummaryEdit {
+  mode: "paper" | "live";
+  status: AgentStatus;
+  balanceText: string;
+}
 
 /** A step id from a `?step=` value. Exact string match only; anything else is null. */
 export function parseStep(value: unknown): BuilderStepId | null {

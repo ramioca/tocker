@@ -14,14 +14,18 @@ import {
   Shield,
   Tag,
   Wallet,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import type { BuilderStepId, PreviewRowId, RequiredId } from "./contract";
 
-/** A part of the agent: the eight steps, and the two card rows that live inside a step. */
-export type PartId = BuilderStepId | "exits" | "funding";
+/**
+ * A part of the agent: the builder's eight steps, the Manage step a saved agent's settings
+ * end on, and the two card rows that live inside a step.
+ */
+export type PartId = BuilderStepId | "manage" | "exits" | "funding";
 
-/** The one icon each part has, everywhere it is drawn. Never import these ten from lucide anywhere else in the builder. */
+/** The one icon each part has, everywhere it is drawn. Never import these eleven from lucide anywhere else in the builder. */
 export const PART_ICON: Record<PartId, LucideIcon> = {
   name: Tag,
   strategy: ScrollText,
@@ -32,6 +36,7 @@ export const PART_ICON: Record<PartId, LucideIcon> = {
   schedule: CalendarClock,
   brain: Brain,
   create: Rocket,
+  manage: Wrench,
   funding: Wallet,
 };
 
@@ -46,6 +51,7 @@ export const PART_ICON_NAME: Record<PartId, string> = {
   schedule: "CalendarClock",
   brain: "Brain",
   create: "Rocket",
+  manage: "Wrench",
   funding: "Wallet",
 };
 
@@ -68,7 +74,7 @@ export const REQUIRED_PART: Record<RequiredId, PartId> = {
 };
 
 /** The step a part is edited on. Only the two row-only parts differ from their own id. */
-export const PART_STEP: Record<PartId, BuilderStepId> = {
+export const PART_STEP: Record<PartId, BuilderStepId | "manage"> = {
   name: "name",
   strategy: "strategy",
   hunts: "hunts",
@@ -78,6 +84,7 @@ export const PART_STEP: Record<PartId, BuilderStepId> = {
   schedule: "schedule",
   brain: "brain",
   create: "create",
+  manage: "manage",
   funding: "create",
 };
 

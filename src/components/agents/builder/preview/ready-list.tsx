@@ -2,10 +2,9 @@
 
 import { useId } from "react";
 import { cn } from "@/lib/utils";
-import type { BuilderStepId, Place, ReadyItem } from "../contract";
 import { HAIR, Mark, PartIcon, ReadyPips, TYPE } from "../look";
 import { REQUIRED_PART } from "../parts";
-import { KICKER } from "./preview-head";
+import { KICKER, type CardPlace, type CardReadyItem } from "./preview-head";
 import { CurrentBar } from "./preview-rows";
 
 /**
@@ -24,10 +23,10 @@ export function ReadyList({
   className,
   style,
 }: {
-  items: ReadyItem[];
-  onGo: (place: Place) => void;
+  items: CardReadyItem[];
+  onGo: (place: CardPlace) => void;
   /** The step that is open: the thing decided there is marked. */
-  currentStep?: BuilderStepId;
+  currentStep?: string;
   disabled?: boolean;
   className?: string;
   style?: React.CSSProperties;

@@ -225,7 +225,7 @@ describe("deriveStatus", () => {
     expect(item.title).toBe("Daily buy limit reached (10 of 10)");
     expect(item.detail).toContain("Resets at 00:00 UTC");
     expect(item.detail).toContain("6h 12m");
-    expect(item.action).toEqual({ label: "Raise the limit", href: "/agents/fresh-hunter/settings#risk" });
+    expect(item.action).toEqual({ label: "Raise the limit", href: "/agents/fresh-hunter/settings?step=limits#risk" });
   });
 
   it("counts only proposals that are still alive, and leads with the one on the clock", () => {
@@ -307,7 +307,20 @@ describe("deriveStatus", () => {
       }),
     );
     expect(items.map((i) => i.kind)).toEqual(["no_llm_key"]);
-    expect(items[0].action).toEqual({ label: "Attach a key", href: "/agents/fresh-hunter/settings#brain" });
+    expect(items[0].action).toEqual({ label: "Attach a key", href: "/agents/fresh-hunter/settings?step=brain#brain" });
+  });
+
+  it("sends a run that failed on its key to where the key is chosen", () => {
+    const failedOn = (error: string) =>
+      deriveStatus(inputs({ lastRun: { id: "run_5", status: "failed", error, summary: null } }))[0];
+
+    const workspace = failedOn("anthropic-workspace-id is required when authenticating with an identity-linked API key");
+    expect(workspace.action).toEqual({ label: "Fix the key", href: "/agents/fresh-hunter/settings?step=brain#brain" });
+
+    // A key is attached and the run still found none, so the failed-run row carries the fix.
+    const noKey = failedOn("The key attached to this agent no longer exists.");
+    expect(noKey.kind).toBe("run_failed");
+    expect(noKey.action).toEqual({ label: "Attach a key", href: "/agents/fresh-hunter/settings?step=brain#brain" });
   });
 
   it("says nothing about a run that succeeded, or one still going", () => {
@@ -323,11 +336,12 @@ describe("deriveStatus", () => {
     const paused = deriveStatus(inputs({ status: "paused" }))[0];
     expect(paused.severity).toBe("warn");
     expect(paused.title).toBe("Paused — runs are off");
-    expect(paused.action).toEqual({ label: "Resume", href: "/agents/fresh-hunter/settings" });
+    expect(paused.action).toEqual({ label: "Resume", href: "/agents/fresh-hunter/settings?step=name#status" });
 
     const draft = deriveStatus(inputs({ status: "draft" }))[0];
     expect(draft.severity).toBe("info");
     expect(draft.kind).toBe("draft");
+    expect(draft.action).toEqual({ label: "Activate", href: "/agents/fresh-hunter/settings?step=name#status" });
   });
 
   it("warns when a live book cannot cover its own clip", () => {
@@ -336,7 +350,7 @@ describe("deriveStatus", () => {
     )[0];
     expect(item.kind).toBe("low_cash");
     expect(item.title).toBe("Cash $0.70 is under the $2 clip");
-    expect(item.action).toEqual({ label: "Add funds", href: "/agents/fresh-hunter/settings#wallets" });
+    expect(item.action).toEqual({ label: "Add funds", href: "/agents/fresh-hunter/settings?step=manage#wallets" });
   });
 
   it("floors the clip at a dollar, so a sub-dollar maxTradeUsd still reads sensibly", () => {
@@ -429,7 +443,7 @@ describe("deriveStatus", () => {
       severity: "warn",
       title: "Its buys were refused",
       detail: "The token's chain is not enabled for this agent. 2 orders were turned down in the last three ticks.",
-      action: { label: "Settings", href: "/agents/fresh-hunter/settings#universe" },
+      action: { label: "Settings", href: "/agents/fresh-hunter/settings?step=hunts#universe" },
     });
   });
 
@@ -518,6 +532,14 @@ describe("deriveStatus", () => {
 describe("deriveStatus for an agent that pays for its own thinking", () => {
   const REASONS = Object.keys(INFERENCE_STOPS) as InferenceStopReason[];
   const CONTEXT = { runCapUsd: 0.15, dayCapUsd: 3, model: "Gemini 2.5 Flash" };
+  /** The settings step each fix opens on, written out so a fix with no step fails here. */
+  const STEP_OF_HASH: Record<string, string> = {
+    "#wallets": "manage",
+    "#budget": "manage",
+    "#thinking": "brain",
+    "#universe": "hunts",
+    "#risk": "limits",
+  };
 
   function thinking(hold: StatusThinking["hold"] = null): StatusThinking {
     return { ...CONTEXT, hold };
@@ -561,9 +583,9 @@ describe("deriveStatus for an agent that pays for its own thinking", () => {
       expect(item.detail).toContain("Tocker checks again");
       expect(item.action).toEqual({
         label: fix.label,
-        href: "hash" in fix ? `/agents/fresh-hunter/settings${fix.hash}` : fix.path,
+        href: "hash" in fix ? `/agents/fresh-hunter/settings?step=${STEP_OF_HASH[fix.hash]}${fix.hash}` : fix.path,
       });
-      expect(item.secondaryAction).toEqual({ label: "Use my own key", href: "/agents/fresh-hunter/settings#brain" });
+      expect(item.secondaryAction).toEqual({ label: "Use my own key", href: "/agents/fresh-hunter/settings?step=brain#brain" });
     }
   });
 
@@ -587,7 +609,7 @@ describe("deriveStatus for an agent that pays for its own thinking", () => {
     );
     expect(item.title).toBe("Daily thinking limit reached");
     expect(item.detail).toContain("$3.00");
-    expect(item.action).toEqual({ label: "Raise the limit", href: "/agents/fresh-hunter/settings#thinking" });
+    expect(item.action).toEqual({ label: "Raise the limit", href: "/agents/fresh-hunter/settings?step=brain#thinking" });
   });
 
   it("offers Run now only for a reason the owner can clear themselves", () => {
@@ -608,7 +630,7 @@ describe("deriveStatus for an agent that pays for its own thinking", () => {
     expect(item.kind).toBe("thinking_hold");
     expect(item.title).toBe("Pay-per-use thinking is on hold");
     expect(`${item.title} ${item.detail}`).not.toContain("a_reason_from_the_future");
-    expect(item.action).toEqual({ label: "Open settings", href: "/agents/fresh-hunter/settings#thinking" });
+    expect(item.action).toEqual({ label: "Open settings", href: "/agents/fresh-hunter/settings?step=brain#thinking" });
     expect(item.secondaryAction?.label).toBe("Use my own key");
   });
 
@@ -727,7 +749,7 @@ describe("deriveStatus for a key agent is unchanged by pay per use", () => {
       severity: "block",
       title: "No LLM key attached",
       detail: "The agent cannot think without one, so every tick fails before it starts.",
-      action: { label: "Attach a key", href: "/agents/fresh-hunter/settings#brain" },
+      action: { label: "Attach a key", href: "/agents/fresh-hunter/settings?step=brain#brain" },
     });
   });
 });
@@ -790,8 +812,8 @@ describe("getAgentStatus", () => {
     expect(hold?.title).toBe("Daily thinking limit reached");
     // The owner's own limit, read from the config.
     expect(hold?.detail).toContain("$3.00");
-    expect(hold?.action).toEqual({ label: "Raise the limit", href: `/agents/${slug}/settings#thinking` });
-    expect(hold?.secondaryAction).toEqual({ label: "Use my own key", href: `/agents/${slug}/settings#brain` });
+    expect(hold?.action).toEqual({ label: "Raise the limit", href: `/agents/${slug}/settings?step=brain#thinking` });
+    expect(hold?.secondaryAction).toEqual({ label: "Use my own key", href: `/agents/${slug}/settings?step=brain#brain` });
     expect(mine.map((i) => i.kind)).not.toContain("no_llm_key");
 
     expect(await getAgentStatus(agentId, "did:privy:someone-else")).toEqual([]);

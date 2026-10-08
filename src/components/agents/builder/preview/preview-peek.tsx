@@ -13,12 +13,19 @@ export interface PreviewPeekProps {
   draft: BuilderDraft;
   /** How many of the three required things are ready, for the screen-reader label. */
   readyCount: number;
-  /** The one-line cost text, from `commitShortLine`. */
+  /**
+   * What the spoken name says about the agent in place of "n of 3 ready", for a page with
+   * something truer to say: a saved agent's settings say how much is unsaved.
+   */
+  readyLabel?: string;
+  /** The one line under the name: the cost text from `commitShortLine`, or a saved agent's save state. */
   shortLine: string;
   /** The last step: the strip keeps the avatar and the name and drops the cost line, so the Create button keeps its width. */
   compact: boolean;
   /** While the agent is being created: the strip does not open. */
   disabled?: boolean;
+  /** Shown under the card in the sheet: what the page offers there beside the card. */
+  footer?: React.ReactNode;
   /** An `AgentPreview`, mounted only while the sheet is open. */
   children: React.ReactNode;
 }
@@ -31,12 +38,28 @@ export interface PreviewPeekProps {
  * The strip is hidden from `lg`, where the card has its own column. From `sm` the bar
  * has room for the whole cost sentence, so the strip drops its own one-line copy of it.
  */
-export function PreviewPeek({ draft, readyCount, shortLine, compact, disabled = false, children }: PreviewPeekProps) {
+export function PreviewPeek({
+  draft,
+  readyCount,
+  readyLabel,
+  shortLine,
+  compact,
+  disabled = false,
+  footer,
+  children,
+}: PreviewPeekProps) {
   const [open, setOpen] = useState(false);
   // A row or a Fix button in the sheet takes the user somewhere, and the builder puts the
   // focus there. Closing must then leave it alone, not hand it back to the strip.
   const wentSomewhere = useRef(false);
   const name = draft.name.trim() || "Unnamed agent";
+  // Every button in the sheet that goes to a place on the page says so (`data-go`), and
+  // the sheet would cover that place.
+  const closeOnGo = (event: React.MouseEvent) => {
+    if (!(event.target instanceof Element) || !event.target.closest("[data-go]")) return;
+    wentSomewhere.current = true;
+    setOpen(false);
+  };
 
   return (
     <>
@@ -44,7 +67,7 @@ export function PreviewPeek({ draft, readyCount, shortLine, compact, disabled = 
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={`Your agent: ${name}. ${readyCount} of 3 ready. Open the summary.`}
+        aria-label={`Your agent: ${name}. ${readyLabel ?? `${readyCount} of 3 ready`}. Open the summary.`}
         disabled={disabled}
         onClick={() => {
           wentSomewhere.current = false;
@@ -87,18 +110,18 @@ export function PreviewPeek({ draft, readyCount, shortLine, compact, disabled = 
             <SheetTitle className={TYPE.kicker}>Your agent</SheetTitle>
           </SheetHeader>
           {/* The sheet is already the surface and already says "Your agent", so the card
-              inside drops its own border, fill, shadow, lit edge and kicker. Every button in the card goes
-              to a place on the page (`data-go`), and the sheet would cover that place. */}
+              inside drops its own border, fill, shadow, lit edge and kicker. */}
           <div
-            onClick={(event) => {
-              if (!(event.target instanceof Element) || !event.target.closest("[data-go]")) return;
-              wentSomewhere.current = true;
-              setOpen(false);
-            }}
+            onClick={closeOnGo}
             className="[&_[data-card-edge]]:hidden [&_[data-preview-kicker]]:hidden [&>aside]:rounded-none [&>aside]:border-0 [&>aside]:bg-transparent [&>aside]:shadow-none"
           >
             {children}
           </div>
+          {footer ? (
+            <div onClick={closeOnGo} className={cn("border-t px-4 py-3", HAIR)}>
+              {footer}
+            </div>
+          ) : null}
           {/* The sheet's own close button is 28px; on a phone this one is the way out, so
               it is 44. After the card in the page, as that one was, so the sheet still
               opens with focus on the card. */}
