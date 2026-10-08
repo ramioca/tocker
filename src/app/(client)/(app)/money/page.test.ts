@@ -33,6 +33,10 @@ vi.mock("@/server/queries/money", async (importOriginal) => ({
 // A chart draws nothing these tests read, and needs a browser to measure itself.
 vi.mock("@/components/charts/equity-chart", () => ({ EquityChart: () => null }));
 
+// The page reads the viewer's zone for the chart from the `tz` cookie; outside a request
+// there is none, which is a viewer whose zone is not known yet (the chart prints UTC).
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) }));
+
 const { default: MoneyPage } = await import("./page");
 const { EMPTY_MONEY } = await import("@/server/queries/money");
 

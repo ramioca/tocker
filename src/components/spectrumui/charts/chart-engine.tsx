@@ -155,6 +155,97 @@ export const DATE_FULL = new Intl.DateTimeFormat('en-US', {
   timeZone: 'UTC',
 });
 
+/** A point this close to a neighbour is one of an hourly stretch, so its time is worth printing. */
+const INTRADAY_GAP_MS = 20 * 60 * 60 * 1000;
+/** A window this short or shorter labels its axis by the time of day, not the date. */
+const INTRADAY_SPAN_MS = 2 * DAY_MS;
+
+/** A chart's dates and times, in one zone: UTC unless the page knows the viewer's. */
+export type ChartClock = {
+  /** "Oct 8" */
+  day: (t: number) => string;
+  /** "Oct 8, 2026" */
+  date: (t: number) => string;
+  /** "14:57", on a 24-hour clock */
+  time: (t: number) => string;
+  /**
+   * The zone as an offset, "UTC" or "UTC+2" or "UTC−3:30". Worked out from the clock's
+   * own numbers rather than taken from the engine's zone names, which differ between
+   * Node and browsers: a server-rendered label has to come out the same in the browser.
+   */
+  zone: (t: number) => string;
+};
+
+const CLOCKS = new Map<string, ChartClock>();
+
+function makeClock(timeZone: string): ChartClock {
+  const day = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone });
+  const date = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone });
+  const time = new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone });
+  const wall = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    hourCycle: 'h23',
+    timeZone,
+  });
+  return {
+    day: (t) => day.format(t),
+    date: (t) => date.format(t),
+    time: (t) => time.format(t),
+    zone: (t) => {
+      const parts: Record<string, number> = {};
+      for (const part of wall.formatToParts(t)) if (part.type !== 'literal') parts[part.type] = Number(part.value);
+      const asUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute);
+      const minutes = Math.round((asUtc - Math.floor(t / 60_000) * 60_000) / 60_000);
+      if (!Number.isFinite(minutes) || minutes === 0) return 'UTC';
+      const abs = Math.abs(minutes);
+      const mm = abs % 60;
+      return `UTC${minutes > 0 ? '+' : '−'}${Math.floor(abs / 60)}${mm ? `:${String(mm).padStart(2, '0')}` : ''}`;
+    },
+  };
+}
+
+/** The clock for a zone; an unknown zone falls back to UTC. Built once per zone. */
+export function chartClock(timeZone = 'UTC'): ChartClock {
+  let clock = CLOCKS.get(timeZone);
+  if (!clock) {
+    try {
+      clock = makeClock(timeZone);
+    } catch {
+      clock = chartClock('UTC');
+    }
+    CLOCKS.set(timeZone, clock);
+  }
+  return clock;
+}
+
+/** For each point, whether it is one of an hourly stretch: a neighbour less than a day away. */
+export function intradayPoints(ts: readonly number[]): boolean[] {
+  return ts.map((t, i) => {
+    const before = i > 0 ? t - ts[i - 1] : Infinity;
+    const after = i < ts.length - 1 ? ts[i + 1] - t : Infinity;
+    return Math.min(before, after) < INTRADAY_GAP_MS;
+  });
+}
+
+/**
+ * The time axis's labels for the chosen ticks. A window of two days or less is labelled
+ * by the time of day, with the date on its first tick and wherever a new day starts
+ * ("Oct 8 09:12", "12:30", "Oct 9 00:10"); anything longer, by the date alone.
+ */
+export function timeTickLabels(ts: readonly number[], ticks: readonly number[], clock: ChartClock): string[] {
+  const span = ts.length > 1 ? ts[ts.length - 1] - ts[0] : Infinity;
+  if (span > INTRADAY_SPAN_MS) return ticks.map((i) => clock.day(ts[i]));
+  return ticks.map((i, k) => {
+    const day = clock.day(ts[i]);
+    const newDay = k === 0 || clock.day(ts[ticks[k - 1]]) !== day;
+    return newDay ? `${day} ${clock.time(ts[i])}` : clock.time(ts[i]);
+  });
+}
+
 /**
  * A value-axis label. `scale` is the largest tick on the same axis: once any tick reaches
  * $1,000 every label is compact ("$9.5K", "$10K", "$10.5K"), so one axis never mixes

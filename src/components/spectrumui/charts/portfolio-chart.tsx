@@ -6,8 +6,6 @@ import {
   type ChartStatus,
   ChartDataTable,
   ChartState,
-  DATE_FULL,
-  DATE_SHORT,
   DAY_MS,
   DOWN,
   EASE,
@@ -18,14 +16,17 @@ import {
   RollingNumber,
   SURFACE,
   UP,
+  chartClock,
   formatAxisPrice,
   formatMoney,
   formatSignedPct,
+  intradayPoints,
   marketVarsClassName,
   monotonePath,
   mulberry32,
   niceTicks,
   sampleRows,
+  timeTickLabels,
   useElementWidth,
   useHoverIndexKeys,
   usePrefersReducedMotion,
@@ -66,6 +67,8 @@ function generatePortfolio(seed: number, start: number): PortfolioPoint[] {
 export const PORTFOLIO = generatePortfolio(31_337, 42_000);
 
 const PAD = { top: 12, right: 66, bottom: 22, left: 12 };
+/** Half a time-axis label's width at 10.5px mono, for keeping the first one inside the plot. */
+const labelHalf = (label = '') => Math.ceil(label.length * 3.2);
 const DRAWDOWN_SHARE = 0.24;
 const GAP = 14;
 
@@ -90,6 +93,11 @@ export interface PortfolioChartProps {
    * mounts it far below the fold), then true to play the intro there. Default true.
    */
   intro?: boolean;
+  /**
+   * The zone the dates and times are printed in (an IANA name). Default UTC, which
+   * the server and the browser agree on; a page that knows the viewer's zone passes it.
+   */
+  timeZone?: string;
 }
 
 export function PortfolioChart({
@@ -104,7 +112,9 @@ export function PortfolioChart({
   onRetry,
   tableMaxRows,
   intro = true,
+  timeZone = 'UTC',
 }: PortfolioChartProps) {
+  const clock = chartClock(timeZone);
   const reduce = usePrefersReducedMotion();
   const [wrapRef, width] = useElementWidth<HTMLDivElement>();
   const svgRef = React.useRef<SVGSVGElement | null>(null);
@@ -123,6 +133,14 @@ export function PortfolioChart({
   }, [data, range.bars]);
 
   const n = view.length;
+  // An hourly stretch prints times as well as dates; a daily series stays as it was.
+  const intraday = React.useMemo(() => intradayPoints(view.map((p) => p.t)), [view]);
+  const shortLabel = (i: number) =>
+    intraday[i] ? `${clock.day(view[i].t)} ${clock.time(view[i].t)}` : clock.day(view[i].t);
+  const fullLabel = (i: number) =>
+    intraday[i]
+      ? `${clock.date(view[i].t)}, ${clock.time(view[i].t)} ${clock.zone(view[i].t)}`
+      : clock.date(view[i].t);
 
   const drawdowns = React.useMemo(() => {
     const out: number[] = [];
@@ -203,8 +221,15 @@ export function PortfolioChart({
     }
     return out;
   }, [n, plotW, cx]);
+  const tickLabels = React.useMemo(
+    () => timeTickLabels(view.map((p) => p.t), timeTicks, chartClock(timeZone)),
+    [view, timeTicks, timeZone],
+  );
 
   const activeIndex = hoverIndex ?? n - 1;
+  const hoverLabel = hoverIndex != null && view[hoverIndex] ? shortLabel(hoverIndex) : '';
+  // 10px mono runs about 6.1px a character; 54px was the old badge's width for a date.
+  const badgeHalf = Math.max(27, Math.ceil(hoverLabel.length * 3.1) + 7);
   const active = view[activeIndex];
   const activeDd = drawdowns[activeIndex] ?? 0;
   const pnl = active ? active.value - active.basis : 0;
@@ -276,7 +301,7 @@ export function PortfolioChart({
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 font-mono text-[10.5px] tabular-nums">
             <span className="text-neutral-400 dark:text-neutral-500">
-              {active ? DATE_FULL.format(active.t) : ''}
+              {active ? fullLabel(activeIndex) : ''}
             </span>
             <span className="text-neutral-500 dark:text-neutral-400">
               Basis{' '}
@@ -307,7 +332,7 @@ export function PortfolioChart({
       {/* The plot is one picture (role="img"), so a keyboard scrub is read out here. */}
       <span className="sr-only" aria-live="polite" aria-atomic="true">
         {keyScrub && hoverIndex != null && active
-          ? `${DATE_FULL.format(active.t)}: ${formatMoney(active.value)}, ${formatSignedPct(pnlPct)} against cost basis`
+          ? `${fullLabel(activeIndex)}: ${formatMoney(active.value)}, ${formatSignedPct(pnlPct)} against cost basis`
           : ''}
       </span>
 
@@ -474,20 +499,22 @@ export function PortfolioChart({
             ) : null}
 
             <g className="font-mono">
-              {timeTicks.map((i) => {
+              {timeTicks.map((i, k) => {
                 const point = view[i];
                 if (!point) return null;
                 return (
                   <text
                     key={i}
-                    x={Math.max(x0 + 14, Math.min(x1 - 14, cx(i)))}
+                    // Kept inside the chart by half the label's width: 10.5px mono runs about
+                    // 6.4px a character, and "Oct 7 15:38" is twice as long as "Oct 8".
+                    x={Math.max(x0 + 14, labelHalf(tickLabels[k]) + 2, Math.min(x1 - 14, cx(i)))}
                     y={innerBottom + 14}
                     textAnchor="middle"
                     fontSize={10.5}
                     fill="currentColor"
                     className="tabular-nums"
                   >
-                    {DATE_SHORT.format(point.t)}
+                    {tickLabels[k]}
                   </text>
                 );
               })}
@@ -495,6 +522,7 @@ export function PortfolioChart({
 
             {hoverIndex != null && view[hoverIndex] ? (
               <g>
+                {/* The badge under the axis fits its label: "Oct 8", or "Oct 8 14:57" on an hourly stretch. */}
                 <line
                   x1={cx(hoverIndex)}
                   x2={cx(hoverIndex)}
@@ -522,9 +550,9 @@ export function PortfolioChart({
                   strokeWidth={1.75}
                 />
                 <g
-                  transform={`translate(${Math.max(x0 + 28, Math.min(x1 - 28, cx(hoverIndex)))}, ${innerBottom + 4})`}
+                  transform={`translate(${Math.max(x0 + badgeHalf + 1, Math.min(x1 - badgeHalf - 1, cx(hoverIndex)))}, ${innerBottom + 4})`}
                 >
-                  <rect x={-27} y={0} width={54} height={16} rx={4} className="fill-neutral-900 dark:fill-white" />
+                  <rect x={-badgeHalf} y={0} width={badgeHalf * 2} height={16} rx={4} className="fill-neutral-900 dark:fill-white" />
                   <text
                     x={0}
                     y={8.5}
@@ -534,7 +562,7 @@ export function PortfolioChart({
                     fontWeight={600}
                     className="fill-white font-mono tabular-nums dark:fill-neutral-950"
                   >
-                    {DATE_SHORT.format(view[hoverIndex].t)}
+                    {hoverLabel}
                   </text>
                 </g>
               </g>
@@ -546,7 +574,7 @@ export function PortfolioChart({
       <ChartDataTable
         caption={`${label} — value, cost basis and drawdown by date${tableStride > 1 ? `, one row in ${tableStride}` : ''}`}
         columns={['Date', 'Value', 'Basis', 'Drawdown %']}
-        rows={tableRows.map((i) => [DATE_SHORT.format(view[i].t), formatMoney(view[i].value), formatMoney(view[i].basis), drawdowns[i].toFixed(2)])}
+        rows={tableRows.map((i) => [shortLabel(i), formatMoney(view[i].value), formatMoney(view[i].basis), drawdowns[i].toFixed(2)])}
       />
     </div>
   );
