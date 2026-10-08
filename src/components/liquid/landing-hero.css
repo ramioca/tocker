@@ -3,11 +3,11 @@
  * the skip link and the brand lockup live in landing.css.
  *
  * The first screen is type and one product moment: an eyebrow, the headline
- * with one word in the brand gradient, a sentence, one action, and the run
- * card rising out of depth on a painted glow (radial gradients, no blur).
- * Behind it all: a painted poster, the live silk crossfading
- * over it, and a faint grid. Colour appears where it means something: the cyan
- * dot, "24/7", the bars of the tokens that clear the floor and their buy dots.
+ * in frosted white glass, a sentence, one action, and the run card rising out
+ * of depth on a painted glow (radial gradients, no blur). Behind it all: a
+ * painted poster and the live silk crossfading over it. Colour appears where
+ * it means something: the cyan dot, the bars of the tokens that clear the
+ * floor and their buy dots.
  *
  * Load-in and scroll depth are hero-intro.tsx (GSAP); the `.lp-intro` gate at
  * the end of the hero block is the CSS half of that contract.
@@ -223,40 +223,48 @@
 }
 .lp-h1 {
   margin-top: 28px;
-  font-size: clamp(3.25rem, 6.6vw, 6.5rem);
+  font-size: clamp(3.25rem, 8.4vw, 8rem);
   line-height: 0.94;
   font-weight: 600;
   letter-spacing: -0.058em;
   color: var(--fg);
   text-wrap: balance;
 }
-.lp-h1-end {
-  white-space: nowrap;
-}
-/* Three set lines, one beat each ("Your strategy." / "Your rules." / "Trading 24/7."),
-   on phones too: each is short enough to keep to one line. */
+/* Two set lines, one beat each ("Your strategy." / "Your rules."), on phones too:
+   each is short enough to keep to one line. */
 .lp-h1-line {
   display: block;
   white-space: nowrap;
 }
+/* Frosted white glass: a white fill that thins toward the foot, so the silk behind
+   tints through it, a soft diagonal sheen and a fine cool grain for the frost. No
+   outline: the tight tracking overlaps the glyphs, and a stroke would draw a seam
+   wherever two of them touch. On the line spans, not the h1: SplitText's moving
+   line boxes (hero-intro.tsx) wrap these spans, so the fill survives the intro, and it
+   is the same without script or motion. No blurred shadow: the intro's line masks
+   clip at the line box and would cut a glow into a rectangle. The padding (given back
+   by the margin) keeps descenders and the overhang of the tight tracking inside the
+   painted box. */
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .lp-h1-line {
+    padding: 0.06em 0.08em 0.2em;
+    margin: -0.06em -0.08em -0.2em;
+    background:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.55  0 0 0 0 0.6  0 0 0 0 0.75  0.16 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+      linear-gradient(112deg, transparent 22%, rgba(255, 255, 255, 0.55) 38%, transparent 54%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(250, 251, 255, 0.9) 45%, rgba(226, 232, 255, 0.7) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
 /* SplitText's line masks (hero-intro.tsx) clip at the line box, and the tight
    leading would shave the descenders of "strategy": give each
    mask room below and take it back with the margin, so the layout is unchanged. */
 .lp-hero .lp-split-line-mask {
   padding-block: 0.04em 0.16em;
   margin-block: -0.04em -0.16em;
-}
-/* The one coloured word: the brand gradient clipped to the type. The padding
-   (given back by the margin) keeps the last glyph inside the painted box despite the
-   tight tracking. */
-.lp-mark {
-  padding-right: 0.06em;
-  margin-right: -0.06em;
-  background: var(--brand-neon);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  white-space: nowrap;
 }
 .lp-hero-sub {
   margin-top: 28px;
