@@ -191,13 +191,13 @@ write("gtm", section(
     + step("03", "Next, creators earn a share of the fees", True, MID)
     + "</div>"
     + f'<div style="display:flex;flex-direction:column;gap:16px;border-top:1px solid {HAIR};padding:20px 0 0 0">'
-    + label("Where the agent trades · volume")
-    + mkt("Now", "$5.2B", "Solana memecoins, one week")
-    + mkt("Next", "$10.8B", "Polymarket, one month")
-    + mkt("Then", "$5.8B", "Solana tokenized stocks, one quarter")
+    + label("Where the agent trades · yearly volume")
+    + mkt("Now", "$482B", "Solana memecoins, 2025")
+    + mkt("Next", "$21.5B", "Polymarket, 2025")
+    + mkt("Then", "$12.4B", "Solana tokenized stocks, 2026 to date")
     + "</div></div></div>",
-    "Feed: in-app demo data · Memecoins: Blockworks (week to 26 Aug 2026) · Polymarket: Portals (Jun 2026) · Stocks: SolanaCompass (Q2 2026)",
-    "Every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score, never the strategy. Followers launch their own; next, creators earn a fee share. Today that's memecoins, five billion dollars a week on Solana at the August peak. Next Polymarket, then tokenized stocks.",
+    "Feed: in-app demo data · Memecoins: Solana 2025 recap · Polymarket: Keyrock/Dune, 2025 · Stocks: CryptoBriefing, Solana DEX volume, 2026 to date",
+    "Every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score, never the strategy. Followers launch their own; next, creators earn a fee share. Today that's memecoins: four hundred eighty-two billion dollars traded on Solana in 2025. Next Polymarket, twenty-one billion last year, then tokenized stocks, already twelve billion this year.",
     ml=-6,
 ))
 

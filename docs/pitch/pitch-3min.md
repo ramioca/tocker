@@ -25,7 +25,7 @@ Traders already pay. In 2025, Solana traders paid one point seven billion dollar
 Agentic trading is early: six funded startups, the largest disclosed round four million. Good teams, with three shared defaults: bundled data, no rug veto before the swap, and copy trading or leaderboards. We bet the other way. Our agent picks and buys data per call, ten gates in code can veto any buy, and every fill is public.
 
 ## gtm
-Every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score, never the strategy. Followers launch their own; next, creators earn a fee share. Today that's memecoins, five billion dollars a week on Solana at the August peak. Next Polymarket, then tokenized stocks.
+Every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score, never the strategy. Followers launch their own; next, creators earn a fee share. Today that's memecoins: four hundred eighty-two billion dollars traded on Solana in 2025. Next Polymarket, twenty-one billion last year, then tokenized stocks, already twelve billion this year.
 
 ## team
 Why me? I lead product and growth at BlockRun, the leading x402 gateway, so I know these rails. I founded Sorbet, a neobank that raised a million dollars and moves five million a month. I worked on AI at Deloitte's Omnia. And I shipped Tocker in under four weeks.
@@ -47,9 +47,10 @@ Tocker is in private beta on Solana and Base. [pause] Back to Sam. Same token. S
 - x402 Foundation backers: Linux Foundation (2026) — research/06
 - Per-call prices: src/lib/data-sources/*.ts; ~7¢ Solana / ~11¢ Base per token — research/12, enrichment.ts
 - $1.7B = $940M bots/terminals + $762M launchpads (2025): Solana Foundation recap, Blockworks Research — research/04
-- $5.2B Solana memecoins in a week (to 26 Aug 2026): Blockworks — research/18
-- $10.8B Polymarket, June 2026: Portals — research/13
-- $5.8B Solana tokenized-stock volume, Q2 2026: SolanaCompass — research/14
+- $482B Solana memecoin volume in 2025 (down ~10% YoY): Solana's 2025 recap, via Bitget/ChainCatcher (https://www.bitget.com/news/detail/12560605132683) and Coinpedia/TradingView — self-reported by Solana; same recap as the $940M bot-fee figure (research/04)
+- ~$21.5B Polymarket volume in 2025: Keyrock x Dune report via Odaily (https://www.odaily.news/en/post/5208620); Sacra concurs (research/13). Other counts: ~$22.5B (Dune dashboard), ~$10.5B (DefiLlama DEX-only)
+- $12.4B Solana tokenized-stock DEX volume, 2026 to date: CryptoBriefing (https://cryptobriefing.com/solana-tokenized-stocks-12-billion-dex-volume/). No calendar-2025 figure exists (xStocks launched 30 Jun 2025); Q2 2026 alone was $5.8B (SolanaCompass)
+- Earlier run-rate figures, kept for Q&A: $5.2B Solana memecoins in the week to 26 Aug 2026 (Blockworks); $10.8B Polymarket in June 2026 (Portals)
 - Competition cells, traction and funding — research/26-competitors-deep (Oct 8 2026; supersedes 22 and 25)
 - Competition evidence (research/26-competitors-deep/proof-points.md):
   - DXRG (Barton et al., arXiv 2609.05663, Sep 2026): 3,505 user-funded AI agents on a shared 12-token Base market, 21 days. Herding: 1,544 of 3,454 active vaults bought the same token (FEET) within one hour on Mar 1; "neither fleet shows a directional edge".
