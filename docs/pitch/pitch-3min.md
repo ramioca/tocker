@@ -1,7 +1,7 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
 ~483 words, about 3:05 at 155 wpm. Sam is an illustrative composite, not a real user. [pause] marks a beat.
-Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. A different approach.' Table vs ClawPump, Minara, Senpi, Fere AI, Ask Gina, HeyElsa with logos, best-at, traction (verified vs self-reported) and four marks; deep research and a VC fact-check pass on Oct 8, 2026 (research/26-competitors-deep). Alternative angles in docs/pitch/deck/competition-angles/.
+Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. A different approach.' Minimal: a strip of the six rivals (logo + best at), then what all six share vs what Tocker does (data, safety, social). Every 'share' line holds for all six (research/26-competitors-deep). The previous full table is in docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
 
 ## cover
 Three a.m. A trader, call her Sam, sees a new token trending. She buys. Minutes later, it's worth nothing. The wallets that bought first? Insiders. [pause] Sam isn't dumb. She's outgunned. I'm Rami, and this is Tocker: the infrastructure for agentic trading.
@@ -22,7 +22,7 @@ Can AI even trade? Last October, six frontier models traded real money; four los
 Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We plan to charge zero point two percent: twenty cents on a hundred dollars.
 
 ## competition
-Agentic trading is early: a handful of seed-stage teams, each genuinely good at one thing. Minara has real perps volume, ClawPump the deepest agent toolkit, Senpi turnkey Hyperliquid strategies. Our approach is different: the agent buys alpha per call, screens every token in code before it buys, and trades in public. Paying for inference in USDC is next.
+Agentic trading is early: six funded startups, the largest disclosed round four million, each good at one thing. What they share: bundled data, safety as a stop-loss, social as copy trading. We do the opposite: the agent buys alpha per call, ten gates in code can veto any buy, and every fill is public while the strategy stays private.
 
 ## gtm
 Every agent trades in public, so every trade markets itself. Each post shows the fill and its entry score, never the strategy. Followers launch their own; next, creators earn a fee share. Today that's memecoins, five billion dollars a week on Solana at the August peak. Next Polymarket, then tokenized stocks.
@@ -63,7 +63,7 @@ Tocker is in private beta on Solana and Base. [pause] Back to Sam. Same token. S
 8. **ClawPump claims $225M+ volume and has x402 and USDC inference too.** Credit it: it's the best toolkit for agents that earn, with wallets, 130 MCP tools and gasless launches. Its rug check is an opt-in skill; ours is a veto in code before every buy. It helps agents earn; Tocker trades a person's strategy in public.
 9. **"Private beta next to $2.6B of volume: why a Series A?"** Rivals' volume proves demand for agents that trade. None we found vetoes a buy on token-safety checks in code, and that is where retail loses money (research/02). Bring beta numbers: agents live, fills, and the share of candidate buys the gates vetoed.
 10. **"Can I copy an agent?"** No, by design. Copying front-runs the leader and leaks the strategy. You follow an agent's public fills and launch your own; creator fee share is next.
-11. **"USDC inference: ClawPump and Minara already have it."** Yes, so it sits in the last column. Today agents run on your own key; per-call USDC inference is next. The edge is in the first three columns.
+11. **"USDC inference: ClawPump and Minara already have it."** Yes, which is why it isn't on the slide as a difference: paying for the model is common (credits at ClawPump, Minara, Senpi, Gina). Today agents run on your own key; per-call USDC inference is next. The edge is data, safety and the public record.
 
 ## Know the field (keep off the slide)
 - Senpi's public GitHub has a "volume generation engine" built for $5M a day of BTC round-trips (Apr 2026). It is unclear whether it ran, so treat its $411M as possibly inflated. Its Agents Arena was retired Jul–Aug 2026.
@@ -71,3 +71,5 @@ Tocker is in private beta on Solana and Base. [pause] Back to Sam. Same token. S
 - Fere AI rebuilt itself on Oct 6, 2026 as a catalogue of fixed-strategy agents. Plain-English strategies and the chat agent are gone.
 - HeyElsa's ELSA token fell ~90% from its January high; ~46% of wallets in one airdrop campaign had no on-chain activity.
 - Ask Gina publishes no traction, and its backers are self-reported.
+- All six lean on points, tokens or NFTs for growth: Senpi points, Minara Sparks, HeyElsa's ELSA, ClawPump's CLAW, Fere's $MONK (2025), Gina's Genesis NFT. Tocker's growth loop is the public fill feed.
+- Traction for the record: Minara $2.63B and Senpi $411M all-time perps volume (DefiLlama); ClawPump $225M+ (self-reported); HeyElsa 945K+ wallets (self-reported); Fere 7,000+ daily users (self-reported).
