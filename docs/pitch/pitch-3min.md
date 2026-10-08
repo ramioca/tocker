@@ -1,37 +1,51 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
-~505 words, about 3:10 at 160 wpm (2:58 at 170). Rewritten by a copywriter pass on Oct 8, 2026: the hook is the market (21,000 tokens a day); the founder's own losses to rugs, honeypots and emotion sit on the problem slide with the running cost (~$200 a month, a fee per swap, and 20+ services to wire); the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
+~378 words, about 2:20 at 160 wpm (the deck's speaker notes; trimmed Oct 8, 2026). The ~505-word, 3:10 version is kept below. Rewritten by a copywriter pass on Oct 8, 2026: the hook is the market (21,000 tokens a day); the founder's own losses to rugs, honeypots and emotion sit on the problem slide with the running cost (~$200 a month, a fee per swap, and 20+ services to wire); the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
 Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. We bet the other way.' (fallback: 'A different approach.'). Rival strip, then what all six do vs Tocker (data, safety, social), each with dated evidence. Copy, two design variants and a VC/fact critic merged on Oct 8, 2026 (research/26-competitors-deep), then rebuilt in the Slides subset (flow layout, text ≥24px, no overlays). Earlier full table: docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
 
 ## cover
-Twenty-one thousand. That's how many tokens launch on pump.fun every day. Almost all collapse. Bots and insiders buy before you've read the name. [pause] Retail isn't dumb. It's outgunned. I'm Rami, and Tocker is the infrastructure for safe agentic trading: anyone can launch a trading agent, with the edge and the guardrails built in.
+Twenty-one thousand tokens launch on pump.fun every day. Almost all collapse. Bots and insiders buy first. [pause] Retail isn't dumb. It's outgunned. I'm Rami, and Tocker is the infrastructure for safe agentic trading.
 
 ## problem
-Today, traders have no edge. In the ninety days to August, ninety-four percent of Solana memecoin wallets made no profit. I've lost more than I'd like to admit to rug pulls, honeypots and, honestly, my own emotions. And agents have no rails. Helius, Jupiter, Nansen, Grok, Claude, a server: about two hundred dollars a month, a fee on every swap, and twenty-plus services you wire and babysit yourself. [pause]
+Over ninety days this year, ninety-four percent of Solana memecoin wallets made no profit. I've lost more than I'd like to admit to rugs, honeypots and my own emotions. And building your own agent? About two hundred dollars a month, and twenty-plus services to wire and babysit.
 
 ## solution
-With Tocker, it takes one line of English. The edge: your agent buys data per call, and ten hard gates in code can veto any buy. The rails: wallet, data, inference and execution in one integration, hosted around the clock. Nothing to wire, nothing to babysit.
+Tocker fixes both with one line of English. Your agent buys data per call, ten hard gates in code can veto any buy, and it runs hosted around the clock. Nothing to wire.
 
 ## product
-Here's a sample run. You write the thesis: Solana memes smart money is accumulating, holders growing every hour, X mindshare rising. Your agent skips BONK and POPCAT, below the floor. WIF scores eighty-one and clears all ten gates: a hundred-dollar buy, exits enforced in code. [pause] I was emotional. An agent isn't. No FOMO, no panic, no revenge trades. It just follows your rules.
+Here's a sample run. The thesis: memes smart money is accumulating. The agent skips BONK and POPCAT. WIF scores eighty-one, clears all ten gates, and it buys a hundred dollars, exits in code. [pause] I was emotional. An agent isn't. It just follows your rules.
 
 ## alpha
-Rules aren't edge. Neither is AI alone. Last October, six frontier models traded real money; four lost over thirty percent. So your agent buys answers over x402, the pay-per-call standard. Can I actually sell this, or is it a honeypot? About seven cents a token on Solana.
+Rules aren't edge, and neither is AI alone: four of six frontier models lost over thirty percent trading real money. So your agent buys answers per call over x402: who's buying, can I sell, is it a rug? About seven cents a token.
 
 ## business
-Who pays? Traders already do. Last year, Solana traders paid nine hundred forty million dollars to bots and terminals. That's our lane. They charge one percent a trade. We'll charge half, which covers the data and the gates.
+Who pays? Traders already do: nine hundred forty million dollars last year to Solana bots and terminals, at one percent a trade. We'll charge half.
 
 ## competition
-An early category, with good teams. We bet the other way. Most offer a chat box or a fixed bot. We give you one line of English and the dials: gates, data, model, sizing, exits. It runs hosted, 24/7. No RPC, no data keys, no AI key: your agent pays for its model in USDC. We publish every fill, never the strategy.
+It's an early category with good teams, and we bet the other way. Most offer a chat box or a fixed bot. We give you one line of English and the dials, hosted 24/7. No keys at all; your agent even pays for its model in USDC. Every fill is public. The strategy never is.
 
 ## gtm
-That public record is the growth loop. Each trade posts with its entry score, like WIF's eighty-one, so every trade markets itself. Followers launch their own agents; next, creators share the fees. We start with Solana memecoins, four hundred eighty-two billion dollars traded last year. Then Polymarket, then tokenized stocks.
+That public record is the growth loop: every trade posts with its score and markets itself, and followers launch their own. We start with Solana memecoins, four hundred eighty-two billion dollars last year, then Polymarket and tokenized stocks.
 
 ## team
-Why me? I lead product and growth at BlockRun, the leading x402 gateway, so I know these rails. I founded Sorbet, a neobank that raised a million dollars and transacts five million a month. I worked on AI at Deloitte. And I shipped Tocker in under four weeks.
+Why me? I lead product and growth at BlockRun, the leading x402 gateway. I founded Sorbet, a neobank moving five million a month. And I shipped Tocker in under four weeks.
 
 ## thanks
-It's in private beta on Solana and Base. Tomorrow, another twenty-one thousand tokens launch. You won't have to watch a single one. [pause] Touch grass. Your agent is trading for you. Thank you.
+We're in private beta on Solana and Base. Tomorrow, twenty-one thousand more tokens launch. You won't have to watch one. [pause] Touch grass. Your agent is trading for you. Thank you.
+
+## Longer version (~505 words, about 3:10)
+Same beats, with the full product thesis, the Alpha Arena date, the itemized $200 stack, and the configurability list on competition. Use it if the slot is a full three minutes.
+
+- **cover:** Twenty-one thousand. That's how many tokens launch on pump.fun every day. Almost all collapse. Bots and insiders buy before you've read the name. [pause] Retail isn't dumb. It's outgunned. I'm Rami, and Tocker is the infrastructure for safe agentic trading: anyone can launch a trading agent, with the edge and the guardrails built in.
+- **problem:** Today, traders have no edge. In the ninety days to August, ninety-four percent of Solana memecoin wallets made no profit. I've lost more than I'd like to admit to rug pulls, honeypots and, honestly, my own emotions. And agents have no rails. Helius, Jupiter, Nansen, Grok, Claude, a server: about two hundred dollars a month, a fee on every swap, and twenty-plus services you wire and babysit yourself. [pause]
+- **solution:** With Tocker, it takes one line of English. The edge: your agent buys data per call, and ten hard gates in code can veto any buy. The rails: wallet, data, inference and execution in one integration, hosted around the clock. Nothing to wire, nothing to babysit.
+- **product:** Here's a sample run. You write the thesis: Solana memes smart money is accumulating, holders growing every hour, X mindshare rising. Your agent skips BONK and POPCAT, below the floor. WIF scores eighty-one and clears all ten gates: a hundred-dollar buy, exits enforced in code. [pause] I was emotional. An agent isn't. No FOMO, no panic, no revenge trades. It just follows your rules.
+- **alpha:** Rules aren't edge. Neither is AI alone. Last October, six frontier models traded real money; four lost over thirty percent. So your agent buys answers over x402, the pay-per-call standard. Can I actually sell this, or is it a honeypot? About seven cents a token on Solana.
+- **business:** Who pays? Traders already do. Last year, Solana traders paid nine hundred forty million dollars to bots and terminals. That's our lane. They charge one percent a trade. We'll charge half, which covers the data and the gates.
+- **competition:** An early category, with good teams. We bet the other way. Most offer a chat box or a fixed bot. We give you one line of English and the dials: gates, data, model, sizing, exits. It runs hosted, 24/7. No RPC, no data keys, no AI key: your agent pays for its model in USDC. We publish every fill, never the strategy.
+- **gtm:** That public record is the growth loop. Each trade posts with its entry score, like WIF's eighty-one, so every trade markets itself. Followers launch their own agents; next, creators share the fees. We start with Solana memecoins, four hundred eighty-two billion dollars traded last year. Then Polymarket, then tokenized stocks.
+- **team:** Why me? I lead product and growth at BlockRun, the leading x402 gateway, so I know these rails. I founded Sorbet, a neobank that raised a million dollars and transacts five million a month. I worked on AI at Deloitte. And I shipped Tocker in under four weeks.
+- **thanks:** It's in private beta on Solana and Base. Tomorrow, another twenty-one thousand tokens launch. You won't have to watch a single one. [pause] Touch grass. Your agent is trading for you. Thank you.
 
 ## What's labelled planned (keep it that way until shipped)
 - 50 bps fee: beta charges $0.10 flat per fill (`src/lib/platform/fee.ts`).
