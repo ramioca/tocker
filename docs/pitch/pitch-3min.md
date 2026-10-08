@@ -1,37 +1,37 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
-~480 words, about 3:05 at 155 wpm (2:55 at 165). Sam is an illustrative composite, not a real user. [pause] marks a beat.
+~490 words, about 3:09 at 155 wpm (2:58 at 165). No persona: the hook is the market itself (21,000 tokens a day), and the close calls back to it. [pause] marks a beat.
 Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. We bet the other way.' (fallback: 'A different approach.'). Rival strip, then what all six do vs Tocker (data, safety, social), each with dated evidence. Copy, two design variants and a VC/fact critic merged on Oct 8, 2026 (research/26-competitors-deep), then rebuilt in the Slides subset (flow layout, text ≥24px, no overlays). Earlier full table: docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
 
 ## cover
-Three a.m. A trader, call her Sam, sees a token trending and buys. Minutes later it's worth nothing. The wallets that bought first? Insiders. [pause] Sam isn't dumb. She's outgunned. I'm Rami, and this is Tocker: the infrastructure for agentic trading.
+Every day, twenty-one thousand new tokens launch on pump.fun, and almost all collapse. Bots and insiders get in first; retail buys last. [pause] Retail isn't dumb. It's outgunned. I'm Rami, and Tocker is the infrastructure for agentic trading: your own trading agent, with the edge and the guardrails built in.
 
 ## problem
-Sam has two problems. No edge: in 2024, nine in ten pump.fun traders lost money or made under a hundred dollars, against twenty-one thousand new tokens a day. No rails: an agent of her own means wiring twenty-plus services and running them around the clock. I know. I wired them.
+Two problems. No edge: in 2024, nine in ten pump.fun traders lost money or made under a hundred dollars. No rails: building your own agent means wiring twenty-plus services, then running them around the clock. I know. I wired them.
 
 ## solution
-Tocker solves both. The edge: the agent buys smart-money, launch and sell-check data per call, and ten hard gates in code can veto any buy. The rails: one integration for wallet, data, inference and execution, hosted 24/7. Bring your own AI key; paying in USDC is next.
+Tocker fixes both. The edge: the agent buys smart-money, launch and sell-check data per call, and ten hard gates in code can veto any buy. The rails: wallet, data, inference and execution in one integration, hosted 24/7. Bring your own AI key today; pay per call in USDC next.
 
 ## product
-Here's Sam's agent. One line of English: liquid Solana memes, smart money buying, holders rising, take forty percent, stop at fifteen. It skips BONK and POPCAT, below her floor. WIF scores eighty-one, clears all ten gates, and it buys a hundred dollars, exits set in code. It all starts on paper.
+Here's how it works. You write one line of English: liquid Solana memes, smart money buying, holders rising, take forty percent, stop at fifteen. The agent skips BONK and POPCAT, below the floor. WIF scores eighty-one, clears all ten gates, and it buys a hundred dollars, exits set in code. Every agent starts on paper.
 
 ## alpha
-Can AI even trade? Last October, six frontier models traded real money; four lost over thirty percent. A model alone trades blind. So Sam's agent buys answers over x402: what just launched, whether insiders hold the supply, whether she can even sell. About seven cents a token.
+Why buy data? Because a model alone trades blind. Last October, six frontier models traded real money, and four lost over thirty percent. So the agent buys answers over x402: what just launched, whether insiders hold the supply, whether it can actually sell. About seven cents a token.
 
 ## business
-Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We'll charge fifty basis points, half what the bots take, and it pays for the data and the gates.
+Traders already pay for this. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We'll charge fifty basis points, half what the bots take, and that covers the data and the gates.
 
 ## competition
-This category is early: six funded startups, the largest disclosed round four million. Good teams, with three shared defaults: bundled data, no rug veto before the swap, and copy trading. We bet the other way. Our agent picks and buys its data, ten gates can veto any buy, and every fill is public.
+The category is early: six funded startups, the largest disclosed round four million. Good teams, with three shared defaults: bundled data, no rug veto before the swap, and copy trading. We bet the other way. Our agent picks and buys its data, ten gates can veto any buy, and every fill is public.
 
 ## gtm
-That's also the growth loop. Every fill posts with its entry score, never the strategy, so every trade markets itself. Followers launch their own; next, creators earn a fee share. We start where the volume is: four hundred eighty-two billion dollars of Solana memecoins last year. Then Polymarket, twenty-one billion, then tokenized stocks, twelve billion this year.
+That public record is the growth loop. Every fill posts with its entry score, never the strategy, so every trade markets itself. Followers launch their own; next, creators share the fees. We start where the volume is: four hundred eighty-two billion dollars of Solana memecoins last year. Then Polymarket, twenty-one billion, then tokenized stocks.
 
 ## team
 Why me? I lead product and growth at BlockRun, the leading x402 gateway, so I know these rails. I founded Sorbet, a neobank that raised a million dollars and moves five million a month. I worked on AI at Deloitte's Omnia. And I shipped Tocker in under four weeks.
 
 ## thanks
-Tocker is in private beta on Solana and Base. [pause] Back to Sam. Same token, same three a.m. This time she's asleep, and her agent said no. [pause] Touch grass. Your agent is trading for you. Thank you.
+Tocker is in private beta on Solana and Base. [pause] Tomorrow, another twenty-one thousand tokens launch. Your agent checks every one, and says no to the ones built to take your money. [pause] Touch grass. Your agent is trading for you. Thank you.
 
 ## What's labelled planned (keep it that way until shipped)
 - 50 bps fee: beta charges $0.10 flat per fill (`src/lib/platform/fee.ts`).
