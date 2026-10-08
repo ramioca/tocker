@@ -1204,6 +1204,70 @@ describe("liveSaveWarnings", () => {
     ).toEqual([]);
   });
 
+  /** A limit of three positions and a $5 reserve, the two an owner switches on. */
+  const limited = config((c) => {
+    c.risk.maxOpenPositions = 3;
+    c.risk.cashReserveUsd = 5;
+  });
+
+  it("warns when the position limit is raised or taken away, and not when it is set or lowered", () => {
+    expect(warnings((c) => void (c.risk.maxOpenPositions = 5), limited)).toEqual(["Max open positions 3 → 5"]);
+    expect(warnings((c) => void (c.risk.maxOpenPositions = null), limited)).toEqual(["Max open positions switched off (was 3)"]);
+    // A save that drops the field altogether takes the limit away just the same.
+    expect(warnings((c) => void delete c.risk.maxOpenPositions, limited)).toEqual(["Max open positions switched off (was 3)"]);
+    // Tightening never asks: lowering it, or setting one where there was none.
+    expect(warnings((c) => void (c.risk.maxOpenPositions = 2), limited)).toEqual([]);
+    expect(warnings((c) => void (c.risk.maxOpenPositions = 1), limited)).toEqual([]);
+    expect(warnings((c) => void (c.risk.maxOpenPositions = 3))).toEqual([]);
+    expect(warnings((c) => void (c.risk.maxOpenPositions = 50))).toEqual([]);
+    // Unchanged, whether the saved config says off or says nothing.
+    expect(warnings(() => undefined, limited)).toEqual([]);
+    const old = config((c) => {
+      delete c.risk.maxOpenPositions;
+      delete c.risk.cashReserveUsd;
+    });
+    expect(liveSaveWarnings(old, config())).toEqual([]);
+    expect(liveSaveWarnings(config(), old)).toEqual([]);
+  });
+
+  it("warns when the cash reserve is lowered or taken away, and not when it is set or raised", () => {
+    expect(warnings((c) => void (c.risk.cashReserveUsd = 2), limited)).toEqual(["Cash reserve $5.00 → $2.00"]);
+    expect(warnings((c) => void (c.risk.cashReserveUsd = 4.99), limited)).toEqual(["Cash reserve $5.00 → $4.99"]);
+    expect(warnings((c) => void (c.risk.cashReserveUsd = 0), limited)).toEqual(["Cash reserve switched off (was $5.00)"]);
+    expect(warnings((c) => void delete c.risk.cashReserveUsd, limited)).toEqual(["Cash reserve switched off (was $5.00)"]);
+    // Tightening never asks: raising it, or setting one where there was none.
+    expect(warnings((c) => void (c.risk.cashReserveUsd = 10), limited)).toEqual([]);
+    expect(warnings((c) => void (c.risk.cashReserveUsd = 5))).toEqual([]);
+    expect(warnings((c) => void (c.risk.cashReserveUsd = 1_000))).toEqual([]);
+    // A slider's rounding is not a lowering.
+    const from = config((c) => void (c.risk.cashReserveUsd = 0.3));
+    expect(warnings((c) => void (c.risk.cashReserveUsd = 0.1 + 0.2), from)).toEqual([]);
+  });
+
+  it("lists both, after the caps and before the sizing, when a save loosens both", () => {
+    expect(
+      warnings((c) => {
+        c.risk.maxTradeUsd = 250;
+        c.risk.slippageBps = 500;
+        c.risk.maxOpenPositions = null;
+        c.risk.cashReserveUsd = 0;
+        c.risk.stopLossPct = null;
+      }, limited),
+    ).toEqual([
+      "Max per trade $100.00 → $250.00",
+      "Slippage tolerance 3.00% → 5.00%",
+      "Max open positions switched off (was 3)",
+      "Cash reserve switched off (was $5.00)",
+      "Stop loss switched off (was 15%)",
+    ]);
+  });
+
+  it("does not ask about the switch that skips a scheduled run: it moves no limit", () => {
+    expect(warnings((c) => void (c.schedule = { ...c.schedule, skipWhenFull: true }))).toEqual([]);
+    const skipping = config((c) => void (c.schedule = { ...c.schedule, skipWhenFull: true }));
+    expect(warnings((c) => void (c.schedule = { ...c.schedule, skipWhenFull: false }), skipping)).toEqual([]);
+  });
+
   it("does not ask about the exits that bank a gain or free up capital", () => {
     expect(
       warnings((c) => {

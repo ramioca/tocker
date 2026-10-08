@@ -1,4 +1,4 @@
-import { DEFAULT_AGENT_CONFIG, DEFAULT_MODEL_ID } from "@/lib/agent/config";
+import { DEFAULT_AGENT_CONFIG, DEFAULT_MODEL_ID, MAX_OPEN_POSITIONS } from "@/lib/agent/config";
 import { DEFAULT_FUND_USD } from "@/lib/wallets/funding";
 import { chooseSource, stripPayPerUse, usdcEstimate } from "@/components/agents/thinking";
 import { thinkSource } from "@/lib/agent/inference";
@@ -96,6 +96,30 @@ export function emptyDraft(): BuilderDraft {
         discovery: [...DEFAULT_AGENT_CONFIG.universe.discovery],
         blocklist: DEFAULT_AGENT_CONFIG.universe.blocklist.map((entry) => ({ ...entry })),
       },
+    },
+  };
+}
+
+/**
+ * A draft saved in this browser, laid over the draft the page starts on. Pure, so a test
+ * can hold it: the builder's restore is this and nothing else.
+ *
+ * The universe, the risk limits and the schedule are nested, so a shallow spread would
+ * drop any key a saved draft predates. Each has gained settings since drafts were first
+ * saved (the position limit, the cash reserve, the skip switch), and a draft without them
+ * has to come back with them as off, not missing: the Risk limits step compares what is
+ * on screen with what it started on, and a missing key is not the same words as off.
+ */
+export function restoreDraft(current: BuilderDraft, saved: Partial<BuilderDraft>): BuilderDraft {
+  return {
+    ...current,
+    ...saved,
+    config: {
+      ...current.config,
+      ...saved.config,
+      universe: { ...current.config.universe, ...saved.config?.universe },
+      risk: { ...current.config.risk, ...saved.config?.risk },
+      schedule: { ...current.config.schedule, ...saved.config?.schedule },
     },
   };
 }
@@ -485,7 +509,16 @@ export const PAPER_BALANCES = [1_000, 10_000, 100_000] as const;
  */
 export const RISK_BOUNDS = {
   maxTradeUsd: { min: 1, max: 5_000, step: 1 },
+  // Whole positions, up to the most the schema takes.
+  maxOpenPositions: { min: 1, max: MAX_OPEN_POSITIONS, step: 1 },
+  // Dollars kept in cash. The same reach as Max per trade: a reserve is weighed against
+  // a ticket, and the two are typed in the same amounts.
+  cashReserveUsd: { min: 1, max: 5_000, step: 1 },
 } as const;
+
+/** What the two optional limits start at when they are switched on. */
+export const DEFAULT_MAX_OPEN_POSITIONS = 3;
+export const DEFAULT_CASH_RESERVE_USD = 5;
 
 /**
  * Max per trade spans $1 to $5,000, but every sensible ticket sits under $500 — on a
@@ -493,6 +526,12 @@ export const RISK_BOUNDS = {
  * the typed readout still takes any exact amount inside RISK_BOUNDS.
  */
 export const MAX_TRADE_LADDER = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000];
+
+/**
+ * The cash reserve walks the same rungs as Max per trade, for the same reason: every
+ * sensible reserve sits near the bottom of a $1 to $5,000 range.
+ */
+export const CASH_RESERVE_LADDER = MAX_TRADE_LADDER;
 
 /**
  * The stops a ladder slider offers. A value that is not a rung (typed, seeded, a

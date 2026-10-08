@@ -450,3 +450,148 @@ describe("the system prompt on what Tocker charges", () => {
     expect(system).toContain("Tocker charges 0.5% of each fill");
   });
 });
+
+/**
+ * The position limit and the cash reserve. An agent with neither is told nothing about
+ * either (the prompts pinned above are those agents'); one with them is told the rule
+ * once, in the system prompt, and the figures it has to plan with in the book of every
+ * tick: how many positions count, and what the reserve leaves to trade.
+ */
+describe("the prompts of an agent with a position limit and a cash reserve", () => {
+  const limited = (risk: Partial<AgentConfig["risk"]>, execution: "auto" | "approve" = "auto", maxPositionPct = 100): AgentConfig => ({
+    ...config(execution, maxPositionPct),
+    risk: { ...config(execution, maxPositionPct).risk, ...risk },
+  });
+  const tick = (risk: Partial<AgentConfig["risk"]>, extra: Partial<Portfolio> = {}) =>
+    buildTickPrompt({ ...cashBound("live", extra), config: limited(risk) });
+
+  const OPEN_NONE =
+    "Open positions: 0 of 3 allowed. You may open 3 more. A buy of a token you already hold is not a new position. The limit is your owner's: like your other thresholds, never state it in a rationale, a post or your summary.";
+  const RESERVE =
+    "Cash reserve: your owner keeps $2.00 of your cash out of every buy, so $3.00 is available to trade. A buy that would leave less than $2.00 in cash after its fee is rejected; a sell never is. Like your other thresholds, never state the reserve in a rationale, a post or your summary.";
+
+  it("puts both in the book, with the count and the cash it may actually spend, and changes nothing else", () => {
+    // $5.00 of cash, $2.00 kept: $3.00 to trade, which covers a $2.98 buy and its fee.
+    expect(tick({ maxOpenPositions: 3, cashReserveUsd: 2 })).toBe(
+      LIVE_KEY_AGENT_BOUND_BY_ITS_CASH.replace(
+        "Max ticket right now: $4.97 — the binding limit is cash $5.00 less the 0.5% Tocker fee",
+        "Max ticket right now: $2.98 — the binding limit is the $3.00 of your cash that is above your $2.00 cash reserve less the 0.5% Tocker fee",
+      )
+        .replace("Positions: none.", `${OPEN_NONE}\n${RESERVE}\nPositions: none.`)
+        .replace("  - Cash available: $5.00", "  - Cash available: $3.00\n  - Positions you may still open: 3 (0 of 3 taken)"),
+    );
+  });
+
+  it("says each one alone when only one is set", () => {
+    const onlyLimit = tick({ maxOpenPositions: 3 });
+    expect(onlyLimit).toBe(
+      LIVE_KEY_AGENT_BOUND_BY_ITS_CASH.replace("Positions: none.", `${OPEN_NONE}\nPositions: none.`).replace(
+        "  - Cash available: $5.00",
+        "  - Cash available: $5.00\n  - Positions you may still open: 3 (0 of 3 taken)",
+      ),
+    );
+    const onlyReserve = tick({ cashReserveUsd: 2 });
+    expect(onlyReserve).toContain(RESERVE);
+    expect(onlyReserve).toContain("  - Cash available: $3.00\n");
+    expect(onlyReserve).not.toContain("Open positions:");
+    expect(onlyReserve).not.toContain("Positions you may still open");
+  });
+
+  it("tells an agent at its limit that a new token will be rejected and an add will not", () => {
+    // The fixture book holds one token.
+    const prompt = buildTickPrompt({ ...input("live", "auto"), config: limited({ maxOpenPositions: 1 }, "auto", 40) });
+    expect(prompt).toContain(
+      "Open positions: 1 of 1 allowed. You are at the limit: a buy of a token you do not already hold is rejected until a position is sold. Adding to a token you hold is still allowed.",
+    );
+    expect(prompt).toContain("\n  - Positions you may still open: 0 (1 of 1 taken)\n");
+  });
+
+  it("does not tell an agent over its limit that one sale makes room", () => {
+    // One held and one waiting under a limit of one: the limit was lowered after the
+    // proposal. A buy of a new token is rejected until none of the two is left.
+    const prompt = buildTickPrompt({
+      ...input("paper", "approve", { pendingBuyTokenIds: ["solana:Wif1111111111111111111111111111111111111111"] }),
+      config: limited({ maxOpenPositions: 1 }, "approve", 40),
+    });
+    expect(prompt).toContain(
+      "Open positions: 2 of 1 allowed (1 held, 1 buy waiting for your owner). You are over the limit: a buy of a token you do not already hold is rejected until the count is back under 1. Adding to a token you hold is still allowed.",
+    );
+    expect(prompt).not.toContain("until a position is sold");
+  });
+
+  it("counts a buy that is waiting for the owner, and says that is what it is", () => {
+    const prompt = buildTickPrompt({
+      ...input("paper", "approve", { pendingBuyTokenIds: ["solana:Wif1111111111111111111111111111111111111111"] }),
+      config: limited({ maxOpenPositions: 3 }, "approve", 40),
+    });
+    expect(prompt).toContain("Open positions: 2 of 3 allowed (1 held, 1 buy waiting for your owner). You may open 1 more.");
+    expect(prompt).toContain("\n  - Positions you may still open: 1 (2 of 3 taken)\n");
+  });
+
+  it("prints no cash to trade with while the cash is under the reserve", () => {
+    const prompt = tick({ cashReserveUsd: 5 }, { cashUsd: 0.8, equityUsd: 0.8 });
+    expect(prompt).toContain("Max ticket right now: $0.00 — the binding limit is the $0.00 of your cash that is above your $5.00 cash reserve");
+    expect(prompt).toContain("  - Cash available: $0.0000\n");
+    expect(prompt).toContain("so $0.00 is available to trade.");
+  });
+
+  it("gives one figure to trade with when thinking money is kept back as well, and never the amount of that", () => {
+    // $5.00, $0.85 kept for thinking, $2.00 reserve: the reserve is the larger, so $3.00.
+    const both = tick({ cashReserveUsd: 2 }, { thinkingReserveUsd: 0.85 });
+    expect(both).toContain("Part of that cash is kept back to pay for your own thinking and cannot be spent on a buy: $3.00 is available to trade.");
+    expect(both).toContain(
+      "Cash reserve: your owner keeps $2.00 of your cash out of every buy, and the amount available to trade above already allows for it.",
+    );
+    expect(both).toContain(
+      "Max ticket right now: $2.98 — the binding limit is the $3.00 of your cash that is available to trade (part of your cash is kept back for your cash reserve and to pay for your thinking) less the 0.5% Tocker fee charged on the fill.",
+    );
+    expect(both).toContain("  - Cash available: $3.00\n");
+    expect(both).not.toContain("0.85");
+    // A reserve smaller than what thinking already keeps back leaves the figure where it was.
+    const small = tick({ cashReserveUsd: 0.5 }, { thinkingReserveUsd: 0.85 });
+    expect(small).toContain("  - Cash available: $4.15\n");
+    expect(small).not.toContain("0.85");
+  });
+
+  const agent = (risk: Partial<AgentConfig["risk"]>) => ({ name: "Fixture", tagline: null, mode: "live" as const, config: limited(risk, "auto", 40) });
+
+  it("states both limits once in the system prompt, among the hard limits, before the fee", () => {
+    const system = buildSystemPrompt(agent({ maxOpenPositions: 3, cashReserveUsd: 5 }), []);
+    expect(system).toContain(
+      [
+        "  - Slippage tolerance: 300 bps",
+        "  - Max open positions: 3. A buy of a token you do not already hold is rejected while you have 3 or more; a buy waiting for your owner's approval counts as one. Adding to a token you hold is not a new position. \"Open positions\" in your book is the count.",
+        "  - Cash reserve: $5.00 always stays in cash. A buy that would leave less than that once its fee is paid is rejected, and \"Max ticket right now\" has already allowed for it.",
+        "  - Tocker charges 0.5% of each fill, buy or sell, taken from this agent's own wallet.",
+      ].join("\n"),
+    );
+    // And the sizing step names the reserve where it names the cash.
+    expect(system).toContain(
+      ["   40%-of-equity concentration cap and the cash you have above your $5.00 reserve once", "   the 0.5% Tocker fee on the fill is set aside"].join("\n"),
+    );
+    vi.stubEnv("PLATFORM_FEE_BPS", "0");
+    expect(buildSystemPrompt(agent({ cashReserveUsd: 5 }), [])).toContain(
+      "concentration cap and the cash you have above your $5.00 reserve, and it names which of the three is binding.",
+    );
+  });
+
+  it("states only the one that is set", () => {
+    const limitOnly = buildSystemPrompt(agent({ maxOpenPositions: 1 }), []);
+    expect(limitOnly).toContain("  - Max open positions: 1. ");
+    expect(limitOnly).not.toContain("Cash reserve");
+    const reserveOnly = buildSystemPrompt(agent({ cashReserveUsd: 0.5 }), []);
+    expect(reserveOnly).toContain("  - Cash reserve: $0.5000 always stays in cash.");
+    expect(reserveOnly).not.toContain("Max open positions");
+  });
+
+  it("says nothing of either to an agent with neither, whether the fields are absent or written out as off", () => {
+    const absent = buildSystemPrompt(agent({}), []);
+    expect(absent).not.toMatch(/Max open positions|Cash reserve|reserve/);
+    // Nothing stands between the last of the five limits and the fee, as before.
+    expect(absent).toContain("  - Slippage tolerance: 300 bps\n  - Tocker charges 0.5% of each fill, buy or sell, taken from this agent's own wallet.");
+    expect(buildSystemPrompt(agent({ maxOpenPositions: null, cashReserveUsd: 0 }), [])).toBe(absent);
+    // The tick prompt too: off, written out, is the prompt pinned above.
+    expect(tick({ maxOpenPositions: null, cashReserveUsd: 0 })).toBe(LIVE_KEY_AGENT_BOUND_BY_ITS_CASH);
+    expect(tick({}, { pendingBuyTokenIds: [] })).toBe(LIVE_KEY_AGENT_BOUND_BY_ITS_CASH);
+  });
+});

@@ -148,7 +148,8 @@ export async function previewTrade(input: PreviewTradeInput): Promise<ActionResu
 
   const config: AgentConfig = agent.config;
   const score = await scoreQuietly(input.chain, token.address, token.symbol, config);
-  const portfolio = await getPortfolio(agent.id);
+  // Read as the order itself will read it, so the preview of a buy answers for the buy.
+  const portfolio = await getPortfolio(agent.id, input.side === "buy" ? { forBuy: true } : {});
   const held = portfolio.positions.find((p) => p.token.id === token.id) ?? null;
   // Sized by the same function the order uses, so the preview answers for the order that
   // will be sent. "Everything" is the position at this mark: the typed figure is a mark
@@ -356,7 +357,9 @@ export async function placeManualTrade(
     );
   }
 
-  const portfolio = await getPortfolio(agent.id);
+  // A buy is judged on a book that also shows the agent's buys in flight; a sell is read
+  // as it always was (`getPortfolio`).
+  const portfolio = await getPortfolio(agent.id, input.side === "buy" ? { forBuy: true } : {});
   const heldPosition = portfolio.positions.find((p) => p.token.id === token.id) ?? null;
   // W7 H1: the owner's own sell is sized from the position too — the venue is told how
   // many tokens to send, not a dollar figure to convert at a price that has moved. And

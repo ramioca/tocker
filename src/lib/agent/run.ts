@@ -67,16 +67,18 @@ import {
 import { createInferenceFetch, simulateInferenceStep } from "@/lib/x402/paidFetch";
 import { newBudget, type X402Context } from "@/lib/x402/types";
 import { describeGuardian, runGuardian } from "@/lib/trading/guardian";
+import { readSkipWhenFull } from "@/lib/trading/hard-limits";
 import { INVOCATION_LIMIT_MS, paidStepLimit, payDeadlineAt, stopOutcome, thinkSource, thinkingModel, wrapUpReason } from "./inference";
 import { admitInferenceRun, applyInferenceHold, clearInferenceHold, type InferencePlan, type RunAdmission } from "./inference-gate";
 import { RunLogger } from "./logger";
 import { createMockModel, isLlmMock } from "./mock-model";
-import { getAgentWallets, getPortfolio, snapshotEquity } from "./portfolio";
+import { getAgentWallets, getPortfolio, snapshotEquity, toRiskPortfolio } from "./portfolio";
 import { buildSystemPrompt, buildTickPrompt, type RecentTrade } from "./prompts";
 import { PROVIDER_UNSUPPORTED, isProvider, providerLabel, providerRow, withArticle, type LlmProvider } from "./providers";
 import { callOptionsFor, keyScrubber, modelFor, noScrub, sentenceInBody, type KeyScrub } from "./providers-server";
-import { RUN_DEFERRED, RunRefusedError } from "./run-gate";
+import { RUN_DEFERRED, RUN_SKIPPED_NO_ROOM, RunRefusedError } from "./run-gate";
 import { nextRunTime, runAnchor } from "./schedule";
+import { fullRunSkip, type NoRoom } from "./skip-full";
 import { buildTools, type RunAgentRecord, type RunContext } from "./tools";
 
 export interface RunAgentInput {
@@ -102,6 +104,11 @@ export interface RunAgentResult {
   error?: string;
   /** Pay-per-use only: the named reason the run stopped, or was not started. */
   stopReason?: InferenceStopReason;
+  /**
+   * Set when a scheduled run was not started because the agent has no room to buy and
+   * its owner has it skip such runs: which of the three reasons it was.
+   */
+  noRoom?: NoRoom["code"];
 }
 
 /** The model a run thinks on, and what the run needs to know about where it came from. */
@@ -380,6 +387,72 @@ interface RunStart {
   plan: InferencePlan | null;
 }
 
+/** A scheduled run that is left unstarted because the agent has no room to buy. */
+interface SkippedForRoom {
+  ok: false;
+  kind: "full";
+  room: NoRoom;
+}
+
+/** An agent's config as a run reads it: parsed, or as stored when it no longer parses. */
+function storedConfig(agent: { config: AgentConfig }): AgentConfig {
+  try {
+    return parseAgentConfig(agent.config);
+  } catch {
+    return agent.config;
+  }
+}
+
+/**
+ * Why this run is not to be started for want of room to buy, or null when it is to go
+ * ahead (`./skip-full`).
+ *
+ * Only ever a scheduled run, and only for an agent whose owner turned the switch on: for
+ * every other agent nothing is read here and the run starts exactly as it did. The book
+ * is the same one the run would read, so the question is asked of the same positions,
+ * cash and day's count the risk guard would be handed. If it cannot be asked (the
+ * database or a wallet did not answer), the run goes ahead: a skip is a saving, and is
+ * never taken on a guess.
+ */
+async function noRoomForScheduledRun(
+  agent: { id: string; mode: "paper" | "live"; config: AgentConfig },
+  trigger: RunAgentInput["trigger"],
+): Promise<NoRoom | null> {
+  if (trigger !== "schedule") return null;
+  const config = storedConfig(agent);
+  if (!readSkipWhenFull(config.schedule)) return null;
+  try {
+    const portfolio = await getPortfolio(agent.id);
+    return fullRunSkip(
+      { mode: agent.mode, config },
+      { portfolio: toRiskPortfolio(portfolio), cashReadFailed: portfolio.cashReadFailed },
+    );
+  } catch (err) {
+    console.error(`[run] ${agent.id}: room to buy could not be checked, so its run goes ahead: ${dbErrorForLog(err)}`);
+    return null;
+  }
+}
+
+/**
+ * Makes a skipped agent due again at its next scheduled time, by the one rule every run
+ * ends on (`./schedule`): one interval from when this invocation began. Nothing else on
+ * its row is touched, `lastRunAt` least of all, because no run happened.
+ *
+ * The interval is read again, as it is when a run ends, so a schedule saved a moment ago
+ * is the one that is kept. A write that fails leaves the agent due: it is asked again on
+ * the next pass, still without a run or a payment.
+ */
+async function rescheduleSkipped(agentId: string, intervalMinutes: number, invocationStartedAt: number): Promise<void> {
+  try {
+    const anchor = runAnchor(invocationStartedAt, Date.now(), INVOCATION_LIMIT_MS);
+    const nextRunAt = nextRunTime(await intervalNow(agentId, intervalMinutes), anchor);
+    const db = await getDb();
+    await db.update(agents).set({ nextRunAt }).where(eq(agents.id, agentId));
+  } catch (err) {
+    console.error(`[run] ${agentId}: its next run could not be set after a skipped one: ${dbErrorForLog(err)}`);
+  }
+}
+
 /**
  * Before any run row is written: does the agent exist, and may its run start.
  *
@@ -391,10 +464,17 @@ interface RunStart {
  * If the check itself cannot be made (the database did not answer), the run is put off:
  * no run, no hold, and the agent is still due on the next pass.
  */
-async function admitRun(input: RunAgentInput, invocationStartedAt: number): Promise<RunAdmission | null> {
+async function admitRun(input: RunAgentInput, invocationStartedAt: number): Promise<RunAdmission | SkippedForRoom | null> {
   const db = await getDb();
   const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId)).limit(1);
   if (!agent) return null;
+  // Asked first: a run that is not going to start needs no payment check, and must not
+  // count against anything a started run counts against.
+  const noRoom = await noRoomForScheduledRun(agent, input.trigger);
+  if (noRoom) {
+    await rescheduleSkipped(agent.id, storedConfig(agent).schedule.intervalMinutes, invocationStartedAt);
+    return { ok: false, kind: "full", room: noRoom };
+  }
   try {
     return await admitInferenceRun(agent, { trigger: input.trigger, invocationStartedAt });
   } catch (err) {
@@ -508,6 +588,11 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
   const admission = await admitRun(input, invocationStartedAt);
   if (admission === null) return { runId: "", status: "failed", error: "Agent not found" };
   if (!admission.ok) {
+    // An agent with no room to buy whose owner has it skip such runs. No row, no model
+    // call, no data: it is already due again at its next scheduled time.
+    if (admission.kind === "full") {
+      return { runId: "", status: "skipped", error: RUN_SKIPPED_NO_ROOM, noRoom: admission.room.code };
+    }
     // A pay-per-use agent that may not run, or whose run would not fit what is left of
     // this invocation. No row is written: the agent is waiting, not failing.
     return admission.kind === "stop"
@@ -536,6 +621,9 @@ export async function startRun(input: RunAgentInput): Promise<{ runId: string }>
   const admission = await admitRun(input, invocationStartedAt);
   if (admission === null) throw new Error("Agent not found");
   if (!admission.ok) {
+    // Never reached by a run started by hand, which is every caller there is: only a
+    // scheduled run is skipped for want of room. Said plainly if one ever is.
+    if (admission.kind === "full") throw new RunRefusedError(RUN_SKIPPED_NO_ROOM, null);
     throw admission.kind === "stop" ? new RunRefusedError(admission.detail, admission.reason) : new RunRefusedError(RUN_DEFERRED, null);
   }
   const runId = await createRunRow(input.agentId, input.trigger);

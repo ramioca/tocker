@@ -26,8 +26,19 @@ export function applyPresetTo(config: Config, preset: StrategyPreset): Config {
     ...(preset.universe ? { universe: { ...config.universe, ...preset.universe } } : {}),
     ...(preset.risk ? { risk: { ...config.risk, ...preset.risk } } : {}),
     ...(preset.execution ? { execution: preset.execution } : {}),
-    ...(preset.schedule ? { schedule: preset.schedule } : {}),
+    // Merged, like the risk above: a preset sets the interval it needs and leaves the
+    // rest of the schedule (the skip switch) as the owner had it.
+    ...(preset.schedule ? { schedule: { ...config.schedule, ...preset.schedule } } : {}),
   };
+}
+
+/**
+ * The schedule on a new interval, with the rest of it as the owner had it. The interval
+ * buttons on the Schedule step set one key; written as a whole new schedule they would
+ * drop the skip switch beside them, which then reads as off and is saved as off.
+ */
+export function withInterval(schedule: Config["schedule"], intervalMinutes: number): Config["schedule"] {
+  return { ...schedule, intervalMinutes };
 }
 
 /**

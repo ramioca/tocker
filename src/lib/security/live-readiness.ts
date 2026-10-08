@@ -220,7 +220,15 @@ export async function simulateFirstTrade(config: AgentConfig, usdc: number): Pro
 
   const verdict = riskGuard(
     { id: "readiness-simulation", mode: "live", config },
-    { cashUsd: Math.max(0, usdc - heldBack), equityUsd: usdc, positions: [], tradesToday: 0 },
+    {
+      cashUsd: Math.max(0, usdc - heldBack),
+      // Said to the guard as the live book says it, so an owner's cash reserve is set
+      // against all of the agent's cash and not taken off twice.
+      ...(heldBack > 0 ? { cashHeldBackUsd: heldBack } : {}),
+      equityUsd: usdc,
+      positions: [],
+      tradesToday: 0,
+    },
     {
       chain,
       side: "buy",

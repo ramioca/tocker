@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { ArrowDownToLine, ChevronLeft, CircleAlert, Loader2, Pause, Play, Zap } from "lucide-react";
 import { AgentAvatar } from "@/components/common/agent-avatar";
-import { formatUsd } from "@/components/common/format";
+import { formatRelative, formatUsd } from "@/components/common/format";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { StatusBadge } from "@/components/common/status-badge";
 import { intervalLabel } from "@/components/agents/agent-config-summary";
 import { EASE, FOCUS, HAIR, TYPE } from "@/components/agents/builder/look";
+import { useCoarseNow } from "@/hooks/use-now";
 import { thinkSource } from "@/lib/agent/inference";
 import { cn } from "@/lib/utils";
 import type { AgentConfig } from "@/db/schema";
@@ -97,6 +98,7 @@ export function AgentBar({
   config,
   initialBalances,
   accountPaused,
+  skippingLine = null,
   isAdmin = false,
   statusPending,
   onToggleStatus,
@@ -109,6 +111,11 @@ export function AgentBar({
   initialBalances: WalletBalance[];
   /** Trading is paused account-wide (Security → Pause all trading). */
   accountPaused: boolean;
+  /**
+   * Set while the saved agent's scheduled runs are being skipped for want of room to buy:
+   * the sentence that says so, from the server (`getSkippingRunsLine`).
+   */
+  skippingLine?: string | null;
   /** Shows operator-only notes in the Fund sheet. */
   isAdmin?: boolean;
   /** A status change is on its way: the button spins and takes no second press. */
@@ -170,6 +177,7 @@ export function AgentBar({
           agent={agent}
           config={config}
           accountPaused={accountPaused}
+          skippingLine={skippingLine}
           onChooseKey={onChooseKey}
           className="col-span-full sm:col-span-1 sm:col-start-3"
         />
@@ -258,12 +266,14 @@ function StatusLine({
   agent,
   config,
   accountPaused,
+  skippingLine,
   onChooseKey,
   className,
 }: {
   agent: AgentDetail;
   config: AgentConfig;
   accountPaused: boolean;
+  skippingLine: string | null;
   onChooseKey: () => void;
   className?: string;
 }) {
@@ -300,11 +310,41 @@ function StatusLine({
     );
   }
   const minutes = config.schedule.intervalMinutes;
+  // On a schedule, and its runs are being skipped because it has no room to buy: "next
+  // tick scheduled" would be true and would still mislead. The sentence is the server's.
+  if (skippingLine && minutes !== 0) return <p className={line}>{skippingLine}</p>;
+  // Set to skip a run with no room to buy, and not skipping right now. Its last run can
+  // then be far older than its interval (a skipped slot leaves no run behind), and "next
+  // tick scheduled" under "ran 2 days ago" gives no reason and no time. So the line says
+  // that runs can be skipped, and when the agent is next looked at.
+  if (minutes !== 0 && config.schedule.skipWhenFull === true && agent.nextRunAt) {
+    return (
+      <p className={line}>
+        Runs {intervalLabel(minutes).toLowerCase()} · skips a run with no room to buy · next look{" "}
+        <NextLook iso={agent.nextRunAt} />
+      </p>
+    );
+  }
   return (
     <p className={line}>
       {minutes === 0
         ? "Manual runs only"
         : `Runs ${intervalLabel(minutes).toLowerCase()} · next tick ${agent.nextRunAt ? "scheduled" : "unscheduled"}`}
     </p>
+  );
+}
+
+/**
+ * When a scheduled agent is next looked at: "in 23 hr.", or "now" once its time has come
+ * and it is waiting for the next pass. On the page's shared half-minute clock, and
+ * relative, so the server and the reader's browser need not agree on a time zone.
+ */
+function NextLook({ iso }: { iso: string }) {
+  const now = useCoarseNow();
+  const due = new Date(iso).getTime() - now < 45_000;
+  return (
+    <time dateTime={iso} suppressHydrationWarning>
+      {due ? "now" : formatRelative(iso, now)}
+    </time>
   );
 }

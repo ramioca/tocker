@@ -150,6 +150,12 @@ interface AgentSettingsProps {
   payPerUseAllowed: boolean;
   /** Tocker's fee in basis points of each fill, from the server; 0 when it is off. */
   feeBps: number;
+  /**
+   * The sentence the bar shows while the saved agent's scheduled runs are being skipped
+   * for want of room to buy, worked out on the server from its book. Null or absent at
+   * every other time.
+   */
+  skippingLine?: string | null;
 }
 
 /**
@@ -185,6 +191,7 @@ function Settings({
   isAdmin,
   payPerUseAllowed,
   feeBps,
+  skippingLine = null,
 }: AgentSettingsProps & { config: AgentConfig }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -585,6 +592,7 @@ function Settings({
             config={config}
             initialBalances={balances}
             accountPaused={accountPaused}
+            skippingLine={skippingLine}
             isAdmin={isAdmin}
             statusPending={statusPending}
             onToggleStatus={() => void toggleStatus()}

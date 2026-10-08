@@ -713,6 +713,10 @@ function describeUnknown(name: string, r: Record<string, unknown>): string {
 /** Refusal reasons, collapsed to something countable. Order matters: first match wins. */
 const REFUSAL_LABELS: ReadonlyArray<readonly [RegExp, string]> = [
   [/daily buy limit/i, "daily buy limit"],
+  // The two limits an owner may switch on. Before the patterns below, because their
+  // sentences also speak of positions and of cash.
+  [/position limit reached|maxopenpositions/i, "position limit"],
+  [/cash reserve|cashreserveusd/i, "cash reserve"],
   [/this tick has already proposed|per tick/i, "tick proposal limit"],
   [/already proposed/i, "already proposed"],
   [/blocklist/i, "blocklist"],

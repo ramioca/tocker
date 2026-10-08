@@ -45,6 +45,8 @@ export type SpecId =
   | "maxPositionPct"
   | "maxDataSpendUsdPerRun"
   | "slippageBps"
+  | "maxOpenPositions"
+  | "cashReserveUsd"
   | "stopLossPct"
   | "takeProfitPct"
   | "trailingStopPct"
@@ -203,6 +205,14 @@ export const SPECS: Record<SpecId, ValueSpec> = {
     example: "150 or 1.5%",
     inputMode: "decimal",
   },
+  // Both can be off, which is the switch's to say: the box itself only takes a number.
+  maxOpenPositions: count(
+    "Max open positions",
+    RISK_BOUNDS.maxOpenPositions.min,
+    RISK_BOUNDS.maxOpenPositions.max,
+    "3",
+  ),
+  cashReserveUsd: cents("Cash reserve", RISK_BOUNDS.cashReserveUsd.min, RISK_BOUNDS.cashReserveUsd.max, "5 or $12.50"),
 
   // ---- exit rules
   stopLossPct: {

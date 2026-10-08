@@ -29,7 +29,7 @@ import { nanoid } from "nanoid";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { agents, follows, getDb, notifications, posts, tokens, trades } from "@/db";
 import type { AgentConfig } from "@/db/schema";
-import { getAgentWallets, getPortfolio, snapshotEquity, toRiskPortfolio } from "@/lib/agent/portfolio";
+import { getAgentWallets, getPortfolio, snapshotEquity, toRiskPortfolio, withoutBuysInFlight } from "@/lib/agent/portfolio";
 import { chargePlatformFee } from "@/lib/platform/fees";
 import { getTokenScore, toTradeScore } from "@/lib/tokens";
 import { toNum } from "@/lib/money";
@@ -41,7 +41,8 @@ import { getExecutor, type ExecutorAgent, type Quote, type TradeRequest } from "
 import { applyFill, heldAmountToken, sellAmountToken } from "./positions";
 import { buildReceipt, saveReceipt } from "./receipt";
 import { getPriceUsd } from "./prices";
-import { riskGuard, type OrderIntent } from "./risk";
+import { proposalExpiresAt, proposalTtlMinutes } from "./proposal-ttl";
+import { riskGuard, withoutWaitingBuys, type OrderIntent } from "./risk";
 import { ownerRiskMessage } from "./risk-copy";
 import { executeTrade } from "./settle";
 import { checkQuoteSanity } from "./sanity";
@@ -64,17 +65,9 @@ export interface ProposalToken {
   decimals: number;
 }
 
-/** Used when a config predates approval mode or carries a nonsense TTL. */
-const DEFAULT_TTL_MINUTES = 60;
-
-export function proposalTtlMinutes(config: AgentConfig): number {
-  const raw = config.execution?.proposalTtlMinutes;
-  return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TTL_MINUTES;
-}
-
-export function proposalExpiresAt(proposedAt: Date, config: AgentConfig): Date {
-  return new Date(proposedAt.getTime() + proposalTtlMinutes(config) * 60_000);
-}
+// The TTL rule lives in a leaf (`./proposal-ttl.ts`) so the book can read it too. It is
+// exported from here as it always was.
+export { proposalExpiresAt, proposalTtlMinutes };
 
 /** True when this agent's trades must be approved by its owner before they route. */
 export function requiresApproval(config: AgentConfig): boolean {
@@ -532,16 +525,39 @@ export async function decideProposal(input: {
     );
   }
 
-  const portfolio = await getPortfolio(row.agent.id);
+  // An approved buy is judged on a book that also shows the agent's buys in flight; an
+  // approved sell is read as it always was (`getPortfolio`).
+  const portfolio = await getPortfolio(row.agent.id, row.trade.side === "buy" ? { forBuy: true } : {});
   const verdict = riskGuard(
     { id: row.agent.id, mode: row.agent.mode, config },
-    toRiskPortfolio(portfolio),
+    // Judged on what is held or already filling. This proposal has been claimed and no
+    // longer waits, and the others that still wait are not positions: under a position
+    // limit, counting them would turn this one down for buys the owner may never approve.
+    // The claim also put this row among the agent's buys in flight, so the book is told
+    // which one it is and leaves it out of what it is judged against.
+    withoutWaitingBuys(toRiskPortfolio(portfolio, { tradeId: input.tradeId, at: now.getTime() })),
     order,
     score,
   );
   if (!verdict.ok) {
+    // A refusal that only the agent's other buys still settling explain is not the end
+    // of the proposal. An order in flight settles in seconds, as a position or as
+    // nothing, and a rejection here is final: the proposal is handed back, to be approved
+    // again in a moment and judged then on a book that has settled. Asked a second time
+    // with them left out only to tell the two apart; a buy is never let through on that
+    // answer.
+    const settled = riskGuard(
+      { id: row.agent.id, mode: row.agent.mode, config },
+      withoutWaitingBuys(toRiskPortfolio(withoutBuysInFlight(portfolio))),
+      order,
+      score,
+    );
+    if (settled.ok) {
+      return settleRetryable("Another buy of this agent's has not settled yet, and with it counted this one does not fit the agent's limits.");
+    }
     // The owner reads this on the card they just tapped: their words, not the model's.
-    return settleRejected(`No longer allowed: ${ownerRiskMessage(verdict)}`);
+    // The reason is the one that stands with nothing in flight.
+    return settleRejected(`No longer allowed: ${ownerRiskMessage(settled)}`);
   }
 
   const executorAgent: ExecutorAgent = {

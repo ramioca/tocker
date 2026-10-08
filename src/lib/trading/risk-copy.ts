@@ -29,6 +29,11 @@ function pct(value: number): string {
   return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}%`;
 }
 
+/** ", with $5.00 kept in reserve" when the owner set a reserve, nothing otherwise. */
+function kept(reserveUsd: number | undefined): string {
+  return reserveUsd !== undefined && reserveUsd > 0 ? `, with ${fmtUsd(reserveUsd)} kept in reserve` : "";
+}
+
 /**
  * The owner's sentence for a refusal. A verdict without a `code` (or one this does not
  * know) falls back to the guard's own reason, which is at worst technical, never wrong.
@@ -57,6 +62,32 @@ export function ownerRiskMessage(verdict: Extract<RiskVerdict, { ok: false }>): 
       return p.maxDailyTrades !== undefined
         ? `This agent has used all ${p.maxDailyTrades} of today's buys. The count resets at 00:00 UTC, or raise Max trades per day in Settings.`
         : verdict.reason;
+    case "position_limit": {
+      if (p.maxOpenPositions === undefined || p.heldPositions === undefined) return verdict.reason;
+      const many = p.maxOpenPositions === 1 ? "position" : "positions";
+      const waiting = p.waitingBuys ?? 0;
+      const placing = p.placingBuys ?? 0;
+      // A buy waiting for approval takes a slot too, and so does one that is being placed
+      // right now, so each is named: "holds 2" under a limit of 3 would read as room for
+      // one more.
+      const beside = [
+        placing > 0 ? `${placing} more being bought right now` : null,
+        waiting > 0 ? `${waiting} more buy${waiting === 1 ? "" : "s"} waiting for your approval` : null,
+      ].filter((part): part is string => part !== null);
+      const holds = beside.length === 0 ? `and holds ${p.heldPositions}` : `and holds ${p.heldPositions}, with ${beside.join(" and ")}`;
+      // How many have to go before this buy can open one. One, unless the limit was set
+      // under what the agent already has: "sell one first" would then be untrue, and the
+      // owner who did would be refused again. A waiting buy frees its slot when declined.
+      const toFree = p.heldPositions + placing + waiting - p.maxOpenPositions + 1;
+      const first =
+        placing > 0
+          ? // The order being placed settles in seconds, as a position or as nothing.
+            "Try again when that buy has settled"
+          : toFree > 1
+            ? `${waiting === 0 ? "Sell" : "Sell or decline"} ${toFree} first`
+            : "Sell one first";
+      return `This agent may hold at most ${p.maxOpenPositions} ${many} ${holds}. ${first}, or raise Max open positions in Settings.`;
+    }
     case "no_score":
       return `${symbol} couldn't be scored, and this agent never buys a token it hasn't scored. Try again in a minute.`;
     case "hard_gates": {
@@ -83,8 +114,23 @@ export function ownerRiskMessage(verdict: Extract<RiskVerdict, { ok: false }>): 
       // setting. Printed exactly, because buying with all of one's cash is the common
       // case and to the cent the need and the cash are the same number.
       const needs = fmtUsdExact(p.amountUsd + (p.feeUsd ?? 0));
-      const most = p.maxBuyUsd !== undefined && p.maxBuyUsd > 0 ? ` The most you can buy is ${fmtUsd(p.maxBuyUsd)}.` : "";
+      const most = p.maxBuyUsd !== undefined && p.maxBuyUsd > 0 ? ` The most you can buy is ${fmtUsd(p.maxBuyUsd)}${kept(p.reserveUsd)}.` : "";
       return `Not enough cash: ${fmtUsdExact(p.cashUsd)} available, and a ${fmtUsdExact(p.amountUsd)} buy needs ${needs} with the ${formatFeeRate(p.feeBps)} Tocker fee.${most}`;
+    }
+    case "cash_reserve": {
+      if (p.leftUsd === undefined || p.reserveUsd === undefined) return verdict.reason;
+      // Exact, like the cash sentence above: a buy that misses the reserve by a fraction
+      // of a cent would otherwise read "$5.00 in cash" against a "$5.00" reserve.
+      const most =
+        p.maxBuyUsd !== undefined && p.maxBuyUsd > 0
+          ? ` The most you can buy is ${fmtUsd(p.maxBuyUsd)}.`
+          : " Add funds, or lower Cash reserve in Settings.";
+      // Buys of this agent's that are still settling are already taken off, and said, or
+      // the figure would not square with the balance the owner can see.
+      const settling =
+        p.settlingUsd !== undefined && p.settlingUsd > 0 ? ` once the ${fmtUsd(p.settlingUsd)} of buys already placed have settled` : "";
+      const leaves = p.leftUsd < 0 ? "nothing" : fmtUsdExact(p.leftUsd);
+      return `This buy would leave ${leaves} in cash${settling}; the agent keeps ${fmtUsd(p.reserveUsd)} in reserve.${most}`;
     }
     case "concentration":
       return p.pct !== undefined && p.capPct !== undefined

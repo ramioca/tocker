@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AGENT_CONFIG, DEFAULT_MODEL_ID } from "@/lib/agent/config";
 import { chooseSource, defaultUsdc, usdcEstimate } from "@/components/agents/thinking";
@@ -13,7 +15,9 @@ import {
   ladderStops,
   nearestStopIndex,
   onProvider,
+  restoreDraft,
   withDefaultKey,
+  type BuilderDraft,
 } from "./types";
 
 describe("max-trade ladder", () => {
@@ -36,6 +40,65 @@ describe("max-trade ladder", () => {
   it("finds the nearest stop", () => {
     expect(MAX_TRADE_LADDER[nearestStopIndex(MAX_TRADE_LADDER, 30)]).toBe(25);
     expect(MAX_TRADE_LADDER[nearestStopIndex(MAX_TRADE_LADDER, 9_999)]).toBe(5_000);
+  });
+});
+
+/**
+ * A draft saved in the browser before a setting existed comes back without it. The risk
+ * limits and the schedule are nested, so a shallow spread dropped the position limit, the
+ * cash reserve and the skip switch from such a draft, and the Risk limits step then read
+ * as changed the moment a switch was turned on and off again.
+ */
+describe("restoreDraft", () => {
+  /** A draft as a browser saved it before the three settings existed. */
+  function savedBeforeTheLimits(): Partial<BuilderDraft> {
+    const fresh = emptyDraft();
+    const risk = { ...fresh.config.risk, maxTradeUsd: 7 };
+    delete risk.maxOpenPositions;
+    delete risk.cashReserveUsd;
+    return { name: "Old draft", config: { ...fresh.config, risk, schedule: { intervalMinutes: 60 } } };
+  }
+
+  it("brings back a draft that predates the limits with them as off, not missing", () => {
+    const restored = restoreDraft(emptyDraft(), savedBeforeTheLimits());
+    expect(restored.name).toBe("Old draft");
+    // What the draft did say is kept.
+    expect(restored.config.risk.maxTradeUsd).toBe(7);
+    expect(restored.config.schedule.intervalMinutes).toBe(60);
+    // What it could not say is the default, in the default's own words.
+    expect(restored.config.risk.maxOpenPositions).toBeNull();
+    expect(restored.config.risk.cashReserveUsd).toBe(0);
+    expect(restored.config.schedule.skipWhenFull).toBe(false);
+    expect(Object.keys(restored.config.risk).sort()).toEqual(Object.keys(emptyDraft().config.risk).sort());
+  });
+
+  it("keeps the limits a saved draft did set", () => {
+    const fresh = emptyDraft();
+    const saved: Partial<BuilderDraft> = {
+      config: {
+        ...fresh.config,
+        risk: { ...fresh.config.risk, maxOpenPositions: 3, cashReserveUsd: 5 },
+        schedule: { intervalMinutes: 15, skipWhenFull: true },
+      },
+    };
+    const restored = restoreDraft(emptyDraft(), saved);
+    expect(restored.config.risk.maxOpenPositions).toBe(3);
+    expect(restored.config.risk.cashReserveUsd).toBe(5);
+    expect(restored.config.schedule).toEqual({ intervalMinutes: 15, skipWhenFull: true });
+  });
+
+  it("leaves a draft with no config on the starting one, and changes neither input", () => {
+    const current = emptyDraft();
+    const restored = restoreDraft(current, { name: "Only a name" });
+    expect(restored.config).toEqual(emptyDraft().config);
+    expect(current).toEqual(emptyDraft());
+  });
+
+  it("is how the builder restores a saved draft", () => {
+    // The restore runs in an effect over localStorage, which no test here has. What can
+    // be held is that the hook still goes through this merge.
+    const hook = readFileSync(path.join(process.cwd(), "src/components/agents/builder/use-draft.ts"), "utf8");
+    expect(hook).toContain("withDefaultKey(restoreDraft(current, parsed), keysRef.current");
   });
 });
 

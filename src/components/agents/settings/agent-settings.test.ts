@@ -87,7 +87,13 @@ function agentOf(overrides: Partial<AgentDetail> = {}): AgentDetail {
 
 function render(
   search = "",
-  props: { agent?: AgentDetail; config?: AgentConfig | null; keys?: LlmKeyRow[]; payPerUseAllowed?: boolean } = {},
+  props: {
+    agent?: AgentDetail;
+    config?: AgentConfig | null;
+    keys?: LlmKeyRow[];
+    payPerUseAllowed?: boolean;
+    skippingLine?: string | null;
+  } = {},
 ): string {
   address.search = search;
   const agent = props.agent ?? agentOf();
@@ -106,6 +112,7 @@ function render(
         isAdmin: false,
         payPerUseAllowed: props.payPerUseAllowed ?? false,
         feeBps: 25,
+        ...(props.skippingLine === undefined ? {} : { skippingLine: props.skippingLine }),
       }),
     ),
   );
@@ -276,5 +283,141 @@ describe("an agent's settings page", () => {
     expect(html).not.toContain('id="step-');
     expect(html).not.toContain(CONFIG.strategyPrompt.slice(0, 40));
     expect(html).not.toContain("Save changes");
+  });
+});
+
+/**
+ * The position limit, the cash reserve and the switch that skips a full agent's scheduled
+ * runs, as the page first paints them. They are drawn by the step bodies the builder
+ * shares, from the same module every other limit is.
+ */
+describe("the two limits that can be off, and the skip switch", () => {
+  /** The attributes of the element with this id. */
+  function tagOf(html: string, id: string): string {
+    const match = new RegExp(`<[a-z]+[^>]*\\bid="${id}"[^>]*>`).exec(html);
+    if (!match) throw new Error(`no #${id}`);
+    return match[0];
+  }
+  const withRisk = (risk: Partial<AgentConfig["risk"]>, schedule: AgentConfig["schedule"] = CONFIG.schedule): AgentConfig => ({
+    ...CONFIG,
+    risk: { ...CONFIG.risk, ...risk },
+    schedule,
+  });
+
+  it("are both off on an agent that never set them, each a switch with its own sentence", () => {
+    const html = render("step=limits");
+    const text = words(html);
+    expect(tagOf(html, "risk-max-positions-toggle")).toContain('aria-checked="false"');
+    expect(tagOf(html, "risk-cash-reserve-toggle")).toContain('aria-checked="false"');
+    expect(text).toContain("Max open positions Off");
+    expect(text).toContain("The most tokens it may hold at once. Off means no limit.");
+    expect(text).toContain("Cash reserve Off");
+    expect(text).toContain("Cash it never spends on a buy. Off means it may spend its last dollar.");
+    // Off is not news: neither is named in the read-back line or on the card.
+    expect(text).not.toMatch(/max \d+ positions?|cash reserve ·|\$[\d.]+ cash reserve/);
+    expect(text).toContain("Risk limits: Saved");
+  });
+
+  it("show what is set as a value that can be typed, with a sentence in the owner's own numbers", () => {
+    const config = withRisk({ maxOpenPositions: 3, cashReserveUsd: 5 });
+    const html = render("step=limits", { agent: agentOf({ config }), config });
+    const text = words(html);
+    expect(tagOf(html, "risk-max-positions-toggle")).toContain('aria-checked="true"');
+    expect(tagOf(html, "risk-max-positions-value")).toContain('value="3"');
+    expect(tagOf(html, "risk-max-positions-value")).toContain('aria-label="Max open positions threshold, exact value"');
+    expect(tagOf(html, "risk-cash-reserve-toggle")).toContain('aria-checked="true"');
+    expect(tagOf(html, "risk-cash-reserve-value")).toContain('value="$5.00"');
+    expect(text).toContain("With 3 held it buys no new token until one is sold; it can still add to one it holds, and it can always sell.");
+    expect(text).toContain("A buy that would leave less than $5.00 in cash once its fee is paid is refused; sells are never held back.");
+    // The read-back line of the step, and the same words on the agent card.
+    expect(text.split("$1.00 data/run · max 3 positions · $5.00 cash reserve · Tocker fee 0.25% of each fill").length - 1).toBe(2);
+    expect(text).toContain("Everything is saved");
+  });
+
+  it("says when the reserve is the whole of the agent's equity or more, so every buy would be refused", () => {
+    // The fixture agent has $30 of equity.
+    const helper = (risk: Partial<AgentConfig["risk"]>) => {
+      const config = withRisk(risk);
+      return words(render("step=limits", { agent: agentOf({ config }), config }));
+    };
+    expect(helper({ cashReserveUsd: 50 })).toContain(
+      "A buy that would leave less than $50.00 in cash is refused, and that is more than its $30.00 of equity, so every buy would be refused.",
+    );
+    expect(helper({ cashReserveUsd: 30 })).toContain(
+      "A buy that would leave less than $30.00 in cash is refused, and that is all of its $30.00 of equity, so every buy would be refused.",
+    );
+    // A cent under the book, a buy is still possible and nothing is claimed.
+    expect(helper({ cashReserveUsd: 29 })).toContain(
+      "A buy that would leave less than $29.00 in cash once its fee is paid is refused; sells are never held back.",
+    );
+  });
+
+  /**
+   * The two ticket sentences are silent for an agent that sizes by a share of equity,
+   * and the reserve's warning used to be silent with them. A reserve is a floor under
+   * cash: it refuses every buy however the ticket is sized.
+   */
+  it("says so too for an agent that sizes its tickets as a share of equity", () => {
+    const sized = { cashReserveUsd: 50, sizing: { mode: "percent_equity", percentOfEquity: 10, referenceRangePct: 25, minTradeUsd: 5 } };
+    const config = withRisk(sized as Partial<AgentConfig["risk"]>);
+    const text = words(render("step=limits", { agent: agentOf({ config }), config }));
+    expect(text).toContain(
+      "A buy that would leave less than $50.00 in cash is refused, and that is more than its $30.00 of equity, so every buy would be refused.",
+    );
+    // The ticket sentences still say nothing about its equity, as before.
+    expect(text).not.toContain("every trade would be refused for lack of cash");
+  });
+
+  it("arrive saved on an agent whose config predates them", () => {
+    const risk = { ...CONFIG.risk };
+    delete risk.maxOpenPositions;
+    delete risk.cashReserveUsd;
+    const old = { ...CONFIG, risk, schedule: { intervalMinutes: 15 } } as AgentConfig;
+    const html = render("step=limits", { agent: agentOf({ config: old }), config: old });
+    expect(tagOf(html, "risk-max-positions-toggle")).toContain('aria-checked="false"');
+    expect(tagOf(html, "risk-cash-reserve-toggle")).toContain('aria-checked="false"');
+    expect(words(html)).toContain("Everything is saved");
+    expect(tagOf(render("step=schedule", { agent: agentOf({ config: old }), config: old }), "schedule-skip-full")).toContain('aria-checked="false"');
+  });
+
+  it("offers the skip as a switch on the Schedule step, off by default, saying what is and is not skipped", () => {
+    const html = render("step=schedule");
+    expect(tagOf(html, "schedule-skip-full")).toContain('role="switch"');
+    expect(tagOf(html, "schedule-skip-full")).toContain('aria-checked="false"');
+    const text = words(html);
+    expect(text).toContain("Skip a run when there is no room to buy");
+    expect(text).toContain(
+      "When it is at its position limit, has no cash for its smallest order after the reserve, or has used the day's buys, a scheduled run is not started: it does not think, buys no data and does not review its positions. Stop loss, take profit and the other automatic exits still fire on their own, and Run now always runs.",
+    );
+
+    const on = withRisk({}, { intervalMinutes: 15, skipWhenFull: true });
+    expect(tagOf(render("step=schedule", { agent: agentOf({ config: on }), config: on }), "schedule-skip-full")).toContain('aria-checked="true"');
+
+    // With every exit rule off the promise about exits is not made: what is said is that
+    // its runs go on while it holds a position.
+    const noExits = withRisk({
+      stopLossPct: null,
+      takeProfitPct: null,
+      trailingStopPct: null,
+      maxHoldHours: null,
+      exitScoreBelow: null,
+      exitOnLiquidityDropPct: null,
+    });
+    const bare = words(render("step=schedule", { agent: agentOf({ config: noExits }), config: noExits }));
+    expect(bare).toContain("Every exit rule is off, so only a run can sell: while it holds a position its runs are not skipped.");
+    expect(bare).not.toContain("automatic exits still fire");
+
+    const manual = withRisk({}, { intervalMinutes: 0, skipWhenFull: true });
+    expect(words(render("step=schedule", { agent: agentOf({ config: manual, nextRunAt: null }), config: manual }))).toContain(
+      "With a manual schedule there is no scheduled run to skip. Run now always runs.",
+    );
+  });
+
+  it("says in the bar that scheduled runs are being skipped, when the server found that they are", () => {
+    const line = "Skipping scheduled runs: no room to buy (3 of 3 positions). Automatic exits still run.";
+    const text = words(render("", { skippingLine: line }));
+    expect(text).toContain(line);
+    expect(text).not.toContain("next tick scheduled");
+    expect(words(render())).toContain("next tick scheduled");
   });
 });

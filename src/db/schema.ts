@@ -190,6 +190,17 @@ export type AgentConfig = {
     maxHoldHours: number | null; // exit a position older than this
     exitScoreBelow: number | null; // rescore holdings each tick; exit if total drops under this
     exitOnLiquidityDropPct: number | null; // exit if pooled liquidity fell this % since entry
+    /**
+     * The most tokens the agent may hold at once, 1 to 50. Null or absent = no limit,
+     * which is every config written before the field existed. Buys only: a sell is never
+     * refused by it. Read through `readMaxOpenPositions` (src/lib/trading/risk.ts).
+     */
+    maxOpenPositions?: number | null;
+    /**
+     * USD the agent always keeps in cash: a buy that would leave less after its fee is
+     * refused. 0 or absent = no reserve. Buys only. Read through `readCashReserveUsd`.
+     */
+    cashReserveUsd?: number;
   };
   /** How trades leave the agent. `approve` = the agent proposes, the owner decides. */
   execution: {
@@ -198,6 +209,12 @@ export type AgentConfig = {
   };
   schedule: {
     intervalMinutes: number; // 0 = manual only
+    /**
+     * Do not start a scheduled run while the agent has no room to buy (`roomToBuy` in
+     * src/lib/trading/risk.ts). Absent = false. Run now is never skipped, and the exit
+     * engine runs on its own clock either way.
+     */
+    skipWhenFull?: boolean;
   };
   llm: {
     provider: LlmProvider;

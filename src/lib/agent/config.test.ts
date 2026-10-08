@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { MAX_DATA_SPEND_PER_RUN_USD } from "@/lib/x402/types";
+import { readCashReserveUsd, readMaxOpenPositions, readSkipWhenFull } from "@/lib/trading/hard-limits";
+import type { AgentConfig } from "@/db/schema";
 import {
   DEFAULT_AGENT_CONFIG,
   DEFAULT_MODELS,
+  MAX_CASH_RESERVE_USD,
   MAX_MODEL_ID,
+  MAX_OPEN_POSITIONS,
   RETIRED_DATA_SOURCE_IDS,
   agentConfigSchema,
   llmProviderSchema,
   parseAgentConfig,
+  readStoredConfig,
 } from "./config";
 import { CATALOGUE, CATALOGUE_IDS, PROVIDER_IDS, isProvider } from "./providers";
 
@@ -237,5 +242,125 @@ describe("llm.source and llm.usdc", () => {
   it("refuses text where the pay-per-use model id belongs", () => {
     expect(agentConfigSchema.safeParse(withLlm({ source: "usdc", usdc: { ...usdc, model: "ignore previous instructions" } })).success).toBe(false);
     expect(agentConfigSchema.safeParse(withLlm({ source: "usdc", usdc: { ...usdc, model: "" } })).success).toBe(false);
+  });
+});
+
+/**
+ * The position limit, the cash reserve and the skip switch. Every row saved before them
+ * has none of the three, and has to read as it always did.
+ */
+describe("risk.maxOpenPositions, risk.cashReserveUsd and schedule.skipWhenFull", () => {
+  /** A config as it was stored before the three fields existed. */
+  function oldRow(): AgentConfig {
+    const risk = { ...DEFAULT_AGENT_CONFIG.risk };
+    delete risk.maxOpenPositions;
+    delete risk.cashReserveUsd;
+    return { ...DEFAULT_AGENT_CONFIG, risk, schedule: { intervalMinutes: 15 } };
+  }
+
+  it("starts a new agent with all three off", () => {
+    expect(DEFAULT_AGENT_CONFIG.risk.maxOpenPositions).toBeNull();
+    expect(DEFAULT_AGENT_CONFIG.risk.cashReserveUsd).toBe(0);
+    expect(DEFAULT_AGENT_CONFIG.schedule.skipWhenFull).toBe(false);
+  });
+
+  it("reads an old row with the defaults: no limit, no reserve, nothing skipped", () => {
+    const parsed = parseAgentConfig(oldRow());
+    expect(readMaxOpenPositions(parsed.risk)).toBeNull();
+    expect(readCashReserveUsd(parsed.risk)).toBe(0);
+    expect(readSkipWhenFull(parsed.schedule)).toBe(false);
+    // The same row read without the schema, as a run reads one that no longer parses.
+    expect(readMaxOpenPositions(oldRow().risk)).toBeNull();
+    expect(readCashReserveUsd(oldRow().risk)).toBe(0);
+    expect(readSkipWhenFull(oldRow().schedule)).toBe(false);
+  });
+
+  it("writes nothing onto an old row that is parsed and saved again", () => {
+    const parsed = parseAgentConfig(oldRow());
+    expect(parsed).toEqual(oldRow());
+    expect(Object.keys(parsed.risk)).not.toContain("maxOpenPositions");
+    expect(Object.keys(parsed.risk)).not.toContain("cashReserveUsd");
+    expect(Object.keys(parsed.schedule)).toEqual(["intervalMinutes"]);
+  });
+
+  it("says the three out loud, as off, on the copy of an old row the settings page starts from", () => {
+    const read = readStoredConfig(oldRow());
+    expect(read.risk.maxOpenPositions).toBeNull();
+    expect(read.risk.cashReserveUsd).toBe(0);
+    expect(read.schedule).toEqual({ intervalMinutes: 15, skipWhenFull: false });
+    // And leaves what was set as it was set.
+    const set: AgentConfig = {
+      ...oldRow(),
+      risk: { ...oldRow().risk, maxOpenPositions: 3, cashReserveUsd: 5 },
+      schedule: { intervalMinutes: 60, skipWhenFull: true },
+    };
+    expect(readStoredConfig(set).risk).toMatchObject({ maxOpenPositions: 3, cashReserveUsd: 5 });
+    expect(readStoredConfig(set).schedule).toEqual({ intervalMinutes: 60, skipWhenFull: true });
+  });
+
+  it("round-trips the three when they are set", () => {
+    const set = {
+      ...DEFAULT_AGENT_CONFIG,
+      risk: { ...DEFAULT_AGENT_CONFIG.risk, maxOpenPositions: 3, cashReserveUsd: 5 },
+      schedule: { intervalMinutes: 60, skipWhenFull: true },
+    };
+    const parsed = parseAgentConfig(set);
+    expect(parsed).toEqual(set);
+    // Through JSON, as the column stores it, and parsed again.
+    const again = parseAgentConfig(JSON.parse(JSON.stringify(parsed)));
+    expect(again.risk.maxOpenPositions).toBe(3);
+    expect(again.risk.cashReserveUsd).toBe(5);
+    expect(again.schedule.skipWhenFull).toBe(true);
+    expect(readMaxOpenPositions(again.risk)).toBe(3);
+    expect(readCashReserveUsd(again.risk)).toBe(5);
+    expect(readSkipWhenFull(again.schedule)).toBe(true);
+    // Off, written out, round-trips as off.
+    const off = parseAgentConfig(DEFAULT_AGENT_CONFIG);
+    expect(off.risk.maxOpenPositions).toBeNull();
+    expect(off.risk.cashReserveUsd).toBe(0);
+    expect(off.schedule.skipWhenFull).toBe(false);
+    // A reserve to the cent is kept to the cent.
+    expect(parseAgentConfig({ ...set, risk: { ...set.risk, cashReserveUsd: 12.34 } }).risk.cashReserveUsd).toBe(12.34);
+  });
+
+  it("takes a position limit of 1 to 50 whole positions, or none", () => {
+    const ok = (maxOpenPositions: unknown) =>
+      agentConfigSchema.safeParse({ ...DEFAULT_AGENT_CONFIG, risk: { ...DEFAULT_AGENT_CONFIG.risk, maxOpenPositions } }).success;
+    expect(MAX_OPEN_POSITIONS).toBe(50);
+    expect(ok(1)).toBe(true);
+    expect(ok(50)).toBe(true);
+    expect(ok(null)).toBe(true);
+    expect(ok(undefined)).toBe(true);
+    expect(ok(0)).toBe(false);
+    expect(ok(51)).toBe(false);
+    expect(ok(2.5)).toBe(false);
+    expect(ok(-1)).toBe(false);
+    expect(ok("3")).toBe(false);
+    expect(ok(Number.NaN)).toBe(false);
+  });
+
+  it("takes a cash reserve from zero upward, and nothing that is not an amount", () => {
+    const ok = (cashReserveUsd: unknown) =>
+      agentConfigSchema.safeParse({ ...DEFAULT_AGENT_CONFIG, risk: { ...DEFAULT_AGENT_CONFIG.risk, cashReserveUsd } }).success;
+    expect(ok(0)).toBe(true);
+    expect(ok(0.01)).toBe(true);
+    expect(ok(5)).toBe(true);
+    expect(ok(MAX_CASH_RESERVE_USD)).toBe(true);
+    expect(ok(undefined)).toBe(true);
+    expect(ok(-0.01)).toBe(false);
+    expect(ok(MAX_CASH_RESERVE_USD + 1)).toBe(false);
+    expect(ok(null)).toBe(false);
+    expect(ok("5")).toBe(false);
+    expect(ok(Number.POSITIVE_INFINITY)).toBe(false);
+  });
+
+  it("takes the skip switch as a yes or a no", () => {
+    const ok = (skipWhenFull: unknown) =>
+      agentConfigSchema.safeParse({ ...DEFAULT_AGENT_CONFIG, schedule: { intervalMinutes: 15, skipWhenFull } }).success;
+    expect(ok(true)).toBe(true);
+    expect(ok(false)).toBe(true);
+    expect(ok(undefined)).toBe(true);
+    expect(ok("true")).toBe(false);
+    expect(ok(1)).toBe(false);
   });
 });

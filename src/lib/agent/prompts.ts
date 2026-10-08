@@ -13,8 +13,9 @@ import { hasAnyExitRule, priceText, toExitRules } from "@/lib/trading/exits";
 import { fmtUsdExact } from "@/lib/money";
 import { feeForFill, formatFeeRate, platformFeeBps } from "@/lib/platform/fee";
 import { isMockMode } from "@/lib/x402/paidFetch";
+import { positionRoom, readCashReserveUsd, readMaxOpenPositions } from "@/lib/trading/risk";
 import { SMART_MONEY_SOURCE } from "./enrichment";
-import { describePortfolio, spendableCashUsd, type Portfolio } from "./portfolio";
+import { cashForBuysUsd, describePortfolio, toRiskPortfolio, type Portfolio } from "./portfolio";
 
 export interface PromptAgent {
   name: string;
@@ -192,11 +193,29 @@ export function buildSystemPrompt(agent: PromptAgent, sources: DataSource[]): st
     to it.`
       : `"Max ticket right now" in your book is the true ceiling, and the three limits above
     are only the inputs to it.`;
+  // The owner's two optional limits. Each is said only when it is set, so the prompt of
+  // an agent with neither is the prompt it always had. The live figures (how many
+  // positions count right now, what the reserve leaves to trade) are in the book, which
+  // is rebuilt every tick; this half only states the rule.
+  const maxOpen = readMaxOpenPositions(config.risk);
+  const reserveUsd = readCashReserveUsd(config.risk);
+  const ownerLimits = [
+    maxOpen === null
+      ? null
+      : `  - Max open positions: ${maxOpen}. A buy of a token you do not already hold is rejected while you have ${maxOpen} or more; a buy waiting for your owner's approval counts as one. Adding to a token you hold is not a new position. "Open positions" in your book is the count.`,
+    reserveUsd > 0
+      ? `  - Cash reserve: ${money(reserveUsd)} always stays in cash. A buy that would leave less than that once its fee is paid is rejected, and "Max ticket right now" has already allowed for it.`
+      : null,
+  ]
+    .filter((line): line is string => line !== null)
+    .map((line) => `${line}\n`)
+    .join("");
+  const cashKept = reserveUsd > 0 ? ` above your ${money(reserveUsd)} reserve` : "";
   const cashLimit =
     feeBps > 0
-      ? `the cash you have once
+      ? `the cash you have${cashKept} once
    the ${feeRate} Tocker fee on the fill is set aside`
-      : "the cash you have";
+      : `the cash you have${cashKept}`;
 
   return `You are "${agent.name}"${agent.tagline ? `, ${agent.tagline}` : ""}, an autonomous crypto trading agent on Tocker.
 
@@ -335,7 +354,7 @@ still the wrong trade for your strategy, your book, or this moment. You decide.
   - Max share of equity in one token: ${config.risk.maxPositionPct}%
   - Max data spend per run: ${money(config.risk.maxDataSpendUsdPerRun)}
   - Slippage tolerance: ${config.risk.slippageBps} bps
-  - ${feeLimit}
+${ownerLimits}  - ${feeLimit}
 
 ${describeExitRules(config)}
 
@@ -432,6 +451,13 @@ export function buildTickPrompt(input: {
 }): string {
   const now = input.now ?? new Date();
   const fired = input.exits ?? [];
+  // Only for an agent with a position limit: how many more it may open, counted the way
+  // the guard counts them. Every other tick prompt is what it always was.
+  const positions = positionRoom(input.config.risk, toRiskPortfolio(input.portfolio));
+  const positionsLeft =
+    positions.limit === null
+      ? ""
+      : `\n  - Positions you may still open: ${Math.max(0, positions.limit - positions.open)} (${positions.open} of ${positions.limit} taken)`;
   const trades =
     input.recentTrades.length === 0
       ? "  No trades yet."
@@ -466,7 +492,7 @@ ${trades}
 ## Remaining budgets this run
   - Data spend: ${money(input.dataBudgetRemainingUsd)} of ${money(input.config.risk.maxDataSpendUsdPerRun)}
   - Buys left today: ${Math.max(0, input.config.risk.maxDailyTrades - input.portfolio.tradesToday)} (sells and exits never count)
-  - Cash available: ${money(spendableCashUsd(input.portfolio))}${
+  - Cash available: ${money(cashForBuysUsd(input.portfolio, input.config))}${positionsLeft}${
     input.config.execution?.mode === "approve"
       ? `\n  - Proposals you may open this tick: ${Math.min(MAX_PROPOSALS_PER_TICK, Math.max(0, input.config.risk.maxDailyTrades - input.portfolio.tradesToday))} (one per token, best first)`
       : ""
