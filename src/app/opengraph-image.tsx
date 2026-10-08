@@ -17,7 +17,7 @@ import { TOCKER_MARK_RATIO } from "@/components/brand/tocker-mark";
  * as a data URL, because the renderer has no site to fetch a path from. A card
  * without it is still a card, so a failed read leaves the text and never throws.
  */
-export const alt = "Tocker — your strategy, your rules.";
+export const alt = "Tocker — your strategy, your rules, 24/7.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
