@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
+import { buyCostUsd, feeForFill, maxBuyUsd } from "@/lib/platform/fee";
 import type { AgentConfig } from "@/db/schema";
 import type { ScoreComponents, TokenScore } from "@/server/types";
 import { isBlocklisted, riskGuard, universeGate, type OrderIntent, type RiskAgent, type RiskPortfolio } from "./risk";
@@ -439,5 +440,124 @@ describe("position sizing", () => {
     });
     // $5,000 is five hundred times the sizing allowance. It is still a legal exit.
     expect(riskGuard(agent, book, { ...buy, side: "sell", amountUsd: 5_000 }, null)).toEqual({ ok: true });
+  });
+});
+
+/**
+ * The cash a buy needs is the ticket plus the fee on that ticket, and the fee is a share
+ * of it. So the most cash C can buy is the largest A with A + fee(A) <= C: the figure the
+ * model is told, the figure the guard holds it to and the figure the ledger then charges
+ * all come from one sum, and they have to agree to the millionth of a dollar.
+ */
+describe("riskGuard: cash for the ticket and its fee", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  // Nothing but cash can bind: no trade cap or concentration cap in the way.
+  const agent = agentWith({ risk: { ...DEFAULT_AGENT_CONFIG.risk, maxTradeUsd: 10_000_000, maxPositionPct: 100 } });
+  const withCash = (cashUsd: number) => portfolio({ cashUsd, equityUsd: Math.max(cashUsd, 10_000_000) });
+  const tryBuy = (cashUsd: number, amountUsd: number) => riskGuard(agent, withCash(cashUsd), { ...buy, amountUsd }, scoreWith());
+
+  it("passes a buy that, with its fee, empties the wallet exactly, and refuses a micro-dollar more", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    // $4.975125 pays $0.024875: $5.000000 in all.
+    expect(buyCostUsd(4.975125, 50)).toBe(5);
+    expect(tryBuy(5, 4.975125)).toEqual({ ok: true });
+    expect(tryBuy(5, 4.975126)).toMatchObject({ ok: false, code: "cash" });
+    // And the round figures: a $2.00 buy needs $2.01, a $100 buy needs $100.50.
+    expect(tryBuy(2.01, 2)).toEqual({ ok: true });
+    expect(tryBuy(2, 2)).toMatchObject({ ok: false, code: "cash" });
+    expect(tryBuy(100.5, 100)).toEqual({ ok: true });
+    expect(tryBuy(100.49, 100)).toMatchObject({ ok: false, code: "cash" });
+  });
+
+  it("agrees with the largest buy the cash covers, at every balance and rate tried", () => {
+    let state = 7;
+    const next = () => {
+      state = (state * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return state / 2_147_483_648;
+    };
+    for (const bps of [25, 50, 100, 1000]) {
+      vi.stubEnv("PLATFORM_FEE_BPS", String(bps));
+      for (let i = 0; i < 400; i += 1) {
+        const cash = (Math.floor(next() * (i % 2 === 0 ? 30_000_000 : 900_000_000_000)) + 1_000) / 1e6;
+        const most = maxBuyUsd(cash, bps);
+        expect(tryBuy(cash, most), `$${cash} at ${bps} bps`).toEqual({ ok: true });
+        expect(tryBuy(cash, most + 0.000001), `$${cash} at ${bps} bps`).toMatchObject({ ok: false, code: "cash" });
+      }
+    }
+  });
+
+  it("holds a buy to the fee the ledger will charge on that fill", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    // Whatever passes leaves at least the fee behind: the fill is then charged
+    // `feeForFill` of the same size, and the wallet covers it.
+    for (const [cash, amount] of [[5, 4.97], [10, 9.95], [1, 0.99], [0.02, 0.01], [12_345.67, 12_284.24]] as const) {
+      expect(tryBuy(cash, amount), `$${amount} of $${cash}`).toEqual({ ok: true });
+      expect(amount + feeForFill(amount, 50)).toBeLessThanOrEqual(cash + 1e-9);
+    }
+  });
+
+  it("tells the model the fee on this order, the rate, and the most that fits", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    // To the cent $4.98 against $5.00 reads as fitting. It needs $5.0049.
+    expect(tryBuy(5, 4.98)).toEqual({
+      ok: false,
+      reason:
+        "Insufficient cash: $5.00 available, $4.98 requested plus the $0.0249 Tocker fee (0.5% of the fill). The most this cash covers is a $4.97 buy.",
+      code: "cash",
+      params: { symbol: "BONK", amountUsd: 4.98, cashUsd: 5, feeUsd: 0.0249, feeBps: 50, maxBuyUsd: 4.97 },
+    });
+    // The figure it is told is one the guard passes.
+    expect(tryBuy(5, 4.97)).toEqual({ ok: true });
+    // Buying with all of one's cash, the commonest way to meet this refusal.
+    const all = tryBuy(1, 1);
+    expect(all.ok ? "" : all.reason).toBe(
+      "Insufficient cash: $1.00 available, $1.00 requested plus the $0.005 Tocker fee (0.5% of the fill). The most this cash covers is a $0.99 buy.",
+    );
+    // Cash that is not whole cents is printed as it is, not rounded up to look like enough.
+    const short = tryBuy(4.996, 4.98);
+    expect(short.ok ? "" : short.reason).toContain("Insufficient cash: $4.996 available, $4.98 requested plus the $0.0249 Tocker fee");
+  });
+
+  it("says no most-that-fits when the cash does not come to a cent", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    const verdict = tryBuy(0.004, 1);
+    expect(verdict.ok ? "" : verdict.reason).toBe(
+      "Insufficient cash: $0.004 available, $1.00 requested plus the $0.005 Tocker fee (0.5% of the fill).",
+    );
+  });
+
+  it("follows the rate that is set", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "100");
+    expect(tryBuy(101, 100)).toEqual({ ok: true });
+    const refused = tryBuy(100.99, 100);
+    expect(refused).toMatchObject({ ok: false, code: "cash", params: { feeUsd: 1, feeBps: 100, maxBuyUsd: 99.99 } });
+    expect(refused.ok ? "" : refused.reason).toContain("plus the $1.00 Tocker fee (1% of the fill)");
+  });
+
+  it("asks for the ticket alone, in the words it always used, when the fee is off", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "0");
+    expect(tryBuy(5, 5)).toEqual({ ok: true });
+    expect(tryBuy(5, 5.01)).toEqual({
+      ok: false,
+      reason: "Insufficient cash: $5.00 available, $5.01 requested.",
+      code: "cash",
+      params: { symbol: "BONK", amountUsd: 5.01, cashUsd: 5, feeUsd: 0, feeBps: 0, maxBuyUsd: 5 },
+    });
+  });
+
+  it("never refuses a sell for cash or for the fee, at any rate, with no cash at all", () => {
+    const holding = portfolio({
+      cashUsd: 0,
+      equityUsd: 80,
+      positions: [{ tokenId: `solana:${BONK}`, chain: "solana", address: BONK, symbol: "BONK", amountToken: 10, valueUsd: 80 }],
+    });
+    for (const bps of ["0", "50", "1000"]) {
+      vi.stubEnv("PLATFORM_FEE_BPS", bps);
+      // The whole position, and a slice of it: the fee is charged after the sale and
+      // is never taken off the size that may be sold.
+      expect(riskGuard(agent, holding, { ...buy, side: "sell", amountUsd: 80 }, null)).toEqual({ ok: true });
+      expect(riskGuard(agent, holding, { ...buy, side: "sell", amountUsd: 0.01 }, null)).toEqual({ ok: true });
+    }
   });
 });

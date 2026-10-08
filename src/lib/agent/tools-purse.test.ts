@@ -53,7 +53,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   books.byAgent.clear();
-  vi.stubEnv("PLATFORM_FEE_USD", "0.10");
+  vi.stubEnv("PLATFORM_FEE_BPS", "50");
   // A proposal is priced with an indicative quote; keep it offline and the same every time.
   vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -149,24 +149,28 @@ async function proposer(options: { cashUsd: number; heldUsd?: number; proposedUs
       { toolCallId: "call_place_trade", messages: [] },
     );
   const proposals = () => db.select().from(schema.trades).where(eq(schema.trades.agentId, agent.id));
-  return { agentId: agent.id, propose, proposals };
+  /** What the model is told `amountUsd` means, read off the tool it is handed. */
+  const amountWords = (tools.place_trade?.inputSchema as unknown as { shape: { amountUsd: { description?: string } } }).shape
+    .amountUsd.description;
+  return { agentId: agent.id, propose, proposals, amountWords };
 }
 
 describe("place_trade in approval mode: one purse", () => {
   /**
    * $20 in the wallet, $4.25 of it held back for thinking, $14 already proposed. A buy
-   * may spend $15.75, so $1.65 is left for another proposal after its fee. Counted against
-   * the raw $20 it looked like $5.90, the $2 proposal went out, and the owner's last
-   * approval was refused at the fill for cash that was never there to spend.
+   * may spend $15.75. The waiting $14 will pay $0.07 in fees when it is approved, which
+   * leaves $1.68, and the largest buy $1.68 covers with a fee of its own is $1.67.
+   * Counted against the raw $20 it looked like $5.90, the $2 proposal went out, and the
+   * owner's last approval was refused at the fill for cash that was never there to spend.
    */
   it("counts what is held back for thinking as not there to propose with, and says so", async () => {
     const agent = await proposer({ cashUsd: 20, heldUsd: 4.25, proposedUsd: 14 });
 
     const refused = await agent.propose(2);
     expect(refused).toMatchObject({ ok: false, unaffordable: true });
-    expect(Number(refused.affordableUsd)).toBeCloseTo(1.65, 6);
+    expect(refused.affordableUsd).toBe(1.67);
     expect(refused.reason).toBe(
-      "Not affordable alongside what is already proposed: cash available to trade $15.75 (part of your cash is kept back to pay for your thinking), $14.00 already awaiting your owner's decision, $0.10 fee per fill — at most $1.65 is left for this one. Shrink it to fit or skip it; the set has to add up to the cash you hold.",
+      "Not affordable alongside what is already proposed: cash available to trade $15.75 (part of your cash is kept back to pay for your thinking), $14.00 already awaiting your owner's decision, and a 0.5% Tocker fee on each fill — at most $1.67 is left for this one. Shrink it to fit or skip it; the set has to add up to the cash you hold.",
     );
     // How much is kept back follows a limit only the owner may read, and the model that
     // reads this refusal writes public text: the figure is nowhere in what it is handed.
@@ -174,8 +178,11 @@ describe("place_trade in approval mode: one purse", () => {
     // Nothing new was proposed: the one already waiting is still the only one.
     expect(await agent.proposals()).toHaveLength(1);
 
-    // What does fit is proposed.
-    const fits = await agent.propose(1.5);
+    // A cent over the figure it was told does not fit either.
+    expect(await agent.propose(1.68)).toMatchObject({ ok: false, unaffordable: true, affordableUsd: 1.67 });
+
+    // The figure it was told does, and is proposed.
+    const fits = await agent.propose(1.67);
     expect(fits.unaffordable).toBeUndefined();
     expect(fits.ok).toBe(true);
     expect(await agent.proposals()).toHaveLength(2);
@@ -190,8 +197,57 @@ describe("place_trade in approval mode: one purse", () => {
     const full = await proposer({ cashUsd: 20, proposedUsd: 18 });
     const refused = await full.propose(2);
     expect(refused).toMatchObject({ ok: false, unaffordable: true });
+    expect(refused.affordableUsd).toBe(1.9);
     expect(refused.reason).toBe(
-      "Not affordable alongside what is already proposed: cash $20.00, $18.00 already awaiting your owner's decision, $0.10 fee per fill — at most $1.90 is left for this one. Shrink it to fit or skip it; the set has to add up to the cash you hold.",
+      "Not affordable alongside what is already proposed: cash $20.00, $18.00 already awaiting your owner's decision, and a 0.5% Tocker fee on each fill — at most $1.90 is left for this one. Shrink it to fit or skip it; the set has to add up to the cash you hold.",
+    );
+  });
+
+  /**
+   * The $18 waiting will pay $0.09 in fees of its own when it is approved. Reserving a
+   * fee for the new buy alone would let $1.95 through ($1.95975 with its fee, under the
+   * $2 that looks free), and the set would then cost $20.04975 against $20.00.
+   */
+  it("keeps back the fee each waiting proposal will pay, not only the new one's", async () => {
+    const full = await proposer({ cashUsd: 20, proposedUsd: 18 });
+    expect(await full.propose(1.95)).toMatchObject({ ok: false, unaffordable: true, affordableUsd: 1.9 });
+    expect(await full.propose(1.91)).toMatchObject({ ok: false, unaffordable: true, affordableUsd: 1.9 });
+    const fits = await full.propose(1.9);
+    expect(fits.unaffordable).toBeUndefined();
+    expect(fits.ok).toBe(true);
+  });
+
+  it("is the cash less what is waiting, with no word about a fee, when the fee is off", async () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "0");
+    const full = await proposer({ cashUsd: 20, proposedUsd: 18 });
+    const refused = await full.propose(2.01);
+    expect(refused).toMatchObject({ ok: false, unaffordable: true, affordableUsd: 2 });
+    expect(refused.reason).toBe(
+      "Not affordable alongside what is already proposed: cash $20.00, $18.00 already awaiting your owner's decision — at most $2.00 is left for this one. Shrink it to fit or skip it; the set has to add up to the cash you hold.",
+    );
+    const fits = await full.propose(2);
+    expect(fits.unaffordable).toBeUndefined();
+    expect(fits.ok).toBe(true);
+  });
+});
+
+/**
+ * The fee is charged on top of a buy. The model is told so where it writes the size, at
+ * the rate in force, and is told of no fee when there is none.
+ */
+describe("place_trade: what the model is told amountUsd is", () => {
+  it("says the fee is on top of a buy and never off the size of a sell, at the rate set", async () => {
+    expect((await proposer({ cashUsd: 20, proposedUsd: 1 })).amountWords).toBe(
+      "USD notional to buy, or USD worth of the position to sell. A buy is charged the 0.5% Tocker fee on top of this amount, so your cash has to cover both; a sell's fee comes off what the sale brings in, never off the size you may sell",
+    );
+    vi.stubEnv("PLATFORM_FEE_BPS", "25");
+    expect((await proposer({ cashUsd: 20, proposedUsd: 1 })).amountWords).toContain("the 0.25% Tocker fee on top of this amount");
+  });
+
+  it("says nothing of a fee when the fee is off", async () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "0");
+    expect((await proposer({ cashUsd: 20, proposedUsd: 1 })).amountWords).toBe(
+      "USD notional to buy, or USD worth of the position to sell",
     );
   });
 });

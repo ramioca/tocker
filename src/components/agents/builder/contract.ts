@@ -165,7 +165,7 @@ export interface CostFacts {
   thinkingNeedUsd: number | null;
   providerLabel: string;
   heldForLive: boolean;
-  feeUsd: number;
+  feeBps: number;
 }
 
 /**

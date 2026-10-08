@@ -60,7 +60,7 @@ key. If you want working previews, give Preview its own database and its own Pri
 | `SOLANA_RPC_URL` | Solana RPC, server-only. Use Helius or another provider — the public RPC is rate-limited. The browser never sees it; `/api/solana/blockhash` proxies the one call it needs. Pay-per-use thinking (section 5) reads wallets and reconciles payments through it, and refuses only an empty value: with the public endpoint set, payments are still signed. |
 | `BASE_RPC_URL` | Any Base RPC |
 | `JUPITER_API_KEY` | Optional, raises Jupiter rate limits |
-| `PLATFORM_FEE_USD` | What each executed fill is charged. Default `0.10`; `0` switches the fee off entirely. A malformed value falls back to the default rather than going free. |
+| `PLATFORM_FEE_BPS` | What each executed fill is charged, in basis points of its USD size. Default `50` (0.5%); `0` switches the fee off entirely. A value that is not a number, is negative or is above `1000` (10%) falls back to the default rather than going free or taking a tenth of a trade. `PLATFORM_FEE_USD` is ignored: it is no longer read, so a deployment that had it at `0` to charge nothing must set `PLATFORM_FEE_BPS=0`. |
 | `PLATFORM_FEE_SETTLE_MIN_USD` | How much an agent must owe before the guardian sweeps its fees on-chain. Default `1.00`. Lower means more transfers for the same money. |
 | `INFERENCE_USDC` | Pay-per-use thinking (section 5). Unset, empty or anything unrecognised is **off**, and the app behaves exactly as it did before the feature existed. `owner` admits the people in `ADMIN_EMAILS` and the ids in the next row; `on` admits everyone. Do not set it before reading section 5. |
 | `INFERENCE_USDC_USER_IDS` | With `INFERENCE_USDC=owner`: more accounts to admit, comma-separated user ids (`did:privy:…`). Default empty. |
@@ -324,8 +324,9 @@ past the cap.
   `maxDuration` can go to 300. Without it the build rejects the value, and with a 60s cap
   an agent run that takes longer is killed mid-flight.
 - Already required and present: Privy ×3, `ENCRYPTION_KEY`, `CRON_SECRET` (≥32 chars),
-  `SOLANA_RPC_URL`, `DATABASE_URL`, `PLATFORM_FEE_USD`, `CRON_MAX_AGENTS`,
-  `NEXT_PUBLIC_APP_URL`.
+  `SOLANA_RPC_URL`, `DATABASE_URL`, `CRON_MAX_AGENTS`, `NEXT_PUBLIC_APP_URL`.
+  `PLATFORM_FEE_USD` may still be set there; it is ignored. The fee is `PLATFORM_FEE_BPS`,
+  and unset it is 0.5% of each fill.
 
 `SOLANA_RPC_URL` now does one more job than it used to: `paidFetch` re-registers the x402
 Solana scheme with it, because `@x402/svm`'s own `registerExactSvmScheme` drops the RPC

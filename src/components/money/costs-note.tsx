@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ChevronDown, Cpu, Database, Receipt, Zap } from "lucide-react";
 import { formatCount, formatUsd } from "@/components/common/format";
+import { formatFeeRate } from "@/lib/platform/fee";
 import { txExplorerUrl } from "@/lib/tokens/links";
 import { THINKING_LATE_LOOK_DAYS } from "@/server/queries/money";
 import type { MoneySummary, ThinkingStepRow, ThinkingSummary } from "@/server/queries/money";
@@ -14,7 +15,7 @@ import { pricesInUse } from "./prices-in-use";
  * alternative is an operator who sees "Costs $14.20" and assumes we took it. Two of the
  * three costs are not ours to take: the market-data (x402) payments come out of the platform's own
  * wallet, and the model tokens are billed to the operator's own LLM account and never
- * pass through Tocker at all. Only the flat per-fill fee is money we collect.
+ * pass through Tocker at all. Only the per-fill fee is money we collect.
  *
  * The model number is the one estimate on the page and it is labelled as one every time
  * it appears.
@@ -272,7 +273,7 @@ export function CostsNote({
   summary,
   scope = "live",
   totals: override,
-  feeUsd,
+  feeBps,
   settleMinUsd,
 }: {
   summary: MoneySummary;
@@ -284,8 +285,12 @@ export function CostsNote({
   scope?: "live" | "paper";
   /** The sums to print when they are not the live totals — see `sumCosts`. */
   totals?: CostTotals;
-  /** `PLATFORM_FEE_USD` as the server actually reads it — never a hardcoded $0.10. */
-  feeUsd: number;
+  /**
+   * The rate new fills are charged, in basis points, as the server reads it
+   * (`platformFeeBps()`); 0 when the fee is off. The amount beside the title is the sum
+   * of what was recorded on each fill and is not worked out from this.
+   */
+  feeBps: number;
   settleMinUsd: number;
 }) {
   const { live } = summary;
@@ -321,19 +326,20 @@ export function CostsNote({
           qualifier={paper ? "simulated" : undefined}
         >
           <p>
-            {feeUsd > 0 && paper ? (
+            {feeBps > 0 && paper ? (
               <>
-                A flat {formatUsd(feeUsd)} on every simulated fill, taken out of the paper book so its P&amp;L
-                compares with a live one. Nothing is collected until an agent trades live.
+                {formatFeeRate(feeBps)} of each simulated fill, taken out of the paper book so its P&amp;L
+                compares with a live one. The total above is what each fill was charged when it filled.
+                Nothing is collected until an agent trades live.
               </>
-            ) : feeUsd > 0 ? (
+            ) : feeBps > 0 ? (
               <>
-                A flat {formatUsd(feeUsd)} on every executed fill — buy or sell, whether the agent placed it, you
-                approved it, or the exit engine took it. Flat rather than a percentage, so we never want a bigger
-                ticket than your strategy does.
+                {formatFeeRate(feeBps)} of each executed fill — buy or sell, whether the agent placed it, you
+                approved it, or the exit engine took it. The total above is what each fill was charged when it
+                filled.
               </>
             ) : (
-              <>The per-fill fee is switched off on this deployment, so nothing has been charged.</>
+              <>The per-fill fee is switched off on this deployment, so new fills are charged nothing.</>
             )}
           </p>
           {accrued > 0 ? (

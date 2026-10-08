@@ -49,9 +49,10 @@ const labels: SummaryLabels = {
 /** The three default sources, a cent a call each. */
 const sources = DEFAULT_AGENT_CONFIG.dataSources.map((id) => ({ id, priceUsd: 0.01 }) as DataSourceInfo);
 
-const FEE = 0.1;
-const opts = { payPerUseAllowed: false, feeUsd: FEE };
-const usdcOpts = { payPerUseAllowed: true, feeUsd: FEE };
+/** The rate the product charges by default, in basis points: 0.5% of each fill. */
+const FEE = 50;
+const opts = { payPerUseAllowed: false, feeBps: FEE };
+const usdcOpts = { payPerUseAllowed: true, feeBps: FEE };
 
 const anthropic = { id: "key_a", provider: "anthropic" as const };
 const openai = { id: "key_oa", provider: "openai" as const };
@@ -86,7 +87,7 @@ describe("a fresh draft reads as the page read before the move", () => {
 
   it("Risk limits", () => {
     expect(riskSummary(draft.config.risk, FEE)).toBe(
-      "$100.00/trade · 10/day · 25% max position · $1.00 data/run · $0.10 Tocker fee per fill",
+      "$100.00/trade · 10/day · 25% max position · $1.00 data/run · Tocker fee 0.5% of each fill",
     );
   });
 
@@ -137,6 +138,15 @@ describe("riskSummary", () => {
   it("has no fee part when the fee is off", () => {
     expect(riskSummary(emptyDraft().config.risk, 0)).toBe(
       "$100.00/trade · 10/day · 25% max position · $1.00 data/run",
+    );
+  });
+
+  it("states the fee as the rate it is handed, the same on any ticket", () => {
+    const risk = emptyDraft().config.risk;
+    expect(riskSummary(risk, 25)).toMatch(/ · Tocker fee 0\.25% of each fill$/);
+    expect(riskSummary(risk, 100)).toMatch(/ · Tocker fee 1% of each fill$/);
+    expect(riskSummary({ ...risk, maxTradeUsd: 2 }, FEE)).toBe(
+      "$2.00/trade · 10/day · 25% max position · $1.00 data/run · Tocker fee 0.5% of each fill",
     );
   });
 });
@@ -266,7 +276,7 @@ describe("costFacts", () => {
   it("carries the provider's name, the fee and the hold", () => {
     const facts = costFacts(funded(true), sources, opts);
     expect(facts.providerLabel).toBe("Anthropic");
-    expect(facts.feeUsd).toBe(FEE);
+    expect(facts.feeBps).toBe(FEE);
     expect(facts.heldForLive).toBe(true);
     expect(costFacts(funded(false), sources, opts).heldForLive).toBe(false);
     expect(costFacts(emptyDraft(), sources, opts).heldForLive).toBe(false);
@@ -638,7 +648,7 @@ describe("costLines", () => {
       { id: "runs", label: "Runs", text: "96 a day" },
       { id: "thinking", label: "Thinking", text: "billed to your Anthropic key" },
       { id: "data", label: "Data", text: "≈$0.05 a run, capped at $1.00 · Tocker pays" },
-      { id: "fee", label: "Fee", text: "$0.10 per fill" },
+      { id: "fee", label: "Fee", text: "0.5% of each fill" },
     ]);
   });
 
@@ -665,12 +675,13 @@ describe("costLines", () => {
     expect(ids(fundedUsdc, usdcOpts)).toContain("sign");
   });
 
-  it("has no fee line when the fee is off, and the fee's share of a small ticket when it is not", () => {
-    expect(ids(emptyDraft(), { payPerUseAllowed: false, feeUsd: 0 })).not.toContain("fee");
+  it("has no fee line when the fee is off, and the rate, the same on a small ticket, when it is not", () => {
+    expect(ids(emptyDraft(), { payPerUseAllowed: false, feeBps: 0 })).not.toContain("fee");
     const small = draftWith((d) => {
       d.config.risk.maxTradeUsd = 2;
     });
-    expect(text(small, "fee")).toBe("$0.10 per fill (5% of a ticket, each way)");
+    expect(text(small, "fee")).toBe("0.5% of each fill");
+    expect(text(emptyDraft(), "fee", { payPerUseAllowed: false, feeBps: 25 })).toBe("0.25% of each fill");
   });
 
   it("a manual schedule runs only by hand", () => {

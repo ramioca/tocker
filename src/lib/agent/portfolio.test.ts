@@ -5,6 +5,7 @@ import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { DEFAULT_AGENT_CONFIG } from "./config";
 import { PAYMENT_IN_FLIGHT_MS } from "./inference";
+import { buyCostUsd } from "@/lib/platform/fee";
 import { applyFill } from "@/lib/trading/positions";
 import { RECONCILE_AFTER_MS } from "@/lib/x402/inference-reconcile";
 import { INFERENCE_GATEWAY, PAID_TIMEOUT_MS, utcDay, type InferencePaymentStatus } from "@/lib/x402/inference-types";
@@ -87,6 +88,8 @@ describe("snapshotEquity", () => {
  * preset was told its clip was $2 while `maxPositionPct` refused anything over $1.
  */
 describe("effectiveTicketUsd", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   const config = {
     ...DEFAULT_AGENT_CONFIG,
     risk: { ...DEFAULT_AGENT_CONFIG.risk, maxTradeUsd: 2, maxPositionPct: 10 },
@@ -104,16 +107,53 @@ describe("effectiveTicketUsd", () => {
     expect(ticket.reason).toContain("fixed usd sizing");
   });
 
-  it("subtracts the platform fee from cash, so the guard and the prompt agree", () => {
+  it("leaves room in the cash for the fee on the buy itself, so the guard and the prompt agree", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
     const ticket = effectiveTicketUsd({ cashUsd: 1.5, equityUsd: 100 }, config);
-    // $1.50 of cash, a $0.10 fee on the fill: $1.40 is the most that can be spent.
-    expect(ticket.amountUsd).toBeCloseTo(1.4, 6);
-    expect(ticket.reason).toContain("Tocker fee");
+    // $1.50 of cash at 0.5%: a $1.492537 buy and its fee come to $1.50. Told in whole
+    // cents and rounded down, because that is how an order is written.
+    expect(ticket.amountUsd).toBe(1.49);
+    expect(ticket.reason).toBe("cash $1.50 less the 0.5% Tocker fee charged on the fill");
+    // The ceiling is one the guard's sum passes, and a cent more is one it refuses.
+    expect(buyCostUsd(ticket.amountUsd, 50)).toBeLessThanOrEqual(1.5);
+    expect(buyCostUsd(ticket.amountUsd + 0.01, 50)).toBeGreaterThan(1.5);
   });
 
-  it("never goes negative when the wallet cannot even cover the fee", () => {
-    const ticket = effectiveTicketUsd({ cashUsd: 0.05, equityUsd: 0.05 }, config);
-    expect(ticket.amountUsd).toBe(0);
+  it("is not the cash less one fee on the whole of it, and is never rounded up", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    const roomy = { ...config, risk: { ...config.risk, maxTradeUsd: 100, maxPositionPct: 100 } };
+    // $5.00 covers a $4.975 buy. "$4.98" would be refused: it costs $5.0049.
+    expect(effectiveTicketUsd({ cashUsd: 5, equityUsd: 5 }, roomy).amountUsd).toBe(4.97);
+    expect(effectiveTicketUsd({ cashUsd: 10, equityUsd: 10 }, roomy).amountUsd).toBe(9.95);
+    expect(effectiveTicketUsd({ cashUsd: 2.65, equityUsd: 2.65 }, roomy).amountUsd).toBe(2.63);
+    expect(describePortfolio(book({ cashUsd: 5, equityUsd: 5 }), roomy)).toContain(
+      "Max ticket right now: $4.97 — the binding limit is cash $5.00 less the 0.5% Tocker fee charged on the fill. An order above this is rejected, not trimmed.",
+    );
+  });
+
+  it("follows the rate that is set", () => {
+    const roomy = { ...config, risk: { ...config.risk, maxTradeUsd: 100, maxPositionPct: 100 } };
+    vi.stubEnv("PLATFORM_FEE_BPS", "100");
+    expect(effectiveTicketUsd({ cashUsd: 10, equityUsd: 10 }, roomy)).toEqual({
+      amountUsd: 9.9,
+      reason: "cash $10.00 less the 1% Tocker fee charged on the fill",
+    });
+    vi.stubEnv("PLATFORM_FEE_BPS", "25");
+    expect(effectiveTicketUsd({ cashUsd: 10, equityUsd: 10 }, roomy)).toEqual({
+      amountUsd: 9.97,
+      reason: "cash $10.00 less the 0.25% Tocker fee charged on the fill",
+    });
+  });
+
+  it("is the cash itself, with no word about a fee, when the fee is off", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "0");
+    const ticket = effectiveTicketUsd({ cashUsd: 1.5, equityUsd: 100 }, config);
+    expect(ticket).toEqual({ amountUsd: 1.5, reason: "cash $1.50" });
+  });
+
+  it("is nothing when the cash does not come to a cent", () => {
+    expect(effectiveTicketUsd({ cashUsd: 0.009, equityUsd: 0.009 }, config).amountUsd).toBe(0);
+    expect(effectiveTicketUsd({ cashUsd: 0, equityUsd: 0 }, config).amountUsd).toBe(0);
   });
 });
 
@@ -187,10 +227,10 @@ describe("what is held back for thinking", () => {
     expect(spendableCashUsd(plain)).toBe(10);
     expect(toRiskPortfolio(plain).cashUsd).toBe(10);
     expect(spendableCashUsd({ cashUsd: 10, thinkingReserveUsd: 0 })).toBe(10);
-    vi.stubEnv("PLATFORM_FEE_USD", "0.10");
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
     expect(effectiveTicketUsd(plain, config)).toEqual({
-      amountUsd: 9.9,
-      reason: "cash $10.00 minus the $0.10 Tocker fee charged on the fill",
+      amountUsd: 9.95,
+      reason: "cash $10.00 less the 0.5% Tocker fee charged on the fill",
     });
     expect(describePortfolio(plain, config)).not.toMatch(/held back|kept back/);
   });
@@ -209,19 +249,21 @@ describe("what is held back for thinking", () => {
   });
 
   it("is in the ceiling the model is told, with the reason, so it does not go looking for the rest", () => {
-    vi.stubEnv("PLATFORM_FEE_USD", "0.10");
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
     const held = book({ mode: "live", cashUsd: 10, equityUsd: 10, thinkingReserveUsd: 0.55 });
     const ticket = effectiveTicketUsd(held, config);
-    expect(ticket.amountUsd).toBeCloseTo(9.35, 6);
+    // The largest buy the $9.45 covers with its own fee, in whole cents: 9.45 / 1.005.
+    expect(ticket.amountUsd).toBe(9.4);
     expect(ticket.reason).toBe(
-      "the $9.45 of your cash that is available to trade (part of your cash is kept back to pay for your thinking) minus the $0.10 Tocker fee charged on the fill",
+      "the $9.45 of your cash that is available to trade (part of your cash is kept back to pay for your thinking) less the 0.5% Tocker fee charged on the fill",
     );
-    // With no fee the same words stand alone.
-    vi.stubEnv("PLATFORM_FEE_USD", "0");
-    expect(effectiveTicketUsd(held, config).reason).toBe(
-      "the $9.45 of your cash that is available to trade (part of your cash is kept back to pay for your thinking)",
-    );
-    vi.stubEnv("PLATFORM_FEE_USD", "0.10");
+    // With no fee the same words stand alone, and all of it may be spent.
+    vi.stubEnv("PLATFORM_FEE_BPS", "0");
+    expect(effectiveTicketUsd(held, config)).toEqual({
+      amountUsd: 9.45,
+      reason: "the $9.45 of your cash that is available to trade (part of your cash is kept back to pay for your thinking)",
+    });
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
 
     const said = describePortfolio(held, config);
     expect(said).toMatch(/Cash: \$10\.00/);
@@ -237,7 +279,7 @@ describe("what is held back for thinking", () => {
    * to be in both, with only a sentence asking the model not to repeat it.
    */
   it("never tells the model how much is kept back: only that some is, and what it may trade with", () => {
-    vi.stubEnv("PLATFORM_FEE_USD", "0.10");
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
     // Figures chosen so the amount kept back appears nowhere else in the book.
     for (const [cashUsd, reserve, spendable] of [
       [10, 0.85, "9.15"],

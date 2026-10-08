@@ -607,7 +607,7 @@ export interface MoneyAgentRow {
   unrealizedPnlUsd: number;
   /** realised + unrealised. Not net of costs — `netUsd` is. */
   pnlUsd: number;
-  /** Tocker's flat per-fill fee, every row on the ledger, settled or not. */
+  /** Tocker's per-fill fee, every row on the ledger as recorded, settled or not. */
   feesUsd: number;
   /** The part of `feesUsd` the agent still owes. Already deducted from live cash. */
   feesAccruedUsd: number;

@@ -12,7 +12,8 @@
  * sentences quote the owner's own caps.
  */
 import { describeBlocker } from "@/components/tokens/blocker-copy";
-import { fmtUsd } from "@/lib/money";
+import { fmtUsd, fmtUsdExact } from "@/lib/money";
+import { formatFeeRate } from "@/lib/platform/fee";
 import { chainLabelFor } from "@/lib/wallets/funding";
 import type { RiskVerdict } from "./risk";
 
@@ -73,11 +74,18 @@ export function ownerRiskMessage(verdict: Extract<RiskVerdict, { ok: false }>): 
       return p.total !== undefined && p.minScore !== undefined
         ? `Your agent's minimum score is ${p.minScore}; ${symbol} scores ${p.total.toFixed(1)}. Lower the minimum in Settings if you meant to take this trade anyway.`
         : verdict.reason;
-    case "cash":
+    case "cash": {
       if (p.cashUsd === undefined || p.amountUsd === undefined) return verdict.reason;
-      return p.feeUsd && p.feeUsd > 0
-        ? `Not enough cash: ${fmtUsd(p.cashUsd)} available, and this needs ${fmtUsd(p.amountUsd + p.feeUsd)} with the ${fmtUsd(p.feeUsd)} Tocker fee.`
-        : `Not enough cash: ${fmtUsd(p.cashUsd)} available, ${fmtUsd(p.amountUsd)} needed.`;
+      if (!p.feeBps || !(p.feeBps > 0)) {
+        return `Not enough cash: ${fmtUsd(p.cashUsd)} available, ${fmtUsd(p.amountUsd)} needed.`;
+      }
+      // The rate and this order's fee are the guard's own figures: this file reads no
+      // setting. Printed exactly, because buying with all of one's cash is the common
+      // case and to the cent the need and the cash are the same number.
+      const needs = fmtUsdExact(p.amountUsd + (p.feeUsd ?? 0));
+      const most = p.maxBuyUsd !== undefined && p.maxBuyUsd > 0 ? ` The most you can buy is ${fmtUsd(p.maxBuyUsd)}.` : "";
+      return `Not enough cash: ${fmtUsdExact(p.cashUsd)} available, and a ${fmtUsdExact(p.amountUsd)} buy needs ${needs} with the ${formatFeeRate(p.feeBps)} Tocker fee.${most}`;
+    }
     case "concentration":
       return p.pct !== undefined && p.capPct !== undefined
         ? `This would make ${symbol} ${pct(p.pct)} of equity; the cap is ${pct(p.capPct)}. Lower the size or raise Max position size in Settings.`

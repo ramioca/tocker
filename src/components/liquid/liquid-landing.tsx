@@ -1,6 +1,6 @@
 import type { FaqTab } from "@/components/spectrumui/faq-tabs-card";
 import { PROVIDER_ORDER, providerLabel } from "@/lib/agent/providers";
-import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
+import { platformFeeBps } from "@/lib/platform/fee";
 import { inferenceFlags } from "@/lib/x402/inference-types";
 import { BrandLockup } from "./brand";
 import { AgentConsole } from "./console";
@@ -48,8 +48,8 @@ const BUDGET = usd2(DEFAULT_DATA_BUDGET_USD);
 
 /**
  * The questions, built per render because one answer states what Tocker charges. That
- * number is the server's own (`platformFeeUsd()`), never one typed here: the page said
- * "a flat fee" with no amount, and an amount written in by hand would outlive a change.
+ * rate is the server's own (`platformFeeBps()`), never one typed here: a rate written
+ * in by hand would outlive a change.
  *
  * Two more answers are the server's for the same reason: whether an agent needs an API
  * key at all depends on a switch (`thinkingAnswers`). With that switch anywhere but fully
@@ -57,7 +57,7 @@ const BUDGET = usd2(DEFAULT_DATA_BUDGET_USD);
  * name are the ones a key can be added for today, read from the registry here, on the
  * server, so the page cannot name one that is not switched on.
  */
-const faqTabs = (feeUsd: number, thinking: { model: string; start: string }): FaqTab[] => [
+const faqTabs = (feeBps: number, thinking: { model: string; start: string }): FaqTab[] => [
   {
     label: "FAQ",
     faqs: [
@@ -83,7 +83,7 @@ const faqTabs = (feeUsd: number, thinking: { model: string; start: string }): Fa
       },
       {
         question: "What does it cost, and what do I need?",
-        answer: `Data is on us: Tocker pays the vendors per call in USDC over x402, up to ${BUDGET} a run by default.${feeSentence(feeUsd)} To start: ${thinking.start.charAt(0).toLowerCase()}${thinking.start.slice(1)}`,
+        answer: `Data is on us: Tocker pays the vendors per call in USDC over x402, up to ${BUDGET} a run by default.${feeSentence(feeBps)} To start: ${thinking.start.charAt(0).toLowerCase()}${thinking.start.slice(1)}`,
       },
     ],
   },
@@ -226,7 +226,7 @@ function Faq() {
         title="Before you join."
         lede="What it trades, what it costs and who holds the wallet."
       />
-      <FaqList tabs={faqTabs(feeEnabled() ? platformFeeUsd() : 0, thinkingAnswers(inferenceFlags().stage === "on", PROVIDER_ORDER.map(providerLabel)))} />
+      <FaqList tabs={faqTabs(platformFeeBps(), thinkingAnswers(inferenceFlags().stage === "on", PROVIDER_ORDER.map(providerLabel)))} />
     </section>
   );
 }

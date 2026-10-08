@@ -6,6 +6,7 @@ import {
   fmtPct,
   fmtToken,
   fmtUsd,
+  fmtUsdExact,
   pctChange,
   signed,
   splitPnl,
@@ -79,6 +80,39 @@ describe("fmtUsd", () => {
   });
   it("drops cents above 100k", () => {
     expect(fmtUsd(150_000)).toBe("$150,000");
+  });
+});
+
+describe("fmtUsdExact", () => {
+  it("reads as fmtUsd does for whole cents", () => {
+    expect(fmtUsdExact(5)).toBe("$5.00");
+    expect(fmtUsdExact(0.1)).toBe("$0.10");
+    expect(fmtUsdExact(0.3)).toBe("$0.30");
+    expect(fmtUsdExact(1234.5)).toBe("$1,234.50");
+    expect(fmtUsdExact(0)).toBe("$0.00");
+    expect(fmtUsdExact("2.010000")).toBe("$2.01");
+  });
+
+  it("keeps every decimal the ledger holds when the amount is not whole cents", () => {
+    expect(fmtUsdExact(5.0049)).toBe("$5.0049");
+    expect(fmtUsdExact(0.005)).toBe("$0.005");
+    expect(fmtUsdExact(0.024875)).toBe("$0.024875");
+    expect(fmtUsdExact(1.005)).toBe("$1.005");
+    expect(fmtUsdExact(12345.678901)).toBe("$12,345.678901");
+    expect(fmtUsdExact(-0.125)).toBe("-$0.125");
+  });
+
+  it("does not print the dust floating point leaves behind", () => {
+    // 1 + 0.005 and 20 − 18.09 are a hair off in floating point; the sixth decimal is the ledger's last.
+    expect(fmtUsdExact(1 + 0.005)).toBe("$1.005");
+    expect(fmtUsdExact(20 - 18.09)).toBe("$1.91");
+    expect(fmtUsdExact(0.1 + 0.2)).toBe("$0.30");
+    expect(fmtUsdExact(0.0000004)).toBe("$0.00");
+  });
+
+  it("renders em dash for null", () => {
+    expect(fmtUsdExact(null)).toBe("—");
+    expect(fmtUsdExact("abc")).toBe("—");
   });
 });
 

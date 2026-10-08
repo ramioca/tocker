@@ -17,6 +17,7 @@
  * is true of the agent now. Without it every string is what it has always been.
  */
 import { formatUsd } from "@/components/common/format";
+import { formatFeeRate } from "@/lib/platform/fee";
 import { checkUsdc, shownSource, usdcEstimate, walletNeedUsd } from "@/components/agents/thinking";
 import { providerLabel as providerLabelFor, withArticle } from "@/lib/agent/providers";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
@@ -42,7 +43,6 @@ import {
 import {
   PAID_LAUNCH_RADAR_USD_PER_CHAIN,
   STRATEGY_PRESETS,
-  feeSharePct,
   launchRadarUsdPerRun,
   type BuilderDraft,
 } from "./types";
@@ -52,7 +52,7 @@ import { validateDraft } from "./validate";
 export function costFacts(
   draft: BuilderDraft,
   sources: DataSourceInfo[],
-  opts: { payPerUseAllowed: boolean; feeUsd: number },
+  opts: { payPerUseAllowed: boolean; feeBps: number },
 ): CostFacts {
   const chosen = sources.filter((source) => draft.config.dataSources.includes(source.id));
   const sourcesPerRun = chosen.reduce((sum, source) => sum + (source.priceUsd ?? 0.01), 0);
@@ -80,7 +80,7 @@ export function costFacts(
     providerLabel: providerLabelFor(draft.config.llm.provider),
     // Funded and headed for the checklist: the create holds its schedule until the switch.
     heldForLive: draft.funding.mode === "fund" && draft.goLive,
-    feeUsd: opts.feeUsd,
+    feeBps: opts.feeBps,
   };
 }
 
@@ -99,12 +99,13 @@ export function dataSummary(facts: CostFacts): string {
 }
 
 /**
- * The "Risk limits" line. The fee closes it: this is the one sentence about trades that
- * is on screen before any control, and nothing else names the fee.
+ * The "Risk limits" line. The fee closes it, as its rate: this is the one sentence about
+ * trades that is on screen before any control, and nothing else names the fee. The rate
+ * is the server's, in basis points, handed down as a prop; 0 when the fee is off.
  */
-export function riskSummary(risk: BuilderDraft["config"]["risk"], feeUsd: number): string {
+export function riskSummary(risk: BuilderDraft["config"]["risk"], feeBps: number): string {
   return `${formatUsd(risk.maxTradeUsd)}/trade · ${risk.maxDailyTrades}/day · ${risk.maxPositionPct}% max position · ${formatUsd(risk.maxDataSpendUsdPerRun)} data/run${
-    feeUsd > 0 ? ` · ${formatUsd(feeUsd)} Tocker fee per fill` : ""
+    feeBps > 0 ? ` · Tocker fee ${formatFeeRate(feeBps)} of each fill` : ""
   }`;
 }
 
@@ -369,7 +370,7 @@ export function previewRows(
   const text: Record<PreviewRowId, string> = {
     hunts: ctx.hunts,
     data: dataSummary(facts),
-    limits: riskSummary(draft.config.risk, facts.feeUsd),
+    limits: riskSummary(draft.config.risk, facts.feeBps),
     exits: exitSummary(draft.config.risk),
     runs: scheduleSummary(draft, facts, ctx.labels, edit),
     thinks: think.text,
@@ -427,13 +428,8 @@ export function costLines(draft: BuilderDraft, facts: CostFacts, edit?: SummaryE
     text: `≈${formatUsd(facts.costPerRun)} a run, capped at ${formatUsd(facts.dataCapUsd)} · Tocker pays`,
   });
 
-  if (facts.feeUsd > 0) {
-    const share = feeSharePct(draft.config.risk.maxTradeUsd, facts.feeUsd);
-    lines.push({
-      id: "fee",
-      label: "Fee",
-      text: `${formatUsd(facts.feeUsd)} per fill${share === null ? "" : ` (${share}% of a ticket, each way)`}`,
-    });
+  if (facts.feeBps > 0) {
+    lines.push({ id: "fee", label: "Fee", text: `${formatFeeRate(facts.feeBps)} of each fill` });
   }
 
   if (edit) return lines;

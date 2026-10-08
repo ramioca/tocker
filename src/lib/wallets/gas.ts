@@ -134,8 +134,9 @@ export const SPONSORED_PRIORITY_BASE_LAMPORTS = 150_000;
 /**
  * Past the base, the platform spends at most this share of the trade's USD size on its
  * priority fee: 30 bps. A $10 trade gets ≈$0.03 of priority, a $0.01 one gets the base.
- * The platform earns a flat fee per fill, so a sub-cent ticket carrying Jupiter's
- * 1.2M-lamport manual-mode priority (seen live) was a guaranteed loss, and a repeatable one.
+ * The platform earns a share of each fill, which on a small ticket is next to nothing,
+ * so a sub-cent ticket carrying Jupiter's 1.2M-lamport manual-mode priority (seen live)
+ * was a guaranteed loss, and a repeatable one.
  */
 export const SPONSORED_PRIORITY_SHARE_BPS = 30;
 /** And never more than this on one swap, however large: 0.0015 SOL. */

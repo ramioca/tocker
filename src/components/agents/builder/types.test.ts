@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AGENT_CONFIG, DEFAULT_MODEL_ID } from "@/lib/agent/config";
-import { DEFAULT_PLATFORM_FEE_USD } from "@/lib/platform/fee";
 import { chooseSource, defaultUsdc, usdcEstimate } from "@/components/agents/thinking";
 import { DEFAULT_PAY_PER_USE_MODEL, PAY_PER_USE_MODELS, USDC_DEFAULT_INTERVAL_MINUTES } from "@/lib/x402/inference-types";
 import { CATALOGUE, CATALOGUE_IDS, PROVIDER_IDS, isProvider, type LlmProvider } from "@/lib/agent/providers";
@@ -8,9 +7,7 @@ import {
   INTERVAL_PRESETS,
   MAX_TRADE_LADDER,
   RISK_BOUNDS,
-  STRATEGY_PRESETS,
   emptyDraft,
-  feeSharePct,
   firstKeyFor,
   intervalHint,
   ladderStops,
@@ -239,28 +236,6 @@ describe("withDefaultKey and a pay-per-use draft", () => {
         expect(withDefaultKey(draft, keys, { payPerUseAllowed: false })).toEqual(off);
       }
     }
-  });
-});
-
-describe("feeSharePct", () => {
-  it("is the flat fee as a whole percent of the ticket", () => {
-    expect(feeSharePct(2, 0.1)).toBe(5);
-    expect(feeSharePct(1, 0.1)).toBe(10);
-    expect(feeSharePct(10, 0.1)).toBe(1);
-  });
-
-  it("stays silent once the fee is under 1% of the ticket, or off", () => {
-    expect(feeSharePct(100, 0.1)).toBeNull();
-    expect(feeSharePct(11, 0.1)).toBeNull();
-    expect(feeSharePct(2, 0)).toBeNull();
-    expect(feeSharePct(0, 0.1)).toBeNull();
-  });
-
-  /** The preset the audit named: $2 clips, where the default fee is 5% a side. */
-  it("flags the small-ticket preset at the fee the product charges by default", () => {
-    const preset = STRATEGY_PRESETS.find((entry) => entry.id === "first-fifteen");
-    expect(preset?.risk?.maxTradeUsd).toBe(2);
-    expect(feeSharePct(preset!.risk!.maxTradeUsd!, DEFAULT_PLATFORM_FEE_USD)).toBe(5);
   });
 });
 

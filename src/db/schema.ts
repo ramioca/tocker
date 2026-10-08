@@ -911,7 +911,7 @@ export interface TradeReceiptData {
   /** Venue or route fee in USD, including the paper simulator's 0.3%. */
   venueFeeUsd: number;
   /**
-   * The flat Tocker fee charged on this fill (W5), in USD. `0` when the fee is off;
+   * The Tocker fee charged on this fill (W5), in USD, as recorded. `0` when the fee is off;
    * absent on receipts written before the fee existed. Public on purpose — what the
    * platform charged is a fact about the trade, not about the strategy.
    */
@@ -1089,9 +1089,10 @@ export const waitlistSignups = pgTable("waitlist_signups", {
  *     operator funds their agent to *trade*; sentiment and safety data is the
  *     platform's cost of goods. The per-run budget, the per-payment cap and the
  *     per-agent/per-run `x402_payments` record are unchanged — only the signer moved.
- *  2. **A flat fee per executed fill.** `PLATFORM_FEE_USD` (default $0.10, `0`
- *     disables) is charged on every fill — buy or sell, agent, approved proposal,
- *     guardian exit or manual — and recorded here at fill time. It never touches the
+ *  2. **A percentage fee per executed fill.** `PLATFORM_FEE_BPS` (default 50, which
+ *     is 0.5% of the fill's USD size; `0` disables) is charged on every fill — buy or
+ *     sell, agent, approved proposal, guardian exit or manual — and recorded here at
+ *     fill time. A row keeps the amount it was written with. It never touches the
  *     trade path: a live agent's accrued fees are swept to the platform wallet in
  *     batches by the guardian once they clear `PLATFORM_FEE_SETTLE_MIN_USD`
  *     (default $1.00). Paper agents write rows too, already `settled` with

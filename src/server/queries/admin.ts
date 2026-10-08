@@ -211,7 +211,7 @@ export interface AdminTradeRow {
   tokenAddress: string;
   notionalUsd: number;
   isPaper: boolean;
-  /** The platform's flat fee on this fill, when one was recorded. */
+  /** The platform's fee on this fill, when one was recorded. */
   platformFeeUsd: number | null;
 }
 

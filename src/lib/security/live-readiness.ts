@@ -6,7 +6,7 @@ import { getAgentWalletBalances, isPaperWallet } from "@/lib/wallets";
 // Constants and the pure helper only — the effectful half of `gas.ts` is workstream A's.
 import { LAMPORTS_PER_SOL, MIN_PLATFORM_SOL, sponsoredFundingLamports } from "@/lib/wallets/gas";
 import { FEES_COVERED, chainLabelFor, feeFailureKind } from "@/lib/wallets/funding";
-import { fmtUsd } from "@/lib/money";
+import { fmtUsd, fmtUsdExact } from "@/lib/money";
 import { RETIRED_DATA_SOURCE_IDS } from "@/lib/agent/config";
 import { thinkSource, thinkingReserveUsd } from "@/lib/agent/inference";
 import { dataChainsFor, getDataSource } from "@/lib/data-sources/registry";
@@ -209,7 +209,7 @@ export function withFirstTradePreset(config: AgentConfig): AgentConfig {
  * Returns `null` when the trade would be allowed.
  */
 export async function simulateFirstTrade(config: AgentConfig, usdc: number): Promise<string | null> {
-  const [{ riskGuard }, { platformFeeUsd }] = await Promise.all([
+  const [{ riskGuard }, { feeForFill, formatFeeRate, platformFeeBps }] = await Promise.all([
     import("@/lib/trading/risk"),
     import("@/lib/platform/fee"),
   ]);
@@ -262,11 +262,14 @@ export async function simulateFirstTrade(config: AgentConfig, usdc: number): Pro
     },
   );
   if (verdict.ok) return null;
-  const fee = platformFeeUsd();
+  // This ticket's own fee, at the rate the guard just used.
+  const feeBps = platformFeeBps();
+  const feeWords =
+    feeBps > 0 ? ` (plus the ${formatFeeRate(feeBps)} Tocker fee, ${fmtUsdExact(feeForFill(amountUsd, feeBps))})` : "";
   return (
     `A ${fmtUsd(amountUsd)} buy against the ${fmtUsd(usdc)} this agent holds` +
     `${heldBack > 0 ? `, of which ${fmtUsd(heldBack)} is kept back to pay for its own thinking,` : ""}` +
-    `${fee > 0 ? ` (plus the ${fmtUsd(fee)} Tocker fee)` : ""} would be refused by the risk guard: ${verdict.reason}`
+    `${feeWords} would be refused by the risk guard: ${verdict.reason}`
   );
 }
 

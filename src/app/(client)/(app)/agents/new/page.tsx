@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AgentBuilder } from "@/components/agents/builder/agent-builder";
 import { dataSources, llmKeys, viewerSession } from "@/components/common/data-access";
-import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
+import { platformFeeBps } from "@/lib/platform/fee";
 import { payPerUseAllowedFor } from "@/server/queries/agents";
 
 export const metadata: Metadata = {
@@ -34,7 +34,7 @@ export default async function NewAgentPage() {
         userId={session.userId}
         sources={sources}
         initialKeys={keys}
-        feeUsd={feeEnabled() ? platformFeeUsd() : 0}
+        feeBps={platformFeeBps()}
         payPerUseAllowed={payPerUseAllowed}
       />
     </Suspense>

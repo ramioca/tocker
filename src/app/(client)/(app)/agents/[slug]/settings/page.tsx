@@ -17,7 +17,7 @@ import {
   walletBalances,
 } from "@/components/common/data-access";
 import { isAdminEmail } from "@/lib/admin";
-import { feeEnabled, platformFeeUsd } from "@/lib/platform/fee";
+import { platformFeeBps } from "@/lib/platform/fee";
 import { payPerUseAllowedFor } from "@/server/queries/agents";
 
 type Props = {
@@ -110,7 +110,7 @@ export default async function AgentSettingsPage({ params, searchParams }: Props)
         accountPaused={paused}
         isAdmin={isAdminEmail(session.email)}
         payPerUseAllowed={payPerUseAllowed}
-        feeUsd={feeEnabled() ? platformFeeUsd() : 0}
+        feeBps={platformFeeBps()}
       />
     </Suspense>
   );

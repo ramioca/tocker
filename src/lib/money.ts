@@ -64,6 +64,21 @@ export function fmtUsd(value: number | string | null | undefined, opts?: { compa
   return usd2.format(n);
 }
 
+/**
+ * A dollar amount for a sentence whose figures have to add up: "$5.00" when it is whole
+ * cents, and otherwise every decimal down to the ledger's sixth with the padding zeros
+ * dropped ("$5.0049", "$0.005"). {@link fmtUsd} rounds to the cent, which turns a buy
+ * that needs $5.0049 into one that "needs $5.00" beside $5.00 of cash.
+ */
+export function fmtUsdExact(value: number | string | null | undefined): string {
+  const n = toNumOrNull(value);
+  if (n === null) return "—";
+  const [whole = "0", decimals = ""] = toNumeric(Math.abs(n), 6).split(".");
+  const kept = decimals.replace(/0+$/, "");
+  if (kept.length <= 2) return fmtUsd(Number(toNumeric(n, 6)));
+  return `${n < 0 ? "-" : ""}$${Number(whole).toLocaleString("en-US")}.${kept}`;
+}
+
 /** "+12.4%" / "-3.0%". `value` is a percentage already (12.4 means 12.4%). */
 export function fmtPct(value: number | string | null | undefined, opts?: { digits?: number; sign?: boolean }): string {
   const n = toNumOrNull(value);

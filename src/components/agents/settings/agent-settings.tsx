@@ -148,8 +148,8 @@ interface AgentSettingsProps {
    * way, so it can always be moved to its owner's key.
    */
   payPerUseAllowed: boolean;
-  /** Tocker's flat fee per fill, from the server; 0 when it is off. */
-  feeUsd: number;
+  /** Tocker's fee in basis points of each fill, from the server; 0 when it is off. */
+  feeBps: number;
 }
 
 /**
@@ -184,7 +184,7 @@ function Settings({
   accountPaused,
   isAdmin,
   payPerUseAllowed,
-  feeUsd,
+  feeBps,
 }: AgentSettingsProps & { config: AgentConfig }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -405,7 +405,7 @@ function Settings({
     keys,
     sources,
     payPerUseAllowed: offered,
-    feeUsd,
+    feeBps,
     quietKey,
     currentStep: step,
     onGo: goFromCard,
@@ -541,9 +541,9 @@ function Settings({
     updateConfig,
     errors,
     allErrors: errors,
-    facts: costFacts(working, sources, { payPerUseAllowed: offered, feeUsd }),
+    facts: costFacts(working, sources, { payPerUseAllowed: offered, feeBps }),
     sources,
-    feeUsd,
+    feeBps,
     keys,
     onKeyAdded: addKey,
     payPerUseAllowed: offered,

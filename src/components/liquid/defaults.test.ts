@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AGENT_CONFIG as C } from "@/lib/agent/config";
 import { CATALOGUE, CATALOGUE_IDS, PROVIDER_IDS, PROVIDER_ORDER, providersInOrder, type CatalogueId } from "@/lib/agent/providers";
-import { DEFAULT_PLATFORM_FEE_USD } from "@/lib/platform/fee";
+import { DEFAULT_PLATFORM_FEE_BPS } from "@/lib/platform/fee";
 import { inferenceFlags } from "@/lib/x402/inference-types";
 import { DEFAULT_ROWS, LANDING_DEFAULTS, MODE_WORDS, feeSentence, providerWords, thinkingAnswers } from "./defaults";
 
@@ -42,22 +42,27 @@ describe("the landing's defaults card", () => {
   });
 });
 
-/** The FAQ said "a flat fee" and no amount; the amount is the fee module's, not the page's. */
+/** The FAQ states what Tocker charges; the rate is the fee module's, not the page's. */
 describe("the landing's fee sentence", () => {
-  it("states the fee the product charges, to the cent", () => {
-    expect(feeSentence(DEFAULT_PLATFORM_FEE_USD)).toBe(
-      ` What Tocker charges is a flat $${DEFAULT_PLATFORM_FEE_USD.toFixed(2)} per filled trade, buy or sell, never a percentage of its size.`,
-    );
-    expect(feeSentence(0.1)).toContain("a flat $0.10 per filled trade");
-    expect(feeSentence(0.25)).toContain("a flat $0.25 per filled trade");
+  it("states the rate the product charges by default", () => {
+    expect(DEFAULT_PLATFORM_FEE_BPS).toBe(50);
+    expect(feeSentence(DEFAULT_PLATFORM_FEE_BPS)).toBe(" What Tocker charges is 0.5% of each filled trade, buy or sell.");
   });
 
-  it("prints a sub-cent fee as it is set rather than rounding it to nothing", () => {
-    expect(feeSentence(0.001)).toContain("a flat $0.001 per filled trade");
+  it("states whatever rate it is handed, in the same words", () => {
+    expect(feeSentence(25)).toBe(" What Tocker charges is 0.25% of each filled trade, buy or sell.");
+    expect(feeSentence(100)).toBe(" What Tocker charges is 1% of each filled trade, buy or sell.");
+  });
+
+  it("no longer says the fee is flat, or that it is never a share of the trade", () => {
+    const said = feeSentence(DEFAULT_PLATFORM_FEE_BPS);
+    expect(said).not.toMatch(/flat|\$|never a percentage/);
   });
 
   it("says nothing about a fee when there is none", () => {
     expect(feeSentence(0)).toBe("");
+    expect(feeSentence(Number.NaN)).toBe("");
+    expect(feeSentence(-50)).toBe("");
   });
 });
 

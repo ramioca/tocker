@@ -138,6 +138,49 @@ describe("buildReceipt", () => {
     expect(receiptSummary(receipt)).toContain(SIMULATED_FILL_TEXT);
   });
 
+  it("carries the fee it is handed as the fee that was charged, and folds it into the total", () => {
+    // $0.25 on a $50 fill, and the dime an older $2 fill was charged: each is what the
+    // ledger recorded for that fill, and neither is worked out here.
+    const now = buildReceipt(input({ fill: { priceUsd: 0.000002, amountToken: 25_000_000, amountUsd: 50, feeUsd: 0.15, txHash: "sig" }, platformFeeUsd: 0.25 }));
+    expect(now.platformFeeUsd).toBe(0.25);
+    expect(now.totalFeeUsd).toBeCloseTo(0.15 + 0.25 + (now.networkFeeUsd ?? 0), 9);
+    const old = buildReceipt(input({ fill: { priceUsd: 0.000002, amountToken: 1_000_000, amountUsd: 2, feeUsd: 0.006, txHash: "sig" }, platformFeeUsd: 0.1 }));
+    expect(old.platformFeeUsd).toBe(0.1);
+    expect(old.totalFeeUsd).toBeCloseTo(0.006 + 0.1 + (old.networkFeeUsd ?? 0), 9);
+  });
+
+  it("says the fees of a small fill in the notification line, not $0.00", () => {
+    // A $0.50 paper fill: $0.0015 to the simulator and $0.0025 to Tocker.
+    const small = buildReceipt(
+      input({
+        quote: { venue: "paper", priceUsd: 0.000002, feeUsd: 0.0015 },
+        fill: { priceUsd: 0.000002, amountToken: 250_000, amountUsd: 0.5, feeUsd: 0.0015, txHash: null },
+        networkFeeUsd: null,
+        platformFeeUsd: 0.0025,
+      }),
+    );
+    expect(receiptSummary(small)).toMatch(/, \$0\.004 fees$/);
+    // From a cent up it reads to the cent, as it always has.
+    const usual = buildReceipt(
+      input({
+        quote: { venue: "paper", priceUsd: 0.000002, feeUsd: 0.15 },
+        fill: { priceUsd: 0.000002, amountToken: 25_000_000, amountUsd: 50, feeUsd: 0.15, txHash: null },
+        networkFeeUsd: null,
+        platformFeeUsd: 0.25,
+      }),
+    );
+    expect(receiptSummary(usual)).toMatch(/, \$0\.40 fees$/);
+    // And a fill that cost nothing says nothing about fees.
+    const free = buildReceipt(
+      input({
+        quote: { venue: "paper", priceUsd: 0.000002, feeUsd: 0 },
+        fill: { priceUsd: 0.000002, amountToken: 250_000, amountUsd: 0.5, feeUsd: 0, txHash: null },
+        networkFeeUsd: null,
+      }),
+    );
+    expect(receiptSummary(free)).not.toContain("fees");
+  });
+
   it("falls back to the quoted price when the fill did not report one", () => {
     const receipt = buildReceipt(
       input({ fill: { priceUsd: 0, amountToken: 1, amountUsd: 100, feeUsd: 0, txHash: "sig" } }),

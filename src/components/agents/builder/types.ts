@@ -180,18 +180,6 @@ export function withDefaultKey(
   };
 }
 
-/**
- * Tocker's flat fee as a share of one ticket, in whole percent, or null when it is off
- * or under 1%. A $0.10 fee is nothing on a $100 ticket and 5% each way on a $2 one, and
- * the builder says so where the ticket size is set. The fee itself is the server's
- * (`platformFeeUsd()`), handed down as a prop: it is never a number written in here.
- */
-export function feeSharePct(ticketUsd: number, feeUsd: number): number | null {
-  if (!(feeUsd > 0) || !(ticketUsd > 0)) return null;
-  const share = (feeUsd / ticketUsd) * 100;
-  return share < 1 ? null : Math.round(share);
-}
-
 export interface StrategyPreset {
   id: string;
   label: string;

@@ -30,7 +30,7 @@
 import { eq, inArray } from "drizzle-orm";
 import { getDb, tradeReceipts } from "@/db";
 import type { ReceiptScoreReason, TradeReceiptData, TradeReceiptVenue } from "@/db/schema";
-import { toNumeric } from "@/lib/money";
+import { fmtUsdExact, toNumeric } from "@/lib/money";
 import type { Chain, ScoreComponents, TokenScore, TradeScore } from "@/server/types";
 import type { Fill, Quote } from "./executor";
 import { SIMULATED_FILL_TEXT, SIMULATED_TX, exceededTolerance, slippageText } from "./receipt-format";
@@ -141,9 +141,10 @@ export interface BuildReceiptInput {
   /** Network / gas cost in USD when the venue reports one. */
   networkFeeUsd?: number | null;
   /**
-   * The flat Tocker fee charged on this fill (W5). Defaults to 0, so a caller that has
-   * not been taught about the fee produces a receipt that says it charged nothing —
-   * which is true of it, rather than quietly true of everyone.
+   * The Tocker fee charged on this fill (W5): the amount `chargePlatformFee` returned,
+   * which is what the ledger holds. Defaults to 0, so a caller that has not been taught
+   * about the fee produces a receipt that says it charged nothing — which is true of
+   * it, rather than quietly true of everyone.
    */
   platformFeeUsd?: number | null;
   quotedAt: Date;
@@ -263,7 +264,10 @@ export async function getReceipts(tradeIds: readonly string[]): Promise<Map<stri
 
 /** One line for a notification body: what filled, where, and how well. */
 export function receiptSummary(receipt: TradeReceiptData): string {
-  const fee = receipt.totalFeeUsd > 0 ? `, $${receipt.totalFeeUsd.toFixed(2)} fees` : "";
+  // Under a cent the total is printed as it stands: the fees on a small fill are real,
+  // and two decimals would call them "$0.00".
+  const total = receipt.totalFeeUsd < 0.01 ? fmtUsdExact(receipt.totalFeeUsd) : `$${receipt.totalFeeUsd.toFixed(2)}`;
+  const fee = receipt.totalFeeUsd > 0 ? `, ${total} fees` : "";
   const where = receipt.simulated ? SIMULATED_FILL_TEXT : receipt.venueLabel;
   // slippageText already says "at the quote" for a zero-slip fill; "at the quote vs quote" did not.
   const slip =

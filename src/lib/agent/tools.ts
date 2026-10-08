@@ -8,7 +8,7 @@
  */
 import { getScoreHistory, scoreTrend } from "@/lib/tokens/history";
 import { loadCachedScores } from "@/lib/trading/score-cache";
-import { platformFeeUsd as flatFeeUsd } from "@/lib/platform/fee";
+import { buyCostUsd, floorToCents, formatFeeRate, maxBuyUsd, platformFeeBps } from "@/lib/platform/fee";
 import { MAX_PROPOSALS_PER_TICK, MIN_SCORED_PER_TICK, SEEN_WINDOW_MS } from "./limits";
 import { INTEL_SOURCE, planEnrichment, type EnrichmentPlan } from "./enrichment";
 
@@ -21,7 +21,7 @@ import type { AgentConfig } from "@/db/schema";
 import { DATA_SOURCES, getDataSource, toDataSourceInfo } from "@/lib/data-sources/registry";
 import { X402BudgetError, type RunBudget, type X402Context } from "@/lib/x402/types";
 import { getExecutor, type ExecutorAgent, type TradeRequest } from "@/lib/trading/executor";
-import { applyFill, heldAmountToken, sellAmountToken } from "@/lib/trading/positions";
+import { DUST_POSITION_USD, applyFill, heldAmountToken, sellAmountToken } from "@/lib/trading/positions";
 import { getPriceUsd } from "@/lib/trading/prices";
 import { recentRangePct } from "@/lib/trading/range";
 import { checkQuoteSanity } from "@/lib/trading/sanity";
@@ -214,6 +214,17 @@ function scorePayload(score: TokenScore): ToolOutcome {
   };
 }
 
+/**
+ * What `amountUsd` means, for the model that fills it in. The fee is said here, where a
+ * buy is sized: it is charged on top of the amount, so the amount is not what the buy
+ * costs. With the fee off the sentence is the plain one.
+ */
+function tradeAmountWords(feeBps: number): string {
+  const plain = "USD notional to buy, or USD worth of the position to sell";
+  if (!(feeBps > 0)) return plain;
+  return `${plain}. A buy is charged the ${formatFeeRate(feeBps)} Tocker fee on top of this amount, so your cash has to cover both; a sell's fee comes off what the sale brings in, never off the size you may sell`;
+}
+
 /** An age ceiling in the candidate table's own units: "45m", "1h", "2.5h", "3d". */
 function ageWords(hours: number): string {
   if (hours < 1) return `${Math.max(1, Math.round(hours * 60))}m`;
@@ -273,12 +284,15 @@ export function buildTools(ctx: RunContext): ToolSet {
    * Whether a buy could still go through this tick: a buy left today, cash for a ticket,
    * trading not paused. Unknown counts as no, because the one caller asks before sending
    * the model back for research, and research nothing can come of is the owner's money.
+   * A ticket is one that would stay on the book: a position under `DUST_POSITION_USD`
+   * leaves it at once and no exit rule watches it, so a few cents of cash is not a
+   * reason to pay for a sweep.
    */
   const canStillBuy = async (): Promise<boolean> => {
     try {
       const portfolio = await getPortfolio(agent.id);
       if (portfolio.cashReadFailed || portfolio.tradesToday >= agent.config.risk.maxDailyTrades) return false;
-      if (effectiveTicketUsd(portfolio, agent.config).amountUsd <= 0) return false;
+      if (effectiveTicketUsd(portfolio, agent.config).amountUsd < DUST_POSITION_USD) return false;
       const { isTradingPaused } = await import("@/lib/security/kill-switch");
       return !(await isTradingPaused(agent.ownerId));
     } catch {
@@ -846,7 +860,7 @@ export function buildTools(ctx: RunContext): ToolSet {
         chain: chainSchema,
         side: z.enum(["buy", "sell"]),
         tokenAddress: z.string().min(3).describe("Mint (Solana) or contract address (Base)"),
-        amountUsd: z.number().positive().describe("USD notional to buy, or USD worth of the position to sell"),
+        amountUsd: z.number().positive().describe(tradeAmountWords(platformFeeBps())),
         rationale: z
           .string()
           .min(10)
@@ -960,10 +974,13 @@ export function buildTools(ctx: RunContext): ToolSet {
           }
           // One purse. What is already proposed and undecided counts as spent, or the
           // third approval finds the cash gone — seen live: $13.40 proposed against
-          // $9.90, the first two filled, the third could not even be quoted.
+          // $9.90, the first two filled, the third could not even be quoted. Spent
+          // means with its fee: every proposal pays the fee on its own fill when it is
+          // approved, so what is left for this one is the cash less the waiting buys
+          // and their fees, and then the largest buy that fits with a fee of its own.
           if (parsed.side === "buy") {
             const committedUsd = await openProposalsUsd(agent.id);
-            const feeUsd = flatFeeUsd();
+            const feeBps = platformFeeBps();
             // The purse is the cash a buy may spend, the figure the risk guard above and
             // the guard at fill time both use. For an agent that pays for its own thinking
             // that is less than its cash: counting the held-back part here let a set of
@@ -976,11 +993,14 @@ export function buildTools(ctx: RunContext): ToolSet {
               (portfolio.thinkingReserveUsd ?? 0) > 0
                 ? `cash available to trade $${purseUsd.toFixed(2)} (part of your cash is kept back to pay for your thinking)`
                 : `cash $${purseUsd.toFixed(2)}`;
-            const affordable = purseUsd - committedUsd - feeUsd;
-            if (parsed.amountUsd > affordable + 1e-9) {
+            const fitsUsd = maxBuyUsd(purseUsd - buyCostUsd(committedUsd, feeBps), feeBps);
+            if (parsed.amountUsd > fitsUsd + 1e-9) {
+              // Told in whole cents, rounded down: the figure has to be one that fits.
+              const affordable = floorToCents(fitsUsd);
+              const feeWords = feeBps > 0 ? `, and a ${formatFeeRate(feeBps)} Tocker fee on each fill` : "";
               return fail(
-                `Not affordable alongside what is already proposed: ${purseWords}, $${committedUsd.toFixed(2)} already awaiting your owner's decision, $${feeUsd.toFixed(2)} fee per fill — at most $${Math.max(0, affordable).toFixed(2)} is left for this one. Shrink it to fit or skip it; the set has to add up to the cash you hold.`,
-                { unaffordable: true, affordableUsd: Math.max(0, affordable) },
+                `Not affordable alongside what is already proposed: ${purseWords}, $${committedUsd.toFixed(2)} already awaiting your owner's decision${feeWords} — at most $${affordable.toFixed(2)} is left for this one. Shrink it to fit or skip it; the set has to add up to the cash you hold.`,
+                { unaffordable: true, affordableUsd: affordable },
               );
             }
           }
@@ -1114,14 +1134,15 @@ export function buildTools(ctx: RunContext): ToolSet {
           })
           .where(eq(trades.id, tradeId));
 
-        // The platform's flat fee, charged the moment the fill is real and before the
-        // position and the receipt are written, so both account for it. Never throws:
-        // a fee that cannot be recorded costs the platform ten cents, not the operator
-        // their trade.
+        // The platform's fee, a share of what the fill actually moved, charged the
+        // moment the fill is real and before the position and the receipt are written,
+        // so both account for it. Never throws: a fee that cannot be recorded costs the
+        // platform that fee, not the operator their trade.
         const platformFeeUsd = await chargePlatformFee({
           agentId: agent.id,
           tradeId,
           chain: parsed.chain,
+          fillUsd: fill.amountUsd,
           isPaper: executor.isPaper,
           now: filledAt,
         });
@@ -1195,8 +1216,8 @@ export function buildTools(ctx: RunContext): ToolSet {
           amountUsd: fill.amountUsd,
           priceUsd: fill.priceUsd,
           feeUsd: fill.feeUsd,
-          // The model should see what the platform took, so its own arithmetic about
-          // what a small ticket is worth matches the book's.
+          // The model should see what the platform took on this fill, so its own
+          // arithmetic about what the trade cost matches the book's.
           platformFeeUsd,
           txHash: fill.txHash,
           // Execution quality, so the model can see a route going bad across ticks.

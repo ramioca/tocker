@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import type { AgentConfig } from "@/db/schema";
 import type { TokenScore } from "@/server/types";
@@ -49,6 +49,8 @@ function refused(verdict: RiskVerdict): Extract<RiskVerdict, { ok: false }> {
 }
 
 describe("ownerRiskMessage", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it("names the per-trade cap in the owner's words, not the config key", () => {
     const message = ownerRiskMessage(refused(riskGuard(agent, book, order({ amountUsd: 5_000 }), score())));
     expect(message).toBe("$5,000 is over this agent's $400 per-trade cap. Lower the size or raise Max per trade in Settings.");
@@ -84,6 +86,47 @@ describe("ownerRiskMessage", () => {
     const message = ownerRiskMessage(refused(riskGuard(agent, book, order(), score({ total: 70.25 }))));
     expect(message).toBe(
       "Your agent's minimum score is 74; JUP scores 70.3. Lower the minimum in Settings if you meant to take this trade anyway.",
+    );
+  });
+
+  it("says what a buy needs with the fee at its rate, and the most that fits", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    const roomy = { ...agent, config: { ...config, risk: { ...config.risk, maxPositionPct: 100 } } };
+    // Buying with all of one's cash: to the cent the need and the cash are the same figure.
+    const all = { ...book, cashUsd: 1, equityUsd: 1 };
+    expect(ownerRiskMessage(refused(riskGuard(roomy, all, order({ amountUsd: 1 }), score())))).toBe(
+      "Not enough cash: $1.00 available, and a $1.00 buy needs $1.005 with the 0.5% Tocker fee. The most you can buy is $0.99.",
+    );
+    const five = { ...book, cashUsd: 5, equityUsd: 5 };
+    const message = ownerRiskMessage(refused(riskGuard(roomy, five, order({ amountUsd: 4.98 }), score())));
+    expect(message).toBe(
+      "Not enough cash: $5.00 available, and a $4.98 buy needs $5.0049 with the 0.5% Tocker fee. The most you can buy is $4.97.",
+    );
+    // No config key, no six-decimal fee: this is the owner's sentence.
+    expect(message).not.toMatch(/maxTradeUsd|\$0\.0249|0\.024900/);
+    // And the figure it names is one the guard passes.
+    expect(riskGuard(roomy, five, order({ amountUsd: 4.97 }), score())).toEqual({ ok: true });
+  });
+
+  it("words the rate it is handed, and reads no setting of its own", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "0");
+    // The fee is off in the environment; the sentence still says what the verdict carried.
+    expect(
+      ownerRiskMessage({
+        ok: false,
+        reason: "r",
+        code: "cash",
+        params: { cashUsd: 100, amountUsd: 100, feeUsd: 0.25, feeBps: 25, maxBuyUsd: 99.75 },
+      }),
+    ).toBe("Not enough cash: $100.00 available, and a $100.00 buy needs $100.25 with the 0.25% Tocker fee. The most you can buy is $99.75.");
+  });
+
+  it("names no fee when there is none", () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "0");
+    const roomy = { ...agent, config: { ...config, risk: { ...config.risk, maxPositionPct: 100 } } };
+    const five = { ...book, cashUsd: 5, equityUsd: 5 };
+    expect(ownerRiskMessage(refused(riskGuard(roomy, five, order({ amountUsd: 5.01 }), score())))).toBe(
+      "Not enough cash: $5.00 available, $5.01 needed.",
     );
   });
 

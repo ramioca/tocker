@@ -29,7 +29,7 @@ import { agents, equitySnapshots, getDb, inferencePayments, positions, tokens, t
 import type { AgentConfig, AgentRiskWithSizing } from "@/db/schema";
 import type { Position, TokenRef } from "@/server/types";
 import type { AgentWalletRef } from "@/lib/x402/types";
-import { netLiveCashUsd, platformFeeUsd } from "@/lib/platform/fee";
+import { floorToCents, formatFeeRate, maxBuyUsd, netLiveCashUsd, platformFeeBps } from "@/lib/platform/fee";
 import { accruedFeesUsd } from "@/lib/platform/fees";
 import { getMarks } from "@/lib/trading/prices";
 import { getPaperCash } from "@/lib/trading/paper";
@@ -405,16 +405,17 @@ export async function snapshotEquity(portfolio: Portfolio): Promise<boolean> {
  * The sizing ceiling on its own is not the answer, and printing it alone was actively
  * misleading: a $10 wallet under the first-trade preset was told its clip was $2 while
  * `maxPositionPct` refused anything over $1. Three limits apply to every buy and the
- * smallest wins — the sizing mode, the concentration cap, and the cash the agent has
- * left after the platform's flat fee. The model should be told the number it has, and
- * why, rather than being made to discover it by being refused.
+ * smallest wins — the sizing mode, the concentration cap, and the largest buy the
+ * agent's cash covers together with the platform fee on that buy. The model should be
+ * told the number it has, and why, rather than being made to discover it by being
+ * refused.
  */
 export function effectiveTicketUsd(
   portfolio: Pick<Portfolio, "cashUsd" | "equityUsd" | "thinkingReserveUsd">,
   config: AgentConfig,
 ): { amountUsd: number; reason: string } {
   const ceiling = sizeCeiling(config, portfolio, {});
-  const feeUsd = platformFeeUsd();
+  const feeBps = platformFeeBps();
   const equity = portfolio.equityUsd > 0 ? portfolio.equityUsd : portfolio.cashUsd;
   // What the risk guard will compare a buy with (`toRiskPortfolio`), so the number the
   // model is told is the number it has.
@@ -434,8 +435,11 @@ export function effectiveTicketUsd(
       reason: `${ceiling.effectiveMode.replace(/_/g, " ")} sizing — ${ceiling.explanation}`,
     },
     {
-      amountUsd: Math.max(0, spendable - feeUsd),
-      reason: feeUsd > 0 ? `${cashWords} minus the $${feeUsd.toFixed(2)} Tocker fee charged on the fill` : cashWords,
+      // The largest amount whose cost, fee included, the cash covers, in the whole cents
+      // an order is written in and rounded down: $5.00 covers a $4.975 buy, and a
+      // ceiling told as "$4.98" is one the guard refuses.
+      amountUsd: floorToCents(maxBuyUsd(spendable, feeBps)),
+      reason: feeBps > 0 ? `${cashWords} less the ${formatFeeRate(feeBps)} Tocker fee charged on the fill` : cashWords,
     },
   ];
   if (equity > 0) {

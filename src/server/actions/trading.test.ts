@@ -14,6 +14,7 @@ import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { DEFAULT_AGENT_CONFIG } from "@/lib/agent/config";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
+import { feeForFill } from "@/lib/platform/fee";
 import type { ExecuteHooks, Fill, Quote, TradeExecutor, TradeRequest } from "@/lib/trading/executor";
 import { PaperExecutor } from "@/lib/trading/paper";
 import { resetPriceCache } from "@/lib/trading/prices";
@@ -108,6 +109,32 @@ function watchedVenue(): { requests: TradeRequest[] } {
     execute: (quote) => paper.execute(quote),
   };
   return { requests };
+}
+
+/**
+ * The simulator on a pool that pays less than the order was sized at: the venue quotes,
+ * or fills, only a share of it. The simulator alone always quotes and fills the size it
+ * was asked for, and a fee on what was asked would then pass for a fee on what filled.
+ */
+function thinVenue(share: { quoted?: number; filled?: number }): void {
+  const paper = new PaperExecutor();
+  const quoted = share.quoted ?? 1;
+  const filled = share.filled ?? 1;
+  venue.override = {
+    venue: paper.venue,
+    isPaper: paper.isPaper,
+    quote: async (request) => {
+      const quote = await paper.quote(request);
+      return { ...quote, priceUsd: quote.priceUsd * quoted, amountUsd: quote.amountUsd * quoted, feeUsd: quote.feeUsd * quoted };
+    },
+    execute: async (quote) => {
+      const fill = await paper.execute(quote);
+      // A sell brings in fewer dollars for the same tokens; a buy spends fewer dollars.
+      return quote.request.side === "sell"
+        ? { ...fill, priceUsd: fill.priceUsd * filled, amountUsd: fill.amountUsd * filled, feeUsd: fill.feeUsd * filled }
+        : { ...fill, amountToken: fill.amountToken * filled, amountUsd: fill.amountUsd * filled, feeUsd: fill.feeUsd * filled };
+    },
+  };
 }
 
 /** An error shaped like the Solana executor's, which the action reads by name. */
@@ -407,6 +434,127 @@ describe("previewTrade", () => {
  * The preview has to describe the order that will be sent: the same tokens, priced by
  * the venue, or an honest "no quote" when the venue did not answer.
  */
+/**
+ * The preview's Tocker fee is this order's own: the rate times what the order would fill
+ * at. An estimate, shown before the receipt, which carries what was charged.
+ */
+describe("previewTrade: the Tocker fee on this order", () => {
+  it("is the rate times the dollars a buy would spend, whatever the size", async () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    const { agentId, userId } = await seedAgent(db, { config: { chains: ["solana"] } });
+    asOwner(userId);
+
+    for (const [amountUsd, fee] of [[50, 0.25], [2, 0.01], [1, 0.005], [100, 0.5]] as const) {
+      const preview = await previewTrade({ agentId, chain: "solana", side: "buy", tokenAddress: BONK, amountUsd });
+      expect(preview.ok).toBe(true);
+      if (!preview.ok) return;
+      expect(preview.data.fees.tockerUsd, `$${amountUsd}`).toBe(fee);
+    }
+  });
+
+  it("is the rate times what the venue would pay for a sell, not the figure typed", async () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    const { agentId } = await agentHoldingBonk();
+
+    // "Everything" ignores the $40 typed: the fee follows the proceeds the venue quoted.
+    const preview = await previewTrade({ agentId, chain: "solana", side: "sell", tokenAddress: BONK, amountUsd: 40, sellAll: true });
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) return;
+    const proceeds = preview.data.sell?.proceedsUsd;
+    expect(proceeds).toBeGreaterThan(0);
+    expect(preview.data.fees.tockerUsd).toBeGreaterThan(0);
+    expect(preview.data.fees.tockerUsd).toBe(feeForFill(proceeds!, 50));
+    // A fee that is a share of the proceeds can never be more than they are.
+    expect(preview.data.fees.tockerUsd).toBeLessThan(proceeds!);
+  });
+
+  it("follows the venue's quote down when the pool would pay less than the position is marked at", async () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    const { agentId } = await agentHoldingBonk();
+    // $40 at the mark, and the venue would pay $37 for it.
+    thinVenue({ quoted: 0.925 });
+
+    const preview = await previewTrade({ agentId, chain: "solana", side: "sell", tokenAddress: BONK, amountUsd: 40, sellAll: true });
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) return;
+    expect(preview.data.positionValueUsd).toBeCloseTo(40, 6);
+    expect(preview.data.sell?.proceedsUsd).toBeCloseTo(37, 6);
+    // 0.5% of the $37 quoted. On the $40 the order was sized at it would be $0.20.
+    expect(preview.data.fees.tockerUsd).toBe(0.185);
+  });
+
+  it("is worked out on the slice at the last mark when the venue will not quote", async () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    const { agentId } = await agentHoldingBonk();
+    liveVenue({
+      quote: async () => {
+        throw jupiterError('Jupiter Ultra /order failed (HTTP 400). {"error":"Failed to get quotes"}', { httpStatus: 400 });
+      },
+    });
+
+    const preview = await previewTrade({ agentId, chain: "solana", side: "sell", tokenAddress: BONK, amountUsd: 40, sellAll: true });
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) return;
+    expect(preview.data.quoted).toBe(false);
+    expect(preview.data.fees.tockerUsd).toBe(feeForFill(preview.data.positionValueUsd!, 50));
+  });
+
+  it("is nothing when the fee is off", async () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "0");
+    const { agentId, userId } = await seedAgent(db, { config: { chains: ["solana"] } });
+    asOwner(userId);
+    const preview = await previewTrade({ agentId, chain: "solana", side: "buy", tokenAddress: BONK, amountUsd: 50 });
+    expect(preview.ok).toBe(true);
+    if (!preview.ok) return;
+    expect(preview.data.fees.tockerUsd).toBe(0);
+  });
+});
+
+/**
+ * The fee is a share of what the fill moved, which is not always what the order asked
+ * for: a sell sized from the mark can bring in less, and a buy can fill short.
+ */
+describe("placeManualTrade: the Tocker fee is on what filled", () => {
+  const feeRow = async (tradeId: string) => {
+    const rows = await db.select().from(schema.platformFees).where(eq(schema.platformFees.tradeId, tradeId));
+    expect(rows).toHaveLength(1);
+    return rows[0]!;
+  };
+
+  it("charges a sell on its proceeds when they come in under the size it was placed at", async () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    const { agentId } = await agentHoldingBonk();
+    thinVenue({ filled: 0.925 });
+
+    // Half the $40 position, sized at $20 from the mark, and the pool pays $18.50.
+    const sold = await placeManualTrade({ agentId, chain: "solana", side: "sell", tokenAddress: BONK, amountUsd: 20 });
+    expect(sold.ok).toBe(true);
+    if (!sold.ok) return;
+    expect(sold.data.amountUsd).toBeCloseTo(18.5, 6);
+
+    // 0.5% of $18.50. On the $20 asked for it would be "0.100000".
+    expect((await feeRow(sold.data.tradeId)).amountUsd).toBe("0.092500");
+    expect(sold.data.receipt.platformFeeUsd).toBe(0.0925);
+    expect((await lastTrade(agentId)).amountUsd).toBe("18.500000");
+  });
+
+  it("charges a buy on the dollars it spent when it fills short", async () => {
+    vi.stubEnv("PLATFORM_FEE_BPS", "50");
+    const { agentId, userId } = await seedAgent(db, { config: { chains: ["solana"] } });
+    asOwner(userId);
+    thinVenue({ filled: 0.925 });
+
+    const bought = await placeManualTrade({ agentId, chain: "solana", side: "buy", tokenAddress: BONK, amountUsd: 40 });
+    expect(bought.ok).toBe(true);
+    if (!bought.ok) return;
+    expect(bought.data.amountUsd).toBeCloseTo(37, 6);
+
+    // 0.5% of the $37 that filled, not of the $40 typed.
+    expect((await feeRow(bought.data.tradeId)).amountUsd).toBe("0.185000");
+    expect(bought.data.receipt.platformFeeUsd).toBe(0.185);
+  });
+});
+
 describe("previewTrade for a sell", () => {
   it("shows the whole holding and what the venue would pay for it on a sell-all", async () => {
     const { agentId, heldToken } = await agentHoldingBonk();

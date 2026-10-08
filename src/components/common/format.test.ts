@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatCostUsd,
   formatExact,
   formatPreviewFees,
   formatPriceUsd,
@@ -142,13 +143,51 @@ describe("formatRelative", () => {
   });
 });
 
+/**
+ * A fee is a share of a fill, so it is seldom whole cents. Printed to the cent, half a
+ * cent rounds up: a $0.125 fee read "$0.13", and the parts of a total came to a cent
+ * more than the total printed beside them.
+ */
+describe("formatCostUsd", () => {
+  it("prints whole cents as dollars and cents", () => {
+    expect(formatCostUsd(0.1)).toBe("$0.10");
+    expect(formatCostUsd(0.2)).toBe("$0.20");
+    expect(formatCostUsd(1234.5)).toBe("$1,234.50");
+    expect(formatCostUsd(0)).toBe("$0.00");
+  });
+
+  it("keeps the decimals of a cost that is not whole cents, and never rounds it up", () => {
+    expect(formatCostUsd(0.125)).toBe("$0.125");
+    expect(formatCostUsd(0.075)).toBe("$0.075");
+    expect(formatCostUsd(0.015)).toBe("$0.015");
+    expect(formatCostUsd(0.243659)).toBe("$0.243659");
+    // A sum that floating point leaves a hair off whole cents is still whole cents.
+    expect(formatCostUsd(0.125 + 0.075)).toBe("$0.20");
+    expect(formatCostUsd(0.1 + 0.2)).toBe("$0.30");
+  });
+
+  it("leaves a cost under a cent as `formatUsd` prints it", () => {
+    for (const usd of [0.009, 0.005, 0.00301, 0.000742]) expect(formatCostUsd(usd)).toBe(formatUsd(usd));
+    expect(formatCostUsd(0.005)).toBe("$0.005");
+  });
+});
+
 describe("formatPreviewFees", () => {
   it("totals both fees and names each", () => {
     expect(formatPreviewFees({ tockerUsd: 0.1, venueUsd: 0.03 })).toBe("≈ $0.13 (Tocker $0.10 · venue $0.03)");
   });
 
+  it("prints each part as it stands, so the two add up to the total in front of them", () => {
+    // 0.5% and the simulator's 0.30% on $25, $5 and $3. To the cent these read
+    // "≈ $0.20 (Tocker $0.13 · venue $0.08)": a cent more in the brackets than outside.
+    expect(formatPreviewFees({ tockerUsd: 0.125, venueUsd: 0.075 })).toBe("≈ $0.20 (Tocker $0.125 · venue $0.075)");
+    expect(formatPreviewFees({ tockerUsd: 0.025, venueUsd: 0.015 })).toBe("≈ $0.04 (Tocker $0.025 · venue $0.015)");
+    expect(formatPreviewFees({ tockerUsd: 0.015, venueUsd: 0.009 })).toBe("≈ $0.024 (Tocker $0.015 · venue $0.009)");
+  });
+
   it("does not invent a venue fee nobody quoted", () => {
     expect(formatPreviewFees({ tockerUsd: 0.1, venueUsd: null })).toBe("$0.10 Tocker · venue fee not quoted");
+    expect(formatPreviewFees({ tockerUsd: 0.125, venueUsd: null })).toBe("$0.125 Tocker · venue fee not quoted");
     expect(formatPreviewFees({ tockerUsd: 0, venueUsd: null })).toBeNull();
   });
 });

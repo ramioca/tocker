@@ -4,7 +4,7 @@ import { TOTAL_FEES_LABEL, feeSplitText } from "./receipt-fees";
 
 describe("the compact row's fee label", () => {
   it("does not attribute the whole total to the venue", () => {
-    // The total includes Tocker's own flat fee; "venue fees" put it on Jupiter.
+    // The total includes Tocker's own fee; "venue fees" put it on Jupiter.
     expect(TOTAL_FEES_LABEL).toBe("fees");
     expect(TOTAL_FEES_LABEL).not.toMatch(/venue/i);
   });
@@ -21,6 +21,17 @@ describe("feeSplitText", () => {
     // A $1 paper sell: the simulator's 0.3% is a third of a cent.
     expect(feeSplitText({ platformFeeUsd: 0.1, venueFeeUsd: 0.00301, networkFeeUsd: null })).toBe(
       "Tocker $0.10 · venue $0.00301",
+    );
+  });
+
+  it("prints each part as it was recorded, so the parts come to the total the row shows", () => {
+    // A $25 paper fill at 0.5%: twelve and a half cents and seven and a half, twenty in
+    // all. To the cent the two read "$0.13" and "$0.08" under a "$0.20 fees" total.
+    expect(feeSplitText({ platformFeeUsd: 0.125, venueFeeUsd: 0.075, networkFeeUsd: null })).toBe(
+      "Tocker $0.125 · venue $0.075",
+    );
+    expect(feeSplitText({ platformFeeUsd: 0.243659, venueFeeUsd: 0.048732, networkFeeUsd: 0.000742 })).toBe(
+      "Tocker $0.243659 · venue $0.048732 · network $0.000742",
     );
   });
 

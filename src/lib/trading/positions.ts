@@ -198,8 +198,8 @@ export function manualSellSizing(input: {
 }
 
 /**
- * Below this, a position is dust: worth less than the platform fee a sale would cost,
- * not worth a guardian's attention, and not something the model should count as "held".
+ * Below this, a position is dust: not worth a guardian's attention or the network fee
+ * the platform fronts to sell it, and not something the model should count as "held".
  * It stays on the row (its cents still count in equity) but leaves the book.
  */
 export const DUST_POSITION_USD = 0.25;

@@ -108,8 +108,8 @@ export interface StepContext {
   /** `costFacts` of the draft. */
   facts: CostFacts;
   sources: DataSourceInfo[];
-  /** Tocker's flat fee per fill, from the server; 0 when it is off. */
-  feeUsd: number;
+  /** Tocker's fee in basis points of each fill, from the server; 0 when it is off. */
+  feeBps: number;
   keys: LlmKeyRow[];
   onKeyAdded: (key: LlmKeyRow) => void;
   /**
@@ -187,7 +187,7 @@ export const CONFIG_STEPS: ReadonlyArray<ConfigStep> = [
           <span className="hidden sm:inline">, so you can press Next</span>.
         </>
       ),
-    body: (ctx) => <StrategyStep {...bodyProps(ctx)} feeUsd={ctx.feeUsd} />,
+    body: (ctx) => <StrategyStep {...bodyProps(ctx)} />,
   },
   {
     id: "hunts",
@@ -247,8 +247,8 @@ export const CONFIG_STEPS: ReadonlyArray<ConfigStep> = [
       ),
     // The fee closes the line: this is the one sentence about trades that is on screen
     // before any control, and nothing else on the page names the fee.
-    now: (ctx) => riskSummary(ctx.draft.config.risk, ctx.feeUsd),
-    body: (ctx) => <RiskStep {...bodyProps(ctx)} feeUsd={ctx.feeUsd} />,
+    now: (ctx) => riskSummary(ctx.draft.config.risk, ctx.feeBps),
+    body: (ctx) => <RiskStep {...bodyProps(ctx)} feeBps={ctx.feeBps} />,
   },
   {
     id: "schedule",

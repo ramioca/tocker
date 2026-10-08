@@ -633,8 +633,8 @@ export interface TradePreview {
   requiresApproval: boolean;
   /**
    * What this fill would cost, so the preview shows it before the receipt does.
-   * `tockerUsd` is 0 when the platform fee is off; `venueUsd` is null when the venue
-   * did not quote one.
+   * `tockerUsd` is the platform fee estimated for this order's size, 0 when the fee is
+   * off; `venueUsd` is null when the venue did not quote one.
    */
   fees: { tockerUsd: number; venueUsd: number | null };
   /**

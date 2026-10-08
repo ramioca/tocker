@@ -13,7 +13,7 @@ import { resolveTimeZone } from "@/components/notifications/day-bucket";
 import { MoneyHeadline } from "@/components/money/money-headline";
 import { PnlByDay } from "@/components/money/pnl-by-day";
 import { getSession } from "@/lib/auth";
-import { platformFeeUsd, settleMinUsd } from "@/lib/platform/fee";
+import { platformFeeBps, settleMinUsd } from "@/lib/platform/fee";
 import { getMoney } from "@/server/queries/money";
 
 export const metadata: Metadata = {
@@ -188,7 +188,7 @@ export default async function MoneyPage() {
               summary={summary}
               scope={costScope}
               totals={costScope === "paper" ? sumCosts(summary.paper) : undefined}
-              feeUsd={platformFeeUsd()}
+              feeBps={platformFeeBps()}
               settleMinUsd={settleMinUsd()}
             />
           </section>

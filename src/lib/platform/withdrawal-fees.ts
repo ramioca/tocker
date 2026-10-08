@@ -19,15 +19,20 @@
  * sweep them, and an owner must not be left with an agent they can neither empty nor
  * delete; the sweep is tried, and whatever it could not collect is let go.
  *
+ * For the same reason a debt under that cent is not held at all. A fee is a share of a
+ * fill, so one small fill owes half a cent; the sweep leaves that where it is, and the
+ * cent held back for it could then be neither withdrawn nor deleted with.
+ *
  * No `server-only` here, like `./settlement.ts`: the wallet library is imported where it
  * is used.
  */
+import { fmtUsdExact } from "@/lib/money";
 import type { Chain } from "@/server/types";
 import { sumFees, withdrawableAfterFees } from "./fee";
 import { accruedFees } from "./fees";
 import { settlePlatformFees, type SettlementResult } from "./settlement";
 
-/** What {@link collectFeesOwed} sweeps from: anything from a cent up. */
+/** What {@link collectFeesOwed} sweeps from, and so what {@link holdBaseFees} holds from: a cent. */
 export const COLLECT_NOW_MIN_USD = 0.01;
 
 /** Said when the wallet could not be read: a refusal, in words that do not blame the fees. */
@@ -46,13 +51,17 @@ const HELD_CHAIN: Chain = "base";
  * fees the agent owes on Base with it: the most that may go is the balance less what is
  * owed, to the cent.
  *
+ * Only a debt the sweep that follows is sure to collect is held, which is one of
+ * {@link COLLECT_NOW_MIN_USD} or more. Less than that is reported as nothing owed, so the
+ * caller neither holds money back for it nor sends a sweep for it.
+ *
  * A balance that could not be read refuses the withdrawal. It is not an empty wallet, and
  * "the most you can withdraw is $0.00" would be a guess presented as a fact. Throws when
  * the fee ledger cannot be read; the caller refuses rather than assume nothing is owed.
  */
 export async function holdBaseFees(input: { agentId: string; amount: number }): Promise<FeeHold> {
   const owedUsd = sumFees((await accruedFees(input.agentId)).filter((fee) => fee.chain === HELD_CHAIN));
-  if (!(owedUsd > 0)) return { ok: true, owedUsd: 0 };
+  if (!(owedUsd >= COLLECT_NOW_MIN_USD)) return { ok: true, owedUsd: 0 };
 
   const { getAgentWallets, readWalletBalances } = await import("@/lib/wallets");
   const wallet = (await getAgentWallets(input.agentId)).find((w) => w.chain === HELD_CHAIN);
@@ -64,7 +73,9 @@ export async function holdBaseFees(input: { agentId: string; amount: number }): 
   if (input.amount > most) {
     return {
       ok: false,
-      error: `This agent owes $${owedUsd.toFixed(2)} in Tocker fees. The most you can withdraw is $${most.toFixed(2)}.`,
+      // What is owed is seldom whole cents, so it is printed as it stands: a cent and a
+      // quarter owed must not read "$0.01" while two cents are being held back for it.
+      error: `This agent owes ${fmtUsdExact(owedUsd)} in Tocker fees. The most you can withdraw is $${most.toFixed(2)}.`,
     };
   }
   return { ok: true, owedUsd };
