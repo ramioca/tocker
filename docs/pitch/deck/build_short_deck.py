@@ -156,11 +156,11 @@ write("alpha", section(
 
 # ---------- business ----------
 write("business", section(
-    "business", "Market and model", "Traders pay 1%. We’ll charge 0.2%.",
+    "business", "Market and model", "Traders pay 1%. We’ll charge 0.5%.",
     two(hero_col("Market", "$1.7B", "paid by Solana traders in 2025. Our lane: the $940M that went to bots and terminals."),
-        hero_col("Our fee · planned", "20 bps", "a trade: 20¢ on $100, where a 1% bot takes $1.<br>AI: your key, or USDC per call (next).")),
+        hero_col("Our fee · planned", "50 bps", "a trade: 50¢ on $100, where a 1% bot takes $1.<br>AI: your key, or USDC per call (next).")),
     "Solana Foundation 2025 recap (Blockworks): $940M bots + $762M launchpads · 1% bots: Photon, Trojan, BonkBot · Beta: $0.10 per fill",
-    "Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We plan to charge zero point two percent: twenty cents on a hundred dollars.",
+    "Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We plan to charge fifty basis points: fifty cents on a hundred dollars, half what the bots take, and that covers the data and the gates.",
 ))
 
 

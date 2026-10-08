@@ -19,7 +19,7 @@ Here's Sam's agent. One line of English: liquid Solana memes, smart money buying
 Can AI even trade? Last October, six frontier models traded real money; four lost over thirty percent. A raw model trades blind, so Sam's agent buys answers over x402, from what just launched to whether insiders hold the supply: seven to eleven cents a token, only on tokens that pass the free checks.
 
 ## business
-Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We plan to charge zero point two percent: twenty cents on a hundred dollars.
+Traders already pay. In 2025, Solana traders paid one point seven billion dollars in fees, nine hundred forty million of it to bots at one percent a trade. That's our lane. We plan to charge fifty basis points: fifty cents on a hundred dollars, half what the bots take, and that covers the data and the gates.
 
 ## competition
 Agentic trading is early: six funded startups, the largest disclosed round four million. Good teams, with three shared defaults: bundled data, no rug veto before the swap, and copy trading or leaderboards. We bet the other way. Our agent picks and buys data per call, ten gates in code can veto any buy, and every fill is public.
@@ -34,7 +34,7 @@ Why me? I lead product and growth at BlockRun, the leading x402 gateway, so I kn
 Tocker is in private beta on Solana and Base. [pause] Back to Sam. Same token. Same three a.m. This time she's asleep, and her agent said no. [pause] Tocker. Your agent trades while you sleep. Thank you.
 
 ## What's labelled planned (keep it that way until shipped)
-- 20 bps fee: beta charges $0.10 flat per fill (`src/lib/platform/fee.ts`).
+- 50 bps fee: beta charges $0.10 flat per fill (`src/lib/platform/fee.ts`).
 - Inference paid per call in USDC: today agents run on the owner's key (Anthropic, OpenAI, OpenRouter).
 - Polymarket and tokenized stocks: "next".
 - Product slide is an illustrative mock-up of a sample run.
@@ -59,7 +59,7 @@ Tocker is in private beta on Solana and Base. [pause] Back to Sam. Same token. S
 
 ## Likely Q&A
 1. **Traction?** Honest answer: private beta, agents start on paper. Bring real numbers (beta agents, paper/live fills, % of candidate buys vetoed by gates).
-2. **20 bps vs $0.10 in code; Senpi charges 5 bps, Robinhood's agents are free.** Flat is the beta setting; 20 bps covers hosting, paid data and gates, still 5× under the 1% bots these traders pay today.
+2. **"50 bps vs $0.10 in code; Senpi charges 5 bps, Robinhood's agents are free."** Flat is the beta setting. 50 bps is in the band agents already charge: Fere AI takes 0.5% a trade, ClawPump's swap fee is 0.30–0.85%, and the bots take 1%. It's half the bots' fee, and it pays for the data, the gates and hosting. Senpi's 5 bps is on Hyperliquid perps, a different market. At $100 a trade the fee is 50¢, while data costs about 7–11¢ a token.
 3. **Who pays for data? Unit economics?** Today the platform settles x402 calls; next, data bills to the agent's wallet and is shared per token across agents.
 4. **Why "infrastructure" without a public API/SDK?** The gates and the per-fill score record are the product; next, we sell the pre-trade check over x402 to any Coinbase, Bankr or OpenClaw agent.
 5. **What stops Nansen or GMGN adding gates?** Data is a commodity we buy from everyone (including Nansen); enforced gates plus a public, score-stamped record with private strategies is the loop.
