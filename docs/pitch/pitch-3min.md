@@ -1,13 +1,13 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
-~480 words, about 3:00 at 160 wpm. Rewritten by a copywriter pass on Oct 8, 2026: the hook is the market (21,000 tokens a day); the founder's own losses to rugs, honeypots and emotion sit on the problem slide with the running cost (~$1.7k a month for one agent's core stack); the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
+~480 words, about 3:00 at 160 wpm. Rewritten by a copywriter pass on Oct 8, 2026: the hook is the market (21,000 tokens a day); the founder's own losses to rugs, honeypots and emotion sit on the problem slide with the running cost (~$200 a month, a fee per swap, and 20+ services to wire); the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
 Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. We bet the other way.' (fallback: 'A different approach.'). Rival strip, then what all six do vs Tocker (data, safety, social), each with dated evidence. Copy, two design variants and a VC/fact critic merged on Oct 8, 2026 (research/26-competitors-deep), then rebuilt in the Slides subset (flow layout, text ≥24px, no overlays). Earlier full table: docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
 
 ## cover
 Twenty-one thousand. That's how many tokens launch on pump.fun every day. Almost all collapse. Bots and insiders buy before you've read the name. [pause] Retail isn't dumb. It's outgunned. I'm Rami, and Tocker is the infrastructure for agentic trading: anyone can launch a trading agent, with the edge and the guardrails built in.
 
 ## problem
-Today, traders have no edge. In twenty twenty-four, nine in ten pump.fun traders lost money or made under a hundred dollars. I've lost more than I'd like to admit to rug pulls, honeypots and, honestly, my own emotions. And agents have no rails: twenty-plus services to wire, then run around the clock. Helius for RPC, Jupiter for swaps, Nansen for data, the X API, the model, hosting: about seventeen hundred dollars a month, before your first trade. [pause]
+Today, traders have no edge. In twenty twenty-four, nine in ten pump.fun traders lost money or made under a hundred dollars. I've lost more than I'd like to admit to rug pulls, honeypots and, honestly, my own emotions. And agents have no rails. Helius for RPC, Jupiter for swaps, Nansen for data, Grok to read X, Claude to decide, a server to host it. About two hundred dollars a month, a fee on every swap, and twenty-plus services you wire and babysit yourself. [pause]
 
 ## solution
 With Tocker, it takes one line of English. The edge: your agent buys data per call, and ten hard gates in code can veto any buy. The rails: wallet, data, inference and execution in one integration, hosted around the clock.
@@ -57,7 +57,7 @@ It's in private beta on Solana and Base. Tomorrow, another twenty-one thousand t
   - SolRugDetector (Chen, Zheng et al., arXiv 2603.24625, Mar 2026): 76,469 of 100,063 new Solana DEX tokens in H1 2025 (76%) were labelled rug pulls.
   - Luo et al. (WWW 2026, arXiv 2601.08641): smart-money memecoin wallets averaged 14%; copiers about 3% after price impact.
 
-- $1.7k/mo core stack for one agent (problem slide), public list prices, Oct 2026: Helius RPC Business $499 · Jupiter API Launch $100 · Nansen Pro $69 + ~$100 credits · X API pay-per-use ~$750 (est. usage) · Claude Sonnet ~$175 (15-min loop) · hosting $39 — research/27. Full production stack with Base RPC, 1inch, Birdeye, GoPlus and Turnkey ≈ $2.5k; bare minimum ≈ $390. Gas and swap fees excluded.
+- ~$200/mo lean stack for one agent (problem slide), list prices, Oct 2026: Helius Developer $49 · Jupiter Ultra $0/mo but 10 bps a swap (50 bps on tokens <24h old; Ultra is superseded by Swap V2) · Nansen Pro $69 (API credits extra) · Grok X search ~$20 (xAI X search ~$5 per 1k posts, ≈4k posts/mo assumed, plus Grok Fast tokens) · Claude API ~$40 (founder's estimate; cached prompts or a smaller model) · hosting $22 (Hetzner CX23 + managed Postgres) — research/27. A production-grade stack is ~$2.5k/mo. Gas and swap fees excluded.
 
 ## Likely Q&A
 1. **Traction?** Honest answer: private beta, agents start on paper. Bring real numbers (beta agents, paper/live fills, % of candidate buys vetoed by gates).

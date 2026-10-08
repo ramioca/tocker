@@ -171,3 +171,15 @@ Swing factors: X API usage scales linearly ($5 per 1k post reads); Helius Busine
 - Vendor pages not opened directly (network blocked); figures come from search extracts of official pages (Helius, QuickNode, Alchemy, Jupiter, Birdeye, Turnkey, Privy, Hetzner, docs.x.com) or third-party trackers.
 - 0x pricing page snapshot appears years old; 1inch prices are not labelled monthly vs annual; CMC tier prices conflict 12×; Arkham API has no public price; RugCheck has no published limits; Nansen per-credit price conflicts 10×; Triton shared price conflicts ($500 official vs $100 third-party) and the official Starter tier bans bots.
 - X, Alchemy, Nansen top-ups, Turnkey and LLM lines depend on usage assumptions stated above.
+
+## Addendum (Oct 8, 2026): lean stack on the slide (~$200/mo)
+Chosen by the founder:
+| Line | Price | Basis |
+|---|---|---|
+| Helius RPC, Developer | $49/mo | helius.dev pricing (above, conf. H) |
+| Jupiter Ultra Swap API | $0/mo; 10 bps per swap (0 on pegged pairs, 50 bps on tokens <24h old) | developers.jup.ag/docs/ultra/fees. Ultra is no longer maintained and is superseded by Swap V2 (/build has no Jupiter fee) |
+| Nansen Pro | $69/mo | docs.nansen.ai; API credits are extra |
+| Grok reading X (xAI X search) | ~$20/mo | X search ≈ $5 per 1k posts (third-party guides, 2026), ~4k posts/mo assumed, plus Grok 4 Fast tokens at $0.20/$0.50 per 1M; confirm on docs.x.ai |
+| Claude API | ~$40/mo | founder's estimate: prompt caching and/or a smaller model on the 15-min loop. The uncached Sonnet estimate above is ~$173 |
+| Hosting | $22/mo | Hetzner CX23 $6.49 + DigitalOcean managed Postgres $15 |
+| **Total** | **≈ $200/mo + swap fees** | |
