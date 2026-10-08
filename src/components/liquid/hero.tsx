@@ -37,13 +37,14 @@ export function Hero({ hasSession }: { hasSession: boolean }) {
           <Chains size={14} />
         </p>
         <h1 id="lp-hero-title" className="lp-h1 lp-intro">
-          {/* Two set lines from 640px (each half keeps to one line, and both never fit on one). */}
-          <span className="lp-h1-half">Your agent trades</span>{" "}
-          <span className="lp-h1-half">
-            while you{" "}
+          {/* Three set lines, one beat each. */}
+          <span className="lp-h1-line">Your strategy.</span>{" "}
+          <span className="lp-h1-line">Your rules.</span>{" "}
+          <span className="lp-h1-line">
+            Trading{" "}
             {/* Word and full stop as one unit: split into lines, they would otherwise be two boxes the line can break between. */}
             <span className="lp-h1-end">
-              <span className="lp-mark">sleep</span>.
+              <span className="lp-mark">24/7</span>.
             </span>
           </span>
         </h1>
