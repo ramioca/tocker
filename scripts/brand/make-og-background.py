@@ -30,8 +30,10 @@ W, H = 1200, 630
 CROP_X = 1170
 # How bright the shader stays (1 = as in the banner): "light", so the type leads.
 GAIN = 0.86
-# The fade into the ground, as fractions of the art's width from its left edge.
-FADE_FROM, FADE_TO = 0.0, 0.42
+# The fade into the ground, as fractions of the art's width from its left edge. It starts
+# well inside the art, so a band of black stays between the headline and the colour, as
+# on the banner, and the cut-off tail of the banner's smoke at the top fades out with it.
+FADE_FROM, FADE_TO = 0.22, 0.62
 GROUND = np.array([5, 5, 7], dtype=np.float32)
 
 

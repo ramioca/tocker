@@ -52,11 +52,14 @@ async function loadLocalGeist(): Promise<Font | null> {
   }
 }
 
-/** A file under public/ as a data URL, or null when it cannot be read. */
-async function loadDataUrl(path: string, type: "image/png" | "image/jpeg"): Promise<string | null> {
+/**
+ * A file as a data URL, or null when it cannot be read. Each caller spells its path out
+ * whole, in one string: that is how the build sees which file to ship with the route. A
+ * path built from a variable would make it ship all of public/ with every page.
+ */
+async function asDataUrl(read: () => Promise<Buffer>, type: "image/png" | "image/jpeg"): Promise<string | null> {
   try {
-    const buf = await readFile(join(process.cwd(), "public", path));
-    return `data:${type};base64,${buf.toString("base64")}`;
+    return `data:${type};base64,${(await read()).toString("base64")}`;
   } catch {
     return null;
   }
@@ -71,8 +74,8 @@ const FROST = {
 
 export default async function Image() {
   const [mark, background, ...loaded] = await Promise.all([
-    loadDataUrl("brand/tocker/v3/tocker-mark-512.png", "image/png"),
-    loadDataUrl("brand/tocker/v3/og-background.jpg", "image/jpeg"),
+    asDataUrl(() => readFile(join(process.cwd(), "public/brand/tocker/v3/tocker-mark-512.png")), "image/png"),
+    asDataUrl(() => readFile(join(process.cwd(), "public/brand/tocker/v3/og-background.jpg")), "image/jpeg"),
     loadLocalGeist(),
     loadGeistFromGoogle(500),
     loadGeistFromGoogle(600),
