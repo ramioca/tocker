@@ -37,19 +37,12 @@ export function Hero({ hasSession }: { hasSession: boolean }) {
           <Chains size={14} />
         </p>
         <h1 id="lp-hero-title" className="lp-h1 lp-intro">
-          {/* Three set lines, one beat each. */}
+          {/* Two set lines, one beat each, in frosted glass (landing-hero.css). */}
           <span className="lp-h1-line">Your strategy.</span>{" "}
-          <span className="lp-h1-line">Your rules.</span>{" "}
-          <span className="lp-h1-line">
-            Trading{" "}
-            {/* Word and full stop as one unit: split into lines, they would otherwise be two boxes the line can break between. */}
-            <span className="lp-h1-end">
-              <span className="lp-mark">24/7</span>.
-            </span>
-          </span>
+          <span className="lp-h1-line">Your rules.</span>
         </h1>
         <p className="lp-hero-sub lp-intro">
-          Describe a strategy in plain English. Your agent screens new tokens and trades the few that clear your bar.
+          Describe a strategy in plain English. Your agent runs it 24/7 and trades only the tokens that clear your bar.
         </p>
         <div className="lp-hero-ctas lp-intro">
           <AppLink hasSession={hasSession} />
