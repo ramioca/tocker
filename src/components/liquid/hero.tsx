@@ -37,12 +37,15 @@ export function Hero({ hasSession }: { hasSession: boolean }) {
           <Chains size={14} />
         </p>
         <h1 id="lp-hero-title" className="lp-h1 lp-intro">
-          {/* Two set lines, one beat each, in frosted glass (landing-hero.css). */}
+          {/* Two set lines in frosted glass (landing-hero.css). The second may break
+              before "24/7." on a narrow phone, and nowhere else. */}
           <span className="lp-h1-line">Your strategy.</span>{" "}
-          <span className="lp-h1-line">Your rules.</span>
+          <span className="lp-h1-line lp-h1-line-wrap">
+            <span className="lp-h1-unit">Your rules,</span> <span className="lp-h1-unit">24/7.</span>
+          </span>
         </h1>
         <p className="lp-hero-sub lp-intro">
-          Describe a strategy in plain English. Your agent runs it 24/7 and trades only the tokens that clear your bar.
+          Describe a strategy in plain English. Your agent screens new tokens and trades the few that clear your bar.
         </p>
         <div className="lp-hero-ctas lp-intro">
           <AppLink hasSession={hasSession} />

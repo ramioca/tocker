@@ -230,14 +230,20 @@
   color: var(--fg);
   text-wrap: balance;
 }
-/* Two set lines, one beat each ("Your strategy." / "Your rules."), on phones too:
-   each is short enough to keep to one line. */
+/* Two set lines, "Your strategy." / "Your rules, 24/7.". The second may break
+   before "24/7." where it cannot fit (narrow phones), and nowhere else. */
 .lp-h1-line {
   display: block;
   white-space: nowrap;
 }
-/* Frosted white glass: a white fill that thins toward the foot, so the silk behind
-   tints through it, a soft diagonal sheen and a fine cool grain for the frost. No
+.lp-h1-line-wrap {
+  white-space: normal;
+}
+.lp-h1-unit {
+  white-space: nowrap;
+}
+/* Frosted white glass, opaque: a solid white that cools toward the foot, a soft
+   diagonal sheen and a fine cool grain for the frost. No
    outline: the tight tracking overlaps the glyphs, and a stroke would draw a seam
    wherever two of them touch. On the line spans, not the h1: SplitText's moving
    line boxes (hero-intro.tsx) wrap these spans, so the fill survives the intro, and it
@@ -250,9 +256,9 @@
     padding: 0.06em 0.08em 0.2em;
     margin: -0.06em -0.08em -0.2em;
     background:
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.55  0 0 0 0 0.6  0 0 0 0 0.75  0.16 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
-      linear-gradient(112deg, transparent 22%, rgba(255, 255, 255, 0.55) 38%, transparent 54%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(250, 251, 255, 0.9) 45%, rgba(226, 232, 255, 0.7) 100%);
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.55  0 0 0 0 0.7  0.24 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+      linear-gradient(112deg, transparent 22%, rgba(255, 255, 255, 0.7) 38%, transparent 54%),
+      linear-gradient(180deg, #ffffff 0%, #f6f7fb 45%, #dde2ef 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
