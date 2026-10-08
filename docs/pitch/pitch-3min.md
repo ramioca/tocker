@@ -1,13 +1,13 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
-~480 words, about 3:00 at 160 wpm. Rewritten by a copywriter pass on Oct 8, 2026: the hook is the market (21,000 tokens a day); the founder's own losses to rugs, honeypots and emotion sit on the problem slide with the running cost (~$2.5k a month for a production agent); the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
+~480 words, about 3:00 at 160 wpm. Rewritten by a copywriter pass on Oct 8, 2026: the hook is the market (21,000 tokens a day); the founder's own losses to rugs, honeypots and emotion sit on the problem slide with the running cost (~$1.7k a month for one agent's core stack); the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
 Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. We bet the other way.' (fallback: 'A different approach.'). Rival strip, then what all six do vs Tocker (data, safety, social), each with dated evidence. Copy, two design variants and a VC/fact critic merged on Oct 8, 2026 (research/26-competitors-deep), then rebuilt in the Slides subset (flow layout, text ≥24px, no overlays). Earlier full table: docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
 
 ## cover
 Twenty-one thousand. That's how many tokens launch on pump.fun every day. Almost all collapse. Bots and insiders buy before you've read the name. [pause] Retail isn't dumb. It's outgunned. I'm Rami, and Tocker is the infrastructure for agentic trading: anyone can launch a trading agent, with the edge and the guardrails built in.
 
 ## problem
-Today, traders have no edge. In twenty twenty-four, nine in ten pump.fun traders lost money or made under a hundred dollars. I've lost more than I'd like to admit to rug pulls, honeypots and, honestly, my own emotions. And agents have no rails: twenty-plus services to wire, then run around the clock. RPCs, data, swaps, the X API, the model: about twenty-five hundred dollars a month before your first trade. [pause]
+Today, traders have no edge. In twenty twenty-four, nine in ten pump.fun traders lost money or made under a hundred dollars. I've lost more than I'd like to admit to rug pulls, honeypots and, honestly, my own emotions. And agents have no rails: twenty-plus services to wire, then run around the clock. Helius for RPC, Jupiter for swaps, Nansen for data, the X API, the model, hosting: about seventeen hundred dollars a month, before your first trade. [pause]
 
 ## solution
 With Tocker, it takes one line of English. The edge: your agent buys data per call, and ten hard gates in code can veto any buy. The rails: wallet, data, inference and execution in one integration, hosted around the clock.
@@ -57,7 +57,7 @@ It's in private beta on Solana and Base. Tomorrow, another twenty-one thousand t
   - SolRugDetector (Chen, Zheng et al., arXiv 2603.24625, Mar 2026): 76,469 of 100,063 new Solana DEX tokens in H1 2025 (76%) were labelled rug pulls.
   - Luo et al. (WWW 2026, arXiv 2601.08641): smart-money memecoin wallets averaged 14%; copiers about 3% after price impact.
 
-- $2.5k/mo to run a production agent 24/7 (problem slide): public list prices, Oct 2026 — X API pay-per-use ~$750 (est. usage), RPC $549 (Helius Business $499 + Base ~$50), swaps $299 (Jupiter Launch $100 + 1inch Startup $199), market data $199 (Birdeye Premium), token safety $199 (GoPlus), LLM ~$175 (Claude Sonnet 5.5, a 15-min loop), smart money $169 (Nansen Pro + credits), wallets $98 (Turnkey), hosting $39 — research/27. Bare minimum ≈ $390/mo. Gas and swap fees excluded. Agency build quotes ($200k+) dropped from the slide at the founder's request.
+- $1.7k/mo core stack for one agent (problem slide), public list prices, Oct 2026: Helius RPC Business $499 · Jupiter API Launch $100 · Nansen Pro $69 + ~$100 credits · X API pay-per-use ~$750 (est. usage) · Claude Sonnet ~$175 (15-min loop) · hosting $39 — research/27. Full production stack with Base RPC, 1inch, Birdeye, GoPlus and Turnkey ≈ $2.5k; bare minimum ≈ $390. Gas and swap fees excluded.
 
 ## Likely Q&A
 1. **Traction?** Honest answer: private beta, agents start on paper. Bring real numbers (beta agents, paper/live fills, % of candidate buys vetoed by gates).
