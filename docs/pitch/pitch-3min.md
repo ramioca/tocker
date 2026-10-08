@@ -1,19 +1,19 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
-~490 words, about 3:09 at 155 wpm (2:58 at 165). No persona: the hook is the market itself (21,000 tokens a day), and the close calls back to it. [pause] marks a beat.
+~515 words, about 3:20 at 155 wpm (3:08 at 165). No persona: the hook is the market itself (21,000 tokens a day), the founder's own losses to rugs and honeypots sit on the problem slide, and the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
 Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. We bet the other way.' (fallback: 'A different approach.'). Rival strip, then what all six do vs Tocker (data, safety, social), each with dated evidence. Copy, two design variants and a VC/fact critic merged on Oct 8, 2026 (research/26-competitors-deep), then rebuilt in the Slides subset (flow layout, text ≥24px, no overlays). Earlier full table: docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
 
 ## cover
 Every day, twenty-one thousand new tokens launch on pump.fun, and almost all collapse. Bots and insiders get in first; retail buys last. [pause] Retail isn't dumb. It's outgunned. I'm Rami, and Tocker is the infrastructure for agentic trading: your own trading agent, with the edge and the guardrails built in.
 
 ## problem
-Two problems. No edge: in 2024, nine in ten pump.fun traders lost money or made under a hundred dollars. No rails: building your own agent means wiring twenty-plus services, then running them around the clock. I know. I wired them.
+Two problems. No edge: in 2024, nine in ten pump.fun traders lost money or made under a hundred dollars. I was one of them. I've lost more than I'd like to admit to rugs and honeypots, and honestly, I traded on emotion. No rails: building your own agent means wiring twenty-plus services, then running them around the clock. I know. I wired them.
 
 ## solution
-Tocker fixes both. The edge: the agent buys smart-money, launch and sell-check data per call, and ten hard gates in code can veto any buy. The rails: wallet, data, inference and execution in one integration, hosted 24/7. Bring your own AI key today; pay per call in USDC next.
+Tocker fixes both. The edge: the agent buys smart-money, launch and sell-check data per call, and ten hard gates in code can veto any buy. The rails: wallet, data, inference and execution in one integration, hosted 24/7.
 
 ## product
-Here's how it works. You write one line of English: liquid Solana memes, smart money buying, holders rising, take forty percent, stop at fifteen. The agent skips BONK and POPCAT, below the floor. WIF scores eighty-one, clears all ten gates, and it buys a hundred dollars, exits set in code. Every agent starts on paper.
+Here's how it works. You write one line of English: liquid Solana memes, smart money buying, holders rising, take forty percent, stop at fifteen. The agent skips BONK and POPCAT, below the floor. WIF scores eighty-one, clears all ten gates, and it buys a hundred dollars, exits set in code. [pause] That's what I never had: an agent isn't emotional. No FOMO, no panic, no revenge trades. It just follows your rules.
 
 ## alpha
 Why buy data? Because a model alone trades blind. Last October, six frontier models traded real money, and four lost over thirty percent. So the agent buys answers over x402: what just launched, whether insiders hold the supply, whether it can actually sell. About seven cents a token.
