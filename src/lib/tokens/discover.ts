@@ -30,7 +30,9 @@
  *
  * It buys a pre-screened launch radar per chain per sweep — one call, not one per
  * token — and its rows are merged into the same de-duplicated pool as the free feeds,
- * so a token both a free and a paid feed found is still scored once.
+ * so a token both a free and a paid feed found is still scored once. A caller that
+ * sweeps twice hands both sweeps one record of what was bought
+ * (`DiscoverInput.paidLaunches`), and the second pays for nothing the first bought.
  */
 import type { Chain, DiscoveryFeed, TokenCandidate, TokenRef } from "@/server/types";
 import type { PaidLaunch } from "@/lib/data-sources/normalize";
@@ -55,7 +57,10 @@ export interface DiscoverInput {
   feeds?: readonly DiscoveryFeed[];
   limit?: number;
   universe: Universe;
-  /** Overrides for this sweep only; the agent's universe is not mutated. */
+  /**
+   * Filters for this sweep only; the agent's universe is not mutated. They can only
+   * narrow it (see {@link sweepFilters}); absent or `null` means the universe's own.
+   */
   minLiquidityUsd?: number;
   maxAgeHours?: number | null;
   /**
@@ -68,11 +73,20 @@ export interface DiscoverInput {
   dataSources?: readonly string[];
   /** Sweep the paid launch radars whether or not `dataSources` names them — the platform pays for them to be used. */
   alwaysPaidLaunches?: boolean;
+  /**
+   * The paid launch radars already bought, by chain. A sweep takes a chain's rows from
+   * here instead of paying for them, and adds what it buys. Hand one map to two sweeps
+   * and the second never pays for a radar the first bought. A chain recorded with no
+   * rows is not bought either, which is how a caller keeps a sweep from paying at all.
+   */
+  paidLaunches?: Map<Chain, TokenCandidate[]>;
   /** Injected in tests so age maths is deterministic. */
   now?: number;
 }
 
 export const DEFAULT_DISCOVERY_LIMIT = 20;
+/** The most rows one sweep hands back, whatever limit it is asked for. */
+export const MAX_DISCOVERY_LIMIT = 100;
 /** Hard ceiling on how many raw records one feed contributes, so a sweep stays cheap. */
 const PER_FEED_CAP = 60;
 /** Base needs a second round-trip per token, so its feeds are capped tighter. */
@@ -264,15 +278,22 @@ function paidFactsFor(launch: PaidLaunch): TokenFacts {
  * Buys one chain's launch radar and turns it into candidates. Never throws: a budget
  * that cannot cover the call, a source the agent did not enable, or an upstream
  * failure all return an empty list and the free feeds carry the sweep.
+ *
+ * `bought` is the caller's record of radars already paid for (`DiscoverInput.paidLaunches`).
+ * A chain in it is answered from it and nothing is paid. The rows are the radar's own,
+ * before any gate, so a second sweep under other filters reads them through its own.
  */
 async function sweepPaidLaunches(
   chain: Chain,
   x402: X402Context,
   dataSources: readonly string[] | undefined,
   minLiquidityUsd: number,
+  bought?: Map<Chain, TokenCandidate[]>,
 ): Promise<TokenCandidate[]> {
   const id = PAID_LAUNCH_SOURCE[chain];
   if (dataSources !== undefined && !dataSources.includes(id)) return [];
+  const already = bought?.get(chain);
+  if (already) return already;
 
   try {
     const [{ getDataSource }, { parseGate402Launches }, { parseSolEnrichLaunches }] = await Promise.all([
@@ -289,10 +310,16 @@ async function sweepPaidLaunches(
       limit: chain === "solana" ? 20 : 30,
     });
     const launches = chain === "solana" ? parseSolEnrichLaunches(result.data) : parseGate402Launches(result.data);
-    return launches
+    const rows = launches
       .filter((l) => l.chain === chain)
       .map((l) => candidateFrom(paidFactsFor(l), "paid_launches", null, l.volume24hUsd));
+    bought?.set(chain, rows);
+    return rows;
   } catch {
+    // Recorded as bought, with nothing in it: a payment that got as far as a signature is
+    // charged whether or not the radar then answered (`paidFetch`), and from here a
+    // failure before that point looks the same. Asking again could pay twice.
+    bought?.set(chain, []);
     return [];
   }
 }
@@ -703,21 +730,38 @@ export function isDiscoveryCandidate(token: { address: string; symbol: string })
   return !NON_CANDIDATE_SYMBOL.test(token.symbol.trim());
 }
 
+/**
+ * The liquidity floor and age ceiling one sweep runs under: the caller's, held inside
+ * the universe's own. A floor below the owner's is raised to it and a ceiling past the
+ * owner's is lowered to it. `scoreToken` enforces the owner's two as hard gates
+ * (`liquidity_below_floor`, `age_above_max`), so a candidate outside them can never be
+ * bought and listing it is wasted research. A narrower value passes through untouched.
+ */
+export function sweepFilters(
+  universe: Pick<Universe, "minLiquidityUsd" | "maxAgeHours">,
+  asked: { minLiquidityUsd?: number; maxAgeHours?: number | null },
+): { minLiquidityUsd: number; maxAgeHours: number | null } {
+  const floor = universe.minLiquidityUsd;
+  const ceiling = universe.maxAgeHours;
+  const liquidity = asked.minLiquidityUsd;
+  const age = asked.maxAgeHours ?? null;
+  return {
+    minLiquidityUsd: liquidity === undefined || !Number.isFinite(liquidity) ? floor : Math.max(liquidity, floor),
+    maxAgeHours: age === null || !Number.isFinite(age) ? ceiling : ceiling === null ? age : Math.min(age, ceiling),
+  };
+}
+
 export async function discoverCandidates(input: DiscoverInput): Promise<TokenCandidate[]> {
   const now = input.now ?? Date.now();
-  const limit = Math.max(1, Math.min(input.limit ?? DEFAULT_DISCOVERY_LIMIT, 100));
+  const limit = Math.max(1, Math.min(input.limit ?? DEFAULT_DISCOVERY_LIMIT, MAX_DISCOVERY_LIMIT));
   const feeds = new Set<DiscoveryFeed>(
     (input.feeds && input.feeds.length > 0 ? input.feeds : input.universe.discovery) as DiscoveryFeed[],
   );
   if (feeds.size === 0) feeds.add("trending");
 
-  // Per-sweep overrides let the model widen or narrow one search without editing the
-  // agent's configured universe.
-  const universe: Universe = {
-    ...input.universe,
-    minLiquidityUsd: input.minLiquidityUsd ?? input.universe.minLiquidityUsd,
-    maxAgeHours: input.maxAgeHours === undefined ? input.universe.maxAgeHours : input.maxAgeHours,
-  };
+  // Per-sweep filters let the model narrow one search without editing the agent's
+  // configured universe. They never loosen it.
+  const universe: Universe = { ...input.universe, ...sweepFilters(input.universe, input) };
   const ctx: DiscoveryContext = { universe, now, maxTradeUsd: 0 };
 
   const chains = Array.from(new Set(input.chains));
@@ -732,7 +776,13 @@ export async function discoverCandidates(input: DiscoverInput): Promise<TokenCan
   if (feeds.has("paid_launches") && x402) {
     for (const chain of chains) {
       jobs.push(
-        sweepPaidLaunches(chain, x402, input.alwaysPaidLaunches ? undefined : input.dataSources, universe.minLiquidityUsd),
+        sweepPaidLaunches(
+          chain,
+          x402,
+          input.alwaysPaidLaunches ? undefined : input.dataSources,
+          universe.minLiquidityUsd,
+          input.paidLaunches,
+        ),
       );
     }
   }

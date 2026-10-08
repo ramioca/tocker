@@ -1,7 +1,8 @@
 /**
- * The tick prompt, and what it tells an agent it may spend.
+ * The tick prompt, and what it tells an agent it may spend. Then one step of the system
+ * prompt: how to sweep for tokens.
  *
- * Two things are pinned here.
+ * Three things are pinned here.
  *
  * First, a live agent that pays for its own thinking keeps part of its cash out of its
  * trades, and every figure the model sizes a buy from has to be the one the risk guard
@@ -15,12 +16,17 @@
  * own `prompts.ts` and `portfolio.ts` (copied out with `git show origin/main:<file>`) on
  * the inputs this file builds, and are pasted as they came. A change that moves one
  * character of a key agent's prompt fails here.
+ *
+ * Third, the system prompt used to say "Widen it with maxAgeHours / minLiquidityUsd when
+ * the table is thin". Neither can widen anything: the owner's age window and liquidity
+ * floor are hard gates. A weak model took the sentence at its word, passed a small
+ * maxAgeHours, got an empty table and ended the tick on it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig } from "@/db/schema";
 import { DEFAULT_AGENT_CONFIG } from "./config";
 import { spendableCashUsd, type Portfolio } from "./portfolio";
-import { buildTickPrompt } from "./prompts";
+import { buildSystemPrompt, buildTickPrompt } from "./prompts";
 
 const NOW = new Date("2026-10-06T12:00:00.000Z");
 
@@ -262,5 +268,26 @@ describe("the tick prompt of a live agent that pays for its own thinking", () =>
     const prompt = buildTickPrompt(cashBound("live", { cashUsd: 0.5, equityUsd: 0.5, thinkingReserveUsd: 0.5 }));
     expect(prompt).toContain("  - Cash available: $0.0000\n");
     expect(prompt).toContain("Max ticket right now: $0.00");
+  });
+});
+
+describe("the system prompt on sweeping for tokens", () => {
+  const system = buildSystemPrompt({ name: "Fixture", tagline: null, mode: "live", config: config("auto") }, []);
+
+  it("says the owner's settings already apply, and that the two filters only narrow", () => {
+    expect(system).toContain(
+      [
+        "2. discover_tokens with no arguments to sweep your feeds. It is free, and your owner's",
+        "   settings (age, liquidity, holders, blocklist) already apply: the ranked table is",
+        "   filtered on them. maxAgeHours / minLiquidityUsd only NARROW the sweep; use them when",
+        "   the table is too long or your strategy is about new launches. To get more",
+        "   candidates, drop them or try other feeds.",
+        "3. score_token on at least five **fresh** candidates",
+      ].join("\n"),
+    );
+  });
+
+  it("never tells the model to widen a sweep", () => {
+    expect(system).not.toMatch(/widen/i);
   });
 });

@@ -143,6 +143,23 @@ describe("direction / pctChange / clamp / compactNumber", () => {
     expect(compactNumber(-2_500_000)).toBe("-2.5M");
     expect(compactNumber(999)).toBe("999");
   });
+  // Stripping trailing zeros from a whole number read a $100,000 floor as "$1K".
+  it("keeps the zeros of a round number", () => {
+    expect(compactNumber(100)).toBe("100");
+    expect(compactNumber(500)).toBe("500");
+    expect(compactNumber(100_000)).toBe("100K");
+    expect(compactNumber(150_000)).toBe("150K");
+    expect(compactNumber(200_000_000)).toBe("200M");
+    expect(compactNumber(100_000_000_000)).toBe("100B");
+    expect(fmtUsd(100_000, { compact: true })).toBe("$100K");
+    expect(fmtToken(100_000_000, "BONK")).toBe("100M BONK");
+    // Padding after a decimal point still goes.
+    expect(compactNumber(1_000)).toBe("1K");
+    expect(compactNumber(10_000)).toBe("10K");
+    expect(compactNumber(15_000)).toBe("15K");
+    expect(compactNumber(1_230_000)).toBe("1.23M");
+    expect(compactNumber(0)).toBe("0");
+  });
 });
 
 describe("splitPnl", () => {
