@@ -4,7 +4,7 @@
     Favicon density. Two straight bold hands and the pivot, nothing else: at 16-20px a
     curved hand and a minor tick are the same smudge. The melt is the lower-right
     quadrant and the drip stays short and thick, or the silhouette reads as a speech
-    bubble. Keep in sync with PetriMark in src/components/brand/petri-mark.tsx.
+    bubble.
   -->
   <path d="M30 6
            C42.2 6 51 14.8 51 25.8

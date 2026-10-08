@@ -5,6 +5,7 @@ import Link from "next/link";
 import { KeyRound, Loader2 } from "lucide-react";
 import { useLoginWithEmail, useLoginWithOAuth, useLoginWithPasskey, useModalStatus } from "@privy-io/react-auth";
 import { cn } from "cn";
+import { TockerMark } from "@/components/brand/tocker-mark";
 import { PRIVY_APP_ID } from "@/components/providers/privy-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -704,15 +705,7 @@ function Header({
     <div className="flex flex-col items-center text-center">
       {/* Decorative: the way home is the lockup in the page's top bar (login-shell.tsx),
           which on a phone sits just above the card, so the mark is not repeated there. */}
-      {/* eslint-disable-next-line @next/next/no-img-element -- a 2KB vector; next/image adds nothing here */}
-      <img
-        src="/brand/tocker/v2/tocker-mark-neon-sm.svg"
-        alt=""
-        width={49}
-        height={40}
-        className="hidden sm:block"
-        draggable={false}
-      />
+      <TockerMark height={40} className="hidden sm:block" />
       <h1
         ref={titleRef}
         tabIndex={titleRef ? -1 : undefined}

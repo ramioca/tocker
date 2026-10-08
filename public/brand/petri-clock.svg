@@ -4,8 +4,7 @@
     The full dial, for 48px and up: four cardinal ticks, a rim highlight and both hands.
     The dial is near-circular across the top-left so it still reads as a watch; only the
     lower-right quadrant slumps, and the drip is short and thick (~7 wide, ~9 tall) — a
-    long thin tail turns the whole mark into a balloon. Keep in sync with PetriClock in
-    src/components/brand/petri-mark.tsx.
+    long thin tail turns the whole mark into a balloon.
   -->
   <path d="M30 7
            C41.5 7 50 15.3 50 25.8

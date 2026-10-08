@@ -1,9 +1,8 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { TockerMark } from "@/components/brand/tocker-mark";
 import { LoginSilk } from "./login-silk";
 import "./auth.css";
-
-const MARK_SRC = "/brand/tocker/v2/tocker-mark-neon-sm.svg";
 
 /**
  * Everything on /login that is not the card: the black ground, the silk's poster, the
@@ -20,8 +19,7 @@ export function LoginShell({ children }: { children: ReactNode }) {
       <LoginBackdrop />
       <header className="auth-top">
         <Link href="/" aria-label="Tocker home" className="auth-brand">
-          {/* eslint-disable-next-line @next/next/no-img-element -- a 2KB vector; next/image adds nothing here */}
-          <img className="auth-brand-mark" src={MARK_SRC} alt="" width={29} height={24} draggable={false} />
+          <TockerMark height={24} className="auth-brand-mark" />
           <span className="auth-brand-word">tocker</span>
         </Link>
       </header>
