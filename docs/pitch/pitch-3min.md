@@ -1,6 +1,6 @@
 # Tocker — 3-minute pitch (short deck, v5)
 
-~525 words, about 3:15 at 160 wpm (3:05 at 170). Rewritten by a copywriter pass on Oct 8, 2026: the hook is the market (21,000 tokens a day); the founder's own losses to rugs, honeypots and emotion sit on the problem slide with the running cost (~$200 a month, a fee per swap, and 20+ services to wire); the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
+~505 words, about 3:10 at 160 wpm (2:58 at 170). Rewritten by a copywriter pass on Oct 8, 2026: the hook is the market (21,000 tokens a day); the founder's own losses to rugs, honeypots and emotion sit on the problem slide with the running cost (~$200 a month, a fee per swap, and 20+ services to wire); the product slide pays it off (an agent isn't emotional). [pause] marks a beat.
 Reviewed over four rounds by VC-partner, design and code-level fact-check critics (Oct 7, 2026). Competition: 'An early category. We bet the other way.' (fallback: 'A different approach.'). Rival strip, then what all six do vs Tocker (data, safety, social), each with dated evidence. Copy, two design variants and a VC/fact critic merged on Oct 8, 2026 (research/26-competitors-deep), then rebuilt in the Slides subset (flow layout, text ≥24px, no overlays). Earlier full table: docs/pitch/deck/competition-angles/table_v9.png. Alternative angles in docs/pitch/deck/competition-angles/.
 
 ## cover
@@ -22,7 +22,7 @@ Rules aren't edge. Neither is AI alone. Last October, six frontier models traded
 Who pays? Traders already do. Last year, Solana traders paid nine hundred forty million dollars to bots and terminals. That's our lane. They charge one percent a trade. We'll charge half, which covers the data and the gates.
 
 ## competition
-Others want this lane. It's early: six funded startups, the largest disclosed round four million, and good teams. But they share three defaults, and we bet the other way on each. They run on bundled data, so agents herd into the same tokens; ours buys its own. They cap risk, but nothing vetoes a rug before the swap; our ten gates do. And they sell copy trading, which turns fourteen percent into three; we publish every fill and keep the strategy private.
+An early category, with good teams. We bet the other way. Most offer a chat box or a fixed bot. We give you one line of English and the dials: gates, data, model, sizing, exits. It runs hosted, 24/7. No RPC, no data keys, just your AI key, soon not even that. We publish every fill, never the strategy.
 
 ## gtm
 That public record is the growth loop. Each trade posts with its entry score, like WIF's eighty-one, so every trade markets itself. Followers launch their own agents; next, creators share the fees. We start with Solana memecoins, four hundred eighty-two billion dollars traded last year. Then Polymarket, then tokenized stocks.
@@ -76,6 +76,9 @@ It's in private beta on Solana and Base. Tomorrow, another twenty-one thousand t
 13. **"76% rugs: whose number?"** SolRugDetector (arXiv, Mar 2026) labelled 76,469 of 100,063 tokens launched on Orca, Raydium and Meteora in H1 2025. Each study defines rugs differently, so don't add it to Solidus's 98.6% (liquidity collapse) or call either "scams".
 14. **"Can the owner switch gates off?"** Some, yes: 7 of the 10 are on by default and owner-configurable (src/lib/agent/config.ts). Mint, freeze, liquidity, holders, age and top-10 also block when the data is unknown; honeypot, can't-sell and tax pass when it's missing. Don't say "unknown means no" for all ten.
 15. **"You have a leaderboard too."** Yes, ranked by PnL with the score at entry. The difference is no copy trading and a private strategy, not the absence of ranking.
+
+16. **"No API keys?"** None to wire for RPC, swaps, data or X: Tocker holds those. Today you bring one AI model key (Anthropic, OpenAI or OpenRouter); paying for the model per call in USDC is next. Don't say "no keys at all" until it ships.
+17. **"More configurable than whom?"** Concretely: strategy, score floor, liquidity/holder/age/tax thresholds, blocklist, up to 12 paid data sources, model, sizing (fixed $, % equity, volatility), exits, auto vs approve. Fere AI's catalogue agents let you tune only size, leverage, stop and take-profit; Senpi, Minara and Ask Gina also take plain-English strategies, so don't claim "the only".
 
 ## Know the field (keep off the slide)
 - Senpi's public GitHub has a "volume generation engine" built for $5M a day of BTC round-trips (Apr 2026). It is unclear whether it ran, so treat its $411M as possibly inflated. Its Agents Arena was retired Jul–Aug 2026.
