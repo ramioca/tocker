@@ -15,7 +15,7 @@ Twenty-one thousand tokens launch on pump.fun every day. Almost all collapse. Bo
 Over ninety days this year, ninety-four percent of Solana memecoin wallets made no profit. I've lost more than I'd like to admit to rugs, honeypots and my own emotions. And building your own agent? About two hundred dollars a month, and twenty-plus services to wire and babysit.
 
 ## solution
-Tocker fixes both with one line of English. Ten hard gates in code refuse unsafe buys, your agent buys data per call, and it runs hosted around the clock. Nothing to wire.
+Tocker fixes both with one prompt. Ten hard gates in code refuse unsafe buys, your agent buys data per call, and it runs hosted around the clock. Nothing to wire.
 
 ## product
 Here's a sample run. The thesis: memes smart money is accumulating. Your agent finds WIF. It scores eighty-one, clears all ten gates, and buys a hundred dollars, exits in code. [pause] I was emotional. An agent isn't. It just follows your rules.
