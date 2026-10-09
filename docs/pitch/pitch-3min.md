@@ -3,7 +3,7 @@
 ~416 words over 10 slides, about 2:35 at 160 wpm. Reworked on Oct 8, 2026 after a pitch roast that pushed on three things: "what's the edge?", "the competitors are well established", and "performance". [pause] marks a beat.
 - **Edge** (new slide, replaces the x402 "alpha" slide): not prediction but not losing, in three steps. Refuse the rugs (gates in code), pick by your thesis (paid data, cents a token), exit by rule. Evidence: research/29, code: research/30.
 - **Proof** slide dropped (Oct 9): the gate audit and house cohort stay in Q&A 20 as the plan, not on a slide.
-- **Competition**: AI trading startups, framed as a crowded space. "Crowded space. Three things set us apart." Six funded startups (logos), plus Bankr, Nansen AI, Wayfinder, Almanak, Cod3x and Robinhood Agents also shipping trading agents; then what all six do vs Tocker: safety, data, social. Terminals stay in Q&A 5.
+- **Competition · Moat** (Oct 9): "Crowded space. Our moat compounds." 12 teams ship AI trading agents (named); table stakes are an LLM, a wallet and execution. Moat, in what compounds: (1) outcome data, every token we score or refuse and how it ended, logged today (`token_score_history`), tuning the gates next; (2) a public record of every fill with its entry score; (3) x402 position, one integration to every paid data source, and next our gate and score sold per call to any agent. Outcome labels and the per-call gate are not built: say "next".
 - **Stale facts fixed:** the 0.5% fee is live (main #53), the beta is open, and the solution slide no longer says "sell-check data" (Solana has no sell test).
 Earlier competition designs: docs/pitch/deck/competition-angles/.
 
@@ -26,7 +26,7 @@ So what's the edge? Not prediction: nobody has shown an AI that picks memecoin w
 Who pays? Traders already do: nine hundred forty million dollars last year to Solana bots and terminals, at one percent a trade. We charge half, and it's live.
 
 ## competition
-This space is crowded. Six funded AI trading startups, plus Bankr, Nansen and now Robinhood, all shipping agents. Good teams. Three things set us apart. Safety: none of the six vetoes a rug before the swap; ours refuses in code, and the AI can't override it. Data: they run on bundled feeds, so agents herd; ours buys its own, per call. And we publish every fill, never the strategy, instead of copy trading.
+This space is crowded: twelve teams ship AI trading agents, Robinhood included. An LLM, a wallet and execution are table stakes, and features get copied. Our moat is what compounds. Outcome data: every token our agents score or refuse, and what happened next, which tunes our gates. A public record that can only be earned over time. And x402: one integration to every data source, and next, our safety check sold to other agents.
 
 ## gtm
 That public record is the growth loop: every trade posts with its score and markets itself, and followers launch their own. We start with Solana memecoins, four hundred eighty-two billion dollars last year, then Polymarket and tokenized stocks.
@@ -93,6 +93,8 @@ We're in open beta on Solana and Base. Tomorrow, twenty-one thousand more tokens
 19. **"Aren't gates table stakes?"** Yes, the checks are: GMGN's open-source buy skill ships nearly the same list. What isn't: they run on every buy of an unattended agent, the AI can't override them, honeypot and can't-sell are always on, and every verdict is logged. Next gates go where rugs actually are: 79% are pump-and-dumps, so bundlers, snipers and dev selling; mint and freeze barely matter on pump.fun (research/29 A1).
 20. **"Show me performance."** We don't have it yet, and we won't show a backtest or a best-agent screenshot. In 4 weeks: the gate audit (refused vs passed, share dead within 24h and 7d, against RugCheck alone and no filter, definitions published first). In 8 weeks: the house cohort, every agent shown net of fees, against gates-off, random entries with the same exits, and holding SOL. Claim fewer rugs and smaller drawdowns, not returns; four weeks of returns is noise.
 21. **"Why not a backtest?"** Across 888 strategies, backtest Sharpe explained under 2.5% of live results (Wiecki et al., 2016), and the safety data we gate on (Jupiter, RugCheck, GoPlus) has no history, so only the gates could be replayed, not the agent.
+
+22. **"What's your moat?"** Features get copied: gates, chat, wallets, execution are table stakes. What compounds: (1) outcome data, every token our agents score or refuse with its verdict and price (logged today in `token_score_history`), labelled with how it ended and used to tune the gates (next; terminals see trades, not the decision or the refusals); (2) a public record of every fill with its entry score, which can only be earned over time; (3) x402: one integration to every paid data source, and next, our gate and score sold per call to other agents, so rivals become customers. Be honest that (1) and (3) are next: today the score's weights are hand-set.
 
 ## Fix before claiming (product gaps, research/30)
 - The prompt says the paid Deepnets check clears a gate; in code it never does (`prompts.ts` vs `tools.ts`).
