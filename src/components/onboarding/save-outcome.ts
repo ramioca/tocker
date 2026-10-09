@@ -10,14 +10,14 @@ import type { OnboardingResult } from "@/server/actions/onboarding";
 /** Said when the request itself failed and there is no answer to read a sentence from. */
 export const SAVE_FAILED = "Could not save. Try again.";
 
-/** Who the account is once the first screen is done: what the second screen's header shows. */
+/** Who the account is once the first screen is done: what the header shows from the second screen on. */
 export interface Identity {
   handle: string;
   avatarSeed: string | null;
 }
 
 export type SaveOutcome =
-  /** Saved. An account with no agent goes on to "Build your first agent"; any other is done. */
+  /** Saved. An account with no agent goes on to "How it works", the second screen; any other is done. */
   | { kind: "saved"; identity: Identity; then: "screen-2" | "close" }
   /**
    * Not saved, and why, under the field or under the avatars. `focus` is where the

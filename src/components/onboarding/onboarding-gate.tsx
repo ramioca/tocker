@@ -1,20 +1,10 @@
 "use client";
 
-import {
-  Component,
-  Suspense,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react";
+import { Component, Suspense, useCallback, useState, useSyncExternalStore, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import { useSession } from "@/hooks/use-session";
-import { FirstRunGround } from "./first-run-ground";
-import { gateDecision, keptFromPage, type FirstRunMode, type FirstRunProfile } from "./gate-decision";
+import { gateDecision, type FirstRunMode, type FirstRunProfile } from "./gate-decision";
 import { onboardingSuppressedOn } from "./suppress";
 
 /*
@@ -32,13 +22,6 @@ const KeyPrompt = dynamic(() => import("./key-prompt").then((mod) => mod.KeyProm
 
 /** Same key the key prompt writes when it is dismissed. */
 const STORAGE_KEY = "tocker:onboarding-dismissed";
-
-/**
- * How long the ground waits for the card's code before it gives the app back. The
- * request is made with the page, so this is only ever reached on a connection that has
- * stalled, and a black screen with nothing to press is worse than being asked next time.
- */
-const CARD_PATIENCE_MS = 12_000;
 
 const noSubscribe = () => () => {};
 const isForced = () => new URLSearchParams(window.location.search).get("onboarding") === "1";
@@ -65,17 +48,24 @@ interface Run {
  *   avatar. The server decides (`needsOnboarding` is `users.onboarded_at IS NULL`, read by
  *   the layout), so no request made here stands between a new account and the answer.
  *   The run is latched with the profile it opened with, because the refresh after a save
- *   re-renders the layout with `needsOnboarding` false while the second screen is still
- *   open. `?onboarding=1` previews the same screens for an account that is through them.
+ *   re-renders the layout with `needsOnboarding` false while the screens after the first
+ *   are still open. `?onboarding=1` previews the same screens for an account that is
+ *   through them.
  *
  * - **The key prompt**, for an account that owns agents and may have no LLM key, as
  *   before: ruled out here when signed out, dismissed on this device or held back on
  *   this page (`./suppress`), and otherwise left to ask whether a key exists.
  *
- * The ground behind the first-run card is drawn here, not by the card. It is a few lines
- * that are already loaded, so on a full load it is in the server's HTML and after
- * /login's client navigation it is in the first commit: the app is never seen first,
- * however late the card's code is.
+ * Nothing is drawn here before the first-run card. It is a dialog over the app, and until
+ * its code has arrived the page the person is on is simply the app: seen, and live. That
+ * is a frame or two on a full load, where the code is asked for with the page, and one
+ * request after /login's client navigation. Nothing pressed in that time is lost: the
+ * gate is in the layout, so the card opens over whichever page the press led to, the
+ * builder included. A like or a follow made in that moment goes out under the name the
+ * account was given at sign-up. Search opened in it stays open under the card, and is
+ * given none of the keys pressed in the card (`paletteTakesKey`, search-palette.tsx).
+ * That is the whole cost; holding the app back for it would mean covering the page with
+ * something that has to be taken away again when the code never comes.
  *
  * The URL and localStorage are the browser's, so the server snapshots say "not forced"
  * and "dismissed", and the first client render agrees; the real answers land right
@@ -100,12 +90,12 @@ export function OnboardingGate({
   const dismissed = useSyncExternalStore(noSubscribe, isDismissed, () => true);
   const pathname = usePathname();
 
-  // Set in the first render when the server asks for it, so the server's HTML and the
-  // first client render both carry the ground.
+  // Set in the first render when the server asks for it, so the server renders the card's
+  // (empty) shell too and its code is asked for with the page.
   const [run, setRun] = useState<Run | null>(() => (needsOnboarding && profile ? { mode: "real", profile } : null));
   const [keyPrompt, setKeyPrompt] = useState(false);
-  const [ground, setGround] = useState<"up" | "leaving" | "gone">("up");
-  const [cardOpen, setCardOpen] = useState(false);
+  // The card has closed, or could not be loaded, and is out of the tree. `run` stays as
+  // it was, so nothing else starts in its place before the next full page load.
   const [cardDone, setCardDone] = useState(false);
 
   // Worked out here, under the state above, not beside the other reads: the lint rule
@@ -128,64 +118,14 @@ export function OnboardingGate({
   else if (profile && decision === "preview") setRun({ mode: "preview", profile });
   else if (decision === "key-prompt") setKeyPrompt(true);
 
-  const cardReady = useRef(false);
-  const onReady = useCallback(() => {
-    cardReady.current = true;
-  }, []);
-  const onOpen = useCallback(() => setCardOpen(true), []);
-  const onClosing = useCallback(() => setGround((now) => (now === "up" ? "leaving" : now)), []);
-  const dropGround = useCallback(() => setGround("gone"), []);
-  // The card's exit and the ground's fade take the same time. Whichever ends first, the
-  // card's end takes both away, so a fade whose last event never arrives (a hidden tab)
-  // cannot leave the ground mounted.
-  const dropAll = useCallback(() => {
-    setGround("gone");
-    setCardDone(true);
-  }, []);
-
-  const waiting = run !== null && ground === "up";
-  useEffect(() => {
-    if (!waiting) return;
-    const timer = window.setTimeout(() => {
-      if (!cardReady.current) dropAll();
-    }, CARD_PATIENCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [waiting, dropAll]);
-
-  // The ground hides the app from a pointer, not from a keyboard. Until the card opens
-  // and its dialog takes the keys (a frame, or as long as its code takes to arrive), none
-  // reaches the app: Tab would walk links nobody can see, and ⌘K would open the palette
-  // under the ground. Caught on the way down, before any listener of the app's.
-  const keysHeld = waiting && !cardOpen;
-  useEffect(() => {
-    if (!keysHeld) return;
-    const hold = (event: KeyboardEvent) => {
-      event.stopPropagation();
-      if (keptFromPage(event)) event.preventDefault();
-    };
-    window.addEventListener("keydown", hold, true);
-    window.addEventListener("keyup", hold, true);
-    return () => {
-      window.removeEventListener("keydown", hold, true);
-      window.removeEventListener("keyup", hold, true);
-    };
-  }, [keysHeld]);
+  const dropCard = useCallback(() => setCardDone(true), []);
 
   return (
     <>
-      {run && ground !== "gone" ? <FirstRunGround leaving={ground === "leaving"} onGone={dropGround} /> : null}
       {run && !cardDone ? (
-        <CardBoundary onError={dropAll}>
+        <CardBoundary onError={dropCard}>
           <Suspense fallback={null}>
-            <FirstRun
-              mode={run.mode}
-              profile={run.profile}
-              ownsAgent={ownedAgentCount > 0}
-              onReady={onReady}
-              onOpen={onOpen}
-              onClosing={onClosing}
-              onClosed={dropAll}
-            />
+            <FirstRun mode={run.mode} profile={run.profile} ownsAgent={ownedAgentCount > 0} onClosed={dropCard} />
           </Suspense>
         </CardBoundary>
       ) : null}
@@ -197,9 +137,10 @@ export function OnboardingGate({
 }
 
 /**
- * Catches the first-run card failing to load or to render, and gives the app back. The
- * ground is opaque: without this, a card that never arrives leaves a new account looking
- * at a black screen. The account is asked again on its next visit.
+ * Catches the first-run card failing to load or to render, and leaves the app as it is.
+ * The gate is drawn by the app layout, whose errors no route boundary catches: without
+ * this, a card whose code never arrives would take every page down with it. The account
+ * is asked again on its next visit.
  */
 class CardBoundary extends Component<{ onError: () => void; children: ReactNode }, { failed: boolean }> {
   state = { failed: false };

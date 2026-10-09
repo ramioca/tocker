@@ -113,3 +113,61 @@ describe("auth.css material and motion", () => {
     for (const { selector } of animated) expect(selector).toBe(".auth-main[data-intro] .auth-card");
   });
 });
+
+describe("the first-run card's fuller tint", () => {
+  const own = RULES.filter((rule) => rule.selector === ".auth-card-app");
+  const at = CSS.indexOf(".auth-card-app {");
+
+  /** WCAG contrast of two sRGB colours. */
+  const contrast = (a: number[], b: number[]) => {
+    const luminance = (rgb: number[]) => {
+      const [r, g, bl] = rgb.map((value) => {
+        const c = value / 255;
+        return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+    };
+    const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (light + 0.05) / (dark + 0.05);
+  };
+
+  it("is one rule that sets the tint and nothing else", () => {
+    expect(own).toHaveLength(1);
+    expect(own[0].body.trim()).toMatch(/^background-color: rgba\(10, 10, 11, 0\.\d+\);$/);
+  });
+
+  it("comes after every tint the card sets for itself, and before every fallback that must still win", () => {
+    // One class each, so the later rule is the one that applies.
+    const tints = [...CSS.matchAll(/\.auth-card \{[^}]*background-color: rgba\(10, 10, 11, 0\.8\d?\)/g)].map(
+      (match) => match.index,
+    );
+    expect(tints).toHaveLength(2);
+    for (const tint of tints) expect(at).toBeGreaterThan(tint);
+    for (const fallback of [
+      "@media (prefers-reduced-transparency: reduce)",
+      "@media (prefers-contrast: more)",
+      "@supports not",
+    ]) {
+      expect(CSS.indexOf(fallback)).toBeGreaterThan(at);
+    }
+  });
+
+  it("keeps the card's words readable with a white page directly behind it and nothing dimming it", () => {
+    const alpha = Number(/0\.\d+/.exec(own[0].body)?.[0]);
+    const fill = [10, 10, 11].map((channel) => channel * alpha + 255 * (1 - alpha));
+    // The app's muted text and its error red in the dark theme, as sRGB:
+    // oklch(0.7 0.008 285) and oklch(0.68 0.2 22).
+    expect(contrast([158, 158, 163], fill)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast([251, 87, 93], fill)).toBeGreaterThanOrEqual(4.5);
+    // The sign-in card's own tints would not: they have the silk's scrim behind them.
+    const thin = [10, 10, 11].map((channel) => channel * 0.8 + 255 * 0.2);
+    expect(contrast([158, 158, 163], thin)).toBeLessThan(4.5);
+  });
+
+  it("is worn by the first-run card and not by the sign-in card", () => {
+    const firstRun = readFileSync(new URL("../onboarding/first-run.tsx", import.meta.url), "utf8");
+    const signIn = readFileSync(new URL("./sign-in-card.tsx", import.meta.url), "utf8");
+    expect(firstRun).toContain('"auth-card auth-card-app ');
+    expect(signIn).not.toContain("auth-card-app");
+  });
+});

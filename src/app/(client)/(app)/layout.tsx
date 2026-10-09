@@ -77,8 +77,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         {children}
         {/* Who sees the first-run screens is decided here, on the server, once per account:
             an account whose `onboarded_at` is null. Strictly null, so a session without the
-            field (a mock) never opens them. The gate draws the ground in this same render
-            and loads the card's code behind it, rather than on every page. */}
+            field (a mock) never opens them. The gate opens the card over whichever page
+            this is, and loads its code only for an account that will see it. */}
         <OnboardingGate
           needsOnboarding={session?.onboardedAt === null}
           profile={

@@ -29,6 +29,7 @@ import { KeyPageLink } from "@/components/agents/provider-picker";
 import { providerLabel } from "@/lib/agent/providers";
 import { cn } from "@/lib/utils";
 import type { LlmKeyRow } from "@/server/types";
+import { APP_BACKDROP } from "./backdrop";
 
 /** Written when the prompt is dismissed; the gate reads the same key before mounting it. */
 const STORAGE_KEY = "tocker:onboarding-dismissed";
@@ -126,7 +127,8 @@ export function KeyPrompt({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm transition-opacity duration-[180ms] ease-[cubic-bezier(0.23,1,0.32,1)] data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        {/* The same dimmed, softly blurred app the first-run card opens over. */}
+        <Dialog.Backdrop className={cn(APP_BACKDROP, "duration-[180ms]")} />
         {/* The viewport centres the panel; the panel caps itself at the screen and
             scrolls inside, so a tall form on a small phone never pushes the close
             button or the last action off-screen while the page behind is locked. */}

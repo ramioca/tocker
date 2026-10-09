@@ -1,14 +1,14 @@
 "use client";
 
 /**
- * The two screens of the first-run card: choose a username and avatar, then build a
- * first agent. `first-run.tsx` owns the dialog, the save and what follows it; these draw
- * what is inside the card and hold only what the person is typing.
+ * The three screens of the first-run card: choose a username and avatar, how it works,
+ * then build a first agent. `first-run.tsx` owns the dialog, the save and what follows
+ * it; these draw what is inside the card and hold only what the person is typing.
  *
- * Each screen is a `<form>` whose submit is the chrome button, so Enter in the field
- * does what the button does. Both end in the same footer (the button, then a 44px quiet
- * row), pinned to the bottom of a card that is the same height on both, so the two
- * buttons sit on the same pixels and nothing moves when one screen replaces the other.
+ * Each screen is a `<form>` whose submit is the chrome button, so Enter does what the
+ * button does. All three end in the same footer (the button, then a 44px quiet row),
+ * pinned to the bottom of a card that is the same height on each, so the three buttons
+ * sit on the same pixels and nothing moves when one screen replaces the other.
  */
 import {
   useCallback,
@@ -25,7 +25,7 @@ import { useRouter } from "next/navigation";
 import { Dialog } from "@base-ui/react/dialog";
 import { motion } from "motion/react";
 import { ArrowRight, Check, CircleAlert, FlaskConical, Loader2, Zap } from "lucide-react";
-import { IconTile, PartIcon, TYPE } from "@/components/agents/builder/look";
+import { HAIR, IconTile, PartIcon, TYPE } from "@/components/agents/builder/look";
 import { MetalSubmit } from "@/components/auth/metal-submit";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { UserAvatar } from "@/components/common/user-avatar";
@@ -34,7 +34,7 @@ import { previewUser, savedAvatar } from "@/components/settings/profile-model";
 import { Input } from "@/components/ui/input";
 import { randomSeed, type AvatarChoice } from "@/lib/avatar";
 import { cn } from "@/lib/utils";
-import type { FirstRunProfile } from "./gate-decision";
+import type { FirstRunProfile, FirstRunProgress } from "./gate-decision";
 import { useHandleCheck } from "./use-handle-check";
 import {
   ADDRESS_PREFIX,
@@ -52,7 +52,7 @@ import {
   type UsernameField,
 } from "./username-field";
 
-/** The builder, where the second screen's button goes. */
+/** The builder, where the last screen's button goes. */
 export const BUILDER_PATH = "/agents/new";
 
 /**
@@ -73,6 +73,31 @@ export const CHOOSE = {
   helper: "This is how people see you on Tocker.",
   label: "Username",
   quiet: "You can change both later in Settings.",
+} as const;
+
+export const TOUR = {
+  title: "How it works",
+  helper: "Three things, then you build one.",
+  primary: "Next",
+  quiet: "Skip",
+} as const;
+
+/** How an agent works, in three points. Each has one small picture at the end of its heading line. */
+export const TOUR_POINTS = [
+  { title: "You write the rules", body: "A strategy in plain words, and limits it cannot break." },
+  { title: "It runs on a schedule", body: "Each run it finds new tokens, scores them and trades by your rules." },
+  { title: "You see every move", body: "Each trade is on its page with the reason. Pause it any time." },
+] as const;
+
+/**
+ * What the three small pictures say: a strategy as someone might type it, the figures a
+ * run ends on, and the reason on a trade. Examples of what the app shows, not a promise
+ * of what an agent does: no token is named, and no price or gain.
+ */
+export const TOUR_SPECIMENS = {
+  strategy: "Buy early, sell fast",
+  run: { scored: 5, bought: 1 },
+  reason: "Volume up 3×",
 } as const;
 
 export const BUILD = {
@@ -102,12 +127,12 @@ export const EASE_OUT: [number, number, number, number] = [0.23, 1, 0.32, 1];
  * of 68, then 72; 8; the address and the status at 18 each), then 20px and the 44px
  * avatars, then 6px and an 18px line that is empty until a save has something to say.
  * The screen holds its content in a box of exactly this height when it shares the card
- * with the second screen, and its stand-in below is the same box, empty, so the two
- * cannot disagree about how tall the first screen is.
+ * with the other two, and its stand-in below is the same box, empty, so the two cannot
+ * disagree about how tall the first screen is.
  */
 const CHOOSE_BLOCK = "h-[220px] sm:h-[228px]";
 /**
- * The footer both screens end in, as a box of one height: 16px, the button under its own
+ * The footer every screen ends in, as a box of one height: 16px, the button under its own
  * 12px, the 44px quiet row. `mt-auto` is what pins it to the bottom of the card. The
  * height is written out, and the stand-ins below are given the same box, so what the
  * card measures and what it shows cannot differ by a pixel of button.
@@ -163,6 +188,101 @@ function viaOfSubmit(event: MouseEvent<HTMLFormElement>): Via | null {
   return event.detail === 0 ? "keyboard" : "pointer";
 }
 
+/** A row arriving: up 6px and in, each a beat after the one above. Still when `animate` is off. */
+function rise(animate: boolean, index: number) {
+  return animate
+    ? {
+        initial: { opacity: 0, transform: "translateY(6px)" },
+        animate: { opacity: 1, transform: "translateY(0px)" },
+        transition: { duration: 0.24, delay: index * 0.05, ease: EASE_OUT },
+      }
+    : { initial: false as const };
+}
+
+/** A line drawing down from its top, `delay` seconds in. Simply there when `animate` is off. */
+function draw(animate: boolean, delay: number) {
+  return animate
+    ? {
+        initial: { transform: "scaleY(0)" },
+        animate: { transform: "scaleY(1)" },
+        transition: { duration: 0.3, delay, ease: EASE_OUT },
+      }
+    : { initial: false as const };
+}
+
+/* --- the row above the title --------------------------------------------------- */
+
+/** One screen gives way to the next: how far each travels and for how long. */
+export interface Swap {
+  travel: number;
+  seconds: number;
+}
+
+/**
+ * The silk, a third on each pip, so the three read as one line filling up. The stops are
+ * the builder's (`SILK` in its look.tsx), cut at one third and at two.
+ */
+const PIP_FILL = [
+  "bg-[linear-gradient(90deg,#3d6bff,#6461ff)]",
+  "bg-[linear-gradient(90deg,#6461ff,#7a5cff_56%,#a353ef)]",
+  "bg-[linear-gradient(90deg,#a353ef,#ff3dcb)]",
+] as const;
+
+/**
+ * The row above the title, 24px tall: a pip for each screen and the count on the left
+ * and, once the first screen is done, the person as they now appear, where the account
+ * menu will show them. There is no close button: screen 1 has nothing to close to, and
+ * the screens after it say so in words, under their button.
+ */
+export function Header({
+  steps,
+  person,
+  swap,
+}: {
+  steps: FirstRunProgress;
+  /** Who the account is now, from the second screen on. Null on the first. */
+  person: { handle: string; avatarSeed: string | null; avatarUrl: string | null } | null;
+  swap: Swap;
+}) {
+  return (
+    <div className="flex h-6 shrink-0 items-center gap-3">
+      {/* Decorative: the count beside them is in words. Each fills from the left as its
+          screen arrives; from the keyboard, and for less motion, it is simply full. */}
+      <span aria-hidden className="flex shrink-0 gap-1">
+        {steps.pips.map((lit, index) => (
+          <span key={index} className="h-1 w-5 overflow-hidden rounded-full bg-white/[0.12]">
+            <span
+              className={cn(
+                "block h-full origin-left rounded-full",
+                PIP_FILL[index],
+                "transition-[scale] duration-300 ease-[var(--ease-out-strong)] motion-reduce:transition-none",
+                swap.seconds === 0 && "transition-none",
+                lit ? "scale-x-100" : "scale-x-0",
+              )}
+            />
+          </span>
+        ))}
+      </span>
+      <p className={cn(TYPE.kicker, "shrink-0")}>
+        <span aria-hidden>{steps.count}</span>
+        <span className="sr-only">{steps.said}</span>
+      </p>
+      {person ? (
+        <motion.div
+          // Arrives with the second screen, once the first has gone, and stays for the third.
+          initial={swap.travel === 0 ? false : { opacity: 0, transform: "scale(0.9)" }}
+          animate={{ opacity: 1, transform: "scale(1)" }}
+          transition={{ duration: 0.2, delay: swap.seconds, ease: EASE_OUT }}
+          className="ml-auto flex min-w-0 origin-right items-center gap-2"
+        >
+          <UserAvatar user={person} px={24} className="size-6" />
+          <span className={cn(TYPE.heading, "truncate")}>@{person.handle}</span>
+        </motion.div>
+      ) : null}
+    </div>
+  );
+}
+
 /* --- screen 1 ------------------------------------------------------------------ */
 
 type FieldAction =
@@ -205,7 +325,7 @@ export function ChooseScreen({
   profile: FirstRunProfile;
   /** A preview says "Keep it", not "Picked for you": its account chose its name long ago. */
   preview: boolean;
-  /** The card also holds the second screen, so this one keeps to a fixed height. */
+  /** The card also holds the other two screens, so this one keeps to a fixed height. */
   shared: boolean;
   saving: boolean;
   refusal: Refusal | null;
@@ -419,19 +539,165 @@ function FieldGlyph({ glyph }: { glyph: FieldView["glyph"] }) {
 /* --- screen 2 ------------------------------------------------------------------ */
 
 /**
- * Screen 2: an agent going from a strategy, to paper, to live, and one button to the
+ * Screen 2: how an agent works, in three points, and one button on to the last screen.
+ * By now the username is saved, so it can be closed freely, and is not shown again.
+ */
+export function TourScreen({
+  handle,
+  animate,
+  onNext,
+  onSkip,
+}: {
+  /** The username just saved, said to a screen reader before the helper. */
+  handle: string;
+  /** The points arrive in order. Off after a key press, and for anyone who asked for less motion. */
+  animate: boolean;
+  onNext: (via: Via) => void;
+  onSkip: () => void;
+}) {
+  const formRef = useRef<HTMLFormElement>(null);
+  const via = useRef<Via>("pointer");
+
+  useEffect(() => {
+    // There is nothing to fill in, so the button has focus when the screen arrives.
+    formRef.current?.querySelector<HTMLButtonElement>('button[type="submit"]')?.focus({ preventScroll: true });
+  }, []);
+
+  return (
+    <form
+      ref={formRef}
+      noValidate
+      className="flex flex-1 flex-col"
+      onClickCapture={(event) => {
+        via.current = viaOfSubmit(event) ?? via.current;
+      }}
+      onSubmit={(event) => {
+        event.preventDefault();
+        onNext(via.current);
+      }}
+    >
+      <Dialog.Title className={TYPE.display}>{TOUR.title}</Dialog.Title>
+      <Dialog.Description className={cn(TYPE.body, "mt-1.5")}>
+        <span className="sr-only">You are @{handle} now. </span>
+        {TOUR.helper}
+      </Dialog.Description>
+
+      <TourPoints animate={animate} className="mt-5 sm:mt-6" />
+
+      <Footer
+        button={<MetalSubmit disabled={false}>{TOUR.primary}</MetalSubmit>}
+        quiet={<QuietButton onClick={onSkip}>{TOUR.quiet}</QuietButton>}
+      />
+    </form>
+  );
+}
+
+/**
+ * The frame of a point's small picture: a 20px well at the end of its heading line, the
+ * height of the mode badges on the next screen, so the line is no taller for it. Its
+ * words are as tall as the well is inside (18px), so nothing cut short loses a descender.
+ *
+ * The widest heading and its picture need about 262px of the row, by the font's own
+ * widths, which a 360px phone has and a narrower one does not. There the picture is left
+ * out whole, not cut to an ellipsis. Should a font run wide in between, it gives way
+ * before the heading does.
+ */
+const SPECIMEN = cn(
+  "flex h-5 min-w-0 items-center gap-1 rounded-md border bg-white/[0.04] px-1.5",
+  "tnum text-[11px] leading-[18px] whitespace-nowrap text-muted-foreground max-[360px]:hidden",
+  HAIR,
+);
+
+/** The silk down the left of the three points, a third on each: the pips above, turned on end. */
+const POINT_RULE = [
+  "bg-[linear-gradient(180deg,#3d6bff,#6461ff)]",
+  "bg-[linear-gradient(180deg,#6461ff,#7a5cff_56%,#a353ef)]",
+  "bg-[linear-gradient(180deg,#a353ef,#ff3dcb)]",
+] as const;
+
+/**
+ * Three rows, each a heading with one small picture of the app at the end of its line,
+ * and two lines under it. The pictures are made from what the app itself draws: the
+ * field a strategy is typed in, a run's figures, a trade with its reason. They are
+ * decorative; the words say everything.
+ *
+ * It shares the next screen's type and its silk down the left, and differs where it
+ * should: there the silk is a rail joining three steps, here it is a rule beside each of
+ * three things that are true at once (the builder's own mark for a read-back line). No
+ * tiles: with a 32px tile in front, a heading and its picture do not fit one line on a
+ * phone under 390px, and a picture under each point would make the card a hundred
+ * pixels taller on every screen.
+ *
+ * The lines under a heading are held to 272px, so from a 360px phone up they break the
+ * same way at every width, and each row is the same three lines tall.
+ */
+export function TourPoints({ animate, className }: { animate: boolean; className?: string }) {
+  return (
+    <ul className={cn("flex flex-col gap-5", className)}>
+      <Point index={0} animate={animate}>
+        {/* The strategy field, with a line in it and the caret after the last word. */}
+        <span aria-hidden className={SPECIMEN}>
+          <span className="truncate text-foreground/85">{TOUR_SPECIMENS.strategy}</span>
+          <span className="h-3 w-px shrink-0 bg-primary" />
+        </span>
+      </Point>
+
+      <Point index={1} animate={animate}>
+        {/* What a run did, as the runs list says it: words muted, figures in mono. */}
+        <span aria-hidden className={SPECIMEN}>
+          <span className="truncate">
+            scored <span className="font-mono text-foreground">{TOUR_SPECIMENS.run.scored}</span>
+            <span className="text-foreground/40"> · </span>
+            bought <span className="font-mono text-foreground">{TOUR_SPECIMENS.run.bought}</span>
+          </span>
+        </span>
+      </Point>
+
+      <Point index={2} animate={animate}>
+        {/* A trade as the feed draws one, at the size of a badge: its side, then why. */}
+        <span aria-hidden className={SPECIMEN}>
+          <span className="shrink-0 rounded-[4px] bg-positive/15 px-1 text-[9px] leading-[14px] font-bold tracking-wider text-positive uppercase">
+            buy
+          </span>
+          <span className="truncate">{TOUR_SPECIMENS.reason}</span>
+        </span>
+      </Point>
+    </ul>
+  );
+}
+
+/** One point: its rule, its heading with the picture at the end of the line, its two lines. */
+function Point({ index, animate, children }: { index: 0 | 1 | 2; animate: boolean; children: ReactNode }) {
+  return (
+    <motion.li {...rise(animate, index)} className="relative pl-3">
+      {/* Draws down once its row has started to arrive, as the rail on the next screen does. */}
+      <motion.span
+        aria-hidden
+        {...draw(animate, 0.08 + index * 0.05)}
+        className={cn("absolute inset-y-[3px] left-0 w-0.5 origin-top rounded-full", POINT_RULE[index])}
+      />
+      <div className="flex items-center justify-between gap-2">
+        <p className={cn(TYPE.heading, "shrink-0 text-foreground")}>{TOUR_POINTS[index].title}</p>
+        {children}
+      </div>
+      <p className={cn(TYPE.small, "max-w-[17rem] text-pretty text-muted-foreground")}>{TOUR_POINTS[index].body}</p>
+    </motion.li>
+  );
+}
+
+/* --- screen 3 ------------------------------------------------------------------ */
+
+/**
+ * Screen 3: an agent going from a strategy, to paper, to live, and one button to the
  * builder. It can be closed freely, and is not shown again.
  */
 export function BuildScreen({
-  handle,
   onBuilder,
   going,
   animate,
   onGo,
   onNotNow,
 }: {
-  /** The username just saved, said to a screen reader before the helper. */
-  handle: string;
   /** The page behind the card is the builder already: the button only has to close the card. */
   onBuilder: boolean;
   /** The builder is on its way. The card stays until it is there. */
@@ -464,10 +730,7 @@ export function BuildScreen({
       }}
     >
       <Dialog.Title className={TYPE.display}>{BUILD.title}</Dialog.Title>
-      <Dialog.Description className={cn(TYPE.body, "mt-1.5")}>
-        <span className="sr-only">You are @{handle} now. </span>
-        {BUILD.helper}
-      </Dialog.Description>
+      <Dialog.Description className={cn(TYPE.body, "mt-1.5")}>{BUILD.helper}</Dialog.Description>
 
       <BuildSteps animate={animate} className="mt-5 sm:mt-6" />
 
@@ -483,7 +746,7 @@ export function BuildScreen({
           </MetalSubmit>
         }
         // On the builder there is nothing to put off: the button closes the card in
-        // place. The row stays, so the button is where Continue was.
+        // place. The row stays, so the button is where Next was.
         quiet={onBuilder ? null : <QuietButton onClick={onNotNow}>{NOT_NOW}</QuietButton>}
       />
     </form>
@@ -502,22 +765,8 @@ const CONNECTOR = "absolute top-[38px] -bottom-1 left-4 origin-top";
  */
 export function BuildSteps({ animate, className }: { animate: boolean; className?: string }) {
   // Rows rise in order; each connector then draws down from its tile.
-  const row = (index: number) =>
-    animate
-      ? {
-          initial: { opacity: 0, transform: "translateY(6px)" },
-          animate: { opacity: 1, transform: "translateY(0px)" },
-          transition: { duration: 0.24, delay: index * 0.05, ease: EASE_OUT },
-        }
-      : { initial: false as const };
-  const line = (delay: number) =>
-    animate
-      ? {
-          initial: { transform: "scaleY(0)" },
-          animate: { transform: "scaleY(1)" },
-          transition: { duration: 0.3, delay, ease: EASE_OUT },
-        }
-      : { initial: false as const };
+  const row = (index: number) => rise(animate, index);
+  const line = (delay: number) => draw(animate, delay);
 
   return (
     <ol className={cn("flex flex-col gap-2.5", className)}>
@@ -603,10 +852,10 @@ function StepText({
 /* --- stand-ins ----------------------------------------------------------------- */
 
 /**
- * A screen's shape with nothing in it to see, hear or reach. The card lays both of these
- * out under whichever screen is showing, in the same grid cell, so it is always as tall
- * as the taller screen at this width: the card is one height, and it is measured by the
- * browser rather than written down as a number that a change of copy would make wrong.
+ * A screen's shape with nothing in it to see, hear or reach. The card lays all three of
+ * these out under whichever screen is showing, in the same grid cell, so it is always as
+ * tall as the tallest screen at this width: the card is one height, and it is measured by
+ * the browser rather than written down as a number that a change of copy would make wrong.
  */
 function Ghost({ children }: { children: ReactNode }) {
   return (
@@ -622,6 +871,17 @@ export function ChooseGhost() {
       <p className={TYPE.display}>{CHOOSE.title}</p>
       <p className={cn(TYPE.body, "mt-1.5")}>{CHOOSE.helper}</p>
       <div className={CHOOSE_BLOCK} />
+      <div className={FOOTER} />
+    </Ghost>
+  );
+}
+
+export function TourGhost() {
+  return (
+    <Ghost>
+      <p className={TYPE.display}>{TOUR.title}</p>
+      <p className={cn(TYPE.body, "mt-1.5")}>{TOUR.helper}</p>
+      <TourPoints animate={false} className="mt-5 sm:mt-6" />
       <div className={FOOTER} />
     </Ghost>
   );

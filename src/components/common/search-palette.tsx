@@ -51,6 +51,27 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+/** A dialog, by the role its popup carries. */
+const ANY_DIALOG = '[role="dialog"], [role="alertdialog"]';
+
+/**
+ * Whether a key pressed on `target` is the palette's to act on. Its listener is on the
+ * window and hears every key on the page, and the palette can end up under another
+ * dialog: the first-run card and the key prompt open by themselves, over whatever is on
+ * screen. A key pressed in one of those is that dialog's. Taken here, Enter would run the
+ * highlighted row and never reach the form it was typed in.
+ *
+ * Every other key is the palette's, as before: from its own input and list, from the
+ * dialog wrapped around it (command-menu.tsx), and from the page itself, where a press on
+ * the palette's edge can leave the focus.
+ */
+export function paletteTakesKey(target: EventTarget | null, palette: Element | null): boolean {
+  // The window and the document are targets too, and have no `closest`.
+  if (!palette || target === null || !("closest" in target)) return true;
+  const dialog = (target as Element).closest(ANY_DIALOG);
+  return dialog === null || dialog.contains(palette);
+}
+
 export function SearchPalette({
   isOpen,
   onClose,
@@ -64,6 +85,7 @@ export function SearchPalette({
   const listId = useId();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -107,9 +129,12 @@ export function SearchPalette({
 
   // A window listener, as in the registry component: a dialog wrapped around the palette
   // may claim the arrows first, and its caller can hand them on (see command-menu.tsx).
+  // It hears keys pressed in a dialog that has opened over the palette as well, and
+  // leaves those alone.
   useEffect(() => {
     if (!isOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!paletteTakesKey(event.target, rootRef.current)) return;
       if (event.key === "Escape") {
         event.preventDefault();
         onClose();
@@ -137,7 +162,7 @@ export function SearchPalette({
   const announcement = filtered.length === 0 ? emptyText : plural(filtered.length, "result", "results");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[15vh]">
+    <div ref={rootRef} className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[15vh]">
       <div aria-hidden onClick={onClose} className="fixed inset-0 bg-black/40 backdrop-blur-xs" />
 
       <div

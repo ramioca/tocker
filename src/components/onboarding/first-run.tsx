@@ -1,36 +1,43 @@
 "use client";
 
 /**
- * The first-run card: a new account chooses its username and avatar, then is shown how
- * an agent goes from a strategy, to paper, to live. Once per account, decided by the
- * server (`users.onboarded_at`); the gate (`onboarding-gate.tsx`) mounts this and draws
- * the ground behind it.
+ * The first-run card: a new account chooses its username and avatar, is told in three
+ * lines how an agent works, and is shown how one goes from a strategy, to paper, to
+ * live. Once per account, decided by the server (`users.onboarded_at`); the gate
+ * (`onboarding-gate.tsx`) mounts this.
+ *
+ * It opens over the app, on whichever page the person is on. The shell is Base UI's
+ * Dialog: focus trap, scroll lock, focus return, and everything outside it inert. Its
+ * backdrop dims and softly blurs the page, so the app is still recognisably there
+ * (`backdrop.ts`, which the key prompt shares). The entrance is CSS transitions on the
+ * dialog's starting and ending styles, for the same time on the backdrop and on the
+ * popup itself (an ancestor below full opacity would take the popup's blur away), so the
+ * two arrive and leave as one, and a close mid-entrance reverses from where it is.
  *
  * The card is the sign-in page's own (`auth-card`, in auth.css): width, padding, border,
- * radius, tint, blur, shadow and top edge all come from that class, which is unlayered
- * and beats any utility. So nothing here sets one of them, and the two cards cannot
- * drift apart. Its top edge is a pseudo-element on the border, so the popup must never
- * clip: a card too tall for the screen scrolls in the wrapper inside it.
- *
- * The shell is Base UI's Dialog: focus trap, scroll lock, focus return. There is no
- * backdrop, because the ground behind is opaque. The entrance is CSS transitions on the
- * dialog's starting and ending styles, on the popup itself (an ancestor below full
- * opacity would take its blur away), so a close mid-entrance reverses from where it is.
+ * radius, blur, shadow and top edge all come from that class, which is unlayered and
+ * beats any utility. So nothing here sets one of them, and the two cards cannot drift
+ * apart. `auth-card-app` beside it is the one difference, a fuller tint: the page behind
+ * this card can be anything, and the card's own fill is what keeps its words readable.
+ * Its top edge is a pseudo-element on the border, so the popup must never clip: a card
+ * too tall for the screen scrolls in the wrapper inside it. The stylesheet is imported
+ * here, because nothing else in the app attaches it.
  *
  * Three shapes (`firstRunPlan`): a new account must finish screen 1 and then sees
- * screen 2; an account that already owns an agent sees screen 1 alone and may put it
- * off; a preview (`?onboarding=1`) is both screens with nothing saved.
+ * screens 2 and 3, either of which it may close; an account that already owns an agent
+ * sees screen 1 alone and may put it off; a preview (`?onboarding=1`) is all three
+ * screens with nothing saved.
  */
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog } from "@base-ui/react/dialog";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { TYPE } from "@/components/agents/builder/look";
-import { UserAvatar } from "@/components/common/user-avatar";
+import "@/components/auth/auth.css";
 import type { AvatarChoice } from "@/lib/avatar";
 import { cn } from "@/lib/utils";
 import { completeOnboarding } from "@/server/actions/onboarding";
+import { APP_BACKDROP } from "./backdrop";
 import {
   BUILDER_PATH,
   BuildGhost,
@@ -38,10 +45,22 @@ import {
   ChooseGhost,
   ChooseScreen,
   EASE_OUT,
+  Header,
+  TourGhost,
+  TourScreen,
   type Refusal,
+  type Swap,
   type Via,
 } from "./first-run-screens";
-import { firstRunPlan, type FirstRunMode, type FirstRunProfile } from "./gate-decision";
+import {
+  canClose,
+  firstRunPlan,
+  progress,
+  screenAfter,
+  type FirstRunMode,
+  type FirstRunProfile,
+  type FirstRunScreen,
+} from "./gate-decision";
 import {
   pageAfterRename,
   previewOutcome,
@@ -52,30 +71,17 @@ import {
 } from "./save-outcome";
 
 /**
- * Where the card sits: /login's own rule, so arriving from there only the card changes.
- * Top-anchored at every width: 72px down on a phone (the 64px bar and 8), and from 640px
- * where a card of its usual height would be centred, never closer than 24px to the bar
- * (which is 72px tall from 900px). A card that grows does so downward and nothing above
- * it moves. The length taken from 50dvh is half that usual height: 510px for the two
- * screens, 466px for the one an owner sees, as measured at 1440px in the app's own type.
- * If the copy or the type scale changes, measure again: a card that is off by a few
- * pixels sits that far from the middle, and nothing else changes. The wider breakpoint
- * is written in rem (900px) so that it sorts after `sm`, which is.
+ * Where the card sits. On a phone it is top-anchored, 72px down: clear of the app's 56px
+ * top bar, which stays in view above it, and a card taller than usual grows downward.
+ * From 640px it is in the middle of the screen. The card is one height for as long as it
+ * is open (the stand-ins in its grid see to that), so centring it by layout moves
+ * nothing from one screen to the next, and there is no measured height to keep in step
+ * with the copy.
  */
-const VIEWPORT = "fixed inset-0 z-[100] flex items-start justify-center px-4 pt-[72px] pb-4 sm:px-6 sm:pb-6";
-const TOP_TWO_SCREENS =
-  "sm:pt-[max(88px,calc(50dvh_-_255px))] min-[56.25rem]:pt-[max(96px,calc(50dvh_-_255px))]";
-const TOP_ONE_SCREEN =
-  "sm:pt-[max(88px,calc(50dvh_-_233px))] min-[56.25rem]:pt-[max(96px,calc(50dvh_-_233px))]";
+const VIEWPORT = "fixed inset-0 z-[100] flex items-start justify-center px-4 pt-[72px] pb-4 sm:items-center sm:p-6";
 
 /** How long the card waits for a frame before it opens without one. */
 const OPEN_WITHOUT_A_FRAME_MS = 250;
-
-/** One screen gives way to the next: how far each travels and for how long. */
-interface Swap {
-  travel: number;
-  seconds: number;
-}
 
 const SWAP = {
   from: ({ travel }: Swap) => ({ opacity: 0, transform: `translateX(${travel}px)` }),
@@ -95,22 +101,13 @@ export function FirstRun({
   mode,
   profile,
   ownsAgent,
-  onReady,
-  onOpen,
-  onClosing,
   onClosed,
 }: {
   mode: FirstRunMode;
   /** The account as it was when the flow opened. The gate keeps it still. */
   profile: FirstRunProfile;
   ownsAgent: boolean;
-  /** The card's code has arrived and it is about to open. */
-  onReady: () => void;
-  /** The card is opening: from here its dialog has the keyboard. */
-  onOpen: () => void;
-  /** The card has started to close: the ground behind it fades with it. */
-  onClosing: () => void;
-  /** The card's exit has finished. */
+  /** The card's exit has finished, and the gate can take it out of the tree. */
   onClosed: () => void;
 }) {
   const router = useRouter();
@@ -124,7 +121,7 @@ export function FirstRun({
 
   const [opened, setOpened] = useState(false);
   const [closed, setClosed] = useState(false);
-  const [screen, setScreen] = useState<1 | 2>(1);
+  const [screen, setScreen] = useState<FirstRunScreen>(1);
   const [screens, setScreens] = useState(plan.screens);
   const [via, setVia] = useState<Via>("pointer");
   const [saving, setSaving] = useState(false);
@@ -143,9 +140,9 @@ export function FirstRun({
   const arrived = goingFrom !== null && (pathname === BUILDER_PATH || (!leaving && pathname !== goingFrom));
   const open = opened && !closed && !arrived;
   const going = goingFrom !== null && (leaving || arrived);
-  const gone = opened && !open;
-  // Screen 1 has no way out for a new account, until a save has failed on it.
-  const dismissible = screen === 2 || !plan.required || failed;
+  // Screen 1 has no way out for a new account, until a save has failed on it. The
+  // screens after it can always be closed: the name is saved by then.
+  const closable = canClose(plan, screen, failed);
 
   const titleRef = useRef<HTMLHeadingElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -155,21 +152,17 @@ export function FirstRun({
   // Opened a frame after it mounts, not open from the first render: a dialog that
   // mounts open has no entrance to play, and one that is open while the page hydrates
   // has a portal the server never drew. A page that is given no frames (a tab in the
-  // background, an embedded preview) is opened by the timer instead, so nobody comes
-  // back to the ground with no card on it.
+  // background, an embedded preview) is opened by the timer instead, so the card is
+  // there when the person comes back to it.
   const shown = useRef(false);
   useEffect(() => {
-    onReady();
     const show = () => {
-      // Once. Run again (a parent handing in a new `onReady`), it would take the card's
-      // own field for what had focus before the card.
+      // Once. The frame and the timer both call this, and the second call would take the
+      // card's own field for what had focus before the card.
       if (shown.current) return;
       shown.current = true;
       returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setOpened(true);
-      // In the same breath: the gate keeps every key from the page until it hears this,
-      // and a card that opened without saying so could not be typed in.
-      onOpen();
     };
     const frame = requestAnimationFrame(show);
     const timer = window.setTimeout(show, OPEN_WITHOUT_A_FRAME_MS);
@@ -177,11 +170,7 @@ export function FirstRun({
       cancelAnimationFrame(frame);
       window.clearTimeout(timer);
     };
-  }, [onReady, onOpen]);
-
-  useEffect(() => {
-    if (gone) onClosing();
-  }, [gone, onClosing]);
+  }, []);
 
   // With a mouse there is a keyboard beside it: start in the field, with the name
   // selected, so typing replaces it. On touch that would raise the keyboard over a card
@@ -217,6 +206,17 @@ export function FirstRun({
     void queryClient.invalidateQueries();
   }
 
+  /** On to the screen after `from`, or out of the card when it was the last. */
+  function goOn(from: FirstRunScreen, of: 1 | 3, pressed: Via) {
+    const next = screenAfter(of, from);
+    if (next === null) {
+      setClosed(true);
+      return;
+    }
+    setVia(pressed);
+    setScreen(next);
+  }
+
   async function save(handle: string, avatar: AvatarChoice, pressed: Via) {
     if (saving) return;
     setRefusal(null);
@@ -244,9 +244,8 @@ export function FirstRun({
     if (plan.saves) showEverywhere(outcome.identity);
     if (outcome.then === "screen-2") {
       // The server's answer decides, not the count this card opened with.
-      setScreens(2);
-      setVia(pressed);
-      setScreen(2);
+      setScreens(3);
+      goOn(1, 3, pressed);
     } else {
       setClosed(true);
     }
@@ -264,17 +263,19 @@ export function FirstRun({
   const fromKeys = via === "keyboard";
   const swap: Swap = { travel: reduce || fromKeys ? 0 : 12, seconds: fromKeys ? 0 : reduce ? 0.15 : 0.2 };
   const person = { handle: identity?.handle ?? profile.handle, avatarSeed: identity?.avatarSeed ?? null, avatarUrl: profile.avatarUrl };
+  // Null for the one screen an owner sees: there is nothing to count.
+  const steps = progress(screens, screen);
 
   return (
     <Dialog.Root
       open={open}
       modal
-      disablePointerDismissal={!dismissible}
+      disablePointerDismissal={!closable}
       onOpenChange={(next, details) => {
         if (next) return;
         // Escape, a press outside and focus leaving all ask to close. Screen 1 refuses
         // them for a new account, and every screen does while a save is on its way.
-        if (!dismissible || saving) {
+        if (!closable || saving) {
           details.cancel();
           return;
         }
@@ -285,12 +286,13 @@ export function FirstRun({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Viewport className={cn(VIEWPORT, screens === 2 ? TOP_TWO_SCREENS : TOP_ONE_SCREEN)}>
+        <Dialog.Backdrop className={cn(APP_BACKDROP, "duration-[240ms] data-ending-style:duration-[160ms]")} />
+        <Dialog.Viewport className={VIEWPORT}>
           <Dialog.Popup
             initialFocus={initialFocus}
             finalFocus={finalFocus}
             className={cn(
-              "auth-card flex max-h-full flex-col outline-none",
+              "auth-card auth-card-app flex max-h-full flex-col outline-none",
               "transition-[opacity,scale] duration-[240ms] ease-[var(--ease-out-strong)] data-ending-style:duration-[160ms]",
               "data-ending-style:opacity-0 data-starting-style:opacity-0",
               "motion-safe:data-ending-style:scale-[0.96] motion-safe:data-starting-style:scale-[0.96]",
@@ -303,13 +305,22 @@ export function FirstRun({
                 in: held to the content alone it overhung by a pixel, and the card could
                 be scrolled by that pixel. Nothing scrolls sideways: a screen on its way
                 in starts 12px to the right. */}
-            <div className="-mx-5 -mt-5 -mb-6 flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-contain px-5 pt-5 pb-6 sm:-m-8 sm:p-8">
-              {screens === 2 ? <Header screen={screen} person={person} swap={swap} /> : null}
+            <div
+              className="-mx-5 -mt-5 -mb-6 flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-contain px-5 pt-5 pb-6 sm:-m-8 sm:p-8"
+              onKeyDown={(event) => {
+                // Enter held down presses once. From the keyboard a screen is simply
+                // there, with its button focused, so a key held a moment too long on one
+                // screen would press the next one's button as well.
+                if (event.key === "Enter" && event.repeat) event.preventDefault();
+              }}
+            >
+              {steps ? <Header steps={steps} person={screen > 1 ? person : null} swap={swap} /> : null}
 
-              <div className={cn("grid flex-1 grid-cols-[minmax(0,1fr)]", screens === 2 && "mt-5")}>
-                {screens === 2 ? (
+              <div className={cn("grid flex-1 grid-cols-[minmax(0,1fr)]", steps && "mt-5")}>
+                {screens === 3 ? (
                   <>
                     <ChooseGhost />
+                    <TourGhost />
                     <BuildGhost />
                   </>
                 ) : null}
@@ -327,7 +338,7 @@ export function FirstRun({
                       <ChooseScreen
                         profile={profile}
                         preview={mode === "preview"}
-                        shared={screens === 2}
+                        shared={screens === 3}
                         saving={saving}
                         refusal={refusal}
                         notNow={failed || (mode === "real" && !plan.required)}
@@ -340,9 +351,15 @@ export function FirstRun({
                         onSubmit={(handle, avatar, pressed) => void save(handle, avatar, pressed)}
                         onNotNow={() => setClosed(true)}
                       />
+                    ) : screen === 2 ? (
+                      <TourScreen
+                        handle={person.handle}
+                        animate={!reduce && !fromKeys}
+                        onNext={(pressed) => goOn(2, 3, pressed)}
+                        onSkip={() => setClosed(true)}
+                      />
                     ) : (
                       <BuildScreen
-                        handle={person.handle}
                         // Read before the button is pressed: once the builder arrives the
                         // card is on its way out, and must not redraw itself as it goes.
                         onBuilder={goingFrom === null && pathname === BUILDER_PATH}
@@ -360,56 +377,5 @@ export function FirstRun({
         </Dialog.Viewport>
       </Dialog.Portal>
     </Dialog.Root>
-  );
-}
-
-/**
- * The row above the title, 24px tall: two pips and a count on the left and, once the
- * first screen is done, the person as they now appear, where the account menu will
- * show them. There is no close button: screen 1 has nothing to close to, and screen 2
- * says "Not now" in words.
- */
-function Header({
-  screen,
-  person,
-  swap,
-}: {
-  screen: 1 | 2;
-  person: { handle: string; avatarSeed: string | null; avatarUrl: string | null };
-  swap: Swap;
-}) {
-  return (
-    <div className="flex h-6 shrink-0 items-center gap-3">
-      {/* The silk, one half on each pip. Decorative: the count beside them is in words. */}
-      <span aria-hidden className="flex shrink-0 gap-1">
-        <span className="h-1 w-6 rounded-full bg-[linear-gradient(90deg,#3d6bff,#7a5cff)]" />
-        <span className="h-1 w-6 overflow-hidden rounded-full bg-white/[0.12]">
-          <span
-            className={cn(
-              "block h-full origin-left rounded-full bg-[linear-gradient(90deg,#7a5cff,#ff3dcb)]",
-              "transition-[scale] duration-300 ease-[var(--ease-out-strong)] motion-reduce:transition-none",
-              swap.seconds === 0 && "transition-none",
-              screen === 2 ? "scale-x-100" : "scale-x-0",
-            )}
-          />
-        </span>
-      </span>
-      <p className={cn(TYPE.kicker, "shrink-0")}>
-        <span aria-hidden>{screen} of 2</span>
-        <span className="sr-only">Step {screen} of 2</span>
-      </p>
-      {screen === 2 ? (
-        <motion.div
-          // Arrives with the second screen, once the first has gone.
-          initial={swap.travel === 0 ? false : { opacity: 0, transform: "scale(0.9)" }}
-          animate={{ opacity: 1, transform: "scale(1)" }}
-          transition={{ duration: 0.2, delay: swap.seconds, ease: EASE_OUT }}
-          className="ml-auto flex min-w-0 origin-right items-center gap-2"
-        >
-          <UserAvatar user={person} px={24} className="size-6" />
-          <span className={cn(TYPE.heading, "truncate")}>@{person.handle}</span>
-        </motion.div>
-      ) : null}
-    </div>
   );
 }

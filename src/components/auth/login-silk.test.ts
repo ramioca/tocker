@@ -40,7 +40,7 @@ describe("the login backdrop's use of the landing", () => {
   });
 });
 
-describe("the backdrop, shared with the first-run screen", () => {
+describe("the backdrop, in a file of its own", () => {
   it("is one component in one file, drawn by the shell", () => {
     expect(SHELL).toContain('import { LoginBackdrop } from "./login-backdrop"');
     expect(SHELL).toContain("<LoginBackdrop />");

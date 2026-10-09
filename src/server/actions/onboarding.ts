@@ -49,9 +49,10 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 /**
- * Does this account own an agent? The server's answer decides whether the second screen
- * ("Build your first agent") is shown. Asked after the save has been written, so a failed
- * read answers no rather than telling someone their saved name was not saved.
+ * Does this account own an agent? The server's answer decides whether the screens after
+ * the first ("How it works", "Build your first agent") are shown. Asked after the save has
+ * been written, so a failed read answers no rather than telling someone their saved name
+ * was not saved.
  */
 async function ownsAgent(db: Db, userId: string): Promise<boolean> {
   try {
