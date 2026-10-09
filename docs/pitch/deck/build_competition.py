@@ -1,64 +1,82 @@
-"""Competition + moat slide (Slides subset: flow layout, text >= 24px, footer pinned).
-Run: python3 -I moat.py <out.html>
-Facts: research/26, 29 (crowd), 30 (what the code logs today: token_score_history; outcome labels are next)."""
+"""Competition matrix: six AI trading startups vs Tocker on five capabilities (Slides subset).
+Cells from docs/pitch/research/26-competitors-deep (README matrix + per-company §7 Autonomy), Oct 2026.
+Marks: Y = yes, P = partly / opt-in, N = no or not found. Run: python3 -I matrix.py <out.html>"""
 import html, re, sys
 
 OUT = sys.argv[1]
 MONO = "font-family:'Geist Mono', 'Courier New', monospace"
 SANS = "font-family:Geist, Arial, sans-serif"
 FG, MID, DIM, HAIR = "#f4f4f1", "#a3a3a1", "#818180", "#f4f4f11f"
-LOGO = "/_blob/41da4bfef67a2f6a83cfa7cf3015ecf2"
 e = lambda t: html.escape(t, quote=False)
 
-CROWD = ["ClawPump", "Minara", "Senpi", "Fere AI", "Ask Gina", "HeyElsa",
-         "Bankr", "Nansen AI", "Wayfinder", "Almanak", "Cod3x", "Robinhood Agents"]
-MOAT = [
-    ("01 · Outcome data", "Every token we score or refuse, and how it ended.",
-     "Logged today. Next, it tunes the gates. Rivals see trades, not decisions."),
-    ("02 · Public record", "Every fill public, with its entry score, from day one.",
-     "A track record can't be copied. It has to be earned, trade by trade."),
-    ("03 · x402 position", "One integration to every paid data source.",
-     "Next, our gate and score sell per call to any agent, rivals included."),
+COLS = [("Runs 24/7", "on its own"), ("Your rules", "and guardrails"), ("Rug veto", "in code"),
+        ("Picks its data", "pays per call, x402"), ("Pays for its AI", "in USDC")]
+ROWS = [
+    ("ClawPump", "/_blob/0bc2d38756d41a19b0f4b42cae97ee97", "Agent toolkit", "YYPPY", ""),
+    ("Minara", "/_blob/03acbe489e6ea92d8d145a181c9dfa84", "Chat + perps autopilot", "YYNPY", ""),
+    ("Senpi", "/_blob/ca68c6e24dedbf9baa8b126a87b00a6b", "Hyperliquid perps agents", "YYNNN", ""),
+    ("Fere AI", "/_blob/3f187fc91f8eb98029cad57c307f6fec", "Preset bots, fixed rules", "YNPNP", ""),
+    ("Ask Gina", "/_blob/dea59d96bd66d04b62a83f5f399fbaa9", "Chat + Polymarket recipes", "PPNNP", "invert"),
+    ("HeyElsa", "/_blob/392c3ee86a193e8a1796ae2fe53d5a5b", "Chat copilot", "NNNNN", ""),
 ]
-LOOP = ["More agents", "more outcomes", "safer gates", "a better public record", "more agents"]
-NOTE = ("This space is crowded: twelve teams ship AI trading agents, Robinhood included. An LLM, a wallet and execution "
-        "are table stakes, and features get copied. Our moat is what compounds. Outcome data: every token our agents "
-        "score or refuse, and what happened next, which tunes our gates. A public record that can only be earned over "
-        "time. And x402: one integration to every data source, and next, our safety check sold to other agents.")
-FOOT = "Crowd: rivals' docs, GitHub, X, Fortune (Robinhood Agents, 29 Sep 2026), Oct 2026 · Outcome labels and the per-call gate are next"
+TOCKER = ("Tocker", "/_blob/41da4bfef67a2f6a83cfa7cf3015ecf2", "Your agent, your rules", "YYYYY")
+NAME_W, COL_W, ROW_H = 544, 224, 62
+NOTE = ("It's a crowded space, and these are good teams, but each covers a piece. HeyElsa and Ask Gina are mostly chat "
+        "with execution. Fere runs preset bots you can't configure. Senpi and Minara run perps strategies on bundled data, "
+        "with no rug veto. Tocker does all five: it runs on its own 24/7, under your rules and guardrails, vetoes rugs in "
+        "code, picks and pays for its data over x402, and pays for its own model in USDC.")
+FOOT = "● yes · ○ partly or opt-in · — no or not found · Rivals' docs, GitHub and X, Oct 2026 (research/26) · Tocker's USDC model payments are switched on per account"
+
+
+def mark(m, strong=False):
+    if m == "Y":
+        c = FG if strong else MID
+        return f'<div style="width:18px; height:18px; display:flex; flex-direction:column; background:{c}; border-radius:256px"></div>'
+    if m == "P":
+        return f'<div style="width:18px; height:18px; display:flex; flex-direction:column; border:2px solid {MID}; border-radius:256px"></div>'
+    return f'<p style="{SANS}; font-size:26px; line-height:1; color:#5c5c5b">—</p>'
+
+
+def row(name, logo, what, marks, opt="", tocker=False):
+    filt = "" if tocker else ("; filter:grayscale(1) invert(1); opacity:0.85" if opt == "invert" else "; filter:grayscale(1); opacity:0.85")
+    fit = "contain" if tocker else "cover"
+    name_c = FG
+    what_c = MID if tocker else DIM
+    cells = "".join(
+        f'<div style="width:{COL_W}px; display:flex; flex-direction:row; justify-content:center; align-items:center; flex:0 0 auto">{mark(m, tocker)}</div>'
+        for m in marks)
+    style = (f"height:{ROW_H + 10 if tocker else ROW_H}px; display:flex; flex-direction:row; align-items:center; "
+             + (f"background:#f4f4f10d; border:1px solid #f4f4f180; border-radius:16px" if tocker else f"border-top:1px solid {HAIR}"))
+    pad = "padding:0 0 0 20px; " if tocker else ""
+    return (f'    <div style="{style}">\n'
+            f'      <div style="width:{NAME_W}px; {pad}display:flex; flex-direction:row; gap:16px; align-items:center; flex:0 0 auto">\n'
+            f'        <img src="{logo}" alt="{e(name)} logo" style="width:40px; height:40px; border-radius:10px; object-fit:{fit}{filt}">\n'
+            f'        <p style="width:150px; {SANS}; font-size:28px; font-weight:600; letter-spacing:-0.3px; white-space:nowrap; color:{name_c}">{e(name)}</p>\n'
+            f'        <p style="{SANS}; font-size:24px; white-space:nowrap; color:{what_c}">{e(what)}</p>\n'
+            f'      </div>\n      {cells}\n    </div>\n')
 
 
 def build():
-    names = " · ".join(n.replace(" ", " ") for n in CROWD)
-    crowd = (f'  <div style="display:flex; flex-direction:column; gap:14px; padding:28px 0 0; border-top:1px solid {HAIR}">\n'
-             f'    <p style="{MONO}; font-size:24px; line-height:30px; letter-spacing:4px; text-transform:uppercase; color:{DIM}">12 teams ship AI trading agents</p>\n'
-             f'    <p style="width:1664px; {SANS}; font-size:28px; line-height:1.3; letter-spacing:-0.3px; white-space:nowrap; color:{MID}">{e(names)}</p>\n'
-             f'    <p style="{SANS}; font-size:30px; line-height:1.3; color:{FG}">Table stakes: an LLM, a wallet, execution. <span style="color:{DIM}">Anyone can ship that.</span></p>\n'
-             f'  </div>\n')
-    cols = ""
-    for i, (label, lead, sub) in enumerate(MOAT):
-        sep = f"; border-left:1px solid #f4f4f129; padding-left:40px" if i else ""
-        cols += (f'      <div style="display:flex; flex-direction:column; gap:14px; flex:1{sep}">\n'
-                 f'        <p style="{MONO}; font-size:24px; line-height:30px; letter-spacing:4px; text-transform:uppercase; white-space:nowrap; color:{MID}">{e(label)}</p>\n'
-                 f'        <p style="{SANS}; font-size:34px; font-weight:600; line-height:1.18; letter-spacing:-0.8px; color:{FG}">{e(lead)}</p>\n'
-                 f'        <p style="{SANS}; font-size:26px; line-height:1.35; color:{MID}">{e(sub)}</p>\n'
-                 f'      </div>\n')
-    loop = f' <span style="color:{DIM}">→</span> '.join(e(x) for x in LOOP)
-    box = (f'  <div style="display:flex; flex-direction:column; gap:22px; padding:26px 40px 28px; background:#f4f4f10d; border:1px solid #f4f4f180; border-radius:20px">\n'
-           f'    <div style="display:flex; flex-direction:row; gap:12px; align-items:center">\n'
-           f'      <img src="{LOGO}" alt="Tocker T mark" style="width:35px; height:29px; object-fit:contain">\n'
-           f'      <p style="{SANS}; font-size:30px; font-weight:600; line-height:1; letter-spacing:-0.5px; color:{FG}">Tocker\'s moat: what compounds</p>\n'
-           f'    </div>\n'
-           f'    <div style="display:flex; flex-direction:row; gap:40px">\n{cols}    </div>\n'
-                      f'  </div>\n')
+    head = "".join(
+        f'<div style="width:{COL_W}px; display:flex; flex-direction:column; align-items:center; gap:2px; flex:0 0 auto">'
+        f'<p style="{SANS}; font-size:26px; font-weight:600; letter-spacing:-0.3px; white-space:nowrap; color:{FG}">{e(a)}</p>'
+        f'<p style="{SANS}; font-size:24px; white-space:nowrap; color:{DIM}">{e(b)}</p></div>'
+        for a, b in COLS)
+    rows = "".join(row(*r) for r in ROWS)
+    body = (f'  <div style="display:flex; flex-direction:column">\n'
+            f'    <div style="display:flex; flex-direction:row; align-items:end; padding:0 0 16px">\n'
+            f'      <div style="width:{NAME_W}px; flex:0 0 auto"><p style="{MONO}; font-size:24px; letter-spacing:4px; text-transform:uppercase; color:{DIM}">Six funded startups</p></div>\n'
+            f'      {head}\n    </div>\n{rows}'
+            f'    <div style="height:12px; border-top:1px solid {HAIR}"></div>\n'
+            f'{row(*TOCKER, tocker=True)}  </div>\n')
     s = (f'<section id="competition" data-transition="fade" style="display:flex; flex-direction:column; gap:28px; padding:128px 128px 160px; background:#000000">\n'
-         f'  <p style="{MONO}; font-size:24px; letter-spacing:4px; text-transform:uppercase; color:{DIM}">Competition · Moat</p>\n'
-         f'  <h2 style="width:1664px; {SANS}; font-size:88px; font-weight:600; line-height:1.05; letter-spacing:-3px; color:{FG}">Crowded space. Our moat compounds.</h2>\n'
-         f'  <div style="flex:1"></div>\n{crowd}{box}'
+         f'  <p style="{MONO}; font-size:24px; letter-spacing:4px; text-transform:uppercase; color:{DIM}">Competition · AI trading startups</p>\n'
+         f'  <h2 style="width:1664px; {SANS}; font-size:88px; font-weight:600; line-height:1.05; letter-spacing:-3px; color:{FG}">Six good teams. Each covers a piece.</h2>\n'
+         f'  <div style="flex:1"></div>\n{body}'
          f'  <p style="position:absolute; bottom:64px; left:128px; width:1664px; {SANS}; font-size:22px; line-height:1.35; white-space:nowrap; color:{DIM}">{e(FOOT)}</p>\n'
          f'  <aside>{e(NOTE)}</aside>\n</section>\n')
     open(OUT, "w").write(s)
-    print("note words", len(NOTE.split()), "| <24:", [x for x in re.findall(r"font-size:(\d+)px", s) if int(x) < 22])
+    print("note words", len(NOTE.split()))
 
 
 build()

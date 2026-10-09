@@ -3,7 +3,7 @@
 ~416 words over 10 slides, about 2:35 at 160 wpm. Reworked on Oct 8, 2026 after a pitch roast that pushed on three things: "what's the edge?", "the competitors are well established", and "performance". [pause] marks a beat.
 - **Edge** (new slide, replaces the x402 "alpha" slide): not prediction but not losing, in three steps. Refuse the rugs (gates in code), pick by your thesis (paid data, cents a token), exit by rule. Evidence: research/29, code: research/30.
 - **Proof** slide dropped (Oct 9): the gate audit and house cohort stay in Q&A 20 as the plan, not on a slide.
-- **Competition · Moat** (Oct 9): "Crowded space. Our moat compounds." 12 teams ship AI trading agents (named); table stakes are an LLM, a wallet and execution. Moat, in what compounds: (1) outcome data, every token we score or refuse and how it ended, logged today (`token_score_history`), tuning the gates next; (2) a public record of every fill with its entry score; (3) x402 position, one integration to every paid data source, and next our gate and score sold per call to any agent. Outcome labels and the per-call gate are not built: say "next".
+- **Competition** (Oct 9): a capability matrix, "Six good teams. Each covers a piece." Six AI startups vs Tocker on runs 24/7 on its own, your rules and guardrails, rug veto in code, picks and pays for its data (x402), pays for its AI in USDC. Cells from research/26 §7 Autonomy and the README matrix. Don't say rivals aren't 24/7: ClawPump, Minara (autopilot), Senpi and Fere all run 24/7. The moat answer is Q&A 22.
 - **Stale facts fixed:** the 0.5% fee is live (main #53), the beta is open, and the solution slide no longer says "sell-check data" (Solana has no sell test).
 Earlier competition designs: docs/pitch/deck/competition-angles/.
 
@@ -26,7 +26,7 @@ So what's the edge? Not prediction: nobody has shown an AI that picks memecoin w
 Who pays? Traders already do: nine hundred forty million dollars last year to Solana bots and terminals, at one percent a trade. We charge half, and it's live.
 
 ## competition
-This space is crowded: twelve teams ship AI trading agents, Robinhood included. An LLM, a wallet and execution are table stakes, and features get copied. Our moat is what compounds. Outcome data: every token our agents score or refuse, and what happened next, which tunes our gates. A public record that can only be earned over time. And x402: one integration to every data source, and next, our safety check sold to other agents.
+It's a crowded space, and these are good teams, but each covers a piece. HeyElsa and Ask Gina are mostly chat with execution. Fere runs preset bots you can't configure. Senpi and Minara run perps strategies on bundled data, with no rug veto. Tocker does all five: it runs on its own 24/7, under your rules and guardrails, vetoes rugs in code, picks and pays for its data over x402, and pays for its own model in USDC.
 
 ## gtm
 That public record is the growth loop: every trade posts with its score and markets itself, and followers launch their own. We start with Solana memecoins, four hundred eighty-two billion dollars last year, then Polymarket and tokenized stocks.
