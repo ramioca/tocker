@@ -62,6 +62,12 @@ export const users = pgTable(
     displayName: text("display_name"),
     bio: text("bio"),
     avatarUrl: text("avatar_url"),
+    /**
+     * The generated avatar this person picked (`src/lib/avatar.ts`: ten letters or
+     * digits, never text they typed). Null means none was picked: their photo is drawn
+     * when `avatar_url` is one the app will show, and a face made from the handle if not.
+     */
+    avatarSeed: text("avatar_seed"),
     email: text("email"),
     /**
      * Muted notification kinds, as `{ [kind]: false }` (src/lib/notifications/prefs.ts).
@@ -69,11 +75,32 @@ export const users = pgTable(
      * trade_unsettled are always delivered whatever this says.
      */
     notificationPrefs: jsonb("notification_prefs").$type<Record<string, boolean>>().default({}).notNull(),
+    /**
+     * When this person chose their username and avatar on the first-run screen. Null means
+     * the handle is still the one sign-up assigned, so they are asked once
+     * (`src/components/onboarding`). Decided here, per account, not per device.
+     */
+    onboardedAt: timestamp("onboarded_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex("users_handle_idx").on(t.handle)],
 );
+
+/**
+ * Usernames given up in a rename, held for the account that gave them up.
+ *
+ * A notification keeps the handle in its title and its link, so a name released the
+ * moment it was changed could be taken by anyone, and those links would lead to them.
+ * A held name counts as taken for every other account (`src/server/queries/handles.ts`);
+ * its old owner may take it back. Nothing redirects from it: `/u/<old>` is a 404. One
+ * account holds its newest few only (`HELD_NAMES_MAX`); an older one is free again.
+ */
+export const retiredHandles = pgTable("retired_handles", {
+  handle: text("handle").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  retiredAt: timestamp("retired_at", { withTimezone: true }).defaultNow().notNull(),
+});
 
 /** User-supplied LLM API keys, encrypted at rest (AES-256-GCM, see src/lib/crypto.ts). */
 export const llmKeys = pgTable(

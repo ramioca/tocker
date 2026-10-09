@@ -22,15 +22,18 @@ import {
 } from "@/lib/agent/providers";
 import { withoutKey } from "@/lib/agent/providers-keys";
 import { revalidatePath } from "next/cache";
-import { and, eq, isNull, ne, not, sql } from "drizzle-orm";
+import { and, eq, isNull, not, sql } from "drizzle-orm";
 import { agents, getDb, llmKeys, notifications, users } from "@/db";
 import { getSession } from "@/lib/auth";
 import { isAdminEmail } from "@/lib/admin";
-import { DISPLAY_NAME_RESERVED, HANDLE_RESERVED, isReservedHandle, isStaffLikeName } from "@/lib/reserved-handles";
+import { AVATAR_REFUSED, AVATAR_SEED_RE } from "@/lib/avatar";
+import { HANDLE_TAKEN, handleProblem, handleProblemSentence, normalizeHandle } from "@/lib/handles";
+import { DISPLAY_NAME_RESERVED, isStaffLikeName } from "@/lib/reserved-handles";
 import { decryptSecret, encryptSecret, last4 } from "@/lib/crypto";
 import { recordAudit } from "@/lib/security/audit";
 import { SECRET_IN_PUBLIC_TEXT, dbErrorForLog, looksLikeSecret } from "@/lib/security/redact";
 import { newId } from "@/server/queries/_shared";
+import { holdRetiredHandle, isHandleTaken } from "@/server/queries/handles";
 import { sanitizePrefs, type NotificationPrefs } from "@/lib/notifications/prefs";
 import type { ActionResult } from "@/server/types";
 import { slowDown } from "./_shared";
@@ -44,12 +47,16 @@ function rejectedBy(provider: string): string {
   return `${providerLabel(provider)} rejected this key — check you copied all of it`;
 }
 
-const HANDLE_RE = /^[a-z0-9_]{2,20}$/;
-
 /** Anthropic's own shape for a workspace id. Anything else in that field is a mistake. */
 const WORKSPACE_ID_RE = /^wrkspc_[A-Za-z0-9]{1,72}$/;
 /** Adding or replacing a key asks its provider about it, so it is paced like any outbound call. */
 const KEY_WRITE_LIMIT = { limit: 10, windowMs: 60_000 } as const;
+/**
+ * A rename moves a profile's address and holds the old name. Nobody choosing a name
+ * needs more than a few a minute, and a loop of them only churns names other people
+ * could have had.
+ */
+const RENAME_LIMIT = { limit: 5, windowMs: 60_000 } as const;
 const LABEL_IS_A_KEY = "Label looks like an API key. A label is only a name; the key itself goes in the key field.";
 
 /**
@@ -68,30 +75,40 @@ function unusableKey(key: string): string | null {
   return keyFitsHeader(key) ? null : KEY_UNSENDABLE;
 }
 
+/**
+ * Change the profile. Every field is optional; one that is absent is left alone.
+ *
+ * There is no `avatarUrl`: the photo is whatever the sign-in provider gave, and a link
+ * anyone could set would be fetched by every viewer's browser. `avatarSeed` is one of
+ * the generated avatars (`src/lib/avatar.ts`); null goes back to the photo, or to the
+ * face made from the username when there is none.
+ */
 export async function updateProfile(input: {
   handle?: string;
   displayName?: string;
   bio?: string;
-  avatarUrl?: string;
+  avatarSeed?: string | null;
 }): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return fail("Sign in first");
 
   const db = await getDb();
   const patch: Partial<typeof users.$inferInsert> = { updatedAt: new Date() };
+  let renamedTo: string | null = null;
 
   if (input.handle !== undefined) {
-    const handle = input.handle.trim().toLowerCase();
-    if (!HANDLE_RE.test(handle)) return fail("Handles are 2–20 characters: letters, numbers and underscores");
-    // Only a change is refused: the form always sends the handle, so without this an
-    // account that already holds one of these names could never save its profile again.
-    if (handle !== session.handle && isReservedHandle(handle)) return fail(HANDLE_RESERVED);
-    const [taken] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(and(eq(users.handle, handle), ne(users.id, session.userId)))
-      .limit(1);
-    if (taken) return fail("That handle is taken");
+    const handle = typeof input.handle === "string" ? normalizeHandle(input.handle) : "";
+    // Only a change is refused. A save may carry the username unchanged, and an account
+    // that already holds a reserved one must still be able to save its profile.
+    const problem = handleProblem(handle, session.handle);
+    if (problem) return fail(handleProblemSentence(problem));
+    if (handle !== session.handle) {
+      // Another account's name, or one another account gave up and still holds. Asked
+      // only of a change: an account's own name is never taken from it, even when a
+      // hold on it was left under someone else by a rename that crossed with its own.
+      if (await isHandleTaken(db, handle, session.userId)) return fail(HANDLE_TAKEN);
+      renamedTo = handle;
+    }
     patch.handle = handle;
   }
   if (input.displayName !== undefined) {
@@ -111,15 +128,38 @@ export async function updateProfile(input: {
     if (looksLikeSecret(bio)) return fail(SECRET_IN_PUBLIC_TEXT);
     patch.bio = bio || null;
   }
-  if (input.avatarUrl !== undefined) {
-    const url = typeof input.avatarUrl === "string" ? input.avatarUrl.trim() : "";
-    if (url && !/^https?:\/\//i.test(url)) return fail("Avatar URL must start with http(s)://");
-    // Rendered on every post and profile; the practical browser limit is about this.
-    if (url.length > 2048) return fail("Avatar URL must be 2048 characters or fewer");
-    patch.avatarUrl = url || null;
+  if (input.avatarSeed !== undefined) {
+    // Only a seed the picker makes: it is in every feed payload that shows this person.
+    if (input.avatarSeed !== null && (typeof input.avatarSeed !== "string" || !AVATAR_SEED_RE.test(input.avatarSeed))) {
+      return fail(AVATAR_REFUSED);
+    }
+    patch.avatarSeed = input.avatarSeed;
   }
 
-  await db.update(users).set(patch).where(eq(users.id, session.userId));
+  // Last, so only a rename that is about to be written is counted: a name that was
+  // taken, or a save refused for its bio, costs nothing.
+  if (renamedTo) {
+    const limited = slowDown("rename", session.userId, RENAME_LIMIT);
+    if (limited) return fail(limited);
+  }
+
+  await db
+    .update(users)
+    .set(
+      // Choosing a username here is choosing one: the first-run screen, which asks an
+      // account still on the name sign-up gave it, has nothing left to ask.
+      renamedTo ? { ...patch, onboardedAt: sql`coalesce(${users.onboardedAt}, now())` } : patch,
+    )
+    .where(eq(users.id, session.userId));
+
+  if (renamedTo) {
+    try {
+      await holdRetiredHandle(db, session.userId, session.handle, renamedTo);
+    } catch (err) {
+      // The rename stands. The old name is merely free, as it was before names were held.
+      console.error("[updateProfile] could not hold the old name", dbErrorForLog(err));
+    }
+  }
 
   revalidatePath("/settings");
   revalidatePath(`/u/${patch.handle ?? session.handle}`);

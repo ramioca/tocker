@@ -4,15 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
+import { UserAvatar } from "@/components/common/user-avatar";
 import { useSession } from "@/hooks/use-session";
 import { signInHref } from "./login-helpers";
-
-function initials(handle: string, displayName: string | null): string {
-  const source = (displayName ?? handle).trim();
-  const parts = source.split(/\s+/).filter(Boolean);
-  const letters = parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : source.slice(0, 2);
-  return letters.toUpperCase();
-}
 
 /** Sends the visitor to Tocker's sign-in page; shows an avatar menu when logged in. */
 export function LoginButton({ className }: { className?: string }) {
@@ -62,14 +56,7 @@ export function LoginButton({ className }: { className?: string }) {
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-2 rounded-lg border border-border px-2 py-1 text-sm transition-colors hover:bg-muted"
       >
-        {session.avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={session.avatarUrl} alt="" className="size-6 rounded-full object-cover" />
-        ) : (
-          <span className="grid size-6 place-items-center rounded-full bg-primary/20 text-[10px] font-semibold text-primary">
-            {initials(session.handle, session.displayName)}
-          </span>
-        )}
+        <UserAvatar user={session} px={24} className="size-6" />
         <span className="max-w-28 truncate">@{session.handle}</span>
       </button>
 

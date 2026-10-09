@@ -81,6 +81,10 @@ export function mockSession(): Session {
     handle: "rami",
     displayName: "Rami",
     avatarUrl: null,
+    avatarSeed: null,
+    // Chosen long ago: mock mode never opens the first-run screen by itself.
+    // `?onboarding=1` previews it, and saves nothing.
+    onboardedAt: iso(NOW - 214 * DAY),
     email: "owner@example.com",
   };
 }

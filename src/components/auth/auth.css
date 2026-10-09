@@ -1,7 +1,10 @@
-/* /login only (imported by login-shell.tsx). Every selector starts with `.auth-`:
-   Next does not unload a stylesheet on client navigation, so this file can still be
-   attached on the landing or in the app. Unlayered on purpose, which means a rule here
-   beats any Tailwind utility on the same element: never set one property both ways. */
+/* /login (login-shell.tsx) and the first-run screen a new account sees next, which
+   draws the same backdrop, lockup and card over the app (login-backdrop.tsx,
+   onboarding/first-run-ground.tsx, onboarding/first-run.tsx). Every selector starts with
+   `.auth-`: the first-run ground attaches this file in the app, and Next does not unload
+   a stylesheet on client navigation, so it can be attached on the landing too. Unlayered
+   on purpose, which means a rule here beats any Tailwind utility on the same element:
+   never set one property both ways. */
 
 .auth-shell {
   /* The app's theme variables, pointed at the landing's palette, so the shared Button,

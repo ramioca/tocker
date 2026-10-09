@@ -7,68 +7,92 @@ import { Input } from "@/components/ui/input";
 import { MorphButton } from "@/components/spectrumui/morph-button";
 import { updateProfile } from "@/server/actions/users";
 import type { Session } from "@/server/types";
-import { AgentAvatar } from "@/components/social-common/agent-avatar";
-import { SESSION_QUERY_KEY } from "@/hooks/use-session";
-import { HANDLE_RESERVED, isReservedHandle } from "@/lib/reserved-handles";
+import { UserAvatar } from "@/components/common/user-avatar";
+import { AvatarPicker } from "@/components/profile/avatar-picker";
+import { HANDLE_RE, handleProblem, handleProblemSentence } from "@/lib/handles";
 import { MORPH_FOCUS, enterSubmits, useMorphAction } from "./use-morph-action";
 import { cleanHandle, removedNote } from "./handle-filter";
+import {
+  fieldFor,
+  followServer,
+  previewUser,
+  profileDirty,
+  profilePayload,
+  savedAvatar,
+  type ProfileDraft,
+  type ProfileField as Field,
+} from "./profile-model";
 
 const BIO_MAX = 240;
-// Mirrors HANDLE_RE in src/server/actions/users.ts, so a bad handle is caught before the round trip.
-const HANDLE_RE = /^[a-z0-9_]{2,20}$/i;
 
-type Field = "handle" | "displayName" | "bio" | "form";
-
-/** Which field a server error belongs to, so it can sit under that field. */
-function fieldFor(message: string): Field {
-  if (/handle/i.test(message)) return "handle";
-  if (/display name/i.test(message)) return "displayName";
-  if (/bio/i.test(message)) return "bio";
-  return "form";
-}
-
-export function ProfileForm({ session, bio: initialBio }: { session: Session; bio: string }) {
+export function ProfileForm({
+  session,
+  bio: initialBio,
+  avatarSeeds,
+}: {
+  session: Session;
+  bio: string;
+  /**
+   * Generated avatars for the picker, made by the page. This form is rendered on the
+   * server too, so it cannot make random ones itself: the two renders would differ.
+   */
+  avatarSeeds: readonly string[];
+}) {
   const [handle, setHandle] = useState(session.handle);
   const [displayName, setDisplayName] = useState(session.displayName ?? "");
   const [bio, setBio] = useState(initialBio);
+  const [avatar, setAvatar] = useState(() => savedAvatar(session));
   const [error, setError] = useState<{ field: Field; message: string } | null>(null);
-  // What the last keystroke dropped from Handle, said in place of its hint until the next
+  // What the last keystroke dropped from Username, said in place of its hint until the next
   // one: characters that vanished without a word read as a broken field.
   const [dropped, setDropped] = useState<string | null>(null);
   // What the server last accepted. Save stays disabled until something differs from it:
   // saving an untouched form played the whole save and said "Saved" about nothing.
-  const [saved, setSaved] = useState({
+  const [saved, setSaved] = useState<ProfileDraft>(() => ({
     handle: session.handle,
     displayName: session.displayName ?? "",
     bio: initialBio,
-  });
-  const dirty = handle !== saved.handle || displayName !== saved.displayName || bio !== saved.bio;
+    avatar: savedAvatar(session),
+  }));
+  const draft: ProfileDraft = { handle, displayName, bio, avatar };
+  // What the page last said the account is. It can change under a mounted form: the
+  // first-run card opens over every page, saves a username and an avatar, and the refresh
+  // after it hands this form new props without resetting its state. Taken in while
+  // rendering, so no frame shows the name the account has just left, and no save is
+  // measured against it.
+  const [server, setServer] = useState({ handle: session.handle, avatarSeed: session.avatarSeed ?? null });
+  if (server.handle !== session.handle || server.avatarSeed !== (session.avatarSeed ?? null)) {
+    const next = followServer(draft, saved, { handle: session.handle, avatar: savedAvatar(session) });
+    setServer({ handle: session.handle, avatarSeed: session.avatarSeed ?? null });
+    setHandle(next.draft.handle);
+    setAvatar(next.draft.avatar);
+    setSaved(next.saved);
+  }
+  const dirty = profileDirty(draft, saved);
   const queryClient = useQueryClient();
   const router = useRouter();
 
   async function save() {
     setError(null);
-    if (!HANDLE_RE.test(handle)) {
-      setError({ field: "handle", message: "Handles are 2–20 characters: letters, numbers and underscores." });
-      throw new Error("invalid handle");
-    }
-    // The same rule and the same sentence as `updateProfile`, before the round trip.
+    // The same rule and the same sentences as `updateProfile`, before the round trip.
     // Only a change is refused, so a handle the account already holds still saves.
-    if (handle !== saved.handle && isReservedHandle(handle)) {
-      setError({ field: "handle", message: HANDLE_RESERVED });
-      throw new Error("reserved handle");
+    const problem = handleProblem(handle, saved.handle);
+    if (problem) {
+      setError({ field: "handle", message: handleProblemSentence(problem) });
+      throw new Error(`${problem} handle`);
     }
     try {
-      const result = await updateProfile({ handle, displayName, bio });
+      const result = await updateProfile(profilePayload(draft, saved));
       if (!result.ok) {
         setError({ field: fieldFor(result.error), message: result.error });
         throw new Error(result.error);
       }
-      setSaved({ handle, displayName, bio });
+      setSaved(draft);
       // The account menu reads the session query (fresh for 30s, no refetch on focus), so
       // without this its Profile link kept pointing at the old handle — a page that no
-      // longer exists. The refresh does the same for everything server-rendered.
-      void queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
+      // longer exists. No key: every feed and comment list in the cache holds the old
+      // name and avatar too. The refresh does the same for everything server-rendered.
+      void queryClient.invalidateQueries();
       router.refresh();
     } catch (e) {
       const message = e instanceof Error ? e.message : "Something went wrong";
@@ -121,18 +145,40 @@ export function ProfileForm({ session, bio: initialBio }: { session: Session; bi
         if (dirty) void run();
       }}
     >
-      <div className="flex items-center gap-4">
-        <AgentAvatar seed={handle || "tocker"} label={displayName || handle} size="lg" rounded="rounded-2xl" />
-        <p className="text-sm text-muted-foreground">
-          Your avatar is generated from your handle. Change the handle, change the face.
+      {/* On a phone the row of tiles needs the card's whole width, so it goes under the
+          avatar and its label. From `sm` it sits beside the avatar, at the width the
+          first-run card gives the same row. */}
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-3 sm:gap-x-5 sm:gap-y-2.5">
+        <UserAvatar
+          user={previewUser(draft, { handle: saved.handle, avatarUrl: session.avatarUrl })}
+          px={64}
+          className="size-16 sm:row-span-2"
+        />
+        {/* Hidden from a screen reader: the group below carries the same name. */}
+        <p aria-hidden className="text-sm font-medium">
+          Avatar
         </p>
+        <div className="col-span-2 min-w-0 sm:col-span-1 sm:col-start-2 sm:w-[336px]">
+          <AvatarPicker
+            photoUrl={session.avatarUrl}
+            pinnedSeed={session.avatarSeed ?? null}
+            initialSeeds={avatarSeeds}
+            value={avatar}
+            onChange={(choice) => {
+              setAvatar(choice);
+              edited("avatar");
+            }}
+            handle={handle || saved.handle}
+          />
+          {errorFor("avatar")}
+        </div>
       </div>
 
       {/* Top labels, like Bio below: a floating label paints a dark box on this card. */}
       <div className="grid gap-5 sm:grid-cols-2">
         <div>
           <label htmlFor="profile-handle" className="text-sm font-medium">
-            Handle
+            Username
           </label>
           <Input
             id="profile-handle"

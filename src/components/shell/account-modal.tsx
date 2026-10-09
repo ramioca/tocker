@@ -40,7 +40,7 @@ export function AccountModal({
         </DialogHeader>
         <div className="space-y-2">
           <Row label="Login email" value={session.email ?? "—"} copyable={Boolean(session.email)} />
-          <Row label="Handle" value={`@${session.handle}`} copyable />
+          <Row label="Username" value={`@${session.handle}`} copyable />
           {session.displayName ? <Row label="Display name" value={session.displayName} /> : null}
         </div>
         <DialogFooter>

@@ -37,8 +37,8 @@ const RESERVED: ReadonlySet<string> = new Set([
   FOUNDER_X.handle.toLowerCase(),
 ]);
 
-/** Said under the handle field, by the form and by the action alike. */
-export const HANDLE_RESERVED = "That handle is reserved";
+/** Said under the username field, by the forms and by the actions alike. */
+export const HANDLE_RESERVED = "That username is reserved";
 
 /**
  * Is this handle one nobody may take?

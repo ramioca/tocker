@@ -3,10 +3,11 @@ import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
-import { verifyAccessToken } from "@privy-io/node";
+import { verifyAccessToken, type LinkedAccount } from "@privy-io/node";
 import { getDb, users } from "@/db";
 import { isPrivyConfigured, privy } from "@/lib/privy";
 import { isReservedHandle, isStaffLikeName } from "@/lib/reserved-handles";
+import { isHandleTaken } from "@/server/queries/handles";
 import type { Session } from "@/server/types";
 
 /** Cookie react-auth sets on the client after login. */
@@ -76,6 +77,9 @@ function toSession(row: typeof users.$inferSelect): Session {
     handle: row.handle,
     displayName: row.displayName,
     avatarUrl: row.avatarUrl,
+    avatarSeed: row.avatarSeed,
+    // Null is what opens the first-run screen (`src/components/onboarding`).
+    onboardedAt: row.onboardedAt ? row.onboardedAt.toISOString() : null,
     email: row.email,
   };
 }
@@ -114,7 +118,9 @@ export function handleCandidate(input: {
 
 /**
  * Append a numeric suffix until the handle is free. A reserved name (`support`,
- * `tocker…`, the founder's) is never the root, whatever the X username was.
+ * `tocker…`, the founder's) is never the root, whatever the X username was. Free means
+ * what it means everywhere a name is checked: no account has it, and no account gave it
+ * up in a rename and still holds it (`src/server/queries/handles.ts`).
  */
 export async function uniqueHandle(base: string): Promise<string> {
   const db = await getDb();
@@ -125,45 +131,74 @@ export async function uniqueHandle(base: string): Promise<string> {
   const root = usable ? clean : "trader";
   for (let i = 0; i < 60; i++) {
     const candidate = i === 0 ? root : `${root.slice(0, 17)}${i}`;
-    const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.handle, candidate)).limit(1);
-    if (!existing) return candidate;
+    if (!(await isHandleTaken(db, candidate, null))) return candidate;
   }
   return `${root.slice(0, 12)}${Date.now().toString(36)}`.slice(0, 20);
 }
 
-/** Pull profile hints out of the Privy user record (first login only). */
-async function privyProfile(userId: string): Promise<{
+/** What sign-up reads from the sign-in provider's record of a new account. */
+export interface ProfileHints {
   email: string | null;
   username: string | null;
   displayName: string | null;
   avatarUrl: string | null;
   walletAddress: string | null;
-}> {
-  const empty = { email: null, username: null, displayName: null, avatarUrl: null, walletAddress: null };
-  if (!isPrivyConfigured()) return empty;
+}
+
+const NO_HINTS: ProfileHints = { email: null, username: null, displayName: null, avatarUrl: null, walletAddress: null };
+
+/**
+ * The hints in a provider record's linked accounts.
+ *
+ * The username, the display name and the photo come from X only: its owner made all
+ * three public there. Google's `name` is not read. It is usually a real name, nobody was
+ * asked whether to show it, and the feed prints a display name above the handle: the
+ * reasoning that took the email's local part out of handles.
+ */
+export function profileHints(accounts: readonly LinkedAccount[]): ProfileHints {
+  const hints = { ...NO_HINTS };
+  for (const acct of accounts) {
+    if (acct.type === "email") hints.email ??= acct.address;
+    else if (acct.type === "google_oauth") hints.email ??= acct.email;
+    else if (acct.type === "twitter_oauth") {
+      hints.username ??= acct.username;
+      hints.displayName ??= acct.name;
+      hints.avatarUrl ??= acct.profile_picture_url;
+    } else if (acct.type === "wallet") {
+      hints.walletAddress ??= acct.address;
+    }
+  }
+  return hints;
+}
+
+/**
+ * The display name and photo a new account's row keeps.
+ *
+ * The name on an X account is whatever its owner typed there, so one that reads as staff
+ * ("Tocker Support") is dropped, as `updateProfile` refuses it. The photo goes with it,
+ * and also when the X username is one nobody may take: an account that arrived dressed
+ * as the product would otherwise keep the product's logo beside a neutral handle.
+ */
+export function identityToStore(hints: Pick<ProfileHints, "username" | "displayName" | "avatarUrl">): {
+  displayName: string | null;
+  avatarUrl: string | null;
+} {
+  const staffName = Boolean(hints.displayName) && isStaffLikeName(hints.displayName ?? "");
+  const reservedUsername = Boolean(hints.username) && isReservedHandle(hints.username ?? "");
+  return {
+    displayName: staffName ? null : hints.displayName || null,
+    avatarUrl: staffName || reservedUsername ? null : hints.avatarUrl || null,
+  };
+}
+
+/** Pull profile hints out of the Privy user record (first login only). */
+async function privyProfile(userId: string): Promise<ProfileHints> {
+  if (!isPrivyConfigured()) return NO_HINTS;
   try {
     const user = await privy().users()._get(userId);
-    let email: string | null = null;
-    let username: string | null = null;
-    let displayName: string | null = null;
-    let avatarUrl: string | null = null;
-    let walletAddress: string | null = null;
-    for (const acct of user.linked_accounts ?? []) {
-      if (acct.type === "email") email ??= acct.address;
-      else if (acct.type === "google_oauth") {
-        email ??= acct.email;
-        displayName ??= acct.name;
-      } else if (acct.type === "twitter_oauth") {
-        username ??= acct.username;
-        displayName ??= acct.name;
-        avatarUrl ??= acct.profile_picture_url;
-      } else if (acct.type === "wallet") {
-        walletAddress ??= acct.address;
-      }
-    }
-    return { email, username, displayName, avatarUrl, walletAddress };
+    return profileHints(user.linked_accounts ?? []);
   } catch {
-    return empty;
+    return NO_HINTS;
   }
 }
 
@@ -179,11 +214,10 @@ async function upsertUser(userId: string): Promise<Session> {
     .values({
       id: userId,
       handle,
-      // The name on an X or Google account is whatever its owner typed there, so one
-      // that reads as staff ("Tocker Support") is dropped, as `updateProfile` refuses it.
-      displayName: profile.displayName && !isStaffLikeName(profile.displayName) ? profile.displayName : null,
-      avatarUrl: profile.avatarUrl ?? null,
+      ...identityToStore(profile),
       email: profile.email ?? null,
+      // `avatar_seed` and `onboarded_at` start null: every new account is asked once to
+      // choose its username and avatar, an X sign-in included.
     })
     .onConflictDoNothing()
     .returning();
