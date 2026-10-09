@@ -96,23 +96,26 @@ def team():
     rows = [
         ("/_blob/645c45990ef87d1be936649a1f600aca", "BlockRun logo", "Product & Growth Lead, BlockRun", "The leading x402 gateway"),
         ("/_blob/d965f9aa423f91f800a9ada66ef7722b", "Sorbet logo", "Founder & CEO, Sorbet", "Neobank. Raised $1M, scaled to $5M in monthly volume."),
-        ("/_blob/1a6766dfb70f34dd78b93e2c922fdd79", "Superteam logo", "Member, Superteam Germany", "Solana's builder network"),
         ("/_blob/37e07f7c17a3f955571e65fe76aee2f6", "Deloitte logo", "Omnia AI, Deloitte", "Deloitte's AI practice"),
     ]
     items = ""
     for i, (src, alt, title, sub) in enumerate(rows):
         last = f"; border-bottom:1px solid {HAIR}" if i == len(rows) - 1 else ""
-        items += (f'      <div style="display:flex; flex-direction:row; gap:32px; align-items:center; padding:22px 0; border-top:1px solid {HAIR}{last}">\n'
+        items += (f'      <div style="display:flex; flex-direction:row; gap:32px; align-items:center; padding:30px 0; border-top:1px solid {HAIR}{last}">\n'
                   f'        <img src="{src}" alt="{alt}" style="width:80px; height:80px; border:1px solid {HAIR}; border-radius:18px; object-fit:cover">\n'
                   f'        <div style="display:flex; flex-direction:column; gap:6px; flex:1">\n'
                   f'          <p style="{SANS}; font-size:38px; font-weight:500; line-height:1.15; letter-spacing:-0.5px; color:{FG}">{e(title)}</p>\n'
                   f'          <p style="{SANS}; font-size:28px; line-height:1.3; color:{MID}">{e(sub)}</p>\n'
                   f'        </div>\n      </div>\n')
-    left = (f'    <div style="width:448px; display:flex; flex-direction:column; gap:24px; flex:0 0 auto">\n'
-            f'      <img src="/_blob/6267b634bb7c763519614c99ac639862" alt="Portrait of Rami Djebari" style="width:448px; height:448px; border:1px solid {HAIR}; border-radius:28px; object-fit:cover">\n'
+    left = (f'    <div style="width:448px; display:flex; flex-direction:column; gap:20px; flex:0 0 auto">\n'
+            f'      <img src="/_blob/6267b634bb7c763519614c99ac639862" alt="Portrait of Rami Djebari" style="width:380px; height:380px; border:1px solid {HAIR}; border-radius:28px; object-fit:cover">\n'
             f'      <div style="display:flex; flex-direction:column; gap:6px">\n'
             f'        <p style="{SANS}; font-size:52px; font-weight:600; line-height:1.05; letter-spacing:-1.5px; color:{FG}">Rami Djebari</p>\n'
             f'        <p style="{SANS}; font-size:30px; color:{MID}">Founder, Tocker</p>\n'
+            f'      </div>\n'
+            f'      <div style="align-self:start; display:flex; flex-direction:row; gap:12px; align-items:center; padding:8px 20px 8px 8px; border:1px solid #f4f4f133; border-radius:256px; background:#f4f4f10d">\n'
+            f'        <img src="/_blob/6c238e3b11b30be29586010c2bb766ad" alt="Superteam Germany logo" style="width:40px; height:40px; border-radius:256px; object-fit:cover">\n'
+            f'        <p style="{SANS}; font-size:26px; font-weight:500; white-space:nowrap; color:{FG}">Superteam Germany member</p>\n'
             f'      </div>\n    </div>\n')
     right = f'    <div style="display:flex; flex-direction:column; flex:1">\n{items}    </div>\n'
     body = f'  <div style="display:flex; flex-direction:row; gap:96px; align-items:start">\n{left}{right}  </div>\n'
