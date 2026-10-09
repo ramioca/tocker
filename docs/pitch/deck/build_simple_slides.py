@@ -122,7 +122,7 @@ def team():
             f'      </div>\n    </div>\n')
     right = f'    <div style="display:flex; flex-direction:column; flex:1">\n{items}    </div>\n'
     body = f'  <div style="display:flex; flex-direction:row; gap:96px; align-items:start">\n{left}{right}  </div>\n'
-    return section("team", "Team", "Ex-founder. Scaled to $5M a month.", body)
+    return section("team", "Team", "Done it before. Scaled fintech to $5M/mo.", body)
 
 
 open(f"{OUT}/team.html", "w").write(team())
