@@ -57,10 +57,16 @@ SLIDES = {
 }
 
 
+X_LOGO = ('<div style="width:340px; display:flex; flex-direction:row; flex:0 0 auto">'
+          '<img src="/_blob/b7070af157c21ae18c4ff737b06b618b" alt="X logo" style="width:72px; height:74px; object-fit:contain"></div>')
+
+
 def gtm():
     def row(k, big, tag):
+        lead = (X_LOGO if big == "X" else
+                f'<p style="width:340px; {SANS}; font-size:80px; font-weight:600; line-height:1; letter-spacing:-3px; white-space:nowrap; color:{FG}">{e(big)}</p>')
         return (f'      <div style="height:150px; display:flex; flex-direction:row; gap:28px; align-items:center; border-top:1px solid {HAIR}">\n'
-                f'        <p style="width:340px; {SANS}; font-size:80px; font-weight:600; line-height:1; letter-spacing:-3px; white-space:nowrap; color:{FG}">{e(big)}</p>\n'
+                f'        {lead}\n'
                 f'        <div style="display:flex; flex-direction:column; gap:8px; flex:1">\n'
                 f'          <p style="{MONO}; font-size:24px; letter-spacing:3px; text-transform:uppercase; color:{DIM}">{e(k)}</p>\n'
                 f'          <p style="{SANS}; font-size:32px; line-height:1.25; letter-spacing:-0.4px; color:{MID}">{e(tag)}</p>\n'
@@ -77,7 +83,7 @@ def gtm():
     left = ('    <div style="display:flex; flex-direction:column; flex:1">\n' + head("How we get users")
             + row("01 · Superteam Earn", "Bounties", "Find our first testers.")
             + row("02 · Competition", "$5K", "The first fully autonomous trading competition.")
-            + row("03 · X", "KOLs", "Ambassadors, KOLs and direct outreach.")
+            + row("03 · X strategy", "X", "KOLs, ambassadors and direct outreach.")
             + '    </div>\n')
     right = ('    <div style="display:flex; flex-direction:column; flex:1">\n' + head("Markets we expand to · yearly volume")
              + mkt("Now", "$482B", "Solana memecoins")
@@ -97,7 +103,7 @@ print("ok")
 
 def team():
     rows = [
-        ("/_blob/645c45990ef87d1be936649a1f600aca", "BlockRun logo", "Product & Growth Lead, BlockRun", "The leading x402 gateway"),
+        ("/_blob/645c45990ef87d1be936649a1f600aca", "BlockRun logo", "Product & Growth Lead, BlockRun", "The leading x402 gateway on Base and Solana."),
         ("/_blob/d965f9aa423f91f800a9ada66ef7722b", "Sorbet logo", "Founder & CEO, Sorbet", "Neobank. Raised $1M, scaled to $5M in monthly volume."),
         ("/_blob/37e07f7c17a3f955571e65fe76aee2f6", "Deloitte logo", "Omnia AI, Deloitte", "Deloitte's AI practice"),
     ]
@@ -110,8 +116,8 @@ def team():
                   f'          <p style="{SANS}; font-size:38px; font-weight:500; line-height:1.15; letter-spacing:-0.5px; color:{FG}">{e(title)}</p>\n'
                   f'          <p style="{SANS}; font-size:28px; line-height:1.3; color:{MID}">{e(sub)}</p>\n'
                   f'        </div>\n      </div>\n')
-    left = (f'    <div style="width:448px; display:flex; flex-direction:column; gap:20px; flex:0 0 auto">\n'
-            f'      <img src="/_blob/6267b634bb7c763519614c99ac639862" alt="Portrait of Rami Djebari" style="width:380px; height:380px; border:1px solid {HAIR}; border-radius:28px; object-fit:cover">\n'
+    left = (f'    <div style="width:448px; display:flex; flex-direction:column; gap:16px; flex:0 0 auto">\n'
+            f'      <img src="/_blob/6267b634bb7c763519614c99ac639862" alt="Portrait of Rami Djebari" style="width:290px; height:290px; border:1px solid {HAIR}; border-radius:24px; object-fit:cover">\n'
             f'      <div style="display:flex; flex-direction:column; gap:6px">\n'
             f'        <p style="{SANS}; font-size:52px; font-weight:600; line-height:1.05; letter-spacing:-1.5px; color:{FG}">Rami Djebari</p>\n'
             f'        <p style="{SANS}; font-size:30px; color:{MID}">Founder, Tocker</p>\n'
@@ -122,7 +128,7 @@ def team():
             f'      </div>\n    </div>\n')
     right = f'    <div style="display:flex; flex-direction:column; flex:1">\n{items}    </div>\n'
     body = f'  <div style="display:flex; flex-direction:row; gap:96px; align-items:start">\n{left}{right}  </div>\n'
-    return section("team", "Team", "Done it before. Scaled fintech to $5M/mo.", body)
+    return section("team", "Team", "Ex-founder. Scaled a fintech to $5M in monthly volume.", body)
 
 
 open(f"{OUT}/team.html", "w").write(team())
