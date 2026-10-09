@@ -73,6 +73,14 @@ import type { EditContext } from "./contract";
 import { Field, RiskSlider, StepHeading, Toggle } from "./field";
 import { SPECS } from "./module-specs";
 import { CHOICE_CARD, CHOICE_OFF, CHOICE_ON, IconTile, Mark, TYPE, type Tone } from "./look";
+import {
+  PAPER_BALANCE_HINT,
+  PAPER_BALANCE_LOCKED_HINTS,
+  PAPER_BALANCE_OPEN_HINT,
+  paperBalanceForCreate,
+  paperBalanceLabel,
+} from "./paper-balance";
+import { PaperBalanceField } from "./paper-balance-field";
 import { slippageMeaning } from "./slippage-copy";
 import { UniverseControls } from "./universe-controls";
 import { StrategyPresetCards } from "./strategy-preset-cards";
@@ -101,7 +109,6 @@ import {
   launchRadarUsdPerRun,
   onProvider,
   smartMoneyBoardUsdPerRun,
-  PAPER_BALANCES,
   RISK_BOUNDS,
   STRATEGY_PRESETS,
   type BuilderDraft,
@@ -991,13 +998,22 @@ export function RiskStep({
   // itself, which is only so for a fixed one, and the sizing block below says what the
   // next ticket would be. The cash reserve is weighed against the book whatever the
   // sizing (`bookUsd`): it is a floor under cash, not a size of ticket.
-  const bookUsd = edit
+  //
+  // One saved agent is still measured by its paper balance: one on paper whose balance
+  // can still be changed. That is so only while it has no trade of either kind and no
+  // position (`paperBalanceLock`), so it is worth exactly that balance, and the balance
+  // is on the Schedule step to change: the caps here are checked against the one in the
+  // working copy. An agent back on paper after trading live is not one of these. Its
+  // paper cash counts those trades, so it is measured by its equity like any other.
+  const untouchedPaper = edit !== undefined && edit.mode === "paper" && edit.paperBalanceLock === null;
+  const savedBook = edit !== undefined && !untouchedPaper;
+  const bookUsd = savedBook
     ? (edit.equityUsd ?? 0)
     : draft.funding.mode === "fund"
       ? draft.funding.amountUsd
       : draft.paperStartingUsd;
   const fundedUsd = edit && readSizing(risk).mode !== "fixed_usd" ? 0 : bookUsd;
-  const startsWith = edit
+  const startsWith = savedBook
     ? `its ${formatUsd(bookUsd)} of equity`
     : draft.funding.mode === "fund"
       ? `the ${formatUsd(bookUsd)} you are funding`
@@ -1154,7 +1170,11 @@ export function RiskStep({
       {edit ? (
         <>
           <div className="border-t border-border/50 pt-4">
-            <SavedAgentSizing risk={risk} equityUsd={edit.equityUsd} onChange={(sizing) => patch({ sizing })} />
+            <SavedAgentSizing
+              risk={risk}
+              equityUsd={untouchedPaper ? draft.paperStartingUsd : edit.equityUsd}
+              onChange={(sizing) => patch({ sizing })}
+            />
           </div>
           {exitRules}
         </>
@@ -1269,9 +1289,18 @@ export function ScheduleStep({
       {/* Only a funded agent headed for the checklist has its schedule held (the create
           sends `holdSchedule`). With "Go live after creating" off it ticks on paper, sized
           to the money it is funded with, so saying "no paper ticks" there was untrue.
-          A saved agent gets none of the three: what it started with was settled when it
-          was created, and no save changes it. */}
-      {edit ? null : draft.funding.mode === "fund" && draft.goLive ? (
+          A saved agent has no funding plan left, so it gets neither note: it gets its
+          paper balance, to change while it has not traded and to read once it has.
+          Which, and why, is the server's answer (`edit.paperBalanceLock`). */}
+      {edit ? (
+        <PaperBalanceField
+          label={paperBalanceLabel(edit.mode)}
+          hint={PAPER_BALANCE_OPEN_HINT}
+          value={draft.paperStartingUsd}
+          onChange={(paperStartingUsd) => update({ paperStartingUsd })}
+          locked={edit.paperBalanceLock === null ? undefined : PAPER_BALANCE_LOCKED_HINTS[edit.paperBalanceLock]}
+        />
+      ) : draft.funding.mode === "fund" && draft.goLive ? (
         <div className="rounded-xl border border-border/70 bg-card/30 p-3">
           <p className="text-sm font-medium">Real money only</p>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
@@ -1283,36 +1312,29 @@ export function ScheduleStep({
         <div className="rounded-xl border border-border/70 bg-card/30 p-3">
           <p className="text-sm font-medium">Paper first, on the money you fund</p>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Until you switch it live it trades paper on this schedule, against the{" "}
-            {formatUsd(draft.funding.amountUsd)} you fund it with — there is no separate paper balance to pick.
+            {/* Funding starts under the smallest paper balance; such an agent's paper book
+                is that balance, and the sentence says so (`paperBalanceForCreate`). */}
+            {paperBalanceForCreate(draft) === draft.funding.amountUsd ? (
+              <>
+                Until you switch it live it trades paper on this schedule, against the{" "}
+                {formatUsd(draft.funding.amountUsd)} you fund it with — there is no separate paper balance to pick.
+              </>
+            ) : (
+              <>
+                Until you switch it live it trades paper on this schedule, against{" "}
+                {formatUsd(paperBalanceForCreate(draft))}, the smallest paper balance there is: the{" "}
+                {formatUsd(draft.funding.amountUsd)} you fund it with is under it.
+              </>
+            )}
           </p>
         </div>
       ) : (
-      <Field label="Paper starting balance" hint="Fake money, real prices, real fills at real quotes.">
-        <div className="flex flex-wrap gap-2">
-          {PAPER_BALANCES.map((amount) => {
-            const active = draft.paperStartingUsd === amount;
-            return (
-              <button
-                key={amount}
-                type="button"
-                aria-pressed={active}
-                onClick={() => update({ paperStartingUsd: amount })}
-                className={cn(
-                  "tnum rounded-xl border px-3 py-2 font-mono text-sm",
-                  "transition-[border-color,background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97]",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  active
-                    ? "border-primary/50 bg-primary/8"
-                    : "border-border/70 hover:border-border hover:bg-muted/40",
-                )}
-              >
-                {amount >= 1_000 ? `$${amount / 1_000}K` : formatUsd(amount)}
-              </button>
-            );
-          })}
-        </div>
-      </Field>
+        <PaperBalanceField
+          label={paperBalanceLabel()}
+          hint={PAPER_BALANCE_HINT}
+          value={draft.paperStartingUsd}
+          onChange={(paperStartingUsd) => update({ paperStartingUsd })}
+        />
       )}
 
       <Field

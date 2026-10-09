@@ -14,7 +14,9 @@
  */
 import { formatUsd } from "@/components/common/format";
 import { USDC_DAY_CAP, USDC_RUN_CAP } from "@/lib/x402/inference-types";
+import { PAPER_BALANCE_MAX_USD, PAPER_BALANCE_MIN_USD } from "@/lib/trading/paper-balance";
 import { MAX_DATA_SPEND_PER_RUN_USD } from "@/lib/x402/types";
+import { paperLabel } from "./paper-balance";
 import { LLM_BOUNDS, RISK_BOUNDS } from "./types";
 import {
   readBps,
@@ -292,7 +294,7 @@ export const SPECS: Record<SpecId, ValueSpec> = {
   usdcPerRun: cents("Limit per run", USDC_RUN_CAP.min, USDC_RUN_CAP.max, "0.30"),
   usdcPerDay: cents("Limit per day", USDC_DAY_CAP.min, USDC_DAY_CAP.max, "3"),
 
-  // ---- schedule. No module draws these three yet; the ranges are the ones a custom
+  // ---- schedule. No module draws the first two yet; the ranges are the ones a custom
   // choice beside the preset buttons would take.
   interval: {
     label: "Interval",
@@ -319,13 +321,16 @@ export const SPECS: Record<SpecId, ValueSpec> = {
     example: "30 minutes or 2h",
     inputMode: "text",
   },
+  // The typed amount beside the Schedule step's three balance buttons. The range is the
+  // server's own (`checkPaperStartingUsd`), to the cent, and the box prints the amount the
+  // way the buttons and the agent card do, so a typed $10,000 reads "$10K" like its button.
   paperStart: {
     label: "Paper starting balance",
-    min: 1,
-    max: 10_000_000,
-    precision: 1,
+    min: PAPER_BALANCE_MIN_USD,
+    max: PAPER_BALANCE_MAX_USD,
+    precision: 0.01,
     read: readUsd,
-    format: sayUsd,
+    format: paperLabel,
     example: "10k or $12,345",
     inputMode: "decimal",
   },

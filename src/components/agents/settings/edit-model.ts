@@ -7,7 +7,10 @@
  *
  * The settings page edits a `BuilderDraft`, the shape the builder creates from, so both
  * pages draw the same step bodies. A saved agent has no funding plan and no start to
- * choose, and those fields of the draft are filled in and never sent.
+ * choose, and those fields of the draft are filled in and never sent. Its paper starting
+ * balance is the one thing it was created with that a save can still change, and only
+ * while the agent has not traded: the server decides that, and this file only keeps a
+ * balance that can no longer change out of what is sent (`withPaperBalance`).
  *
  * Two sets of errors, on purpose. `validateEdit` is the only thing that refuses a save,
  * and it refuses exactly four things. `shownErrors` is what the page displays, which is
@@ -30,6 +33,7 @@ import type { AgentConfig, PositionSizingConfig } from "@/db/schema";
 import { MAX_AGENT_NAME, agentConfigSchema } from "@/lib/agent/config";
 import { thinkSource } from "@/lib/agent/inference";
 import { readCashReserveUsd, readMaxOpenPositions } from "@/lib/trading/hard-limits";
+import { sameBalance } from "@/lib/trading/paper-balance";
 import { readSizing } from "@/lib/trading/sizing";
 import { chainLabelFor } from "@/lib/wallets/funding";
 import type { AgentDetail } from "@/server/types";
@@ -38,7 +42,10 @@ import { sameConfig } from "./same-config";
 type Config = BuilderDraft["config"];
 
 /** As much of a saved agent as a save can change, as the server last returned it. */
-export type SavedAgent = Pick<AgentDetail, "name" | "tagline" | "avatarSeed" | "isPublic" | "llmKeyId"> & {
+export type SavedAgent = Pick<
+  AgentDetail,
+  "name" | "tagline" | "avatarSeed" | "isPublic" | "llmKeyId" | "paperStartingUsd"
+> & {
   config: AgentConfig;
 };
 
@@ -60,7 +67,8 @@ export const CONFIRM_LIVE_SAVES = true;
  * The seed is what the avatar is drawn from today: an agent that never picked one is
  * drawn from its name (`AgentAvatar`), so that is its seed here, and the avatar row shows
  * the picture the agent has. The funding and the start are a draft's plans; a saved agent
- * has none left, and no save reads them.
+ * has none left, and no save reads them. The paper balance is the agent's own, and a save
+ * sends it when it was changed.
  */
 export function draftOf(
   agent: Pick<AgentDetail, "name" | "tagline" | "avatarSeed" | "isPublic" | "llmKeyId" | "paperStartingUsd" | "status">,
@@ -92,8 +100,23 @@ export function savedFrom(draft: BuilderDraft): SavedAgent {
     avatarSeed: draft.avatarSeed,
     isPublic: draft.isPublic,
     llmKeyId: thinkSource(draft.config) === "usdc" ? null : draft.llmKeyId,
+    paperStartingUsd: draft.paperStartingUsd,
     config: configToSave(draft),
   };
+}
+
+/**
+ * The working copy the page may use, given the server's answer on whether the paper
+ * balance can still be changed.
+ *
+ * While it can, the copy is the one being edited. Once it cannot, the balance in it is
+ * the saved one, whatever was typed before: an edit made while the balance was open
+ * (in this visit, or kept from an earlier one and put back) is not something to save any
+ * more, and left in the copy it would mark the Schedule step as changed and have every
+ * save refused for it. The rest of the copy is untouched, and so are its edits.
+ */
+export function withPaperBalance(working: BuilderDraft, savedUsd: number, open: boolean): BuilderDraft {
+  return open || working.paperStartingUsd === savedUsd ? working : { ...working, paperStartingUsd: savedUsd };
 }
 
 // ------------------------------------------------------------- what a save sends
@@ -124,6 +147,10 @@ const MAX_AVATAR_SEED = 64;
  * would change with the name, although the card showed the old picture when Save was
  * pressed. The seed sent then is the old name, which keeps it. A name too long to be a
  * seed is the one case left alone: sending it would only have the whole save refused.
+ *
+ * The paper starting balance is sent only when it was changed. The server takes a change
+ * of it only while the agent has not traded and refuses the whole save otherwise,
+ * so a save that leaves it alone must not carry it.
  */
 export function savePayload(draft: BuilderDraft, saved: SavedAgent): SavePayload {
   const name = draft.name.trim();
@@ -136,6 +163,7 @@ export function savePayload(draft: BuilderDraft, saved: SavedAgent): SavePayload
     ...(picked || renamedWithoutSeed ? { avatarSeed: draft.avatarSeed } : {}),
     isPublic: draft.isPublic,
     llmKeyId: thinkSource(draft.config) === "usdc" ? null : draft.llmKeyId,
+    ...(sameBalance(draft.paperStartingUsd, saved.paperStartingUsd) ? {} : { paperStartingUsd: draft.paperStartingUsd }),
     config: configToSave(draft),
   };
 }
@@ -259,7 +287,8 @@ const EDIT_STEPS = SETTINGS_STEPS.filter((step): step is SharedStepId => step !=
  * Sections of the config are compared whatever order their keys are in, because the
  * database does not keep it. The name and the tagline are compared trimmed, as they are
  * sent, so a space typed after a name is not a change. The key does not count on pay per
- * use, which is saved with none.
+ * use, which is saved with none. The paper starting balance is on the Schedule step, and
+ * counts there.
  */
 export function changedSteps(draft: BuilderDraft, saved: SavedAgent): Set<SharedStepId> {
   const next = configToSave(draft);
@@ -277,7 +306,8 @@ export function changedSteps(draft: BuilderDraft, saved: SavedAgent): Set<Shared
     data: differs("dataSources"),
     // The exit rules, the position sizing and the per-run data cap are part of `risk`.
     limits: differs("risk"),
-    schedule: differs("schedule") || differs("execution"),
+    schedule:
+      differs("schedule") || differs("execution") || !sameBalance(draft.paperStartingUsd, saved.paperStartingUsd),
     brain: differs("llm") || (thinkSource(next) !== "usdc" && draft.llmKeyId !== saved.llmKeyId),
   };
   return new Set(EDIT_STEPS.filter((step) => changed[step]));
@@ -323,6 +353,16 @@ export const UNSAVED_STEP_NAMES: Record<SharedStepId, string> = {
 
 /** Past this many, the sentence counts the steps and leaves their names to the rail. */
 const MOST_NAMED = 3;
+
+/**
+ * Whether the paper starting balance is the only thing a save of this copy would change.
+ * Such a save touches nothing a live agent trades with: its real-money book never reads
+ * the paper balance, so nothing about it "applies to real money".
+ */
+export function onlyPaperBalanceChanged(draft: BuilderDraft, saved: SavedAgent): boolean {
+  if (sameBalance(draft.paperStartingUsd, saved.paperStartingUsd)) return false;
+  return changedSteps({ ...draft, paperStartingUsd: saved.paperStartingUsd }, saved).size === 0;
+}
 
 /**
  * The bottom bar's sentence about what is unsaved: how many steps and, while they fit,
@@ -571,8 +611,9 @@ export function startEdit(saved: BuilderDraft): EditState {
 
 /**
  * Whether two copies, working or saved, agree on everything a save writes, whatever order
- * the keys of their configs are in. What a save does not write (whether the agent is
- * running, what it started with) is not looked at.
+ * the keys of their configs are in. That includes the paper starting balance, which a
+ * save writes when it was changed. What no save writes (whether the agent is running) is
+ * not looked at.
  */
 export function sameSettings(a: BuilderDraft, b: BuilderDraft): boolean {
   return (
@@ -581,6 +622,7 @@ export function sameSettings(a: BuilderDraft, b: BuilderDraft): boolean {
     a.avatarSeed === b.avatarSeed &&
     a.isPublic === b.isPublic &&
     a.llmKeyId === b.llmKeyId &&
+    sameBalance(a.paperStartingUsd, b.paperStartingUsd) &&
     sameConfig(a.config, b.config)
   );
 }
@@ -605,6 +647,8 @@ function rebased(working: BuilderDraft, sent: BuilderDraft, server: BuilderDraft
     avatarSeed: working.avatarSeed === sent.avatarSeed ? server.avatarSeed : working.avatarSeed,
     isPublic: working.isPublic === sent.isPublic ? server.isPublic : working.isPublic,
     llmKeyId: working.llmKeyId === sent.llmKeyId ? server.llmKeyId : working.llmKeyId,
+    paperStartingUsd:
+      working.paperStartingUsd === sent.paperStartingUsd ? server.paperStartingUsd : working.paperStartingUsd,
     config: config as Config,
   };
 }

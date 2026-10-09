@@ -28,6 +28,7 @@ import {
   editReducer,
   editStatus,
   liveSaveWarnings,
+  onlyPaperBalanceChanged,
   sameSettings,
   savePayload,
   saveStateShort,
@@ -37,6 +38,7 @@ import {
   startEdit,
   stillRefused,
   validateEdit,
+  withPaperBalance,
   type EditState,
   type SavedAgent,
 } from "./edit-model";
@@ -461,6 +463,82 @@ describe("savePayload", () => {
   });
 });
 
+/**
+ * The paper starting balance. The server takes a change of it only while the agent has no
+ * paper history, and refuses the whole save otherwise, so it travels only when it changed.
+ */
+describe("savePayload: the paper starting balance", () => {
+  it("is not sent by a save that leaves it alone, whatever else the save changes", () => {
+    const saved = agent();
+    expect("paperStartingUsd" in savePayload(edited(saved), saved)).toBe(false);
+    for (const { what, saved: of, draft } of EDITS) {
+      expect("paperStartingUsd" in savePayload(draft, of), what).toBe(false);
+    }
+    // The same amount, however it came to be in the copy, is not a change.
+    const retyped = edited(saved, (d) => void (d.paperStartingUsd = 10_000.0000001));
+    expect("paperStartingUsd" in savePayload(retyped, saved)).toBe(false);
+    const odd = agent({ paperStartingUsd: 5 });
+    expect("paperStartingUsd" in savePayload(edited(odd), odd)).toBe(false);
+  });
+
+  it("is sent, as typed, when it was changed", () => {
+    const saved = agent();
+    for (const usd of [20, 250, 1_500, 12_345.67, 2_500_000]) {
+      const payload = savePayload(edited(saved, (d) => void (d.paperStartingUsd = usd)), saved);
+      expect(payload.paperStartingUsd, String(usd)).toBe(usd);
+      // And nothing else about the payload moves for it.
+      const { paperStartingUsd: _balance, ...rest } = payload;
+      expect(rest).toEqual(savePayload(edited(saved), saved));
+    }
+  });
+
+  it("travels with whatever else was edited, in the one save", () => {
+    const saved = agent();
+    const draft = edited(saved, (d) => {
+      d.paperStartingUsd = 500;
+      d.name = "Aileen the Second";
+      d.config.risk.maxTradeUsd = 25;
+    });
+    const payload = savePayload(draft, saved);
+    expect(payload).toMatchObject({ name: "Aileen the Second", paperStartingUsd: 500 });
+    expect(payload.config?.risk.maxTradeUsd).toBe(25);
+  });
+});
+
+describe("withPaperBalance", () => {
+  const saved = agent();
+
+  it("is the working copy itself while the balance can still be changed", () => {
+    const draft = edited(saved, (d) => void (d.paperStartingUsd = 250));
+    expect(withPaperBalance(draft, saved.paperStartingUsd, true)).toBe(draft);
+    const untouched = edited(saved);
+    expect(withPaperBalance(untouched, saved.paperStartingUsd, true)).toBe(untouched);
+    expect(withPaperBalance(untouched, saved.paperStartingUsd, false)).toBe(untouched);
+  });
+
+  it("carries the saved balance once it cannot, and keeps every other edit", () => {
+    const draft = edited(saved, (d) => {
+      d.paperStartingUsd = 250;
+      d.name = "Aileen the Second";
+      d.config.schedule = { intervalMinutes: 60 };
+    });
+    const pinned = withPaperBalance(draft, saved.paperStartingUsd, false);
+    expect(pinned.paperStartingUsd).toBe(10_000);
+    expect(pinned.name).toBe("Aileen the Second");
+    expect(pinned.config).toBe(draft.config);
+    // So the edit is neither unsaved nor sent: a save of the rest is not refused for it.
+    expect([...changedSteps(pinned, saved)]).toEqual(["name", "schedule"]);
+    expect("paperStartingUsd" in savePayload(pinned, saved)).toBe(false);
+    // The copy being edited is not written to.
+    expect(draft.paperStartingUsd).toBe(250);
+  });
+
+  it("leaves nothing unsaved when the balance was the only edit", () => {
+    const draft = edited(saved, (d) => void (d.paperStartingUsd = 250));
+    expect(changedSteps(withPaperBalance(draft, saved.paperStartingUsd, false), saved).size).toBe(0);
+  });
+});
+
 describe("configToSave", () => {
   it("is the working config itself for a key agent and for a pay-per-use one with its limits", () => {
     const keyed = edited(agent());
@@ -499,10 +577,19 @@ describe("savedFrom", () => {
       avatarSeed: "kestrel",
       isPublic: true,
       llmKeyId: null,
+      paperStartingUsd: 10_000,
       config: draft.config,
     });
     // So the copy that was sent reads as saved the moment the save succeeds.
     expect(changedSteps(draft, held).size).toBe(0);
+  });
+
+  it("holds a paper balance that was changed, so it does not read as unsaved under a Saved toast", () => {
+    const draft = edited(agent(), (d) => void (d.paperStartingUsd = 250));
+    const held = savedFrom(draft);
+    expect(held.paperStartingUsd).toBe(250);
+    expect(changedSteps(draft, held).size).toBe(0);
+    expect("paperStartingUsd" in savePayload(draft, held)).toBe(false);
   });
 });
 
@@ -882,6 +969,9 @@ describe("changedSteps", () => {
       ["limits", (d) => void (d.config.risk.sizing = { ...DEFAULT_SIZING, percentOfEquity: 20 })],
       ["schedule", (d) => void (d.config.schedule = { intervalMinutes: 60 })],
       ["schedule", (d) => void (d.config.execution = { mode: "auto", proposalTtlMinutes: 60 })],
+      // The paper starting balance is on the Schedule step.
+      ["schedule", (d) => void (d.paperStartingUsd = 250)],
+      ["schedule", (d) => void (d.paperStartingUsd = 12_345.67)],
       ["brain", (d) => void (d.config.llm.model = "claude-other-model")],
       ["brain", (d) => void (d.config.llm.maxSteps = 12)],
       ["brain", (d) => void (d.llmKeyId = "key_b")],
@@ -1079,6 +1169,37 @@ describe("saveStateText", () => {
     );
     expect(saveStateText(set("name", "strategy", "data", "brain"), true)).toBe(
       "Unsaved changes on 4 steps · applies to real money from the next tick",
+    );
+  });
+
+  /**
+   * A live agent's real-money book never reads the paper balance, so a save that changes
+   * that and nothing else is not one that "applies to real money". The page asks this
+   * before it words the bar.
+   */
+  it("knows a save that changes the paper balance and nothing else", () => {
+    const saved = agent();
+    const only = edited(saved, (d) => void (d.paperStartingUsd = 15));
+    expect(onlyPaperBalanceChanged(only, saved)).toBe(true);
+    expect(onlyPaperBalanceChanged(edited(saved), saved)).toBe(false);
+    // With anything else on the same step, or on another, it is not the only change.
+    const withInterval = edited(saved, (d) => {
+      d.paperStartingUsd = 15;
+      d.config.schedule = { intervalMinutes: 60 };
+    });
+    expect(onlyPaperBalanceChanged(withInterval, saved)).toBe(false);
+    const withCap = edited(saved, (d) => {
+      d.paperStartingUsd = 15;
+      d.config.risk.maxTradeUsd = 250;
+    });
+    expect(onlyPaperBalanceChanged(withCap, saved)).toBe(false);
+    expect(onlyPaperBalanceChanged(edited(saved, (d) => void (d.config.risk.maxTradeUsd = 250)), saved)).toBe(false);
+    // The bar's sentence for the two, on an agent that trades real money.
+    const sentence = (draft: BuilderDraft) =>
+      saveStateText(changedSteps(draft, saved), !onlyPaperBalanceChanged(draft, saved));
+    expect(sentence(only)).toBe("Unsaved changes on 1 step: Schedule & mode");
+    expect(sentence(withInterval)).toBe(
+      "Unsaved changes on 1 step: Schedule & mode · applies to real money from the next tick",
     );
   });
 
@@ -1326,6 +1447,18 @@ describe("liveSaveWarnings", () => {
     expect(liveSaveWarnings(saved, usdcConfig())).toEqual([]);
   });
 
+  /**
+   * The paper starting balance is not in the config at all, so a live agent's save that
+   * changes only that has nothing to ask about: it loosens no rule on real money. What the
+   * dialog is given is the two configs, and they are the same.
+   */
+  it("asks nothing about the paper starting balance", () => {
+    const live = agent();
+    const draft = edited(live, (d) => void (d.paperStartingUsd = 2_500_000));
+    expect([...changedSteps(draft, live)]).toEqual(["schedule"]);
+    expect(liveSaveWarnings(live.config, configToSave(draft))).toEqual([]);
+  });
+
   it("lists everything a save loosens, in the order the limits are set", () => {
     const from = sized({ mode: "percent_equity", percentOfEquity: 10 });
     expect(
@@ -1390,9 +1523,11 @@ describe("editReducer", () => {
 
   it("tells two copies apart by what a save writes, and by nothing else", () => {
     expect(sameSettings(base, again())).toBe(true);
-    expect(sameSettings(base, again({ status: "paused", paperStartingUsd: 500 }))).toBe(true);
+    expect(sameSettings(base, again({ status: "paused" }))).toBe(true);
     expect(sameSettings(base, { ...base, config: reordered(base.config) })).toBe(true);
     for (const other of [
+      // A save writes the paper balance when it was changed, so it tells copies apart.
+      again({ paperStartingUsd: 500 }),
       again({ name: "Aileen the Second" }),
       again({ tagline: null }),
       again({ avatarSeed: "ember" }),
@@ -1522,6 +1657,44 @@ describe("editReducer", () => {
     const working = state.working;
     state = editReducer(state, { type: "propsChanged", saved: again({ name: "Renamed elsewhere" }) });
     expect(state.working).toBe(working);
+  });
+
+  it("takes a save of the paper balance alone as answered when the page shows the new balance", () => {
+    let state = editReducer(start(), { type: "edit", patch: { paperStartingUsd: 250 } });
+    const sent = state.working;
+    expect([...changedSteps(sent, saved)]).toEqual(["schedule"]);
+    state = editReducer(state, { type: "saved", sent });
+    expect(state.pending).toEqual({ sent, base });
+    // A refresh that was already on its way still carries the old balance: not the answer.
+    const stale = again({ status: "paused" });
+    state = editReducer(state, { type: "propsChanged", saved: stale });
+    expect(state.pending).not.toBeNull();
+    expect(state.working.paperStartingUsd).toBe(250);
+    // The answer carries the new one, and the working copy takes the server's word for it.
+    const server = again({ status: "paused", paperStartingUsd: 250 });
+    state = editReducer(state, { type: "propsChanged", saved: server });
+    expect(state.pending).toBeNull();
+    expect(state.working).toBe(server);
+    expect(changedSteps(state.working, { ...agent({ paperStartingUsd: 250 }), config: server.config as AgentConfig }).size).toBe(0);
+  });
+
+  it("keeps a paper balance typed between a save and its answer", () => {
+    let state = editRisk(start(), 250);
+    const sent = state.working;
+    state = editReducer(state, { type: "saved", sent });
+    state = editReducer(state, { type: "edit", patch: { paperStartingUsd: 20 } });
+    const server = again({}, (c) => void (c.risk.maxTradeUsd = 250));
+    state = editReducer(state, { type: "propsChanged", saved: server });
+    expect(state.working.paperStartingUsd).toBe(20);
+    expect(state.working.config.risk).toBe(server.config.risk);
+  });
+
+  it("puts the paper balance back on Discard", () => {
+    let state = editReducer(start(), { type: "edit", patch: { paperStartingUsd: 250 } });
+    expect(state.working.paperStartingUsd).toBe(250);
+    state = editReducer(state, { type: "discard" });
+    expect(state.working).toBe(base);
+    expect(state.working.paperStartingUsd).toBe(10_000);
   });
 
   it("goes back to what is saved on Discard, and to a copy that is put back", () => {

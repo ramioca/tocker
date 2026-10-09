@@ -18,6 +18,7 @@ import {
 } from "@/components/common/data-access";
 import { isAdminEmail } from "@/lib/admin";
 import { platformFeeBps } from "@/lib/platform/fee";
+import { readPaperBalanceLock } from "@/lib/trading/paper-history";
 import { getSkippingRunsLine } from "@/server/queries/agent-status";
 import { payPerUseAllowedFor } from "@/server/queries/agents";
 
@@ -78,7 +79,7 @@ export default async function AgentSettingsPage({ params, searchParams }: Props)
   // rendering an editor over someone else's strategy.
   if (!agent.config) notFound();
 
-  const [balances, walletBudget, sources, keys, paused, payPerUseAllowed, skippingLine] = await Promise.all([
+  const [balances, walletBudget, sources, keys, paused, payPerUseAllowed, skippingLine, balanceLock] = await Promise.all([
     walletBalances(agent.id),
     agentWalletBudget(agent.id),
     dataSources(),
@@ -89,6 +90,10 @@ export default async function AgentSettingsPage({ params, searchParams }: Props)
     // Why nothing is running, for an agent set to skip scheduled runs with no room to
     // buy. Null for every other agent, and it never throws.
     getSkippingRunsLine(agent.id, session.userId),
+    // Why its paper balance can no longer be changed, or null while it can: only while
+    // it has not traded, on paper or with real money. Decided here, never in the browser,
+    // and it never throws.
+    readPaperBalanceLock(agent.id),
   ]);
 
   // The fee is read here, on the server, and handed down: the steps quote it beside the
@@ -116,6 +121,7 @@ export default async function AgentSettingsPage({ params, searchParams }: Props)
         payPerUseAllowed={payPerUseAllowed}
         feeBps={platformFeeBps()}
         skippingLine={skippingLine}
+        paperBalanceLock={balanceLock}
       />
     </Suspense>
   );

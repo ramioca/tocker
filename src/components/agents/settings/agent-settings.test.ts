@@ -93,6 +93,7 @@ function render(
     keys?: LlmKeyRow[];
     payPerUseAllowed?: boolean;
     skippingLine?: string | null;
+    paperBalanceLock?: "paper" | "live" | null;
   } = {},
 ): string {
   address.search = search;
@@ -113,6 +114,7 @@ function render(
         payPerUseAllowed: props.payPerUseAllowed ?? false,
         feeBps: 25,
         ...(props.skippingLine === undefined ? {} : { skippingLine: props.skippingLine }),
+        ...(props.paperBalanceLock === undefined ? {} : { paperBalanceLock: props.paperBalanceLock }),
       }),
     ),
   );
@@ -419,5 +421,153 @@ describe("the two limits that can be off, and the skip switch", () => {
     expect(text).toContain(line);
     expect(text).not.toContain("next tick scheduled");
     expect(words(render())).toContain("next tick scheduled");
+  });
+});
+
+/**
+ * The paper starting balance on the Schedule step of a saved agent. Whether it can still
+ * be changed, and why not, is the server's answer, handed to the page
+ * (`paperBalanceLock`); the page shows the control when there is no reason and the amount
+ * with that reason's sentence when there is one, and decides nothing itself.
+ */
+describe("the paper starting balance on a saved agent's Schedule step", () => {
+  function tagOf(html: string, id: string): string {
+    const match = new RegExp(`<[a-z]+[^>]*\\bid="${id}"[^>]*>`).exec(html);
+    if (!match) throw new Error(`no #${id}`);
+    return match[0];
+  }
+  /** The three amount buttons, as their opening tags, in order. */
+  function presets(html: string): string[] {
+    return [...html.matchAll(/<button[^>]*aria-pressed="(?:true|false)"[^>]*>\$(?:1K|10K|100K)<\/button>/g)].map(
+      ([tag]) => tag,
+    );
+  }
+  const OPEN_HINT = "It has not traded yet, so you can still change this. Pick one or type any amount from $10 to $10M.";
+  const LOCKED_HINT = "It has traded on paper, so its balance is part of its record.";
+  const LOCKED_LIVE_HINT =
+    "It has traded with real money, and its paper book counts those trades, so its balance is part of its record.";
+
+  it("is the builder's control while the agent has not traded: three buttons and a box to type in", () => {
+    const html = render("step=schedule", { paperBalanceLock: null });
+    const text = words(html);
+    expect(text).toContain("Paper starting balance");
+    expect(text).toContain(OPEN_HINT);
+    expect(text).not.toContain(LOCKED_HINT);
+    // The agent's own balance is the button that is lit, and what the box shows.
+    const buttons = presets(html);
+    expect(buttons).toHaveLength(3);
+    expect(buttons.map((tag) => /aria-pressed="(true|false)"/.exec(tag)?.[1])).toEqual(["false", "true", "false"]);
+    const box = tagOf(html, "paper-balance-value");
+    expect(box).toContain('value="$10K"');
+    expect(box).toContain('aria-label="Paper starting balance, exact value"');
+    expect(box).toContain('inputMode="decimal"');
+    expect(box).not.toContain(' disabled=""');
+    // One of the four is lit, and here it is a button, not the box.
+    expect(box).not.toContain("border-primary/50");
+    // Nothing is unsaved for showing it.
+    expect(text).toContain("Schedule & mode: Saved");
+    expect(text).toContain("Everything is saved");
+  });
+
+  it("shows an amount that is none of the three in the box, with no button lit", () => {
+    for (const [usd, shown] of [
+      [20, "$20"],
+      [250, "$250"],
+      [1_500, "$1.5K"],
+      [12_345.67, "$12,345.67"],
+      [2_500_000, "$2.5M"],
+    ] as Array<[number, string]>) {
+      const html = render("step=schedule", { agent: agentOf({ paperStartingUsd: usd }), paperBalanceLock: null });
+      expect(tagOf(html, "paper-balance-value"), shown).toContain(`value="${shown}"`);
+      expect(presets(html).filter((tag) => tag.includes('aria-pressed="true"'))).toEqual([]);
+      // The box is then the one that is lit, as a pressed button is.
+      expect(tagOf(html, "paper-balance-value"), shown).toContain("border-primary/50 bg-primary/8");
+      // The read-back line of the step and the agent card's row say the same amount.
+      expect(words(html).split(`· ${shown} paper`).length - 1, shown).toBe(2);
+    }
+  });
+
+  it("is the amount and one sentence of why once the agent has traded on paper, with no control", () => {
+    const html = render("step=schedule", { paperBalanceLock: "paper" });
+    const text = words(html);
+    expect(text).toContain("Paper starting balance $10,000.00");
+    expect(text).toContain(LOCKED_HINT);
+    expect(text).not.toContain(LOCKED_LIVE_HINT);
+    expect(text).not.toContain(OPEN_HINT);
+    expect(html).not.toContain('id="paper-balance-value"');
+    expect(presets(html)).toEqual([]);
+    // Absent, the answer is no: the page never offers a change the server did not allow.
+    const unsaid = render("step=schedule");
+    expect(unsaid).not.toContain('id="paper-balance-value"');
+    expect(words(unsaid)).toContain(LOCKED_HINT);
+  });
+
+  /**
+   * Paper cash counts real-money trades too, so an agent that has only those cannot pick
+   * its paper balance afterwards. It has not traded on paper, and is not told it has.
+   */
+  it("is the amount and the other sentence once the agent has traded with real money only, on paper again or still live", () => {
+    for (const [mode, label] of [
+      ["paper", "Paper starting balance"],
+      ["live", "Paper balance, used if you switch back to paper"],
+    ] as const) {
+      const html = render("step=schedule", { agent: agentOf({ mode }), paperBalanceLock: "live" });
+      const text = words(html);
+      expect(text, mode).toContain(`${label} $10,000.00`);
+      expect(text, mode).toContain(LOCKED_LIVE_HINT);
+      expect(text, mode).not.toContain(LOCKED_HINT);
+      expect(text, mode).not.toContain(OPEN_HINT);
+      expect(html, mode).not.toContain('id="paper-balance-value"');
+      expect(presets(html), mode).toEqual([]);
+      expect(text, mode).toContain("Everything is saved");
+    }
+  });
+
+  it("says what the balance is for on an agent that trades real money, open or not", () => {
+    const live = agentOf({ mode: "live", paperStartingUsd: 10_000 });
+    const open = render("step=schedule", { agent: live, paperBalanceLock: null });
+    expect(words(open)).toContain("Paper balance, used if you switch back to paper");
+    expect(words(open)).toContain(OPEN_HINT);
+    expect(tagOf(open, "paper-balance-value")).toContain('aria-label="Paper balance, used if you switch back to paper, exact value"');
+    expect(presets(open)).toHaveLength(3);
+    // Its card says the balance is its paper one: nothing it trades with is.
+    expect(words(open)).toContain("· live · $10K paper balance");
+
+    const locked = words(render("step=schedule", { agent: live, paperBalanceLock: "paper" }));
+    expect(locked).toContain("Paper balance, used if you switch back to paper $10,000.00");
+    expect(locked).toContain(LOCKED_HINT);
+  });
+
+  it("checks the caps of an untouched paper agent against its paper balance, and of any other against its equity", () => {
+    // The fixture has $30 of equity and a $100 ticket; this one starts with $20 of paper.
+    const small = agentOf({ paperStartingUsd: 20 });
+    const untouched = words(render("step=limits", { agent: small, paperBalanceLock: null }));
+    expect(untouched).toContain(
+      "A single trade can never move more than $100.00 — but that is more than its $20.00 paper balance, so every trade would be refused for lack of cash.",
+    );
+    const traded = words(render("step=limits", { agent: small, paperBalanceLock: "paper" }));
+    expect(traded).toContain("but that is more than its $30.00 of equity");
+    // A live agent's caps are never set against its paper balance.
+    const live = words(render("step=limits", { agent: agentOf({ mode: "live", paperStartingUsd: 20 }), paperBalanceLock: null }));
+    expect(live).toContain("but that is more than its $30.00 of equity");
+    expect(live).not.toContain("paper balance, so every trade");
+  });
+
+  /**
+   * An agent that traded live and is on paper again has no paper trade, but its paper
+   * cash counts what it made or lost live: $200 of balance and $9 of book, say. Its caps
+   * are set against the book, or a $100 ticket it cannot pay for would pass for one it can.
+   */
+  it("checks the caps of an agent back on paper after trading live against its equity, not its balance", () => {
+    const back = agentOf({ paperStartingUsd: 200, equityUsd: 9 });
+    const text = words(render("step=limits", { agent: back, paperBalanceLock: "live" }));
+    expect(text).toContain(
+      "A single trade can never move more than $100.00 — but that is more than its $9.00 of equity, so every trade would be refused for lack of cash.",
+    );
+    expect(text).not.toContain("paper balance, so every trade");
+    // An agent with that balance that has never traded at all is worth it, and can pay.
+    const fresh = words(render("step=limits", { agent: back, paperBalanceLock: null }));
+    expect(fresh).toContain("A single trade can never move more than $100.00, whatever the model asks for.");
+    expect(fresh).not.toContain("every trade would be refused for lack of cash");
   });
 });

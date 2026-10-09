@@ -1258,6 +1258,19 @@ export function buildTools(ctx: RunContext): ToolSet {
         });
         ctx.tradeIds.push(tradeId);
 
+        // A paper buy only. Its owner may change the paper starting balance until the
+        // book has a trade, and this one was cleared on the balance the book above was
+        // read with: if that has changed in the meantime the order is not filled. Asked
+        // now that the row is written, because from here on the balance cannot change
+        // (`paperBalanceMoved`). Already loaded: the paper executor above came from it.
+        if (executor.isPaper && parsed.side === "buy") {
+          const { PAPER_BALANCE_MOVED, paperBalanceMoved } = await import("@/lib/trading/paper");
+          if (await paperBalanceMoved(agent.id, portfolio.startingUsd)) {
+            await db.update(trades).set({ status: "failed", error: PAPER_BALANCE_MOVED }).where(eq(trades.id, tradeId));
+            return fail(PAPER_BALANCE_MOVED, { rejected: true });
+          }
+        }
+
         const quotedAt = new Date();
         let quote;
         try {

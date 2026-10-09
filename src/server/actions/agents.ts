@@ -12,6 +12,8 @@ import { RUN_REFUSED_WHILE_PAUSED, RUN_REFUSED_WITHOUT_KEY, isRunRefused } from 
 import { nextRunTime, scheduledMinutes } from "@/lib/agent/schedule";
 import { getSession } from "@/lib/auth";
 import { isTradingPaused } from "@/lib/security/kill-switch";
+import { PAPER_BALANCE_REFUSED, checkPaperStartingUsd, sameBalance } from "@/lib/trading/paper-balance";
+import { changePaperBalance, paperBalanceLock } from "@/lib/trading/paper-history";
 import { inferenceAllowedFor, inferenceFlags } from "@/lib/x402/inference-types";
 import { SECRET_IN_PUBLIC_TEXT, looksLikeSecret } from "@/lib/security/redact";
 import { applyAgentBudgetPolicy, createAgentWallets, getAgentWallets } from "@/lib/wallets";
@@ -25,28 +27,8 @@ import { slowDown } from "./_shared";
 const MAX_NAME = MAX_AGENT_NAME;
 const MAX_TAGLINE = 120;
 const MAX_AVATAR_SEED = 64;
-/**
- * Paper money is imaginary, but the number is persisted as `numeric` and drives every
- * sizing rule; an absurd or non-finite one makes the book meaningless. Well above the
- * largest preset ($100k) and anything anyone would fund an agent with.
- */
-const MAX_PAPER_STARTING_USD = 10_000_000;
 /** What an owner may set by hand; `error` is only ever set by the run loop. */
 const SETTABLE_STATUSES: ReadonlySet<string> = new Set(["draft", "active", "paused"]);
-
-/**
- * Checked once, in `createAgent`, which is the only place the balance is set.
- * `updateAgent` does not take it: paper cash is the starting balance minus net buys, so
- * rewriting it on an agent that has traded rewrites its public PnL and its place on the
- * leaderboard.
- */
-function checkPaperStartingUsd(value: unknown): string | null {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return "Paper starting balance must be positive";
-  }
-  if (value > MAX_PAPER_STARTING_USD) return "Paper starting balance must be $10,000,000 or less";
-  return null;
-}
 
 /**
  * Note the absence of any "forkable" flag. Copying someone's agent is not a setting the
@@ -60,6 +42,13 @@ export interface CreateAgentInput {
   isPublic: boolean;
   llmKeyId: string | null;
   config: AgentConfigInput;
+  /**
+   * What the paper book starts with, inside `checkPaperStartingUsd`'s range
+   * (src/lib/trading/paper-balance.ts). `createAgent` sets it. `updateAgent` changes it
+   * only while the agent has not traded, on paper or with real money: paper cash is this
+   * balance minus net buys, so rewriting it on an agent that has traded would rewrite its
+   * public PnL and its place on the leaderboard.
+   */
   paperStartingUsd?: number;
   /** Skip the draft step: go straight to `active` with a run scheduled now. */
   activate?: boolean;
@@ -357,7 +346,24 @@ export async function updateAgent(id: string, input: Partial<CreateAgentInput>):
     patch.avatarSeed = seed || null;
   }
   if (input.isPublic !== undefined) patch.isPublic = input.isPublic === true;
-  // `input.paperStartingUsd` is not read: see `checkPaperStartingUsd`. No form sends it.
+  // The paper starting balance, when this save changes it. The amount the agent already
+  // has is no change: it is saved like any save that says nothing about it, and is not
+  // held to a range the agent may predate. A different one has to be in range, and is
+  // allowed only while the balance is still open (`paperBalanceLock`), whatever mode the
+  // agent is in. That is asked here so a save that cannot go through stops before
+  // anything is made for it, and decided for good where it is written
+  // (`changePaperBalance`).
+  let paperStartingUsd: number | null = null;
+  if (input.paperStartingUsd !== undefined) {
+    const next: unknown = input.paperStartingUsd;
+    if (typeof next !== "number" || !sameBalance(next, Number(agent.paperStartingUsd))) {
+      const problem = checkPaperStartingUsd(next);
+      if (problem) return fail(problem);
+      const lock = await paperBalanceLock(db, id);
+      if (lock) return fail(PAPER_BALANCE_REFUSED[lock]);
+      paperStartingUsd = next as number;
+    }
+  }
   if (input.llmKeyId !== undefined) {
     if (input.llmKeyId) {
       const [key] = await db
@@ -456,7 +462,16 @@ export async function updateAgent(id: string, input: Partial<CreateAgentInput>):
     walletAdded = wallet.created;
   }
 
-  await db.update(agents).set(patch).where(eq(agents.id, id));
+  if (paperStartingUsd === null) {
+    await db.update(agents).set(patch).where(eq(agents.id, id));
+  } else {
+    // One change or none: the balance and the rest of the save are written together, or
+    // a trade that landed since the check above refuses them together. A wallet
+    // made a moment ago for a chain this save switched on stays; the next save finds it.
+    const outcome = await changePaperBalance({ agentId: id, ownerId: session.userId, paperStartingUsd, patch });
+    if (outcome === "gone") return fail("Agent not found");
+    if (outcome !== "changed") return fail(PAPER_BALANCE_REFUSED[outcome]);
+  }
 
   // Keep the wallet-layer cap from drifting below the app-level trade cap when the
   // owner raises it, and put the same cap on a wallet that was just made. Best-effort:

@@ -459,6 +459,18 @@ export async function placeManualTrade(
     decidedBy: "owner",
   });
 
+  // A paper buy only: it was cleared on the paper starting balance the book above was
+  // read with, and the owner may change that balance until the book has a trade. If it
+  // has changed in the meantime the order is not filled. Asked now that the row is
+  // written, because from here on the balance cannot change (`paperBalanceMoved`).
+  if (executor.isPaper && input.side === "buy") {
+    const { PAPER_BALANCE_MOVED, paperBalanceMoved } = await import("@/lib/trading/paper");
+    if (await paperBalanceMoved(agent.id, portfolio.startingUsd)) {
+      await db.update(trades).set({ status: "failed", error: PAPER_BALANCE_MOVED }).where(eq(trades.id, tradeId));
+      return fail(PAPER_BALANCE_MOVED);
+    }
+  }
+
   const quotedAt = new Date();
   let quote;
   try {

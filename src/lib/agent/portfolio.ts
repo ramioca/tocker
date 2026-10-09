@@ -445,7 +445,9 @@ export async function getPortfolio(agentId: string, options: { forBuy?: boolean 
   // The chains whose balance came from the indexer. Only ever looked at under a reserve.
   let indexedChains: Chain[] = [];
   if (agent.mode === "paper") {
-    cashUsd = await getPaperCash(agentId);
+    // From the balance read above, the one reported as `startingUsd` below: a paper buy
+    // and a paper mark each ask whether that balance still stands as they are written.
+    cashUsd = await getPaperCash(agentId, Number(agent.paperStartingUsd));
   } else {
     const walletRefs = await getAgentWallets(agentId);
     // Noted before the first wallet is asked, and only for an agent that pays for its own
@@ -697,6 +699,20 @@ export function toRiskPortfolio(portfolio: Portfolio, deciding?: DecidingProposa
  *    mark is written. A step is in flight for seconds, a run's last mark is taken after
  *    its last step has resolved, and the marks pass comes round again in five minutes.
  *    Every other agent's mark is written exactly as before: nothing is read for it.
+ *
+ * And one for a paper book:
+ *
+ *  - **A mark measured against a balance that has since changed is not written.** An
+ *    owner may change the paper starting balance while the book is untouched
+ *    (`changePaperBalance`, src/lib/trading/paper-history.ts), and that change deletes the
+ *    book's marks, each of them a flat point at the old balance. A mark worked out a
+ *    moment before the change and written a moment after it would put one of those points
+ *    back, for good. So a paper mark is written only while the agent's balance is still
+ *    the one the book was read with (`startingUsd`). The balance is read under a
+ *    `FOR KEY SHARE` lock, in one transaction with the insert, and that lock and the
+ *    change's `FOR UPDATE` shut each other out: the mark lands wholly before the change,
+ *    which then deletes it, or it reads the new balance and is not written. A live mark
+ *    is written exactly as before.
  */
 export async function snapshotEquity(portfolio: Portfolio): Promise<boolean> {
   if (portfolio.cashReadFailed) {
@@ -708,13 +724,32 @@ export async function snapshotEquity(portfolio: Portfolio): Promise<boolean> {
     return false;
   }
   const db = await getDb();
-  await db.insert(equitySnapshots).values({
+  const mark = {
     id: nanoid(),
     agentId: portfolio.agentId,
     equityUsd: portfolio.equityUsd.toFixed(6),
     cashUsd: portfolio.cashUsd.toFixed(6),
     mode: portfolio.mode,
-  });
+  };
+  if (portfolio.mode === "paper") {
+    return db.transaction(
+      async (tx) => {
+        const [book] = await tx
+          .select({ paperStartingUsd: agents.paperStartingUsd })
+          .from(agents)
+          .where(eq(agents.id, portfolio.agentId))
+          .limit(1)
+          .for("key share");
+        if (!book || Number(book.paperStartingUsd) !== portfolio.startingUsd) return false;
+        await tx.insert(equitySnapshots).values(mark);
+        return true;
+      },
+      // Set by hand: once the lock has been waited for, the row must be read as it is
+      // now, which a transaction that kept its first view of the database would not do.
+      { isolationLevel: "read committed" },
+    );
+  }
+  await db.insert(equitySnapshots).values(mark);
   return true;
 }
 

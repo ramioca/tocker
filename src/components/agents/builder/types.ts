@@ -3,6 +3,7 @@ import { DEFAULT_FUND_USD } from "@/lib/wallets/funding";
 import { chooseSource, stripPayPerUse, usdcEstimate } from "@/components/agents/thinking";
 import { thinkSource } from "@/lib/agent/inference";
 import { isProvider, type LlmProvider } from "@/lib/agent/providers";
+import { checkPaperStartingUsd } from "@/lib/trading/paper-balance";
 import type { AgentConfigInput } from "@/lib/agent/config";
 import type { AgentConfig } from "@/db/schema";
 import type { LlmKeyRow } from "@/server/types";
@@ -109,11 +110,21 @@ export function emptyDraft(): BuilderDraft {
  * saved (the position limit, the cash reserve, the skip switch), and a draft without them
  * has to come back with them as off, not missing: the Risk limits step compares what is
  * on screen with what it started on, and a missing key is not the same words as off.
+ *
+ * The paper starting balance is kept when it is an amount the Schedule step can hold: one
+ * of the three a draft could carry before any amount could be typed, or any other inside
+ * the range. Anything else in storage (nothing, not a number, out of range) comes back
+ * as the balance the page starts on, since the box could neither show it nor send it.
  */
 export function restoreDraft(current: BuilderDraft, saved: Partial<BuilderDraft>): BuilderDraft {
+  const paperStartingUsd: unknown = saved.paperStartingUsd;
   return {
     ...current,
     ...saved,
+    paperStartingUsd:
+      typeof paperStartingUsd === "number" && checkPaperStartingUsd(paperStartingUsd) === null
+        ? paperStartingUsd
+        : current.paperStartingUsd,
     config: {
       ...current.config,
       ...saved.config,
@@ -499,6 +510,11 @@ export function intervalHint(preset: { minutes: number; hint: string }, payPerUs
   return `${runs}, about $${estimate.dayUsd.toFixed(2)} of thinking.`;
 }
 
+/**
+ * The paper starting balances the Schedule step offers as buttons. Any other amount in
+ * range can be typed beside them (`PaperBalanceField`); one of these, typed, lights its
+ * button.
+ */
 export const PAPER_BALANCES = [1_000, 10_000, 100_000] as const;
 
 /**

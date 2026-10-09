@@ -6,6 +6,7 @@ import * as schema from "@/db/schema";
 import { DEFAULT_AGENT_CONFIG } from "./config";
 import { PAYMENT_IN_FLIGHT_MS } from "./inference";
 import { buyCostUsd } from "@/lib/platform/fee";
+import { changePaperBalance } from "@/lib/trading/paper-history";
 import { applyFill } from "@/lib/trading/positions";
 import { RECONCILE_AFTER_MS } from "@/lib/x402/inference-reconcile";
 import { INFERENCE_GATEWAY, PAID_TIMEOUT_MS, utcDay, type InferencePaymentStatus } from "@/lib/x402/inference-types";
@@ -46,6 +47,9 @@ function book(overrides: Partial<Portfolio> = {}): Portfolio {
   };
 }
 
+/** The paper starting balance `seedAgent` gives an agent: what a paper book of one was read with. */
+const SEEDED_BALANCE = 10_000;
+
 /**
  * W7 H8. A paper book starts at `paperStartingUsd` (10,000 by default) and a live book
  * at whatever was deposited, so a series that mixes the two reads as a −99.9% crash from
@@ -57,7 +61,7 @@ describe("snapshotEquity", () => {
     const paper = await seedAgent(db);
     const live = await seedAgent(db, { mode: "live" });
 
-    expect(await snapshotEquity(book({ agentId: paper.agentId, mode: "paper" }))).toBe(true);
+    expect(await snapshotEquity(book({ agentId: paper.agentId, mode: "paper", startingUsd: SEEDED_BALANCE }))).toBe(true);
     expect(await snapshotEquity(book({ agentId: live.agentId, mode: "live", cashUsd: 10, equityUsd: 10 }))).toBe(true);
 
     const [paperRow] = await db
@@ -89,6 +93,67 @@ describe("snapshotEquity", () => {
       .from(schema.equitySnapshots)
       .where(eq(schema.equitySnapshots.agentId, agentId));
     expect(rows).toHaveLength(0);
+  });
+});
+
+/**
+ * An owner may change the paper starting balance while the paper book is untouched, and
+ * that change deletes the book's marks: each is a flat point at the old balance
+ * (`changePaperBalance`). A mark worked out just before the change and written just after
+ * it would put one of those points back for good, so a paper mark is written only while
+ * the balance is still the one the book was read with.
+ */
+describe("snapshotEquity: a paper mark and a balance that has changed since the book was read", () => {
+  const marks = (agentId: string) =>
+    db.select().from(schema.equitySnapshots).where(eq(schema.equitySnapshots.agentId, agentId));
+
+  it("writes the mark while the balance is the one the book was read with", async () => {
+    const { agentId } = await seedAgent(db, { paperStartingUsd: "250" });
+    const read = await getPortfolio(agentId);
+    expect(read.startingUsd).toBe(250);
+    expect(read.cashUsd).toBe(250);
+    expect(await snapshotEquity(read)).toBe(true);
+    const rows = await marks(agentId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ mode: "paper", equityUsd: "250.000000", cashUsd: "250.000000" });
+  });
+
+  it("writes no mark for a book read before the balance was changed", async () => {
+    const agent = await seedAgent(db);
+    // The marks pass reads the book: $10,000, flat.
+    const stale = await getPortfolio(agent.agentId);
+    expect(stale.equityUsd).toBe(10_000);
+    // The owner's save lands before the pass writes its point.
+    expect(await changePaperBalance({ agentId: agent.agentId, ownerId: agent.userId, paperStartingUsd: 20, patch: {} })).toBe("changed");
+
+    expect(await snapshotEquity(stale)).toBe(false);
+    expect(await marks(agent.agentId)).toEqual([]);
+
+    // The next pass reads the book as it is now, and its mark is written.
+    const fresh = await getPortfolio(agent.agentId);
+    expect(fresh).toMatchObject({ startingUsd: 20, cashUsd: 20, equityUsd: 20 });
+    expect(await snapshotEquity(fresh)).toBe(true);
+    expect((await marks(agent.agentId)).map((row) => row.equityUsd)).toEqual(["20.000000"]);
+  });
+
+  it("is a rule for a paper mark only: a live mark is written whatever the paper balance has become", async () => {
+    const agent = await seedAgent(db, { mode: "live" });
+    const liveBook = book({ agentId: agent.agentId, mode: "live", cashUsd: 15, equityUsd: 15, startingUsd: SEEDED_BALANCE });
+    expect(await changePaperBalance({ agentId: agent.agentId, ownerId: agent.userId, paperStartingUsd: 15, patch: {} })).toBe("changed");
+    expect(await snapshotEquity(liveBook)).toBe(true);
+    expect((await marks(agent.agentId)).map((row) => row.mode)).toEqual(["live"]);
+  });
+
+  it("reads the balance once for a paper book, so its cash and the balance it reports agree", async () => {
+    const { agentId } = await seedAgent(db, { paperStartingUsd: "12345.67" });
+    const read = await getPortfolio(agentId);
+    expect(read.startingUsd).toBe(12_345.67);
+    expect(read.cashUsd).toBe(read.startingUsd);
+    expect(read.equityUsd).toBe(read.startingUsd);
+  });
+
+  it("writes nothing for a paper agent that is gone", async () => {
+    expect(await snapshotEquity(book({ agentId: "no-such-agent", mode: "paper" }))).toBe(false);
   });
 });
 
@@ -453,7 +518,9 @@ describe("a paid step in flight when the wallet was read", () => {
     // A book with no read time on it (every key agent's, every paper agent's) is marked
     // as it always was, whatever the ledger holds for that agent.
     expect(await snapshotEquity(liveBook(paying.agentId, null))).toBe(true);
-    expect(await snapshotEquity(book({ agentId: paying.agentId, mode: "paper", cashReadAt: readAt }))).toBe(true);
+    expect(
+      await snapshotEquity(book({ agentId: paying.agentId, mode: "paper", cashReadAt: readAt, startingUsd: SEEDED_BALANCE })),
+    ).toBe(true);
     expect(await marksOf(paying.agentId)).toHaveLength(2);
   });
 });
