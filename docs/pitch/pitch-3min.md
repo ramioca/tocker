@@ -1,9 +1,9 @@
 # Tocker — 3-minute pitch (short deck, v6)
 
-~445 words over 11 slides, about 2:40 at 160 wpm. Reworked on Oct 8, 2026 after a pitch roast that pushed on three things: "what's the edge?", "the competitors are well established", and "performance". [pause] marks a beat.
+~416 words over 10 slides, about 2:35 at 160 wpm. Reworked on Oct 8, 2026 after a pitch roast that pushed on three things: "what's the edge?", "the competitors are well established", and "performance". [pause] marks a beat.
 - **Edge** (new slide, replaces the x402 "alpha" slide): not prediction but not losing, in three steps. Refuse the rugs (gates in code), pick by your thesis (paid data, cents a token), exit by rule. Evidence: research/29, code: research/30.
-- **Proof** (new slide): a pre-registered gate audit and a real-money house cohort with controls. This is a plan, not a result; the slide commits us to running it.
-- **Competition**: AI trading startups only. "Good teams. We built the safer agent." What all six do vs Tocker, safety first: no rug veto before the swap vs 10 code gates the AI can't override; bundled data vs data bought per call; copy trading vs every fill public, never the strategy. Terminals (Axiom, GMGN, fomo) stay in Q&A 5 and Know the field.
+- **Proof** slide dropped (Oct 9): the gate audit and house cohort stay in Q&A 20 as the plan, not on a slide.
+- **Competition**: AI trading startups, framed as a crowded space. "Crowded space. Three things set us apart." Six funded startups (logos), plus Bankr, Nansen AI, Wayfinder, Almanak, Cod3x and Robinhood Agents also shipping trading agents; then what all six do vs Tocker: safety, data, social. Terminals stay in Q&A 5.
 - **Stale facts fixed:** the 0.5% fee is live (main #53), the beta is open, and the solution slide no longer says "sell-check data" (Solana has no sell test).
 Earlier competition designs: docs/pitch/deck/competition-angles/.
 
@@ -22,14 +22,11 @@ Here's a sample run. The thesis: memes smart money is accumulating. Your agent f
 ## edge
 So what's the edge? Not prediction: nobody has shown an AI that picks memecoin winners. It starts with not losing. Our gates refuse the rugs, and the AI can't override them. Your thesis picks from what's left. And exits run by rule: in a live contest, none of thirty AI agents got liquidated. Forty-three percent of humans did.
 
-## proof
-Claims aren't proof, so we'll prove it in public. We log every launch with its gate verdict and check which ones died within a day. And house agents trade real money, gates on and off, against random entries and just holding SOL. Every agent shown.
-
 ## business
 Who pays? Traders already do: nine hundred forty million dollars last year to Solana bots and terminals, at one percent a trade. We charge half, and it's live.
 
 ## competition
-Six AI trading startups, good teams, mostly perps and chat. We're better in three ways. Safety: nothing of theirs vetoes a rug before the swap; ours does, in code, and the AI can't override it. Data: they share bundled feeds, so agents herd; ours buys its own, per call. And we publish every fill, never the strategy.
+This space is crowded. Six funded AI trading startups, plus Bankr, Nansen and now Robinhood, all shipping agents. Good teams. Three things set us apart. Safety: none of the six vetoes a rug before the swap; ours refuses in code, and the AI can't override it. Data: they run on bundled feeds, so agents herd; ours buys its own, per call. And we publish every fill, never the strategy, instead of copy trading.
 
 ## gtm
 That public record is the growth loop: every trade posts with its score and markets itself, and followers launch their own. We start with Solana memecoins, four hundred eighty-two billion dollars last year, then Polymarket and tokenized stocks.
@@ -43,7 +40,6 @@ We're in open beta on Solana and Base. Tomorrow, twenty-one thousand more tokens
 ## What's labelled planned (keep it that way until shipped)
 - 50 bps fee: LIVE on main as 0.5% of each fill (#53, `src/lib/platform/fee.ts`), in place of the flat $0.10. SPEC.md on this branch still says $0.10.
 - Pay-per-use AI ships switched off (`src/lib/x402/inference-types.ts`); "no keys" holds only where it is switched on.
-- Proof slide: the gate audit and the house cohort are not built yet (research/30 §6: ~4 days to build the audit, ~3 to set up the cohort). Don't present it as running until it is.
 - An outcome-fitted score is "next": today the score's weights are hand-set and have never been checked against results.
 - Inference paid per call in USDC: LIVE behind a per-account switch (main #28 'Pay-per-use thinking', #29 eleven models). An agent with no LLM key buys each model step from BlockRun in USDC from its own Solana wallet; spend caps and a kill switch (INFERENCE_USDC) on the admin page. Disclose the founder's BlockRun role (Q&A 6).
 - Polymarket and tokenized stocks: "next".
@@ -57,8 +53,8 @@ We're in open beta on Solana and Base. Tomorrow, twenty-one thousand more tokens
 - x402 Foundation backers: Linux Foundation (2026) — research/06
 - Per-call prices: src/lib/data-sources/*.ts. Per token on Solana: ~1.6¢ on default sources (X search + Deepnets), ~6.6¢ with Nansen on, so "2–7¢"; Base ~0.6¢ default, ~10.6¢ with Nansen — research/30 §7
 - Edge slide: 76% (SolRugDetector, arXiv 2603.24625, 100,063 tokens, H1 2025); 0 of 30 AI agents liquidated vs 43% of humans, AI −4.5% vs humans −32% (Aster Human vs AI Season 1, Chainwire, 14 Jan 2026; perps, not memecoins) — research/29 A1, A3
-- Proof slide footer: across 888 Quantopian strategies, backtest Sharpe explained R² < 0.025 of live (Wiecki et al., 2016) — research/29 C
-- Competition: $940M = Solana bots and terminals, 2025 (The Block, Jan 2026); $4M = Senpi seed (Sep 2025); terminal features from their docs — research/29 B. The 94% on the problem slide is fomo-app wallet data via Dune (research/28), which is why the note can say "fomo's own wallet data".
+- Competition "also shipping" line: Bankr, Nansen AI (autonomy still in paper trading), Wayfinder, Almanak (TVL ≈$446K), Cod3x (47 users), Robinhood Agents (150K agentic accounts, listed assets only; Fortune, 29 Sep 2026) — research/29 B. Make no claims about them beyond "shipping trading agents".
+- Terminals (for Q&A): $940M = Solana bots and terminals, 2025 (The Block, Jan 2026); $4M = Senpi seed (Sep 2025); terminal features from their docs — research/29 B. The 94% on the problem slide is fomo-app wallet data via Dune (research/28), which is why the note can say "fomo's own wallet data".
 - $1.7B = $940M bots/terminals + $762M launchpads (2025): Solana Foundation recap, Blockworks Research — research/04
 - $482B Solana memecoin volume in 2025 (down ~10% YoY): Solana's 2025 recap, via Bitget/ChainCatcher (https://www.bitget.com/news/detail/12560605132683) and Coinpedia/TradingView — self-reported by Solana; same recap as the $940M bot-fee figure (research/04)
 - ~$21.5B Polymarket volume in 2025: Keyrock x Dune report via Odaily (https://www.odaily.news/en/post/5208620); Sacra concurs (research/13). Other counts: ~$22.5B (Dune dashboard), ~$10.5B (DefiLlama DEX-only)

@@ -13,8 +13,9 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else \
 DATA = {
     "eyebrow": "Competition · AI trading startups",
     # Founder's original, kept as an option: "An early category. A different approach."
-    "headline": "Good teams. We built the safer agent.",
+    "headline": "Crowded space. Three things set us apart.",
     "field_label": "Six funded startups · largest disclosed round $4M",
+    "also": ("Also shipping trading agents: ", "Bankr · Nansen AI · Wayfinder · Almanak · Cod3x · Robinhood Agents"),
     # (name, logo blob, best at; "invert" flips a light tile dark)
     "field": [
         ("ClawPump", "/_blob/0bc2d38756d41a19b0f4b42cae97ee97", "Agent toolkit"),
@@ -43,9 +44,10 @@ DATA = {
     ],
     "foot": ("Evidence: DXRG, arXiv 2609.05663 · SolRugDetector, arXiv 2603.24625 · Luo et al., WWW 2026. "
              "Rivals: docs, GitHub, X, Oct 2026."),
-    "note": ("Six AI trading startups, good teams, mostly perps and chat. We're better in three ways. Safety: nothing "
-             "of theirs vetoes a rug before the swap; ours does, in code, and the AI can't override it. Data: they share "
-             "bundled feeds, so agents herd; ours buys its own, per call. And we publish every fill, never the strategy."),
+    "note": ("This space is crowded. Six funded AI trading startups, plus Bankr, Nansen and now Robinhood, all "
+             "shipping agents. Good teams. Three things set us apart. Safety: none of the six vetoes a rug before the "
+             "swap; ours refuses in code, and the AI can't override it. Data: they run on bundled feeds, so agents herd; "
+             "ours buys its own, per call. And we publish every fill, never the strategy, instead of copy trading."),
 }
 
 MONO = "font-family:'Geist Mono', 'Courier New', monospace"
@@ -59,7 +61,7 @@ THEY_W = 640
 TOCK_W = 1664 - LABEL_W - THEY_W          # 874
 PAD = 40
 HEAD_H = 60
-ROW_H = 118
+ROW_H = 102
 TILE = 48
 
 
@@ -82,8 +84,11 @@ def field_strip():
                   f'<div style="display:flex;flex-direction:column;gap:2px">'
                   f'<p style="font-size:26px;font-weight:600;letter-spacing:-0.3px;line-height:1.15;color:{FG};white-space:nowrap">{esc(name)}</p>'
                   f'<p style="font-size:24px;line-height:1.2;color:{DIM};white-space:nowrap">{esc(best)}</p></div></div>')
+    pre, names = DATA["also"]
+    also = (f'<p style="font-size:24px;line-height:1.2;color:{DIM};white-space:nowrap">{esc(pre)}'
+            f'<span style="color:{MID}">{esc(names)}</span></p>')
     return (f'<div style="display:flex;flex-direction:column;gap:18px">{mono(DATA["field_label"])}'
-            f'<div style="display:flex;flex-direction:row;gap:16px">{tiles}</div></div>')
+            f'<div style="display:flex;flex-direction:row;gap:16px">{tiles}</div>{also}</div>')
 
 
 def left_block():
@@ -130,7 +135,7 @@ def build():
         f'<h2 style="{SANS};font-size:88px;font-weight:600;letter-spacing:-3px;line-height:1.05;color:{FG}">{esc(DATA["headline"])}</h2>\n'
         f'<div style="flex:1"></div>\n'
         f'{field_strip()}\n'
-        f'<div style="height:14px"></div>\n'
+        f'<div style="height:2px"></div>\n'
         f'{compare}\n'
         f'<p style="position:absolute;left:128px;bottom:64px;width:1664px;font-size:22px;line-height:1.35;color:{DIM};white-space:nowrap">{esc(DATA["foot"])}</p>\n'
         f'<aside>{esc(DATA["note"])}</aside>\n</section>\n'
