@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { CalendarDays, Pencil } from "lucide-react";
 import type { UserProfile } from "@/server/types";
-import { AgentAvatar } from "@/components/social-common/agent-avatar";
+import { UserAvatar } from "@/components/common/user-avatar";
 import { FollowToggle } from "@/components/social-common/follow-toggle";
 import { PnlText } from "@/components/social-common/pnl-text";
 import { formatCount, formatJoined, formatUsd } from "@/components/social-common/format";
@@ -28,12 +28,10 @@ export function ProfileHeader({ profile }: { profile: UserProfile }) {
         of Follow in both, so its fan opens over the row's empty middle, not the pill.
       */}
       <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-x-5 sm:gap-y-0">
-        <AgentAvatar
-          seed={profile.handle}
-          label={profile.displayName ?? profile.handle}
-          size="lg"
-          rounded="rounded-2xl"
-          className="col-start-1 row-start-1 sm:row-span-2 sm:size-24 sm:text-3xl"
+        <UserAvatar
+          user={profile}
+          px={96}
+          className="col-start-1 row-start-1 size-16 sm:row-span-2 sm:size-24"
         />
 
         <div className="col-start-2 row-start-1 flex items-center gap-2 self-center justify-self-end sm:col-start-3 sm:self-start">

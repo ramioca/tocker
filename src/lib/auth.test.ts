@@ -5,7 +5,8 @@
  * derived from the email address or the wallet (it is public before the person has
  * chosen anything), and it must never be a name that reads as the product, its staff or
  * its founder. Token verification is not exercised here: `handleCandidate` is pure and
- * `uniqueHandle` only reads `users`, against in-memory PGlite.
+ * `uniqueHandle` only reads `users` and the names held after a rename, against
+ * in-memory PGlite. What the whole of sign-up stores is in `auth-signup.test.ts`.
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { nanoid } from "nanoid";
@@ -24,6 +25,13 @@ beforeAll(async () => {
 
 async function takeHandle(handle: string): Promise<void> {
   await db.insert(schema.users).values({ id: `did:privy:${nanoid(8)}`, handle });
+}
+
+/** An account that used to be called `handle`, renamed, and so still holds the name. */
+async function holdHandle(handle: string): Promise<void> {
+  const userId = `did:privy:${nanoid(8)}`;
+  await db.insert(schema.users).values({ id: userId, handle: `r${nanoid(8).toLowerCase().replace(/[^a-z0-9]/g, "x")}` });
+  await db.insert(schema.retiredHandles).values({ handle, userId });
 }
 
 describe("handleCandidate", () => {
@@ -64,6 +72,18 @@ describe("uniqueHandle", () => {
     expect(await uniqueHandle(base)).toBe(base);
     await takeHandle(base);
     expect(await uniqueHandle(base)).toBe(`${base}1`);
+  });
+
+  it("skips a name somebody gave up in a rename and still holds", async () => {
+    // Links in other people's notifications still point at it, so a new account
+    // arriving with that X username must not become it.
+    const base = `h${nanoid(6).toLowerCase().replace(/[^a-z0-9]/g, "x")}`;
+    await holdHandle(base);
+    expect(await uniqueHandle(base)).toBe(`${base}1`);
+    // Held and taken names are skipped alike, in one run of suffixes.
+    await holdHandle(`${base}1`);
+    await takeHandle(`${base}2`);
+    expect(await uniqueHandle(base)).toBe(`${base}3`);
   });
 
   it("never hands out a reserved name, whatever the X username was", async () => {

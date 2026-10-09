@@ -74,6 +74,10 @@ export const mockSession: Session = {
   handle: "rami",
   displayName: "Rami",
   avatarUrl: null,
+  avatarSeed: null,
+  // The mock viewer chose its name long ago, so mock mode never opens the first-run
+  // screen by itself. `?onboarding=1` previews it, and saves nothing.
+  onboardedAt: iso(200 * DAY),
   email: "owner@example.com",
 };
 

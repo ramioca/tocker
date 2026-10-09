@@ -4,7 +4,6 @@ import { useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Bot, IdCard, LogOut, Settings, UserCircle } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LoginButton } from "@/components/auth/login-button";
+import { UserAvatar } from "@/components/common/user-avatar";
 import { useSession } from "@/hooks/use-session";
 
 // Opened a handful of times ever; loaded on the first click rather than with every page.
@@ -43,19 +43,16 @@ export function AccountMenu() {
   }
 
   const name = session.displayName ?? session.handle;
-  const initial = name.slice(0, 1).toUpperCase();
 
   return (
     <>
       <DropdownMenu>
         <DropdownMenuTrigger
-          className="rounded-full transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.95] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          // A grid, so the avatar is laid out as a box and the button is exactly its size.
+          className="grid rounded-full transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.95] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           aria-label="Account menu"
         >
-          <Avatar className="size-8">
-            {session.avatarUrl ? <AvatarImage src={session.avatarUrl} alt="" /> : null}
-            <AvatarFallback>{initial}</AvatarFallback>
-          </Avatar>
+          <UserAvatar user={session} px={32} className="size-8" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
           {/* Base UI: a Label is a GroupLabel and throws outside a Group. */}

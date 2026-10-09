@@ -7,6 +7,7 @@ import { LikeButton } from "@/components/spectrumui/like-button";
 import { ShareButton } from "@/components/spectrumui/share-button";
 import { copyLink } from "@/components/common/copy-link";
 import { AgentAvatar } from "@/components/common/agent-avatar";
+import { UserAvatar } from "@/components/common/user-avatar";
 import { ChainBadge } from "@/components/common/chain-badge";
 import { ModeBadge } from "@/components/common/mode-badge";
 import { PnlText } from "@/components/common/pnl-text";
@@ -274,7 +275,8 @@ export const FeedCard = memo(function FeedCard({
             <AgentAvatar seed={agent.avatarSeed} name={agent.name} size="md" />
           </Link>
         ) : (
-          <AgentAvatar seed={item.author.handle} name={item.author.handle} size="md" />
+          // A person's own note. Round, where an agent's mark is a rounded square.
+          <UserAvatar user={item.author} px={36} className="size-9" />
         )}
 
         <div className="min-w-0 flex-1">

@@ -18,7 +18,7 @@ import {
 
 type PostJoin = {
   post: typeof posts.$inferSelect;
-  author: { id: string; handle: string; displayName: string | null; avatarUrl: string | null };
+  author: { id: string; handle: string; displayName: string | null; avatarUrl: string | null; avatarSeed: string | null };
   agent: typeof agents.$inferSelect | null;
   trade: typeof trades.$inferSelect | null;
 };
@@ -27,7 +27,13 @@ function baseQuery(db: Db) {
   return db
     .select({
       post: posts,
-      author: { id: users.id, handle: users.handle, displayName: users.displayName, avatarUrl: users.avatarUrl },
+      author: {
+        id: users.id,
+        handle: users.handle,
+        displayName: users.displayName,
+        avatarUrl: users.avatarUrl,
+        avatarSeed: users.avatarSeed,
+      },
       agent: agents,
       trade: trades,
     })
@@ -185,7 +191,13 @@ export async function getComments(
   const rows = await db
     .select({
       comment: comments,
-      author: { id: users.id, handle: users.handle, displayName: users.displayName, avatarUrl: users.avatarUrl },
+      author: {
+        id: users.id,
+        handle: users.handle,
+        displayName: users.displayName,
+        avatarUrl: users.avatarUrl,
+        avatarSeed: users.avatarSeed,
+      },
     })
     .from(comments)
     .innerJoin(users, eq(users.id, comments.authorId))

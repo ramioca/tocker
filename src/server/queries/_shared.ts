@@ -111,13 +111,30 @@ export function iso(value: Date | string | null | undefined): string | null {
 
 // ---------- row mappers ----------
 
+/**
+ * The photo link a card anyone can read may carry: none once the person has picked a
+ * generated avatar. Nothing draws the photo then (`avatarFor`), and the link is to their
+ * X picture, which they chose not to show beside this name. Their own session keeps it,
+ * so their picker can still offer "Your photo".
+ */
+export function publicPhoto(row: { avatarUrl: string | null; avatarSeed: string | null }): string | null {
+  return row.avatarSeed ? null : row.avatarUrl;
+}
+
 export function toUserCard(row: {
   id: string;
   handle: string;
   displayName: string | null;
   avatarUrl: string | null;
+  avatarSeed: string | null;
 }): UserCard {
-  return { id: row.id, handle: row.handle, displayName: row.displayName, avatarUrl: row.avatarUrl };
+  return {
+    id: row.id,
+    handle: row.handle,
+    displayName: row.displayName,
+    avatarUrl: publicPhoto(row),
+    avatarSeed: row.avatarSeed,
+  };
 }
 
 export type TokenRow = typeof tokens.$inferSelect;
@@ -999,7 +1016,13 @@ export async function buildAgentCards(
   const ownerIds = [...new Set(rows.map((r) => r.ownerId))];
   const [owners, aggregates] = await Promise.all([
     db
-      .select({ id: users.id, handle: users.handle, displayName: users.displayName, avatarUrl: users.avatarUrl })
+      .select({
+        id: users.id,
+        handle: users.handle,
+        displayName: users.displayName,
+        avatarUrl: users.avatarUrl,
+        avatarSeed: users.avatarSeed,
+      })
       .from(users)
       .where(inArray(users.id, ownerIds)),
     loaded ??
@@ -1009,7 +1032,7 @@ export async function buildAgentCards(
       ),
   ]);
   const ownerById = new Map(owners.map((o) => [o.id, toUserCard(o)]));
-  const fallbackOwner = (id: string): UserCard => ({ id, handle: "unknown", displayName: null, avatarUrl: null });
+  const fallbackOwner = (id: string): UserCard => ({ id, handle: "unknown", displayName: null, avatarUrl: null, avatarSeed: null });
   return rows.map((r) => toAgentCard(r, ownerById.get(r.ownerId) ?? fallbackOwner(r.ownerId), aggregates.get(r.id)));
 }
 

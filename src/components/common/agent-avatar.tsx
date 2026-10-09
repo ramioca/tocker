@@ -73,14 +73,6 @@ const SIZES = {
   xl: "size-16",
 } as const;
 
-const TEXT_SIZES = {
-  xs: "text-[9px]",
-  sm: "text-[10px]",
-  md: "text-xs",
-  lg: "text-sm",
-  xl: "text-lg",
-} as const;
-
 export function AgentAvatar({
   seed,
   name,
@@ -112,32 +104,6 @@ export function AgentAvatar({
         size="100%"
         className="block size-full"
       />
-    </span>
-  );
-}
-
-/** Round variant for people rather than agents. */
-export function UserAvatar({
-  handle,
-  size = "sm",
-  className,
-}: {
-  handle: string;
-  size?: keyof typeof SIZES;
-  className?: string;
-}) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "inline-grid shrink-0 place-items-center rounded-full font-semibold text-white/90 ring-1 ring-inset ring-white/10",
-        SIZES[size],
-        TEXT_SIZES[size],
-        className,
-      )}
-      style={{ backgroundImage: avatarGradient(`user:${handle}`) }}
-    >
-      {handle.slice(0, 2).toUpperCase()}
     </span>
   );
 }

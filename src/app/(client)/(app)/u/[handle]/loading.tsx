@@ -19,7 +19,7 @@ export default function ProfileLoading() {
     >
       <header className="glass-panel rounded-2xl p-5 sm:p-6">
         <div className="flex flex-wrap items-start gap-5">
-          <Bar className="size-16 shrink-0 rounded-2xl" />
+          <Bar className="size-16 shrink-0 rounded-full" />
           <div className="min-w-0 flex-1 space-y-2.5">
             <Bar className="h-6 w-44" />
             <Bar className="h-3.5 w-28" />

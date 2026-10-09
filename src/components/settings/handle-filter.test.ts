@@ -25,17 +25,17 @@ describe("removedNote", () => {
   });
 
   it("names punctuation a screen reader would skip", () => {
-    expect(removedNote(["-", "."])).toBe("Hyphens and dots aren’t allowed in handles");
-    expect(removedNote([" "])).toBe("Spaces aren’t allowed in handles");
-    expect(removedNote(["\t", " "])).toBe("Spaces aren’t allowed in handles");
+    expect(removedNote(["-", "."])).toBe("Hyphens and dots aren’t allowed in usernames");
+    expect(removedNote([" "])).toBe("Spaces aren’t allowed in usernames");
+    expect(removedNote(["\t", " "])).toBe("Spaces aren’t allowed in usernames");
   });
 
   it("quotes anything else, singular when it is one character", () => {
-    expect(removedNote(["@"])).toBe("“@” isn’t allowed in handles");
-    expect(removedNote(["@", "-"])).toBe("“@” and hyphens aren’t allowed in handles");
+    expect(removedNote(["@"])).toBe("“@” isn’t allowed in usernames");
+    expect(removedNote(["@", "-"])).toBe("“@” and hyphens aren’t allowed in usernames");
   });
 
   it("stops listing after three", () => {
-    expect(removedNote([" ", "!", "#", "@"])).toBe("Spaces, “!” and other symbols aren’t allowed in handles");
+    expect(removedNote([" ", "!", "#", "@"])).toBe("Spaces, “!” and other symbols aren’t allowed in usernames");
   });
 });

@@ -51,13 +51,13 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       return EMPTY_COMMAND_INDEX;
     }),
     // Only the slugs and the count: "My agents" lights up on the viewer's own agent pages
-    // and no one else's, and onboarding skips "create your first agent" for an owner.
+    // and no one else's, and the first-run screens skip "build your first agent" for an owner.
     myAgents(userId).catch((error: unknown) => {
       console.error("[app-layout] my agents failed", error);
       return [];
     }),
     killSwitchFor(userId),
-    // For onboarding's wording only. It never throws, and answers "no" when in doubt.
+    // For the key prompt's wording only. It never throws, and answers "no" when in doubt.
     payPerUseAllowedFor(session),
   ]);
 
@@ -75,8 +75,20 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         pausedAt={killSwitch.pausedAt}
       >
         {children}
-        {/* First-run only, so the modal's code loads behind a gate rather than on every page. */}
-        <OnboardingGate ownedAgentCount={mine.length} payPerUseAllowed={payPerUseAllowed} />
+        {/* Who sees the first-run screens is decided here, on the server, once per account:
+            an account whose `onboarded_at` is null. Strictly null, so a session without the
+            field (a mock) never opens them. The gate draws the ground in this same render
+            and loads the card's code behind it, rather than on every page. */}
+        <OnboardingGate
+          needsOnboarding={session?.onboardedAt === null}
+          profile={
+            session
+              ? { handle: session.handle, avatarUrl: session.avatarUrl, avatarSeed: session.avatarSeed ?? null }
+              : null
+          }
+          ownedAgentCount={mine.length}
+          payPerUseAllowed={payPerUseAllowed}
+        />
       </AppShell>
     </>
   );

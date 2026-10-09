@@ -5,6 +5,7 @@
  * asked for its card, which loaded the same aggregates again. `buildAgentCards` now
  * takes them when they are in hand. The card must be the same card either way.
  */
+import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -12,7 +13,8 @@ import type { Db } from "@/db";
 import * as schema from "@/db/schema";
 import { seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { toNumeric } from "@/lib/money";
-import { buildAgentCards, loadAgentAggregates, loadBookMarks, toTradeRow } from "./_shared";
+import { buildAgentCards, loadAgentAggregates, loadBookMarks, publicPhoto, toTradeRow, toUserCard } from "./_shared";
+import { getUserProfile } from "./users";
 
 const DAY = 86_400_000;
 
@@ -58,6 +60,49 @@ describe("buildAgentCards with aggregates in hand", () => {
     expect(card.followerCount).toBe(1);
     expect(card.pnlUsd).not.toBeNull();
     expect(handedOver.find((c) => c.id === unmarked.agentId)).toMatchObject({ pnlUsd: null, equityUsd: null });
+  });
+});
+
+describe("the photo link on a card anyone can read", () => {
+  const PHOTO = "https://pbs.twimg.com/profile_images/1234567890/face_normal.jpg";
+  const SEED = "k3j9x0a1bz";
+
+  it("is left out once the person picked a generated avatar: nothing draws it", () => {
+    expect(publicPhoto({ avatarUrl: PHOTO, avatarSeed: SEED })).toBeNull();
+    expect(publicPhoto({ avatarUrl: PHOTO, avatarSeed: null })).toBe(PHOTO);
+    expect(publicPhoto({ avatarUrl: null, avatarSeed: null })).toBeNull();
+
+    const person = { id: "did:privy:someone", handle: "someone", displayName: null };
+    expect(toUserCard({ ...person, avatarUrl: PHOTO, avatarSeed: SEED })).toEqual({ ...person, avatarUrl: null, avatarSeed: SEED });
+    expect(toUserCard({ ...person, avatarUrl: PHOTO, avatarSeed: null })).toEqual({ ...person, avatarUrl: PHOTO, avatarSeed: null });
+  });
+
+  it("reaches posts and comments only through the same card", () => {
+    const feed = readFileSync(new URL("./feed.ts", import.meta.url), "utf8");
+    expect(feed.match(/author: toUserCard\(r\.author\)/g)).toHaveLength(2);
+    expect(feed).not.toMatch(/author: r\.author\b/);
+  });
+
+  it("is on no agent card or profile of someone who picked an avatar", async () => {
+    const picked = await seedAgent(db);
+    const kept = await seedAgent(db);
+    await db.update(schema.users).set({ avatarUrl: PHOTO, avatarSeed: SEED }).where(eq(schema.users.id, picked.userId));
+    await db.update(schema.users).set({ avatarUrl: PHOTO }).where(eq(schema.users.id, kept.userId));
+
+    const rows = await db.select().from(schema.agents).where(inArray(schema.agents.id, [picked.agentId, kept.agentId]));
+    const cards = await buildAgentCards(db, rows);
+    expect(cards.find((card) => card.id === picked.agentId)?.owner).toMatchObject({ avatarUrl: null, avatarSeed: SEED });
+    expect(cards.find((card) => card.id === kept.agentId)?.owner).toMatchObject({ avatarUrl: PHOTO, avatarSeed: null });
+
+    const [{ handle }] = await db.select().from(schema.users).where(eq(schema.users.id, picked.userId));
+    // To a visitor and to the person themselves: the page is the same page.
+    for (const viewer of [null, picked.userId]) {
+      const profile = await getUserProfile(handle, viewer);
+      expect(profile).toMatchObject({ avatarUrl: null, avatarSeed: SEED });
+      expect(JSON.stringify(profile)).not.toContain("pbs.twimg.com");
+    }
+    const [other] = await db.select().from(schema.users).where(eq(schema.users.id, kept.userId));
+    expect(await getUserProfile(other.handle, null)).toMatchObject({ avatarUrl: PHOTO, avatarSeed: null });
   });
 });
 

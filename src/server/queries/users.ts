@@ -2,7 +2,7 @@ import "server-only";
 import { and, asc, desc, eq, exists, ilike, inArray, isNull, lt, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { agents, follows, getDb, llmKeys, notifications, users, type Db } from "@/db";
 import type { LlmKeyRow, NotificationRow, Page, UserProfile } from "@/server/types";
-import { buildAgentCards, decodeCursor, encodeCursor, isFollowing, pageSize } from "./_shared";
+import { buildAgentCards, decodeCursor, encodeCursor, isFollowing, pageSize, publicPhoto } from "./_shared";
 import { redactSecrets } from "@/lib/security/redact";
 import { visibleRationale } from "./visibility";
 import { missingKeySql } from "@/lib/agent/inference-gate";
@@ -93,7 +93,8 @@ export async function getUserProfile(handle: string, viewerId?: string | null): 
     id: user.id,
     handle: user.handle,
     displayName: user.displayName,
-    avatarUrl: user.avatarUrl,
+    avatarUrl: publicPhoto(user),
+    avatarSeed: user.avatarSeed,
     bio: user.bio,
     createdAt: user.createdAt.toISOString(),
     followerCount: Number(followerRow[0]?.n ?? 0),

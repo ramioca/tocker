@@ -1,7 +1,8 @@
 /**
- * The Handle field's input filter, outside the component so it can be tested. Handles
- * are letters, numbers and underscores, lowercased; anything else typed or pasted is
- * dropped — and named, so it doesn't just vanish without a word.
+ * The username field's input filter, outside the component so it can be tested. A
+ * username is letters, numbers and underscores, lowercased; anything else typed or pasted
+ * is dropped — and named, so it doesn't just vanish without a word. It is "username"
+ * wherever a person reads it and "handle" in code (`src/lib/handles.ts`).
  */
 
 // Said as words: a screen reader at its default punctuation level skips a lone "-" or ".".
@@ -16,7 +17,7 @@ export function cleanHandle(raw: string): { value: string; removed: string[] } {
   return { value: raw.replace(/[^a-zA-Z0-9_]/g, "").toLowerCase(), removed };
 }
 
-/** "Hyphens and dots aren’t allowed in handles", or null when nothing was dropped. */
+/** "Hyphens and dots aren’t allowed in usernames", or null when nothing was dropped. */
 export function removedNote(removed: string[]): string | null {
   if (removed.length === 0) return null;
   const names = [...new Set(removed.map((ch) => NAMED[/\s/.test(ch) ? " " : ch] ?? `“${ch}”`))];
@@ -24,5 +25,5 @@ export function removedNote(removed: string[]): string | null {
   const list = shown.length === 1 ? shown[0] : `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
   // Only a single quoted character is singular; the named ones are already plural.
   const singular = shown.length === 1 && !Object.values(NAMED).includes(shown[0]);
-  return `${list.charAt(0).toUpperCase()}${list.slice(1)} ${singular ? "isn’t" : "aren’t"} allowed in handles`;
+  return `${list.charAt(0).toUpperCase()}${list.slice(1)} ${singular ? "isn’t" : "aren’t"} allowed in usernames`;
 }

@@ -1,5 +1,6 @@
 /**
- * Whether the signed-in user has any LLM keys, for the onboarding modal.
+ * Whether the signed-in user has any LLM keys, for the key prompt
+ * (`src/components/onboarding/key-prompt.tsx`).
  *
  * Deliberately returns only metadata (id, provider, label, last4) — the same shape
  * `LlmKeyRow` already exposes. No secret ever crosses this boundary.

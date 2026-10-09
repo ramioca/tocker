@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { TockerMark } from "@/components/brand/tocker-mark";
-import { LoginSilk } from "./login-silk";
+import { LoginBackdrop } from "./login-backdrop";
 import "./auth.css";
 
 /**
@@ -24,17 +24,6 @@ export function LoginShell({ children }: { children: ReactNode }) {
         </Link>
       </header>
       {children}
-    </div>
-  );
-}
-
-/** Back to front: poster, silk (when it loads), scrim. The grain is a pseudo-element. */
-function LoginBackdrop() {
-  return (
-    <div className="auth-bg" aria-hidden>
-      <div className="auth-bg-poster" />
-      <LoginSilk />
-      <div className="auth-bg-scrim" />
     </div>
   );
 }

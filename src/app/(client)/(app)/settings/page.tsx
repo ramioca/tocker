@@ -11,6 +11,8 @@ import { NotificationPrefs } from "@/components/settings/notification-prefs";
 import { SignOutSection } from "@/components/settings/sign-out-section";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { isAdminEmail } from "@/lib/admin";
+import { avatarTiles } from "@/lib/avatar";
+import { seedCount } from "@/components/profile/avatar-picker-model";
 
 export const metadata: Metadata = { title: "Settings" }; // the root layout appends " · Tocker"
 
@@ -52,7 +54,14 @@ export default async function SettingsPage() {
           title="Profile"
           description="How you appear on the feed, the leaderboard and every agent you publish."
         >
-          <ProfileForm session={session} bio={profile?.bio ?? ""} />
+          {/* The picker's generated avatars are made here, once per request: the form is
+              rendered on the server too, and random ones made in it would differ between
+              the two renders. As many as the row can hold; it uses fewer beside a photo. */}
+          <ProfileForm
+            session={session}
+            bio={profile?.bio ?? ""}
+            avatarSeeds={avatarTiles(null, seedCount(false))}
+          />
         </SettingsSection>
 
         <SettingsSection

@@ -6,7 +6,9 @@
  * upserted (other workstreams' rows referencing them survive).
  *
  * Pair it with `DEV_IMPERSONATE_USER_ID=did:privy:seed-you` to browse the app as
- * the seeded user without Privy credentials.
+ * the seeded user without Privy credentials. Every seeded user has chosen a username
+ * (`onboarded_at` set) except `SEED_NOT_ONBOARDED`, so the first-run screen stays out of
+ * the way unless that account, or an id that is not seeded, is the one impersonated.
  */
 import { createHash } from "node:crypto";
 import { inArray, sql } from "drizzle-orm";
@@ -154,6 +156,13 @@ const SEED_USERS = [
   { id: "did:privy:seed-dex", handle: "dex", displayName: "Dex", bio: "Narrative velocity is the only alpha.", email: "dex@tocker.dev" },
   { id: "did:privy:seed-sable", handle: "sable", displayName: "Sable", bio: "Slow, boring, profitable.", email: "sable@tocker.dev" },
 ];
+
+/**
+ * The seeded owner who has not chosen a username and avatar yet (`users.onboarded_at`
+ * null). Impersonate it to see the first-run screen as an account with agents does;
+ * seeding again puts it back. Never `seed-you`, which local development signs in as.
+ */
+const SEED_NOT_ONBOARDED = "did:privy:seed-sable";
 
 /** Exit-engine and execution defaults shared by every seeded agent. */
 const EXIT_DEFAULTS = { trailingStopPct: null, maxHoldHours: null, exitScoreBelow: 40, exitOnLiquidityDropPct: 50 } as const;
@@ -708,6 +717,10 @@ async function seed() {
       bio: u.bio,
       email: u.email,
       avatarUrl: null,
+      // A schema push runs no migration, so nothing backfills this: without it every
+      // seeded account would meet the first-run screen. `SEED_NOT_ONBOARDED` is the one
+      // left as sign-up leaves an account, to see that screen as an owner does.
+      onboardedAt: u.id === SEED_NOT_ONBOARDED ? null : at(-i - 1, 9),
       createdAt: at(-i - 1, 9),
       updatedAt: at(-i - 1, 9),
     })),
@@ -1119,6 +1132,7 @@ async function seed() {
     `✓ seeded ${SEED_USERS.length} users · ${SEED_AGENTS.length} agents · ${tradeCount} trades · ${postCount} posts · ${snapCount} snapshots`,
   );
   console.log("  browse as the demo user: DEV_IMPERSONATE_USER_ID=did:privy:seed-you pnpm dev");
+  console.log(`  see the first-run screen as an owner: DEV_IMPERSONATE_USER_ID=${SEED_NOT_ONBOARDED} pnpm dev`);
 }
 
 seed()

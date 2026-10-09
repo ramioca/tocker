@@ -16,6 +16,14 @@ export interface Session {
   handle: string;
   displayName: string | null;
   avatarUrl: string | null;
+  /** The generated avatar this person picked, or null. Optional: mocks and fixtures build a session by hand. */
+  avatarSeed?: string | null;
+  /**
+   * When they chose their username and avatar (ISO), or null when they have not yet.
+   * Strictly null is what opens the first-run screen, so an object without the field
+   * (a mock) never does.
+   */
+  onboardedAt?: string | null;
   email: string | null;
 }
 
@@ -23,7 +31,10 @@ export interface UserCard {
   id: string;
   handle: string;
   displayName: string | null;
+  /** The sign-in photo's link. Null once an avatar is picked: no link goes out that is not drawn (`publicPhoto`). */
   avatarUrl: string | null;
+  /** As on `Session`. Drawn through `UserAvatar`, which prefers it to the photo. */
+  avatarSeed?: string | null;
 }
 
 export interface TokenRef {

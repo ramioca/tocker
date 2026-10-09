@@ -12,7 +12,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { UserAvatar } from "@/components/common/agent-avatar";
+import { UserAvatar } from "@/components/common/user-avatar";
 import { RelativeTime } from "@/components/common/relative-time";
 import { EmptyState } from "@/components/common/empty-state";
 import { Textarea } from "@/components/ui/textarea";
@@ -93,6 +93,7 @@ export function CommentThread({
             handle: session.handle,
             displayName: session.displayName,
             avatarUrl: session.avatarUrl,
+            avatarSeed: session.avatarSeed ?? null,
           },
           createdAt: new Date().toISOString(),
         };
@@ -191,7 +192,7 @@ export function CommentThread({
           <ul className="space-y-4">
             {comments.map((comment) => (
               <li key={comment.id} className="flex gap-2.5">
-                <UserAvatar handle={comment.author.handle} size="sm" />
+                <UserAvatar user={comment.author} px={28} className="size-7" />
                 <div className="min-w-0 flex-1">
                   {/* Linked and with the @handle, as a card header is: beside an agent
                       called "Nova", a commenter shown only as "Nova" is ambiguous. */}
