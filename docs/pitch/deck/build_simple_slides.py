@@ -59,22 +59,25 @@ SLIDES = {
 
 def gtm():
     def row(k, big, tag):
-        return (f'      <div style="display:flex; flex-direction:column; gap:12px; padding:24px 0 20px; border-top:1px solid {HAIR}">\n'
-                f'        <p style="{MONO}; font-size:24px; letter-spacing:4px; text-transform:uppercase; color:{DIM}">{e(k)}</p>\n'
-                f'        <p style="{SANS}; font-size:96px; font-weight:600; line-height:1; letter-spacing:-4px; white-space:nowrap; color:{FG}">{e(big)}</p>\n'
-                f'        <p style="{SANS}; font-size:36px; line-height:1.25; letter-spacing:-0.5px; color:{MID}">{e(tag)}</p>\n'
-                f'      </div>\n')
+        return (f'      <div style="height:150px; display:flex; flex-direction:row; gap:28px; align-items:center; border-top:1px solid {HAIR}">\n'
+                f'        <p style="width:340px; {SANS}; font-size:80px; font-weight:600; line-height:1; letter-spacing:-3px; white-space:nowrap; color:{FG}">{e(big)}</p>\n'
+                f'        <div style="display:flex; flex-direction:column; gap:8px; flex:1">\n'
+                f'          <p style="{MONO}; font-size:24px; letter-spacing:3px; text-transform:uppercase; color:{DIM}">{e(k)}</p>\n'
+                f'          <p style="{SANS}; font-size:32px; line-height:1.25; letter-spacing:-0.4px; color:{MID}">{e(tag)}</p>\n'
+                f'        </div>\n      </div>\n')
 
     def mkt(k, num, tag):
-        return (f'      <div style="display:flex; flex-direction:row; gap:28px; align-items:baseline; padding:30px 0; border-top:1px solid {HAIR}">\n'
-                f'        <p style="width:92px; {MONO}; font-size:24px; letter-spacing:3px; text-transform:uppercase; color:{DIM}">{e(k)}</p>\n'
-                f'        <p style="width:310px; {SANS}; font-size:96px; font-weight:600; line-height:1; letter-spacing:-4px; font-variant-numeric:tabular-nums; color:{FG}">{e(num)}</p>\n'
-                f'        <p style="flex:1; {SANS}; font-size:36px; line-height:1.25; color:{MID}">{e(tag)}</p>\n'
-                f'      </div>\n')
+        return (f'      <div style="height:150px; display:flex; flex-direction:row; gap:28px; align-items:center; border-top:1px solid {HAIR}">\n'
+                f'        <p style="width:340px; {SANS}; font-size:80px; font-weight:600; line-height:1; letter-spacing:-3px; white-space:nowrap; font-variant-numeric:tabular-nums; color:{FG}">{e(num)}</p>\n'
+                f'        <div style="display:flex; flex-direction:column; gap:8px; flex:1">\n'
+                f'          <p style="{MONO}; font-size:24px; letter-spacing:3px; text-transform:uppercase; color:{DIM}">{e(k)}</p>\n'
+                f'          <p style="{SANS}; font-size:32px; line-height:1.25; letter-spacing:-0.4px; color:{MID}">{e(tag)}</p>\n'
+                f'        </div>\n      </div>\n')
     head = lambda t: f'      <p style="{MONO}; font-size:24px; letter-spacing:4px; text-transform:uppercase; color:{MID}; padding:0 0 18px">{e(t)}</p>\n'
     left = ('    <div style="display:flex; flex-direction:column; flex:1">\n' + head("How we get users")
-            + row("01 · Superteam Earn bounty", "$5K", "The first autonomous trading competition. Best strategy wins.")
-            + row("02 · X", "Ads + DMs", "Paid ads and cold DMs to traders.")
+            + row("01 · Superteam Earn", "Bounties", "Find our first testers.")
+            + row("02 · Competition", "$5K", "The first fully autonomous trading competition.")
+            + row("03 · X", "KOLs", "Ambassadors, KOLs and direct outreach.")
             + '    </div>\n')
     right = ('    <div style="display:flex; flex-direction:column; flex:1">\n' + head("Markets we expand to · yearly volume")
              + mkt("Now", "$482B", "Solana memecoins")

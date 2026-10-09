@@ -30,7 +30,7 @@ Who pays? Traders already do: nine hundred forty million dollars last year to So
 It's a crowded space, and these are good teams, but each covers a piece. HeyElsa and Ask Gina are mostly chat with execution. Fere runs preset bots you can't configure. Senpi and Minara run perps strategies on bundled data, with no rug veto. Tocker does all five: it runs on its own 24/7, under your rules and guardrails, vetoes rugs in code, picks and pays for its data over x402, and pays for its own model in USDC.
 
 ## gtm
-We get users two ways. First, a Superteam Earn bounty to test it: the first autonomous trading competition, five thousand dollars, best strategy wins. Second, paid ads and cold DMs to traders on X. We start with Solana memecoins, four hundred eighty-two billion dollars traded last year, then Polymarket and tokenized stocks.
+We get users three ways. Bounties on Superteam Earn find our first testers. Then the first fully autonomous trading competition, five thousand dollars in prizes, best strategy wins. And X: KOLs, ambassadors and direct outreach. We start with Solana memecoins, four hundred eighty-two billion dollars traded last year, then Polymarket and tokenized stocks.
 
 ## traction
 Where are we? Eleven users in open beta, each paying about two dollars a day in fees, so about sixty dollars a month. At that rate, three hundred thirty-four users gets us to twenty thousand dollars of MRR. The competition and X are how we get there.
