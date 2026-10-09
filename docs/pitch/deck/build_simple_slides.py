@@ -19,71 +19,50 @@ def section(sid, eyebrow, headline, body, foot=""):
             f'  <aside>{e(NOTES[sid])}</aside>\n</section>\n')
 
 
-def bigs(items, size):
+def bigs(items, size, weights=None):
     cols = ""
     gap = 96 if len(items) == 2 else 64
-    for num, tag in items:
-        cols += (f'    <div style="display:flex; flex-direction:column; gap:24px; flex:1; padding:36px 0 0; border-top:1px solid {HAIR}">\n'
+    for j, (num, tag) in enumerate(items):
+        w = weights[j] if weights else 1
+        cols += (f'    <div style="display:flex; flex-direction:column; gap:24px; flex:{w}; padding:36px 0 0; border-top:1px solid {HAIR}">\n'
                  f'      <p style="{SANS}; font-size:{size}px; font-weight:600; line-height:0.95; letter-spacing:-{size // 22}px; white-space:nowrap; font-variant-numeric:tabular-nums; color:{FG}">{e(num)}</p>\n'
-                 f'      <p style="{SANS}; font-size:36px; line-height:1.3; letter-spacing:-0.5px; color:{MID}">{e(tag)}</p>\n'
+                 f'      <p style="{SANS}; font-size:42px; line-height:1.25; letter-spacing:-0.6px; color:{MID}">{e(tag)}</p>\n'
                  f'    </div>\n')
     return f'  <div style="display:flex; flex-direction:row; gap:{gap}px">\n{cols}  </div>\n'
 
 
 SLIDES = {
     "problem": ("The problem", "Traders lack edge. Agents lack rails.",
-                bigs([("94%", "of memecoin wallets made no profit in 90 days."),
-                      ("$200", "a month and 20+ services to run your own agent.")], 150),
-                "94%: 304,161 Solana memecoin wallets, fomo × Dune, 90 days to Aug 2026 · $200: list prices, Oct 2026"),
+                bigs([("94%", "of memecoin wallets made no profit."),
+                      ("$200", "a month and 20+ services to run your own agent.")], 180),
+                "94%: 304,161 Solana memecoin wallets over 90 days to Aug 2026, fomo × Dune · $200: list prices, Oct 2026"),
     "solution": ("The solution", "Tocker is the edge and the rails.",
                  bigs([("1 line", "of English launches your agent."),
                        ("10", "hard gates refuse unsafe buys."),
-                       ("24/7", "hosted. Nothing to wire.")], 150), ""),
+                       ("24/7", "hosted. Nothing to wire.")], 180), ""),
     "edge": ("The edge", "Edge starts with not losing.",
-             bigs([("76%", "of new Solana tokens were rugs. Our gates refuse them."),
+             bigs([("76%", "of new tokens were rugs. Gates refuse them."),
                    ("2–7¢", "per token for the data your thesis needs."),
-                   ("0 of 30", "AI agents liquidated, against 43% of humans.")], 150),
-             "76%: SolRugDetector, H1 2025 · 0 of 30: Aster Human vs AI, Season 1, Jan 2026 · 2–7¢: Tocker data registry"),
+                   ("0/30", "AI agents liquidated, against 43% of humans.")], 180),
+             "76%: SolRugDetector, H1 2025 · 0/30: Aster Human vs AI, Season 1, Jan 2026 · 2–7¢: Tocker data registry"),
     "business": ("Business model", "Traders pay 1%. We charge 0.5%.",
                  bigs([("$940M", "paid to Solana trading bots in 2025."),
-                       ("0.5%", "our fee per trade. Live today.")], 150),
+                       ("0.5%", "our fee per trade. Live today.")], 180),
                  "Solana Foundation 2025 recap (Blockworks) · 1% bots: Photon, Trojan, BonkBot"),
     "traction": ("Traction", "11 users. 334 gets us to $20K MRR.",
                  bigs([("11", "users in open beta."),
                        ("~$2", "in fees per user, per day."),
-                       ("334", "users × $60 a month = $20K.")], 150),
+                       ("334", "users × $60 a month = $20K.")], 180),
                  ""),
 }
 
 
 def gtm():
-    def row(k, big, tag):
-        return (f'      <div style="display:flex; flex-direction:column; gap:12px; padding:24px 0 20px; border-top:1px solid {HAIR}">\n'
-                f'        <p style="{MONO}; font-size:24px; letter-spacing:4px; text-transform:uppercase; color:{DIM}">{e(k)}</p>\n'
-                f'        <p style="{SANS}; font-size:88px; font-weight:600; line-height:1; letter-spacing:-3px; white-space:nowrap; color:{FG}">{e(big)}</p>\n'
-                f'        <p style="{SANS}; font-size:34px; line-height:1.3; letter-spacing:-0.5px; color:{MID}">{e(tag)}</p>\n'
-                f'      </div>\n')
-
-    def mkt(k, num, tag):
-        return (f'      <div style="display:flex; flex-direction:row; gap:28px; align-items:baseline; padding:26px 0; border-top:1px solid {HAIR}">\n'
-                f'        <p style="width:92px; {MONO}; font-size:24px; letter-spacing:3px; text-transform:uppercase; color:{DIM}">{e(k)}</p>\n'
-                f'        <p style="width:290px; {SANS}; font-size:88px; font-weight:600; line-height:1; letter-spacing:-3px; font-variant-numeric:tabular-nums; color:{FG}">{e(num)}</p>\n'
-                f'        <p style="flex:1; {SANS}; font-size:32px; line-height:1.25; color:{MID}">{e(tag)}</p>\n'
-                f'      </div>\n')
-    left = (f'    <div style="display:flex; flex-direction:column; flex:1">\n'
-            f'      <p style="{MONO}; font-size:24px; letter-spacing:4px; text-transform:uppercase; color:{MID}; padding:0 0 18px">How we get users</p>\n'
-            + row("01 · Superteam Earn bounty", "$5K", "Our test: the first autonomous trading competition. Best strategy wins.")
-            + row("02 · X", "Ads + DMs", "Paid ads and cold DMs to traders on X.")
-            + '    </div>\n')
-    right = (f'    <div style="display:flex; flex-direction:column; flex:1">\n'
-             f'      <p style="{MONO}; font-size:24px; letter-spacing:4px; text-transform:uppercase; color:{MID}; padding:0 0 18px">Where we expand · yearly volume</p>\n'
-             + mkt("Now", "$482B", "Solana memecoins")
-             + mkt("Next", "$21.5B", "Polymarket")
-             + mkt("Then", "$12.4B", "Tokenized stocks")
-             + '    </div>\n')
-    body = f'  <div style="display:flex; flex-direction:row; gap:96px; align-items:start">\n{left}{right}  </div>\n'
+    body = bigs([("$5K", "Superteam bounty. Best AI strategy wins."),
+                 ("X", "Paid ads and cold DMs."),
+                 ("$482B", "Solana memecoins. Then Polymarket and stocks.")], 180, [1, 0.8, 1.45])
     return section("gtm", "Go-to-market", "Win traders. Then new markets.", body,
-                   "$482B: Solana 2025 recap · $21.5B: Polymarket 2025, Keyrock × Dune · $12.4B: Solana tokenized stocks, 2026 to date")
+                   "$482B: Solana memecoin volume, 2025 recap · Polymarket $21.5B (2025) · Solana tokenized stocks $12.4B (2026 to date)")
 
 
 for sid, (eb, h, body, foot) in SLIDES.items():
