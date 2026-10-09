@@ -1,9 +1,10 @@
 # Tocker — 3-minute pitch (short deck, v6)
 
-~416 words over 10 slides, about 2:35 at 160 wpm. Reworked on Oct 8, 2026 after a pitch roast that pushed on three things: "what's the edge?", "the competitors are well established", and "performance". [pause] marks a beat.
+~470 words over 11 slides, about 2:55 at 160 wpm. Reworked on Oct 8, 2026 after a pitch roast that pushed on three things: "what's the edge?", "the competitors are well established", and "performance". [pause] marks a beat.
 - **Edge** (new slide, replaces the x402 "alpha" slide): not prediction but not losing, in three steps. Refuse the rugs (gates in code), pick by your thesis (paid data, cents a token), exit by rule. Evidence: research/29, code: research/30.
 - **Proof** slide dropped (Oct 9): the gate audit and house cohort stay in Q&A 20 as the plan, not on a slide.
 - **Competition** (Oct 9): a capability matrix, "Six good teams. Each covers a piece." Six AI startups vs Tocker on runs 24/7 on its own, your rules and guardrails, rug veto in code, picks and pays for its data (x402), pays for its AI in USDC. Cells from research/26 §7 Autonomy and the README matrix. Don't say rivals aren't 24/7: ClawPump, Minara (autopilot), Senpi and Fere all run 24/7. The moat answer is Q&A 22.
+- **Pitch #2 feedback (Oct 9): too much text.** Problem, solution, edge and business are now big numbers with one tagline each. GTM drops the feed image: two acquisition channels (a $5K autonomous trading competition as a bounty on Earn; paid ads and cold DMs on X) and the expansion markets. New traction slide after GTM: 11 users, ~$2 in fees per user a month (founder's figures), 10K users × $2 = $20K MRR.
 - **Stale facts fixed:** the 0.5% fee is live (main #53), the beta is open, and the solution slide no longer says "sell-check data" (Solana has no sell test).
 Earlier competition designs: docs/pitch/deck/competition-angles/.
 
@@ -29,7 +30,10 @@ Who pays? Traders already do: nine hundred forty million dollars last year to So
 It's a crowded space, and these are good teams, but each covers a piece. HeyElsa and Ask Gina are mostly chat with execution. Fere runs preset bots you can't configure. Senpi and Minara run perps strategies on bundled data, with no rug veto. Tocker does all five: it runs on its own 24/7, under your rules and guardrails, vetoes rugs in code, picks and pays for its data over x402, and pays for its own model in USDC.
 
 ## gtm
-That public record is the growth loop: every trade posts with its score and markets itself, and followers launch their own. We start with Solana memecoins, four hundred eighty-two billion dollars last year, then Polymarket and tokenized stocks.
+We get users two ways. First, a bounty on Earn: the first autonomous trading competition, five thousand dollars, best strategy wins. Second, paid ads and cold DMs to traders on X. We start with Solana memecoins, four hundred eighty-two billion dollars traded last year, then Polymarket and tokenized stocks.
+
+## traction
+Where are we? Eleven users in open beta, paying about two dollars each in fees a month. To reach twenty thousand dollars of MRR, we need ten thousand users. The competition and X are how we get there.
 
 ## team
 Why me? I lead product and growth at BlockRun, the leading x402 gateway. I founded Sorbet, a neobank moving five million a month. I worked on AI at Deloitte. And I shipped Tocker in under four weeks.
@@ -70,7 +74,7 @@ We're in open beta on Solana and Base. Tomorrow, twenty-one thousand more tokens
 - ~$200/mo lean stack for one agent (problem slide), list prices, Oct 2026: Helius Developer $49 · Jupiter Ultra $0/mo but 10 bps a swap (50 bps on tokens <24h old; Ultra is superseded by Swap V2) · Nansen Pro $69 (API credits extra) · Grok X search ~$20 (xAI X search ~$5 per 1k posts, ≈4k posts/mo assumed, plus Grok Fast tokens) · Claude API ~$40 (founder's estimate; cached prompts or a smaller model) · hosting $22 (Hetzner CX23 + managed Postgres) — research/27. A production-grade stack is ~$2.5k/mo. Gas and swap fees excluded.
 
 ## Likely Q&A
-1. **Traction?** Honest answer: open beta since sign-up opened (main #19, #36); every agent starts on paper with $10k. Bring real numbers (agents, paper vs live fills, the share of candidates the gates refused), and never show the leaderboard as performance: it ranks paper and live agents together today.
+1. **Traction?** 11 users in open beta, ~$2 in fees per user a month (founder's figures; confirm the per-month basis before the pitch). $20K MRR needs ~10K users at that rate. Also: open beta since sign-up opened (main #19, #36); every agent starts on paper with $10k. Bring real numbers (agents, paper vs live fills, the share of candidates the gates refused), and never show the leaderboard as performance: it ranks paper and live agents together today.
 2. **"Senpi charges 5 bps, Robinhood's agents are free."** Our 0.5% is live (main #53) and sits in the band agents already charge: Fere AI takes 0.5% a trade, ClawPump's swap fee is 0.30–0.85%, and the bots take 1%. Senpi's 5 bps is on Hyperliquid perps, a different market. At $100 a trade the fee is 50¢; data costs ~2¢ a token on default sources, ~7¢ with Nansen. Careful on margins: the agent buys data for every token it scores, not just the ones it buys, so at the $5 daily data cap the fee only covers data above roughly $1,000 of trades per owner per day (research/30 §8). Don't claim the fee "pays for the data" yet.
 3. **Who pays for data? Unit economics?** Today the platform settles x402 calls; next, data bills to the agent's wallet and is shared per token across agents.
 4. **Why "infrastructure" without a public API/SDK?** The gates and the per-fill score record are the product; next, we sell the pre-trade check over x402 to any Coinbase, Bankr or OpenClaw agent.
