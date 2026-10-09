@@ -95,17 +95,58 @@ export function computePaperCash(
   return cash - (Number.isFinite(platformFeesUsd) && platformFeesUsd > 0 ? platformFeesUsd : 0);
 }
 
-/** Database-backed version of {@link computePaperCash}. */
-export async function getPaperCash(agentId: string): Promise<number> {
+/** What a paper buy is told when the balance it was sized against is no longer the agent's. */
+export const PAPER_BALANCE_MOVED =
+  "The paper balance was changed while this order was being placed, so nothing was bought. Size it against the new balance and try again.";
+
+/**
+ * Whether the agent's paper starting balance is no longer `startingUsd`, the one the book
+ * a buy was judged on was read with (`Portfolio.startingUsd`).
+ *
+ * An owner may change the balance while the agent has not traded
+ * (`changePaperBalance`, ./paper-history.ts). That change is refused once a trade row
+ * exists, but it cannot see a buy that has passed the risk guard on the old balance
+ * and not written its row yet: a $500 ticket cleared against $10,000 would land on a book
+ * that now starts with $20. So a paper buy asks this right AFTER its row is written, and
+ * fails itself on yes. After, because from that row on the balance can no longer change:
+ * a change that got in first is seen here, and one that comes later is refused for the
+ * row. Compared with the very figure the book's cash was worked out from (`getPortfolio`
+ * reads the balance once and hands it to `getPaperCash`), so the question is exactly
+ * whether the book the order was judged on is the book it lands on.
+ *
+ * An agent that is gone counts as moved: the order is not filled on a guess.
+ */
+export async function paperBalanceMoved(agentId: string, startingUsd: number): Promise<boolean> {
   const db = await getDb();
-  const agent = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
-  if (!agent[0]) throw new Error(`Agent ${agentId} not found`);
+  const [row] = await db
+    .select({ paperStartingUsd: agents.paperStartingUsd })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .limit(1);
+  return !row || Number(row.paperStartingUsd) !== startingUsd;
+}
+
+/**
+ * Database-backed version of {@link computePaperCash}.
+ *
+ * `startingUsd` is for a caller that has already read the agent and reports the balance
+ * beside the cash (`getPortfolio`): given it, the agent is not read a second time, so the
+ * two figures can never come from either side of a change to the balance.
+ */
+export async function getPaperCash(agentId: string, startingUsd?: number): Promise<number> {
+  const db = await getDb();
+  let paperStartingUsd = startingUsd;
+  if (paperStartingUsd === undefined) {
+    const agent = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
+    if (!agent[0]) throw new Error(`Agent ${agentId} not found`);
+    paperStartingUsd = Number(agent[0].paperStartingUsd);
+  }
   const rows = await db
     .select()
     .from(trades)
     .where(and(eq(trades.agentId, agentId), eq(trades.status, "filled")));
   return computePaperCash(
-    Number(agent[0].paperStartingUsd),
+    paperStartingUsd,
     rows.map((r) => ({ side: r.side, amountUsd: Number(r.amountUsd), feeUsd: Number(r.feeUsd) })),
     await chargedFeesUsd(agentId),
   );

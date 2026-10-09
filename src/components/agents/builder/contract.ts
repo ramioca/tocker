@@ -11,6 +11,7 @@
  * summary is told when the agent already exists.
  */
 import type { AgentConfig } from "@/db/schema";
+import type { PaperBalanceLock } from "@/lib/trading/paper-balance";
 import type { AgentStatus, LlmKeyRow } from "@/server/types";
 import type { UsdcEstimate } from "@/components/agents/thinking";
 
@@ -192,6 +193,14 @@ export interface EditContext {
   savedConfig: AgentConfig;
   /** False when the account may no longer use pay per use; the panel says so and the agent can still leave it. */
   payPerUseStillAllowed: boolean;
+  /**
+   * Why the paper starting balance can no longer be changed, or null while it still can:
+   * only while the agent has not traded, on paper or with real money. The server's
+   * answer, worked out when the page was rendered (`readPaperBalanceLock`,
+   * src/lib/trading/paper-history.ts); a step only shows it, and a save is judged again
+   * where it is written.
+   */
+  paperBalanceLock: PaperBalanceLock | null;
 }
 
 /**

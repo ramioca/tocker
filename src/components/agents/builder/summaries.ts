@@ -41,6 +41,7 @@ import {
   type SummaryEdit,
   type SummaryLabels,
 } from "./contract";
+import { paperBalanceForCreate, paperLabel } from "./paper-balance";
 import {
   PAID_LAUNCH_RADAR_USD_PER_CHAIN,
   STRATEGY_PRESETS,
@@ -186,10 +187,14 @@ export function fundingSummary(draft: BuilderDraft, facts: CostFacts, edit?: Sum
 }
 
 /**
- * The "Schedule & mode" line. With `edit` it closes on the mode the saved agent is in:
- * how it starts and what it starts with were decided when it was created, and no save
- * changes either. Only the mode is read, so the Schedule step, which is told the mode and
- * not the balance, can quote the same line as the agent card.
+ * The "Schedule & mode" line. With `edit` it closes on the mode the saved agent is in and
+ * its paper balance: how it starts was decided when it was created and no save changes
+ * that, while the balance is on the Schedule step and can be changed there until the agent
+ * trades on paper. A paper agent's line ends the way a draft's does ("$10K paper"); a live
+ * one says the balance is its paper one, since nothing it trades with is.
+ *
+ * Of `edit` only the mode is read, and the balance is the draft's own, so the Schedule
+ * step can quote the same line as the agent card.
  */
 export function scheduleSummary(
   draft: BuilderDraft,
@@ -199,12 +204,23 @@ export function scheduleSummary(
 ): string {
   const interval = facts.intervalMinutes;
   const execution = executionLabel(draft.config.execution, labels);
-  if (edit) return `${labels.interval(interval)} · ${execution} · ${edit.mode}`;
+  const paper = paperLabel(draft.paperStartingUsd);
+  if (edit) {
+    return `${labels.interval(interval)} · ${execution} · ${
+      edit.mode === "live" ? `live · ${paper} paper balance` : `${paper} paper`
+    }`;
+  }
   return facts.heldForLive
     ? `${labels.interval(interval)} · ${execution} · real money only, live after the checklist`
     : draft.funding.mode === "fund"
-      ? `${labels.interval(interval)} · ${execution} · paper on the funded amount until you go live`
-      : `${labels.interval(interval)} · ${execution} · ${draft.activate ? "starts active" : "starts paused"} · ${paperLabel(draft.paperStartingUsd)} paper`;
+      ? `${labels.interval(interval)} · ${execution} · paper on ${
+          // Funding starts under the smallest paper balance: such an agent's paper book
+          // is that balance, not the funded amount (`paperBalanceForCreate`).
+          paperBalanceForCreate(draft) === draft.funding.amountUsd
+            ? "the funded amount"
+            : paperLabel(paperBalanceForCreate(draft))
+        } until you go live`
+      : `${labels.interval(interval)} · ${execution} · ${draft.activate ? "starts active" : "starts paused"} · ${paper} paper`;
 }
 
 /**
@@ -218,14 +234,9 @@ export function executionLabel(execution: BuilderDraft["config"]["execution"], l
     : "trades on its own";
 }
 
-/**
- * The paper balance in the short form of the Schedule step's buttons: "$10K". Only a
- * whole number of thousands has that form; anything else is the full amount, where
- * dividing by a thousand used to print "$12.345K".
- */
-export function paperLabel(usd: number): string {
-  return usd >= 1_000 && usd % 1_000 === 0 ? `$${usd / 1_000}K` : formatUsd(usd);
-}
+// The paper balance in the short form of the Schedule step's buttons ("$10K"), for any
+// amount. It lives beside the control's other words; the summaries quote it from here.
+export { paperLabel };
 
 // What the "A way to think" row says while it is missing. `stillNeeded` reads these back,
 // so the bar and the card name the same missing thing.

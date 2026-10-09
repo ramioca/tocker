@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AGENT_CONFIG, DEFAULT_MODEL_ID, agentConfigSchema } from "@/lib/agent/config";
+import { PAPER_BALANCE_MAX_USD, PAPER_BALANCE_MIN_USD, checkPaperStartingUsd } from "@/lib/trading/paper-balance";
 import {
   HOLDER_LADDER,
   LIQUIDITY_LADDER,
@@ -131,10 +132,13 @@ describe("every spec against agentConfigSchema", () => {
   });
 
   it("keeps the paper balance inside what the create action accepts", () => {
-    // The action takes anything above zero up to ten million dollars.
-    expect(SPECS.paperStart.min).toBeGreaterThan(0);
-    expect(SPECS.paperStart.max).toBeLessThanOrEqual(10_000_000);
-    expect(SPECS.paperStart.precision).toBe(1);
+    // The action takes ten dollars to ten million, and the box takes exactly that, to
+    // the cent (`paper-balance.test.ts` holds what is typed into it).
+    expect(SPECS.paperStart.min).toBe(PAPER_BALANCE_MIN_USD);
+    expect(SPECS.paperStart.max).toBe(PAPER_BALANCE_MAX_USD);
+    expect(checkPaperStartingUsd(SPECS.paperStart.min)).toBeNull();
+    expect(checkPaperStartingUsd(SPECS.paperStart.max)).toBeNull();
+    expect(SPECS.paperStart.precision).toBe(0.01);
   });
 });
 

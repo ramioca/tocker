@@ -38,6 +38,7 @@ import { EmptyState } from "@/components/common/empty-state";
 import { thinkSource } from "@/lib/agent/inference";
 import { SESSION_QUERY_KEY } from "@/hooks/use-session";
 import { safeAction } from "@/lib/safe-action";
+import { PAPER_BALANCE_REFUSED, type PaperBalanceLock } from "@/lib/trading/paper-balance";
 import { cn } from "@/lib/utils";
 import { noteBudgetChangeAction } from "@/server/actions/security";
 import type { AgentConfig, WalletBudget } from "@/db/schema";
@@ -49,6 +50,7 @@ import {
   configToSave,
   editStatus,
   liveSaveWarnings,
+  onlyPaperBalanceChanged,
   savePayload,
   saveStateShort,
   saveStateText,
@@ -156,6 +158,13 @@ interface AgentSettingsProps {
    * every other time.
    */
   skippingLine?: string | null;
+  /**
+   * Why the paper starting balance can no longer be changed, worked out on the server, or
+   * null while it still can: only while the agent has not traded, on paper or with real
+   * money. Absent means it cannot, which is the answer that shows no control. The
+   * Schedule step shows it; a save is judged again.
+   */
+  paperBalanceLock?: PaperBalanceLock | null;
 }
 
 /**
@@ -192,6 +201,7 @@ function Settings({
   payPerUseAllowed,
   feeBps,
   skippingLine = null,
+  paperBalanceLock = "paper",
 }: AgentSettingsProps & { config: AgentConfig }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -210,7 +220,7 @@ function Settings({
     markSaved,
     discard,
     restore,
-  } = useAgentEdit(agent, config, llmKeys);
+  } = useAgentEdit(agent, config, llmKeys, paperBalanceLock === null);
   const live = agent.mode === "live";
   // One answer for everything that asks whether pay per use is on offer: the choice on the
   // Brain step, the checks on the working copy and the costs on the card.
@@ -404,6 +414,7 @@ function Settings({
     isAdmin,
     savedConfig: saved.config,
     payPerUseStillAllowed: payPerUseAllowed,
+    paperBalanceLock,
   };
   // The agent card, from the working copy. A copy swapped whole (a save come back, a
   // discard, its undo) changes its rows without their tint.
@@ -431,6 +442,11 @@ function Settings({
       if (!result.ok) {
         toast.error("Not saved", { description: result.error });
         setSaveState("error");
+        // The agent traded after this page was loaded, so the balance it still offers
+        // for change no longer can be. The server is asked again: the Schedule step then
+        // shows the balance as part of the record, the edit to it is dropped, and the
+        // rest of what was typed is still here to save.
+        if (Object.values(PAPER_BALANCE_REFUSED).includes(result.error)) router.refresh();
         return;
       }
       // The working copy takes the server's word for everything that was sent once the
@@ -559,7 +575,13 @@ function Settings({
     summary,
   };
 
-  const saveStateLine = saveStateText(changed, live);
+  // A save that changes the paper balance and nothing else moves no real money, so the
+  // bar does not say it does. The balance is on one step, so only a page with that one
+  // step unsaved is looked at again.
+  const saveStateLine = saveStateText(
+    changed,
+    live && !(changed.size === 1 && onlyPaperBalanceChanged(working, saved)),
+  );
 
   return (
     <>

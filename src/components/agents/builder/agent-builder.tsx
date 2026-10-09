@@ -16,6 +16,7 @@ import { EASE, FOCUS, ReadyPips, TYPE } from "./look";
 import { ReviewReady } from "./review-ready";
 import { BUILDER_STEPS, type BuilderStepId } from "./contract";
 import { firstErrorKey, firstErrorPlace, requestedStep, resumeStep, stepHref, stepStatus } from "./flow";
+import { paperBalanceForCreate } from "./paper-balance";
 import { AgentPreview } from "./preview/agent-preview";
 import { PreviewPeek } from "./preview/preview-peek";
 import { NowLine, StepPanel } from "./step-panel";
@@ -292,9 +293,10 @@ export function AgentBuilder({
       // chosen before the mode was switched.
       llmKeyId: payPerUse ? null : draft.llmKeyId,
       // A funded agent has no paper book worth pretending about: its paper balance is
-      // the money it is actually given, and when it is headed for the live checklist its
-      // schedule stays parked until the switch — no paper ticks in between.
-      paperStartingUsd: draft.funding.mode === "fund" ? draft.funding.amountUsd : draft.paperStartingUsd,
+      // the money it is actually given (`paperBalanceForCreate`), and when it is headed
+      // for the live checklist its schedule stays parked until the switch — no paper
+      // ticks in between.
+      paperStartingUsd: paperBalanceForCreate(draft),
       activate: draft.activate,
       holdSchedule: draft.funding.mode === "fund" && draft.goLive,
       // A viewer who may not use pay-per-use never sends a config that asks for it.

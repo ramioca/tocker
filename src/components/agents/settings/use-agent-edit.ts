@@ -4,7 +4,15 @@ import { useCallback, useMemo, useReducer, useState } from "react";
 import type { BuilderDraft } from "@/components/agents/builder/types";
 import type { AgentConfig } from "@/db/schema";
 import type { AgentDetail, LlmKeyRow } from "@/server/types";
-import { draftOf, editReducer, savePayload, savedFrom, startEdit, type SavedAgent } from "./edit-model";
+import {
+  draftOf,
+  editReducer,
+  savePayload,
+  savedFrom,
+  startEdit,
+  withPaperBalance,
+  type SavedAgent,
+} from "./edit-model";
 
 /** As much of the saved agent as its working copy is made from. */
 type EditedAgent = Pick<
@@ -68,8 +76,17 @@ export interface AgentEdit {
  * page was handed the agent again.
  *
  * The list of keys grows when one is added on the page and is never reset.
+ *
+ * `paperBalanceOpen` is the server's answer on whether the paper starting balance can
+ * still be changed. Once it cannot, the working copy handed out carries the saved balance
+ * whatever was typed while it could (`withPaperBalance`).
  */
-export function useAgentEdit(agent: EditedAgent, config: AgentConfig, initialKeys: LlmKeyRow[]): AgentEdit {
+export function useAgentEdit(
+  agent: EditedAgent,
+  config: AgentConfig,
+  initialKeys: LlmKeyRow[],
+  paperBalanceOpen = false,
+): AgentEdit {
   // One object for each time the page is handed the agent, so that is what a change of it means.
   const told = useMemo(() => draftOf(agent, config), [agent, config]);
   const [state, dispatch] = useReducer(editReducer, told, startEdit);
@@ -87,6 +104,7 @@ export function useAgentEdit(agent: EditedAgent, config: AgentConfig, initialKey
       avatarSeed: agent.avatarSeed,
       isPublic: agent.isPublic,
       llmKeyId: agent.llmKeyId,
+      paperStartingUsd: agent.paperStartingUsd,
       config,
     };
     if (pending === null) return asTold;
@@ -110,14 +128,20 @@ export function useAgentEdit(agent: EditedAgent, config: AgentConfig, initialKey
     (copy: BuilderDraft, since: number) => dispatch({ type: "restore", draft: copy, since }),
     [],
   );
+  // The copy every reader is given: the one being edited, less a balance edit that can no
+  // longer be saved.
+  const working = useMemo(
+    () => withPaperBalance(state.working, saved.paperStartingUsd, paperBalanceOpen),
+    [state.working, saved.paperStartingUsd, paperBalanceOpen],
+  );
   const discard = () => {
-    const discarded = state.working;
+    const discarded = working;
     dispatch({ type: "discard" });
     return discarded;
   };
 
   return {
-    working: state.working,
+    working,
     saved,
     savedDraft: pending ? pending.sent : state.saved,
     refused: state.refused,

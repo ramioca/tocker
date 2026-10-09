@@ -21,6 +21,8 @@ import { RUN_REFUSED_WHILE_PAUSED, RUN_REFUSED_WITHOUT_KEY, RunRefusedError } fr
 import { attachLlmKey, seedAgent, setupTestDb } from "@/lib/agent/test-support";
 import { setTradingPaused } from "@/lib/security/kill-switch";
 import { MAX_NEW_AGENTS_PER_DAY, RATE_LIMITS, limiter } from "@/lib/security/rate-limit";
+import { getPaperCash } from "@/lib/trading/paper";
+import { seedKnownTokens, tokenId, USDC_SOLANA } from "@/lib/trading/tokens";
 import { DATA_SPEND_CARRYOVER, realDataSpend24h } from "@/lib/x402/daily-budget";
 import { DEFAULT_PAY_PER_USE_MODEL, describeInferenceStop } from "@/lib/x402/inference-types";
 import { uniqueSlug } from "@/server/queries/_shared";
@@ -33,6 +35,12 @@ let db: Db;
 const walletCalls: Array<{ agentId: string; chains: Chain[]; existingAgent: boolean }> = [];
 const budgetCalls: Array<{ agentId: string; perTxUsd: number }> = [];
 let walletOutage = false;
+/**
+ * Something that happens while a save is between its checks and its write: the stand-in
+ * for the wallet read, which is the last thing `updateAgent` does before it writes, runs
+ * this once. Null at every other time.
+ */
+let landsBeforeTheWrite: (() => Promise<unknown>) | null = null;
 const startRun = vi.fn<(input: { agentId: string; trigger: string; invocationStartedAt?: number }) => Promise<{ runId: string }>>(
   async () => ({ runId: "run_test" }),
 );
@@ -58,11 +66,16 @@ vi.mock("@/lib/wallets", () => ({
       .onConflictDoNothing();
     return rows;
   },
-  getAgentWallets: async (agentId: string) =>
-    db
+  getAgentWallets: async (agentId: string) => {
+    // What a test has arranged to happen at this point of a save, once.
+    const lands = landsBeforeTheWrite;
+    landsBeforeTheWrite = null;
+    await lands?.();
+    return db
       .select({ id: schema.wallets.id, chain: schema.wallets.chain, address: schema.wallets.address })
       .from(schema.wallets)
-      .where(and(eq(schema.wallets.agentId, agentId), eq(schema.wallets.kind, "agent_server"))),
+      .where(and(eq(schema.wallets.agentId, agentId), eq(schema.wallets.kind, "agent_server")));
+  },
   applyAgentBudgetPolicy: async (input: { agentId: string; perTxUsd: number }) => {
     budgetCalls.push({ agentId: input.agentId, perTxUsd: input.perTxUsd });
     return null;
@@ -86,6 +99,7 @@ beforeAll(async () => {
 beforeEach(() => {
   session = null;
   walletOutage = false;
+  landsBeforeTheWrite = null;
   walletCalls.length = 0;
   budgetCalls.length = 0;
   startRun.mockClear();
@@ -300,33 +314,451 @@ describe("createAgent: slugs that are routes", () => {
   });
 });
 
-describe("updateAgent: the paper starting balance", () => {
-  it("cannot be rewritten once the agent exists", async () => {
-    const seeded = await seedAgent(db, { paperStartingUsd: "1000" });
-    session = { userId: seeded.userId, handle: "owner", displayName: null, avatarUrl: null, email: null };
+/**
+ * The paper starting balance. A paper book's cash is this balance minus buys plus sells
+ * minus fees, and its public PnL, its chart and its place on the leaderboard are measured
+ * against it. So it is any amount in range when the agent is made, and afterwards it can
+ * change only while the agent has not traded at all: no paper history, and no real-money
+ * order either, because paper cash counts those too.
+ */
+describe("createAgent: the paper starting balance", () => {
+  const make = (paperStartingUsd: unknown) =>
+    createAgent({
+      name: `Agent ${nanoid(4)}`,
+      isPublic: true,
+      llmKeyId: null,
+      config: DEFAULT_AGENT_CONFIG,
+      paperStartingUsd: paperStartingUsd as number,
+    });
+  const balanceOf = async (agentId: string) =>
+    (await db.select().from(schema.agents).where(eq(schema.agents.id, agentId)))[0]?.paperStartingUsd;
 
-    // Raising it is +999,900% on the leaderboard; lowering it inflates all-time PnL.
-    for (const paperStartingUsd of [10_000_000, 1]) {
-      const result = await updateAgent(seeded.agentId, { paperStartingUsd, tagline: `tried ${paperStartingUsd}` });
-      expect(result.ok).toBe(true);
-      const [row] = await db.select().from(schema.agents).where(eq(schema.agents.id, seeded.agentId));
-      expect(Number(row?.paperStartingUsd)).toBe(1000);
-      // The rest of the save still lands.
-      expect(row?.tagline).toBe(`tried ${paperStartingUsd}`);
+  it("is any amount in range, kept to the cent: $20, $2,500,000 and the two ends", async () => {
+    await newOwner();
+    for (const [usd, stored] of [
+      [20, "20.00"],
+      [2_500_000, "2500000.00"],
+      [12_345.67, "12345.67"],
+      [10, "10.00"],
+      [10_000_000, "10000000.00"],
+    ] as Array<[number, string]>) {
+      // More creates than an hour allows: this is about the balance, not the allowance.
+      limiter.reset();
+      const made = await make(usd);
+      expect(made.ok, String(usd)).toBe(true);
+      if (made.ok) expect(await balanceOf(made.data.id), String(usd)).toBe(stored);
     }
   });
 
-  it("is still set, and bounded, when the agent is created", async () => {
+  it("is $10,000 for a create that names none, as it always was", async () => {
     await newOwner();
-    const made = await createAgent({ name: "Balanced", isPublic: true, llmKeyId: null, config: DEFAULT_AGENT_CONFIG, paperStartingUsd: 2500 });
+    const made = await create();
     expect(made.ok).toBe(true);
-    if (!made.ok) return;
-    const [row] = await db.select().from(schema.agents).where(eq(schema.agents.id, made.data.id));
-    expect(Number(row?.paperStartingUsd)).toBe(2500);
+    if (made.ok) expect(await balanceOf(made.data.id)).toBe("10000.00");
+  });
 
-    expect(
-      await createAgent({ name: "Too rich", isPublic: true, llmKeyId: null, config: DEFAULT_AGENT_CONFIG, paperStartingUsd: 99_999_999_999 }),
-    ).toEqual({ ok: false, error: "Paper starting balance must be $10,000,000 or less" });
+  it("refuses under $10 and over $10,000,000, with a sentence, and makes nothing", async () => {
+    const userId = await newOwner();
+    const TOO_LOW = { ok: false, error: "Paper starting balance must be $10 or more" };
+    const TOO_HIGH = { ok: false, error: "Paper starting balance must be $10,000,000 or less" };
+    for (const low of [9.99, 5, 1, 0, -100, Number.NaN, "10000", null, {}]) {
+      expect(await make(low), String(low)).toEqual(TOO_LOW);
+    }
+    for (const high of [10_000_000.01, 99_999_999_999, Number.POSITIVE_INFINITY]) {
+      expect(await make(high), String(high)).toEqual(TOO_HIGH);
+    }
+    expect(await db.select().from(schema.agents).where(eq(schema.agents.ownerId, userId))).toHaveLength(0);
+    // Refused before the request was about to make wallets, so the hour is not spent on it.
+    expect(walletCalls).toHaveLength(0);
+    expect((await make(10)).ok).toBe(true);
+  });
+});
+
+describe("updateAgent: the paper starting balance", () => {
+  const BONK_ID = tokenId("solana", "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263");
+  const USDC_ID = tokenId("solana", USDC_SOLANA);
+  const TRADED = {
+    ok: false,
+    error: "This agent has traded on paper, so its paper balance can no longer be changed. Nothing was saved.",
+  };
+  const TRADED_LIVE = {
+    ok: false,
+    error:
+      "This agent has traded with real money, and its paper book counts those trades, so its paper balance can no longer be changed. Nothing was saved.",
+  };
+
+  type Seeded = { userId: string; agentId: string };
+
+  /** An agent of the signed-in owner's, with marks of every kind on its book. */
+  async function agentOf(mode: "paper" | "live" = "paper", paperStartingUsd = "10000"): Promise<Seeded> {
+    const seeded = await seedAgent(db, { mode, paperStartingUsd });
+    session = { userId: seeded.userId, handle: "owner", displayName: null, avatarUrl: null, email: null };
+    return seeded;
+  }
+  async function mark(agentId: string, mode: "paper" | "live" | null, equityUsd: string): Promise<string> {
+    const id = nanoid();
+    await db.insert(schema.equitySnapshots).values({ id, agentId, equityUsd, cashUsd: equityUsd, mode });
+    return id;
+  }
+  async function trade(
+    agent: Seeded,
+    over: {
+      isPaper: boolean;
+      status: (typeof schema.tradeStatusEnum.enumValues)[number];
+      side?: "buy" | "sell";
+      amountUsd?: string;
+    },
+  ): Promise<void> {
+    await db.insert(schema.trades).values({
+      id: nanoid(),
+      agentId: agent.agentId,
+      ownerId: agent.userId,
+      chain: "solana",
+      side: over.side ?? "buy",
+      tokenId: BONK_ID,
+      quoteTokenId: USDC_ID,
+      amountToken: "100",
+      amountUsd: over.amountUsd ?? "25",
+      priceUsd: "0.25",
+      status: over.status,
+      isPaper: over.isPaper,
+    });
+  }
+  const position = (agentId: string, amountToken: string) =>
+    db.insert(schema.positions).values({ agentId, tokenId: BONK_ID, amountToken, avgCostUsd: "0.25", realizedPnlUsd: "1.5" });
+
+  /** Everything a save could touch: the agent's row and every row that hangs off it. */
+  async function everything(agentId: string) {
+    const [row] = await db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
+    if (!row) throw new Error("agent row missing");
+    const of = <T extends { id?: string; tokenId?: string }>(rows: T[]) =>
+      [...rows].sort((a, b) => String(a.id ?? a.tokenId).localeCompare(String(b.id ?? b.tokenId)));
+    return {
+      row,
+      marks: of(await db.select().from(schema.equitySnapshots).where(eq(schema.equitySnapshots.agentId, agentId))),
+      trades: of(await db.select().from(schema.trades).where(eq(schema.trades.agentId, agentId))),
+      positions: of(await db.select().from(schema.positions).where(eq(schema.positions.agentId, agentId))),
+      wallets: of(await db.select().from(schema.wallets).where(eq(schema.wallets.agentId, agentId))),
+    };
+  }
+  /** The agent's row without the two columns a change of balance writes. */
+  const rest = (row: typeof schema.agents.$inferSelect) => {
+    const { paperStartingUsd: _balance, updatedAt: _at, ...others } = row;
+    return others;
+  };
+
+  beforeAll(async () => {
+    await seedKnownTokens();
+  });
+
+  it("changes on a paper agent whose book is untouched, takes its flat marks, and leaves every other column", async () => {
+    const agent = await agentOf("paper");
+    // Flat points at the balance it was made with, as the marks pass writes them.
+    await mark(agent.agentId, "paper", "10000");
+    await mark(agent.agentId, "paper", "10000");
+    await mark(agent.agentId, null, "10000");
+    const before = await everything(agent.agentId);
+
+    expect(await updateAgent(agent.agentId, { paperStartingUsd: 250 })).toEqual({ ok: true, data: undefined });
+
+    const after = await everything(agent.agentId);
+    expect(after.row.paperStartingUsd).toBe("250.00");
+    expect(rest(after.row)).toEqual(rest(before.row));
+    expect(after.row.mode).toBe("paper");
+    // Left in place they would draw a cliff from $10,000 to $250 and a 97.5% drawdown.
+    expect(after.marks).toEqual([]);
+    expect(after.wallets).toEqual(before.wallets);
+    // No wallet was made and no wallet policy applied for it.
+    expect(walletCalls).toHaveLength(0);
+    expect(budgetCalls).toHaveLength(0);
+  });
+
+  it("takes any amount in range: $20, $12,345.67 and $2,500,000", async () => {
+    const agent = await agentOf("paper");
+    for (const [usd, stored] of [
+      [20, "20.00"],
+      [12_345.67, "12345.67"],
+      [2_500_000, "2500000.00"],
+    ] as Array<[number, string]>) {
+      expect((await updateAgent(agent.agentId, { paperStartingUsd: usd })).ok, String(usd)).toBe(true);
+      expect((await everything(agent.agentId)).row.paperStartingUsd).toBe(stored);
+    }
+  });
+
+  it("changes on a live agent that has not traded, and touches nothing of its live record", async () => {
+    const agent = await agentOf("live");
+    // Its live book so far: funded, marked, and nothing bought yet.
+    const liveMarks = [await mark(agent.agentId, "live", "15"), await mark(agent.agentId, "live", "15")];
+    const unstamped = await mark(agent.agentId, null, "15");
+    // And the flat paper marks from before it went live.
+    await mark(agent.agentId, "paper", "10000");
+    await mark(agent.agentId, "paper", "10000");
+    const before = await everything(agent.agentId);
+
+    expect((await updateAgent(agent.agentId, { paperStartingUsd: 15 })).ok).toBe(true);
+
+    const after = await everything(agent.agentId);
+    expect(after.row.paperStartingUsd).toBe("15.00");
+    expect(rest(after.row)).toEqual(rest(before.row));
+    expect(after.row.mode).toBe("live");
+    // Every live mark, and the unstamped one a live agent's readers take for live, is there
+    // as it was. Only the paper ones are gone.
+    expect(after.marks.map((row) => row.id).sort()).toEqual([...liveMarks, unstamped].sort());
+    expect(after.marks).toEqual(before.marks.filter((row) => row.mode !== "paper"));
+    expect(after.trades).toEqual(before.trades);
+    expect(after.positions).toEqual(before.positions);
+    expect(after.wallets).toEqual(before.wallets);
+  });
+
+  it("lands with the rest of the same save, as one change", async () => {
+    const agent = await agentOf("paper");
+    const config = { ...DEFAULT_AGENT_CONFIG, risk: { ...DEFAULT_AGENT_CONFIG.risk, maxTradeUsd: 25 } };
+    expect((await updateAgent(agent.agentId, { name: "Smaller book", tagline: "Starts with less.", config, paperStartingUsd: 500 })).ok).toBe(true);
+    const { row } = await everything(agent.agentId);
+    expect(row).toMatchObject({ name: "Smaller book", tagline: "Starts with less.", paperStartingUsd: "500.00" });
+    expect(row.config.risk.maxTradeUsd).toBe(25);
+  });
+
+  /**
+   * Any paper trade row, in any status, and any paper position, held or closed. Each on an
+   * agent that is on paper and on one that has since gone live.
+   */
+  describe.each(["paper", "live"] as const)("on a %s agent with paper history", (mode) => {
+    const histories: Array<[string, (agent: Seeded) => Promise<unknown>]> = [
+      ...schema.tradeStatusEnum.enumValues.map(
+        (status): [string, (agent: Seeded) => Promise<unknown>] => [
+          `a paper trade that is ${status}`,
+          (agent) => trade(agent, { isPaper: true, status }),
+        ],
+      ),
+      ["an open paper position", (agent) => position(agent.agentId, "40")],
+      ["a closed paper position", (agent) => position(agent.agentId, "0")],
+    ];
+
+    it.each(histories)("refuses for %s, and the refusal changes nothing", async (_what, history) => {
+      const agent = await agentOf(mode, "1000");
+      await history(agent);
+      await mark(agent.agentId, "paper", "1000");
+      await mark(agent.agentId, mode === "live" ? "live" : null, "1000");
+      const before = await everything(agent.agentId);
+
+      // Raising it is +999,900% on the leaderboard; lowering it inflates all-time PnL.
+      for (const paperStartingUsd of [10_000_000, 10, 999.99, 1000.01]) {
+        // Alone, and with other edits in the same save: none of them lands either.
+        expect(await updateAgent(agent.agentId, { paperStartingUsd })).toEqual(TRADED);
+        expect(
+          await updateAgent(agent.agentId, {
+            paperStartingUsd,
+            name: "Renamed",
+            tagline: `tried ${paperStartingUsd}`,
+            isPublic: false,
+            config: { ...DEFAULT_AGENT_CONFIG, schedule: { intervalMinutes: 60 } },
+          }),
+        ).toEqual(TRADED);
+      }
+
+      expect(await everything(agent.agentId)).toEqual(before);
+      // Nothing was made for a save that was never going to go through.
+      expect(walletCalls).toHaveLength(0);
+      expect(budgetCalls).toHaveLength(0);
+    });
+  });
+
+  /**
+   * Paper cash counts every filled trade, the real-money ones too, so an agent that has
+   * traded live opens its paper book on its balance plus what those trades made or lost.
+   * Were the balance still open then, its owner could pick it with the result in hand. So
+   * a real-money order closes the balance as a paper one does, in any status, whether the
+   * agent is still live or back on paper. It is told why in its own sentence: it has not
+   * traded on paper.
+   */
+  describe.each(["live", "paper"] as const)("on an agent that is %s, with real-money orders and no paper history", (mode) => {
+    it.each(schema.tradeStatusEnum.enumValues.map((status) => [status]))(
+      "refuses for a real-money order that is %s, and the refusal changes nothing",
+      async (status) => {
+        const agent = await agentOf(mode, "1000");
+        await trade(agent, { isPaper: false, status });
+        const liveMark = await mark(agent.agentId, "live", "15");
+        await mark(agent.agentId, "paper", "1000");
+        const before = await everything(agent.agentId);
+
+        for (const paperStartingUsd of [10_000_000, 10, 999.99, 1000.01]) {
+          expect(await updateAgent(agent.agentId, { paperStartingUsd })).toEqual(TRADED_LIVE);
+          expect(
+            await updateAgent(agent.agentId, {
+              paperStartingUsd,
+              name: "Renamed",
+              isPublic: false,
+              config: { ...DEFAULT_AGENT_CONFIG, schedule: { intervalMinutes: 60 } },
+            }),
+          ).toEqual(TRADED_LIVE);
+        }
+
+        const after = await everything(agent.agentId);
+        expect(after).toEqual(before);
+        // Its marks are all still there, the paper ones as much as the live one.
+        expect(after.marks.map((row) => row.id)).toContain(liveMark);
+        expect(after.marks).toHaveLength(2);
+        expect(walletCalls).toHaveLength(0);
+        expect(budgetCalls).toHaveLength(0);
+      },
+    );
+
+    it("cannot have what it made live measured against a balance picked afterwards", async () => {
+      const agent = await agentOf(mode, "1000");
+      // Bought $1,000 of a token with real money and sold it for $1,050.
+      await trade(agent, { isPaper: false, status: "filled", side: "buy", amountUsd: "1000" });
+      await trade(agent, { isPaper: false, status: "filled", side: "sell", amountUsd: "1050" });
+      await position(agent.agentId, "0");
+      // Its paper book opens $50 up: +5%.
+      expect(await getPaperCash(agent.agentId)).toBe(1050);
+      const before = await everything(agent.agentId);
+
+      // $10 would make the same $50 read as +500%; $10,000,000 would hide a loss.
+      for (const paperStartingUsd of [10, 20, 10_000_000]) {
+        expect(await updateAgent(agent.agentId, { paperStartingUsd })).toEqual(TRADED_LIVE);
+      }
+
+      expect(await getPaperCash(agent.agentId)).toBe(1050);
+      expect(await everything(agent.agentId)).toEqual(before);
+    });
+  });
+
+  it("says the paper sentence for an agent that has traded both ways", async () => {
+    const agent = await agentOf("live", "1000");
+    await trade(agent, { isPaper: false, status: "filled" });
+    await trade(agent, { isPaper: true, status: "filled" });
+    expect(await updateAgent(agent.agentId, { paperStartingUsd: 20 })).toEqual(TRADED);
+  });
+
+  it("refuses when a real-money order lands between the first look and the write, and saves none of it", async () => {
+    const agent = await agentOf("live");
+    const liveMark = await mark(agent.agentId, "live", "15");
+    await mark(agent.agentId, "paper", "10000");
+    landsBeforeTheWrite = () => trade(agent, { isPaper: false, status: "pending" });
+
+    const result = await updateAgent(agent.agentId, {
+      paperStartingUsd: 20,
+      name: "Renamed",
+      config: { ...DEFAULT_AGENT_CONFIG, schedule: { intervalMinutes: 60 } },
+    });
+
+    expect(result).toEqual(TRADED_LIVE);
+    const after = await everything(agent.agentId);
+    expect(after.row.paperStartingUsd).toBe("10000.00");
+    expect(after.row.name).not.toBe("Renamed");
+    expect(after.row.config.schedule.intervalMinutes).toBe(DEFAULT_AGENT_CONFIG.schedule.intervalMinutes);
+    expect(after.marks.map((row) => row.id)).toContain(liveMark);
+    expect(after.marks).toHaveLength(2);
+    expect(after.trades).toHaveLength(1);
+  });
+
+  it("refuses when a paper trade lands between the first look and the write, and saves none of it", async () => {
+    const agent = await agentOf("paper");
+    await mark(agent.agentId, "paper", "10000");
+    // The wallets are read after the save's checks and before its write: the stand-in is
+    // where a trade from a run in flight gets in, at the last moment it could.
+    landsBeforeTheWrite = () => trade(agent, { isPaper: true, status: "pending" });
+
+    const result = await updateAgent(agent.agentId, {
+      paperStartingUsd: 20,
+      name: "Renamed",
+      config: { ...DEFAULT_AGENT_CONFIG, schedule: { intervalMinutes: 60 } },
+    });
+
+    expect(result).toEqual(TRADED);
+    const after = await everything(agent.agentId);
+    expect(after.row.paperStartingUsd).toBe("10000.00");
+    expect(after.row.name).not.toBe("Renamed");
+    expect(after.row.config.schedule.intervalMinutes).toBe(DEFAULT_AGENT_CONFIG.schedule.intervalMinutes);
+    expect(after.marks).toHaveLength(1);
+    expect(after.trades).toHaveLength(1);
+  });
+
+  it("refuses another account's agent, whatever its book, and changes nothing", async () => {
+    const agent = await agentOf("paper");
+    await mark(agent.agentId, "paper", "10000");
+    const before = await everything(agent.agentId);
+    await newOwner();
+
+    expect(await updateAgent(agent.agentId, { paperStartingUsd: 20 })).toEqual({ ok: false, error: "You do not own this agent" });
+    expect(await everything(agent.agentId)).toEqual(before);
+
+    session = null;
+    expect(await updateAgent(agent.agentId, { paperStartingUsd: 20 })).toEqual({ ok: false, error: "Sign in first" });
+    expect(await everything(agent.agentId)).toEqual(before);
+  });
+
+  it("refuses an amount out of range, even on an untouched agent, and changes nothing", async () => {
+    const agent = await agentOf("paper");
+    await mark(agent.agentId, "paper", "10000");
+    const before = await everything(agent.agentId);
+
+    for (const low of [9.99, 1, 0, -5, Number.NaN, "250", null]) {
+      expect(await updateAgent(agent.agentId, { paperStartingUsd: low as number, tagline: "Not saved" }), String(low)).toEqual({
+        ok: false,
+        error: "Paper starting balance must be $10 or more",
+      });
+    }
+    for (const high of [10_000_000.01, Number.POSITIVE_INFINITY]) {
+      expect(await updateAgent(agent.agentId, { paperStartingUsd: high, tagline: "Not saved" }), String(high)).toEqual({
+        ok: false,
+        error: "Paper starting balance must be $10,000,000 or less",
+      });
+    }
+    expect(await everything(agent.agentId)).toEqual(before);
+  });
+
+  /**
+   * A save that says nothing about the balance, or names the balance the agent already
+   * has, is the save it always was: no lock, no look at the book, no mark touched.
+   */
+  it("leaves a save without the balance exactly as it was, on an agent with history and on one without", async () => {
+    for (const traded of [true, false]) {
+      const agent = await agentOf("paper", "1000");
+      if (traded) await trade(agent, { isPaper: true, status: "filled" });
+      await mark(agent.agentId, "paper", "1000");
+      await mark(agent.agentId, null, "1000");
+      const before = await everything(agent.agentId);
+
+      expect((await updateAgent(agent.agentId, { tagline: "No balance in this one" })).ok).toBe(true);
+      // The amount it already has, as a stale page or a careless caller might send it.
+      expect((await updateAgent(agent.agentId, { paperStartingUsd: 1000, name: "Still saves" })).ok).toBe(true);
+      expect((await updateAgent(agent.agentId, { paperStartingUsd: 1000.004, isPublic: false })).ok).toBe(true);
+
+      const after = await everything(agent.agentId);
+      expect(after.row).toMatchObject({
+        paperStartingUsd: "1000.00",
+        tagline: "No balance in this one",
+        name: "Still saves",
+        isPublic: false,
+      });
+      expect(after.marks).toEqual(before.marks);
+      expect(after.trades).toEqual(before.trades);
+    }
+  });
+
+  it("does not hold an agent made before the range to it, until its balance is changed", async () => {
+    // Funded with $5 when a funded agent's paper balance was the funded amount.
+    const agent = await agentOf("paper", "5");
+    expect((await updateAgent(agent.agentId, { paperStartingUsd: 5, tagline: "Saved as it is" })).ok).toBe(true);
+    expect((await everything(agent.agentId)).row).toMatchObject({ paperStartingUsd: "5.00", tagline: "Saved as it is" });
+    // A change has to be to an amount in range, like any other.
+    expect(await updateAgent(agent.agentId, { paperStartingUsd: 6 })).toEqual({
+      ok: false,
+      error: "Paper starting balance must be $10 or more",
+    });
+    expect((await updateAgent(agent.agentId, { paperStartingUsd: 15 })).ok).toBe(true);
+    expect((await everything(agent.agentId)).row.paperStartingUsd).toBe("15.00");
+  });
+
+  it("can be changed more than once while the book is untouched, and not after its first paper trade", async () => {
+    const agent = await agentOf("paper");
+    expect((await updateAgent(agent.agentId, { paperStartingUsd: 250 })).ok).toBe(true);
+    expect((await updateAgent(agent.agentId, { paperStartingUsd: 1_500 })).ok).toBe(true);
+    await trade(agent, { isPaper: true, status: "proposed" });
+    expect(await updateAgent(agent.agentId, { paperStartingUsd: 250 })).toEqual(TRADED);
+    expect((await everything(agent.agentId)).row.paperStartingUsd).toBe("1500.00");
   });
 });
 

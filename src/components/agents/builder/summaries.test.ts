@@ -265,7 +265,18 @@ describe("fundingSummary and scheduleSummary", () => {
       d.config.schedule = { intervalMinutes: 60 };
     });
     expect(scheduleSummary(draft, costFacts(draft, sources, opts), labels)).toBe(
-      "Every 1h · trades on its own · starts paused · $500.00 paper",
+      "Every 1h · trades on its own · starts paused · $500 paper",
+    );
+  });
+
+  it("fund mode under the smallest paper balance says what its paper book is", () => {
+    // Funding starts at $5 and a paper balance at $10 (`paperBalanceForCreate`).
+    const draft = draftWith((d) => {
+      d.funding = { mode: "fund", amountUsd: 7.5, gasUsd: 0, split: null };
+      d.goLive = false;
+    });
+    expect(scheduleSummary(draft, costFacts(draft, sources, opts), labels)).toBe(
+      "Every 15 min · asks before each trade (1 h to decide) · paper on $10 until you go live",
     );
   });
 
@@ -276,10 +287,30 @@ describe("fundingSummary and scheduleSummary", () => {
     expect(executionLabel({ mode: "auto", proposalTtlMinutes: 60 }, labels)).toBe("trades on its own");
     expect(paperLabel(1_000)).toBe("$1K");
     expect(paperLabel(100_000)).toBe("$100K");
-    expect(paperLabel(500)).toBe("$500.00");
-    // Not a whole number of thousands: the full amount, never "$12.345K".
-    expect(paperLabel(12_345)).toBe("$12,345.00");
-    expect(paperLabel(1_500)).toBe("$1,500.00");
+    expect(paperLabel(500)).toBe("$500");
+    // Not a short number of thousands: the full amount, never "$12.345K".
+    expect(paperLabel(12_345)).toBe("$12,345");
+    expect(paperLabel(1_500)).toBe("$1.5K");
+  });
+
+  /**
+   * Any amount can be typed now, so the line and the agent card have to read well for one
+   * that is not a button: short where the short form is the number, the amount itself
+   * where it is not.
+   */
+  it("the schedule line for an amount that is not one of the three buttons", () => {
+    const line = (usd: number) => {
+      const draft = draftWith((d) => {
+        d.paperStartingUsd = usd;
+      });
+      return scheduleSummary(draft, costFacts(draft, sources, opts), labels);
+    };
+    const start = "Every 15 min · asks before each trade (1 h to decide) · starts active · ";
+    expect(line(20)).toBe(`${start}$20 paper`);
+    expect(line(250)).toBe(`${start}$250 paper`);
+    expect(line(1_500)).toBe(`${start}$1.5K paper`);
+    expect(line(12_345.67)).toBe(`${start}$12,345.67 paper`);
+    expect(line(2_500_000)).toBe(`${start}$2.5M paper`);
   });
 });
 
@@ -861,18 +892,39 @@ describe("a saved agent's card", () => {
   const paper: SummaryEdit = { mode: "paper", status: "paused", balanceText: "$0.00 USDC in its wallets" };
   const ctx = { hunts: "Solana · score 62+ · $15K+ liquidity · 4 feeds", labels, payPerUseAllowed: false };
 
-  it("closes the schedule row on the mode it is in, not on how it starts or its paper balance", () => {
+  it("closes the schedule row on the mode it is in and its paper balance, not on how it starts", () => {
     const draft = emptyDraft();
     const facts = costFacts(draft, sources, opts);
+    // Nothing a live agent trades with is the paper balance, so its line says what it is.
     expect(scheduleSummary(draft, facts, labels, live)).toBe(
-      "Every 15 min · asks before each trade (1 h to decide) · live",
+      "Every 15 min · asks before each trade (1 h to decide) · live · $10K paper balance",
     );
     const line = scheduleSummary(draft, facts, labels, paper);
-    expect(line).toBe("Every 15 min · asks before each trade (1 h to decide) · paper");
+    expect(line).toBe("Every 15 min · asks before each trade (1 h to decide) · $10K paper");
     expect(line).not.toContain("starts");
-    expect(line).not.toContain("$10K");
-    // The mode is all it reads, so the Schedule step can quote it without the balance.
+    // Of the saved agent the mode is all it reads, so the Schedule step can quote it too.
     expect(scheduleSummary(draft, facts, labels, { mode: "live" })).toBe(scheduleSummary(draft, facts, labels, live));
+  });
+
+  it("follows the paper balance in the working copy, for any amount", () => {
+    const row = (usd: number, edit: SummaryEdit) => {
+      const draft = draftWith((d) => {
+        d.paperStartingUsd = usd;
+      });
+      const facts = costFacts(draft, sources, opts);
+      // The card's row and the step's read-back line are the same sentence.
+      const rows = previewRows(draft, facts, validateDraft(draft, [anthropic]), { ...ctx, edit });
+      expect(rows.find((entry) => entry.id === "runs")?.text).toBe(scheduleSummary(draft, facts, labels, edit));
+      return scheduleSummary(draft, facts, labels, edit);
+    };
+    const start = "Every 15 min · asks before each trade (1 h to decide) · ";
+    expect(row(20, paper)).toBe(`${start}$20 paper`);
+    expect(row(250, paper)).toBe(`${start}$250 paper`);
+    expect(row(1_500, paper)).toBe(`${start}$1.5K paper`);
+    expect(row(12_345.67, paper)).toBe(`${start}$12,345.67 paper`);
+    expect(row(2_500_000, paper)).toBe(`${start}$2.5M paper`);
+    expect(row(15, live)).toBe(`${start}live · $15 paper balance`);
+    expect(row(2_500_000, live)).toBe(`${start}live · $2.5M paper balance`);
   });
 
   it("reads the interval and the execution from the working copy", () => {
@@ -881,13 +933,13 @@ describe("a saved agent's card", () => {
       d.config.execution = { mode: "auto", proposalTtlMinutes: 60 };
     });
     expect(scheduleSummary(draft, costFacts(draft, sources, opts), labels, live)).toBe(
-      "Every 1h · trades on its own · live",
+      "Every 1h · trades on its own · live · $10K paper balance",
     );
     const manual = draftWith((d) => {
       d.config.schedule = { intervalMinutes: 0 };
     });
     expect(scheduleSummary(manual, costFacts(manual, sources, opts), labels, paper)).toBe(
-      "Manual only · asks before each trade (1 h to decide) · paper",
+      "Manual only · asks before each trade (1 h to decide) · $10K paper",
     );
   });
 
@@ -897,11 +949,10 @@ describe("a saved agent's card", () => {
       funded(false),
       draftWith((d) => {
         d.activate = false;
-        d.paperStartingUsd = 500;
       }),
     ]) {
       expect(scheduleSummary(draft, costFacts(draft, sources, opts), labels, live)).toBe(
-        "Every 15 min · asks before each trade (1 h to decide) · live",
+        "Every 15 min · asks before each trade (1 h to decide) · live · $10K paper balance",
       );
     }
   });
