@@ -48,10 +48,10 @@ SLIDES = {
                  bigs([("$940M", "paid to Solana trading bots in 2025."),
                        ("0.5%", "our fee per trade. Live today.")], 240),
                  "Solana Foundation 2025 recap (Blockworks) · 1% bots: Photon, Trojan, BonkBot"),
-    "traction": ("Traction", "11 users. The path to $20K MRR.",
+    "traction": ("Traction", "11 users. 334 gets us to $20K MRR.",
                  bigs([("11", "users in open beta."),
-                       ("~$2", "in fees per user, a month."),
-                       ("10K", "users × $2 a month = $20K MRR.")], 200),
+                       ("~$2", "in fees per user, per day."),
+                       ("334", "users at $60 a month = $20K MRR.")], 200),
                  ""),
 }
 
@@ -72,7 +72,7 @@ def gtm():
                 f'      </div>\n')
     left = (f'    <div style="display:flex; flex-direction:column; flex:1">\n'
             f'      <p style="{MONO}; font-size:24px; letter-spacing:4px; text-transform:uppercase; color:{MID}; padding:0 0 18px">How we get users</p>\n'
-            + row("01 · Bounty on Earn", "$5K", "The first autonomous trading competition. Best strategy wins.")
+            + row("01 · Superteam Earn bounty", "$5K", "Our test: the first autonomous trading competition. Best strategy wins.")
             + row("02 · X", "Ads + DMs", "Paid ads and cold DMs to traders on X.")
             + '    </div>\n')
     right = (f'    <div style="display:flex; flex-direction:column; flex:1">\n'
@@ -90,3 +90,33 @@ for sid, (eb, h, body, foot) in SLIDES.items():
     open(f"{OUT}/{sid}.html", "w").write(section(sid, eb, h, body, foot))
 open(f"{OUT}/gtm.html", "w").write(gtm())
 print("ok")
+
+
+def team():
+    rows = [
+        ("/_blob/645c45990ef87d1be936649a1f600aca", "BlockRun logo", "Product & Growth Lead, BlockRun", "The leading x402 gateway"),
+        ("/_blob/d965f9aa423f91f800a9ada66ef7722b", "Sorbet logo", "Founder & CEO, Sorbet", "Neobank. Raised $1M, scaled to $5M in monthly volume."),
+        ("/_blob/1a6766dfb70f34dd78b93e2c922fdd79", "Superteam logo", "Member, Superteam Germany", "Solana's builder network"),
+        ("/_blob/37e07f7c17a3f955571e65fe76aee2f6", "Deloitte logo", "Omnia AI, Deloitte", "Deloitte's AI practice"),
+    ]
+    items = ""
+    for i, (src, alt, title, sub) in enumerate(rows):
+        last = f"; border-bottom:1px solid {HAIR}" if i == len(rows) - 1 else ""
+        items += (f'      <div style="display:flex; flex-direction:row; gap:32px; align-items:center; padding:22px 0; border-top:1px solid {HAIR}{last}">\n'
+                  f'        <img src="{src}" alt="{alt}" style="width:80px; height:80px; border:1px solid {HAIR}; border-radius:18px; object-fit:cover">\n'
+                  f'        <div style="display:flex; flex-direction:column; gap:6px; flex:1">\n'
+                  f'          <p style="{SANS}; font-size:38px; font-weight:500; line-height:1.15; letter-spacing:-0.5px; color:{FG}">{e(title)}</p>\n'
+                  f'          <p style="{SANS}; font-size:28px; line-height:1.3; color:{MID}">{e(sub)}</p>\n'
+                  f'        </div>\n      </div>\n')
+    left = (f'    <div style="width:448px; display:flex; flex-direction:column; gap:24px; flex:0 0 auto">\n'
+            f'      <img src="/_blob/6267b634bb7c763519614c99ac639862" alt="Portrait of Rami Djebari" style="width:448px; height:448px; border:1px solid {HAIR}; border-radius:28px; object-fit:cover">\n'
+            f'      <div style="display:flex; flex-direction:column; gap:6px">\n'
+            f'        <p style="{SANS}; font-size:52px; font-weight:600; line-height:1.05; letter-spacing:-1.5px; color:{FG}">Rami Djebari</p>\n'
+            f'        <p style="{SANS}; font-size:30px; color:{MID}">Founder, Tocker</p>\n'
+            f'      </div>\n    </div>\n')
+    right = f'    <div style="display:flex; flex-direction:column; flex:1">\n{items}    </div>\n'
+    body = f'  <div style="display:flex; flex-direction:row; gap:96px; align-items:start">\n{left}{right}  </div>\n'
+    return section("team", "Team", "Ex-founder. Scaled to $5M a month.", body)
+
+
+open(f"{OUT}/team.html", "w").write(team())
