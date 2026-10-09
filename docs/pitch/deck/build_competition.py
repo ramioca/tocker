@@ -25,7 +25,7 @@ NOTE = ("It's a crowded space, and these are good teams, but each covers a piece
         "with execution. Fere runs preset bots you can't configure. Senpi and Minara run perps strategies on bundled data, "
         "with no rug veto. Tocker does all five: it runs on its own 24/7, under your rules and guardrails, vetoes rugs in "
         "code, picks and pays for its data over x402, and pays for its own model in USDC.")
-FOOT = "● yes · ○ partly or opt-in · — no or not found · Rivals' docs, GitHub and X, Oct 2026 (research/26) · Tocker's USDC model payments are switched on per account"
+FOOT = "● yes · ○ partly or opt-in · — no · Rivals: docs, GitHub, X, Oct 2026 · Tocker: USDC AI payments on per account"
 
 
 def mark(m, strong=False):
