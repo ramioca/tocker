@@ -21,7 +21,7 @@ Tocker fixes both with one line of English. Ten hard gates in code refuse unsafe
 Here's a sample run. The thesis: memes smart money is accumulating. Your agent finds WIF. It scores eighty-one, clears all ten gates, and buys a hundred dollars, exits in code. [pause] I was emotional. An agent isn't. It just follows your rules.
 
 ## edge
-So what's the edge? Not prediction: nobody has shown an AI that picks memecoin winners. It starts with not losing. Our gates refuse the rugs, and the AI can't override them. Your thesis picks from what's left. And exits run by rule: in a live contest, none of thirty AI agents got liquidated. Forty-three percent of humans did.
+So what's the edge? Not prediction: nobody has shown an AI that picks memecoin winners. It starts with not losing. Our gates refuse the rugs, and the AI can't override them. Then your thesis picks from what's left, with premium data most traders never buy: smart money, holder growth, bullish signals, for a few cents a token. And exits run by rule: in a live contest, none of thirty AI agents got liquidated. Forty-three percent of humans did.
 
 ## business
 Who pays? Traders already do: nine hundred forty million dollars last year to Solana bots and terminals, at one percent a trade. We charge half, and it's live.
